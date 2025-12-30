@@ -12,7 +12,7 @@ use crate::cmapdb::{CMap, CMapDB};
 use crate::error::{PdfError, Result};
 use crate::pdfcolor::{PDFColorSpace, PREDEFINED_COLORSPACE};
 use crate::pdftypes::{PDFObject, PDFStream};
-use crate::psparser::{PSBaseParser, PSToken};
+use crate::psparser::{Keyword, PSBaseParser, PSToken};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
@@ -22,7 +22,7 @@ pub enum ContentToken {
     /// An operand (number, string, array, dict, literal)
     Operand(PSToken),
     /// A keyword/operator (BT, ET, Tj, etc.)
-    Keyword(Vec<u8>),
+    Keyword(Keyword),
     /// An inline image with dictionary and data
     InlineImage {
         dict: HashMap<String, PSToken>,
@@ -125,72 +125,80 @@ impl PDFContentParser {
             match &token {
                 PSToken::Keyword(kw) => {
                     // Handle structure keywords
-                    if kw == b"[" {
-                        self.context_stack.push(Context::Array(abs_pos, Vec::new()));
-                        continue;
-                    } else if kw == b"]" {
-                        if let Some(Context::Array(arr_pos, items)) = self.context_stack.pop() {
-                            let array_token = PSToken::Array(items);
-                            if self.context_stack.is_empty() {
-                                // Top-level array - push to operand stack
-                                self.operand_stack.push((arr_pos, array_token));
-                            } else {
-                                // Nested - push to parent context
-                                self.push_to_context(array_token);
-                            }
+                    match kw {
+                        Keyword::ArrayStart => {
+                            self.context_stack.push(Context::Array(abs_pos, Vec::new()));
+                            continue;
                         }
-                        continue;
-                    } else if kw == b"<<" {
-                        self.context_stack.push(Context::Dict(abs_pos, Vec::new()));
-                        continue;
-                    } else if kw == b">>" {
-                        if let Some(Context::Dict(dict_pos, items)) = self.context_stack.pop() {
-                            let dict = Self::build_dict(items);
-                            let dict_token = PSToken::Dict(dict);
-                            if self.context_stack.is_empty() {
-                                self.operand_stack.push((dict_pos, dict_token));
-                            } else {
-                                self.push_to_context(dict_token);
+                        Keyword::ArrayEnd => {
+                            if let Some(Context::Array(arr_pos, items)) = self.context_stack.pop() {
+                                let array_token = PSToken::Array(items);
+                                if self.context_stack.is_empty() {
+                                    // Top-level array - push to operand stack
+                                    self.operand_stack.push((arr_pos, array_token));
+                                } else {
+                                    // Nested - push to parent context
+                                    self.push_to_context(array_token);
+                                }
                             }
+                            continue;
                         }
-                        continue;
-                    } else if kw == b"{" {
-                        self.context_stack.push(Context::Proc(abs_pos, Vec::new()));
-                        continue;
-                    } else if kw == b"}" {
-                        if let Some(Context::Proc(proc_pos, items)) = self.context_stack.pop() {
-                            let proc_token = PSToken::Array(items);
-                            if self.context_stack.is_empty() {
-                                self.operand_stack.push((proc_pos, proc_token));
-                            } else {
-                                self.push_to_context(proc_token);
+                        Keyword::DictStart => {
+                            self.context_stack.push(Context::Dict(abs_pos, Vec::new()));
+                            continue;
+                        }
+                        Keyword::DictEnd => {
+                            if let Some(Context::Dict(dict_pos, items)) = self.context_stack.pop() {
+                                let dict = Self::build_dict(items);
+                                let dict_token = PSToken::Dict(dict);
+                                if self.context_stack.is_empty() {
+                                    self.operand_stack.push((dict_pos, dict_token));
+                                } else {
+                                    self.push_to_context(dict_token);
+                                }
                             }
+                            continue;
                         }
-                        continue;
-                    }
-
-                    // Handle inline image keywords
-                    if kw == b"BI" {
-                        self.in_inline_dict = true;
-                        self.operand_stack.clear();
-                        continue;
-                    } else if kw == b"ID" && self.in_inline_dict {
-                        self.in_inline_dict = false;
-                        let dict = self.build_inline_dict();
-                        let eos = self.get_inline_eos(&dict);
-                        let (img_data, consumed) = self.get_inline_data(&eos);
-                        self.pos += consumed;
-                        self.base_parser.set_pos(self.pos);
-                        return Some((
-                            abs_pos,
-                            ContentToken::InlineImage {
-                                dict,
-                                data: img_data,
-                            },
-                        ));
-                    } else if kw == b"EI" {
-                        // Already handled by ID processing
-                        continue;
+                        Keyword::BraceOpen => {
+                            self.context_stack.push(Context::Proc(abs_pos, Vec::new()));
+                            continue;
+                        }
+                        Keyword::BraceClose => {
+                            if let Some(Context::Proc(proc_pos, items)) = self.context_stack.pop() {
+                                let proc_token = PSToken::Array(items);
+                                if self.context_stack.is_empty() {
+                                    self.operand_stack.push((proc_pos, proc_token));
+                                } else {
+                                    self.push_to_context(proc_token);
+                                }
+                            }
+                            continue;
+                        }
+                        Keyword::BI => {
+                            self.in_inline_dict = true;
+                            self.operand_stack.clear();
+                            continue;
+                        }
+                        Keyword::ID if self.in_inline_dict => {
+                            self.in_inline_dict = false;
+                            let dict = self.build_inline_dict();
+                            let eos = self.get_inline_eos(&dict);
+                            let (img_data, consumed) = self.get_inline_data(&eos);
+                            self.pos += consumed;
+                            self.base_parser.set_pos(self.pos);
+                            return Some((
+                                abs_pos,
+                                ContentToken::InlineImage {
+                                    dict,
+                                    data: img_data,
+                                },
+                            ));
+                        }
+                        Keyword::EI => {
+                            // Already handled by ID processing
+                            continue;
+                        }
+                        _ => {} // Fall through to normal keyword handling
                     }
 
                     // If we're inside inline dict, treat keyword as operand
@@ -1411,37 +1419,37 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     /// Dispatch an operator to the appropriate do_* method.
-    fn dispatch_operator(&mut self, name: &[u8], args: &mut Vec<PSToken>) {
-        match name {
+    fn dispatch_operator(&mut self, op: &Keyword, args: &mut Vec<PSToken>) {
+        match op {
             // Graphics state operators
-            b"q" => self.do_q(),
-            b"Q" => self.do_Q(),
-            b"cm" => {
+            Keyword::Qq => self.do_q(),
+            Keyword::Q => self.do_Q(),
+            Keyword::Cm => {
                 if let Some((a, b, c, d, e, f)) = Self::pop_matrix(args) {
                     self.do_cm(a, b, c, d, e, f);
                 }
             }
-            b"w" => {
+            Keyword::Ww => {
                 if let Some(w) = Self::pop_number(args) {
                     self.do_w(w);
                 }
             }
-            b"J" => {
+            Keyword::J => {
                 if let Some(n) = Self::pop_int(args) {
                     self.do_J(n);
                 }
             }
-            b"j" => {
+            Keyword::Jj => {
                 if let Some(n) = Self::pop_int(args) {
                     self.do_j(n);
                 }
             }
-            b"M" => {
+            Keyword::M => {
                 if let Some(m) = Self::pop_number(args) {
                     self.do_M(m);
                 }
             }
-            b"d" => {
+            Keyword::D => {
                 // dash pattern: [array] phase
                 if args.len() >= 2 {
                     let phase = Self::pop_number(args).unwrap_or(0.0);
@@ -1449,39 +1457,39 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     self.do_d(arr, phase);
                 }
             }
-            b"ri" => {
+            Keyword::Ri => {
                 if let Some(intent) = Self::pop_name(args) {
                     self.do_ri(&intent);
                 }
             }
-            b"i" => {
+            Keyword::I => {
                 if let Some(f) = Self::pop_number(args) {
                     self.do_i(f);
                 }
             }
-            b"gs" => {
+            Keyword::Gs => {
                 if let Some(name) = Self::pop_name(args) {
                     self.do_gs(&name);
                 }
             }
-            b"Do" => {
+            Keyword::Do => {
                 if let Some(name) = Self::pop_name(args) {
                     self.do_Do(name);
                 }
             }
 
             // Path construction operators
-            b"m" => {
+            Keyword::Mm => {
                 if let Some((x, y)) = Self::pop_point(args) {
                     self.do_m(x, y);
                 }
             }
-            b"l" => {
+            Keyword::L => {
                 if let Some((x, y)) = Self::pop_point(args) {
                     self.do_l(x, y);
                 }
             }
-            b"c" => {
+            Keyword::C => {
                 if args.len() >= 6 {
                     let y3 = Self::pop_number(args).unwrap_or(0.0);
                     let x3 = Self::pop_number(args).unwrap_or(0.0);
@@ -1492,7 +1500,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     self.do_c(x1, y1, x2, y2, x3, y3);
                 }
             }
-            b"v" => {
+            Keyword::V => {
                 if args.len() >= 4 {
                     let y3 = Self::pop_number(args).unwrap_or(0.0);
                     let x3 = Self::pop_number(args).unwrap_or(0.0);
@@ -1501,7 +1509,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     self.do_v(x2, y2, x3, y3);
                 }
             }
-            b"y" => {
+            Keyword::Y => {
                 if args.len() >= 4 {
                     let y3 = Self::pop_number(args).unwrap_or(0.0);
                     let x3 = Self::pop_number(args).unwrap_or(0.0);
@@ -1510,8 +1518,8 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     self.do_y(x1, y1, x3, y3);
                 }
             }
-            b"h" => self.do_h(),
-            b"re" => {
+            Keyword::H => self.do_h(),
+            Keyword::Re => {
                 if args.len() >= 4 {
                     let h = Self::pop_number(args).unwrap_or(0.0);
                     let w = Self::pop_number(args).unwrap_or(0.0);
@@ -1522,98 +1530,98 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             }
 
             // Path painting operators
-            b"S" => self.do_S(),
-            b"s" => self.do_s(),
-            b"f" | b"F" => self.do_f(),
-            b"f*" => self.do_f_star(),
-            b"B" => self.do_B(),
-            b"B*" => self.do_B_star(),
-            b"b" => self.do_b(),
-            b"b*" => self.do_b_star(),
-            b"n" => self.do_n(),
+            Keyword::S => self.do_S(),
+            Keyword::Ss => self.do_s(),
+            Keyword::Ff | Keyword::F => self.do_f(),
+            Keyword::FStar => self.do_f_star(),
+            Keyword::B => self.do_B(),
+            Keyword::BStar => self.do_B_star(),
+            Keyword::Bb => self.do_b(),
+            Keyword::BbStar => self.do_b_star(),
+            Keyword::N => self.do_n(),
 
             // Clipping operators
-            b"W" => self.do_W(),
-            b"W*" => self.do_W_star(),
+            Keyword::WClip => self.do_W(),
+            Keyword::WStar => self.do_W_star(),
 
             // Text object operators
-            b"BT" => self.do_BT(),
-            b"ET" => self.do_ET(),
+            Keyword::BT => self.do_BT(),
+            Keyword::ET => self.do_ET(),
 
             // Text state operators
-            b"Tc" => {
+            Keyword::Tc => {
                 if let Some(cs) = Self::pop_number(args) {
                     self.do_Tc(cs);
                 }
             }
-            b"Tw" => {
+            Keyword::Tw => {
                 if let Some(ws) = Self::pop_number(args) {
                     self.do_Tw(ws);
                 }
             }
-            b"Tz" => {
+            Keyword::Tz => {
                 if let Some(s) = Self::pop_number(args) {
                     self.do_Tz(s);
                 }
             }
-            b"TL" => {
+            Keyword::TL => {
                 if let Some(l) = Self::pop_number(args) {
                     self.do_TL(l);
                 }
             }
-            b"Tf" => {
+            Keyword::Tf => {
                 if args.len() >= 2 {
                     let size = Self::pop_number(args).unwrap_or(12.0);
                     let fontid = Self::pop_name(args).unwrap_or_default();
                     self.do_Tf(&fontid, size);
                 }
             }
-            b"Tr" => {
+            Keyword::Tr => {
                 if let Some(r) = Self::pop_int(args) {
                     self.do_Tr(r);
                 }
             }
-            b"Ts" => {
+            Keyword::Ts => {
                 if let Some(r) = Self::pop_number(args) {
                     self.do_Ts(r);
                 }
             }
 
             // Text positioning operators
-            b"Td" => {
+            Keyword::Td => {
                 if let Some((tx, ty)) = Self::pop_point(args) {
                     self.do_Td(tx, ty);
                 }
             }
-            b"TD" => {
+            Keyword::TD => {
                 if let Some((tx, ty)) = Self::pop_point(args) {
                     self.do_TD(tx, ty);
                 }
             }
-            b"Tm" => {
+            Keyword::Tm => {
                 if let Some((a, b, c, d, e, f)) = Self::pop_matrix(args) {
                     self.do_Tm(a, b, c, d, e, f);
                 }
             }
-            b"T*" => self.do_T_star(),
+            Keyword::TStar => self.do_T_star(),
 
             // Text showing operators
-            b"Tj" => {
+            Keyword::Tj => {
                 if let Some(s) = Self::pop_string(args) {
                     self.do_Tj(s);
                 }
             }
-            b"TJ" => {
+            Keyword::TJ => {
                 if let Some(seq) = Self::pop_text_seq(args) {
                     self.do_TJ(seq);
                 }
             }
-            b"'" => {
+            Keyword::Quote => {
                 if let Some(s) = Self::pop_string(args) {
                     self.do_quote(s);
                 }
             }
-            b"\"" => {
+            Keyword::DoubleQuote => {
                 if args.len() >= 3 {
                     let s = Self::pop_string(args).unwrap_or_default();
                     let ac = Self::pop_number(args).unwrap_or(0.0);
@@ -1655,7 +1663,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     fn pop_name(args: &mut Vec<PSToken>) -> Option<String> {
         args.pop().and_then(|t| match t {
             PSToken::Literal(s) => Some(s),
-            PSToken::Keyword(k) => String::from_utf8(k).ok(),
+            PSToken::Keyword(k) => std::str::from_utf8(k.as_bytes()).ok().map(String::from),
             _ => None,
         })
     }

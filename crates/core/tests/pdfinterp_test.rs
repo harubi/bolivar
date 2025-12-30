@@ -5,7 +5,7 @@
 
 use bolivar_core::cmapdb::CMapBase;
 use bolivar_core::pdfinterp::{ContentToken, PDFContentParser};
-use bolivar_core::psparser::PSToken;
+use bolivar_core::psparser::{Keyword, PSToken};
 
 // ============================================================================
 // Basic content stream tokenization tests
@@ -28,13 +28,13 @@ fn test_parse_simple_operators() {
 
     // First should be BT keyword
     match &tokens[0] {
-        ContentToken::Keyword(kw) => assert_eq!(kw, b"BT"),
+        ContentToken::Keyword(kw) => assert_eq!(*kw, Keyword::BT),
         _ => panic!("Expected BT keyword, got {:?}", tokens[0]),
     }
 
     // Last should be ET keyword
     match tokens.last().unwrap() {
-        ContentToken::Keyword(kw) => assert_eq!(kw, b"ET"),
+        ContentToken::Keyword(kw) => assert_eq!(*kw, Keyword::ET),
         _ => panic!("Expected ET keyword"),
     }
 }
@@ -49,13 +49,13 @@ fn test_parse_graphics_operators() {
 
     // First should be 'q' (save graphics state)
     match &tokens[0] {
-        ContentToken::Keyword(kw) => assert_eq!(kw, b"q"),
+        ContentToken::Keyword(kw) => assert_eq!(*kw, Keyword::Qq),
         _ => panic!("Expected q keyword"),
     }
 
     // Last should be 'Q' (restore graphics state)
     match tokens.last().unwrap() {
-        ContentToken::Keyword(kw) => assert_eq!(kw, b"Q"),
+        ContentToken::Keyword(kw) => assert_eq!(*kw, Keyword::Q),
         _ => panic!("Expected Q keyword"),
     }
 }
@@ -69,34 +69,19 @@ fn test_parse_path_operators() {
     let tokens: Vec<ContentToken> = parser.collect();
 
     // Should contain moveto, lineto, curveto, closepath, stroke
-    let keywords: Vec<&[u8]> = tokens
+    let keywords: Vec<Keyword> = tokens
         .iter()
         .filter_map(|t| match t {
-            ContentToken::Keyword(kw) => Some(kw.as_slice()),
+            ContentToken::Keyword(kw) => Some(kw.clone()),
             _ => None,
         })
         .collect();
 
-    assert!(
-        keywords.contains(&b"m".as_slice()),
-        "Missing moveto operator"
-    );
-    assert!(
-        keywords.contains(&b"l".as_slice()),
-        "Missing lineto operator"
-    );
-    assert!(
-        keywords.contains(&b"c".as_slice()),
-        "Missing curveto operator"
-    );
-    assert!(
-        keywords.contains(&b"h".as_slice()),
-        "Missing closepath operator"
-    );
-    assert!(
-        keywords.contains(&b"S".as_slice()),
-        "Missing stroke operator"
-    );
+    assert!(keywords.contains(&Keyword::Mm), "Missing moveto operator");
+    assert!(keywords.contains(&Keyword::L), "Missing lineto operator");
+    assert!(keywords.contains(&Keyword::C), "Missing curveto operator");
+    assert!(keywords.contains(&Keyword::H), "Missing closepath operator");
+    assert!(keywords.contains(&Keyword::S), "Missing stroke operator");
 }
 
 #[test]
@@ -107,16 +92,16 @@ fn test_parse_text_showing_operators() {
 
     let tokens: Vec<ContentToken> = parser.collect();
 
-    let keywords: Vec<&[u8]> = tokens
+    let keywords: Vec<Keyword> = tokens
         .iter()
         .filter_map(|t| match t {
-            ContentToken::Keyword(kw) => Some(kw.as_slice()),
+            ContentToken::Keyword(kw) => Some(kw.clone()),
             _ => None,
         })
         .collect();
 
-    assert!(keywords.contains(&b"Tj".as_slice()), "Missing Tj operator");
-    assert!(keywords.contains(&b"TJ".as_slice()), "Missing TJ operator");
+    assert!(keywords.contains(&Keyword::Tj), "Missing Tj operator");
+    assert!(keywords.contains(&Keyword::TJ), "Missing TJ operator");
 }
 
 // ============================================================================
@@ -207,13 +192,13 @@ fn test_inline_image_followed_by_more_content() {
         .any(|t| matches!(t, ContentToken::InlineImage { .. }));
     let has_q = tokens
         .iter()
-        .any(|t| matches!(t, ContentToken::Keyword(kw) if kw == b"q"));
+        .any(|t| matches!(t, ContentToken::Keyword(kw) if *kw == Keyword::Qq));
     let has_cm = tokens
         .iter()
-        .any(|t| matches!(t, ContentToken::Keyword(kw) if kw == b"cm"));
+        .any(|t| matches!(t, ContentToken::Keyword(kw) if *kw == Keyword::Cm));
     let has_restore = tokens
         .iter()
-        .any(|t| matches!(t, ContentToken::Keyword(kw) if kw == b"Q"));
+        .any(|t| matches!(t, ContentToken::Keyword(kw) if *kw == Keyword::Q));
 
     assert!(has_inline_image, "Missing inline image");
     assert!(has_q, "Missing q operator after inline image");
@@ -237,19 +222,19 @@ fn test_parse_multiple_streams() {
     // Should seamlessly parse content from both streams
     let has_bt = tokens
         .iter()
-        .any(|t| matches!(t, ContentToken::Keyword(kw) if kw == b"BT"));
+        .any(|t| matches!(t, ContentToken::Keyword(kw) if *kw == Keyword::BT));
     let has_tf = tokens
         .iter()
-        .any(|t| matches!(t, ContentToken::Keyword(kw) if kw == b"Tf"));
+        .any(|t| matches!(t, ContentToken::Keyword(kw) if *kw == Keyword::Tf));
     let has_td = tokens
         .iter()
-        .any(|t| matches!(t, ContentToken::Keyword(kw) if kw == b"Td"));
+        .any(|t| matches!(t, ContentToken::Keyword(kw) if *kw == Keyword::Td));
     let has_tj = tokens
         .iter()
-        .any(|t| matches!(t, ContentToken::Keyword(kw) if kw == b"Tj"));
+        .any(|t| matches!(t, ContentToken::Keyword(kw) if *kw == Keyword::Tj));
     let has_et = tokens
         .iter()
-        .any(|t| matches!(t, ContentToken::Keyword(kw) if kw == b"ET"));
+        .any(|t| matches!(t, ContentToken::Keyword(kw) if *kw == Keyword::ET));
 
     assert!(has_bt, "Missing BT");
     assert!(has_tf, "Missing Tf");
@@ -303,7 +288,7 @@ fn test_operands_before_operator() {
 
     // Last should be 're' operator
     match &tokens[4] {
-        ContentToken::Keyword(kw) => assert_eq!(kw, b"re"),
+        ContentToken::Keyword(kw) => assert_eq!(*kw, Keyword::Re),
         _ => panic!("Expected 're' keyword"),
     }
 }
@@ -327,7 +312,7 @@ fn test_string_operand() {
 
     // Second should be Tj
     match &tokens[1] {
-        ContentToken::Keyword(kw) => assert_eq!(kw, b"Tj"),
+        ContentToken::Keyword(kw) => assert_eq!(*kw, Keyword::Tj),
         _ => panic!("Expected Tj keyword"),
     }
 }
@@ -375,7 +360,7 @@ fn test_dict_operand() {
 
     // Third is BDC
     match &tokens[2] {
-        ContentToken::Keyword(kw) => assert_eq!(kw, b"BDC"),
+        ContentToken::Keyword(kw) => assert_eq!(*kw, Keyword::BDC),
         _ => panic!("Expected BDC keyword"),
     }
 }
@@ -393,17 +378,17 @@ fn test_parse_with_comments() {
     let tokens: Vec<ContentToken> = parser.collect();
 
     // Comment should be ignored
-    let keywords: Vec<&[u8]> = tokens
+    let keywords: Vec<Keyword> = tokens
         .iter()
         .filter_map(|t| match t {
-            ContentToken::Keyword(kw) => Some(kw.as_slice()),
+            ContentToken::Keyword(kw) => Some(kw.clone()),
             _ => None,
         })
         .collect();
 
-    assert!(keywords.contains(&b"BT".as_slice()));
-    assert!(keywords.contains(&b"Tf".as_slice()));
-    assert!(keywords.contains(&b"ET".as_slice()));
+    assert!(keywords.contains(&Keyword::BT));
+    assert!(keywords.contains(&Keyword::Tf));
+    assert!(keywords.contains(&Keyword::ET));
 }
 
 #[test]

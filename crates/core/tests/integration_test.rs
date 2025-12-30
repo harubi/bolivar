@@ -6,6 +6,7 @@
 use bolivar_core::cmapdb::{CMap, CMapBase, IdentityCMap, UnicodeMap};
 use bolivar_core::encodingdb::name2unicode;
 use bolivar_core::pdfparser::{PDFContentParser, PDFParser};
+use bolivar_core::psparser::Keyword;
 
 // === Text extraction flow ===
 
@@ -16,7 +17,7 @@ fn test_parse_and_decode_text() {
     let ops = PDFContentParser::parse(content).unwrap();
 
     // Find the Tj operation
-    let tj = ops.iter().find(|op| op.operator == b"Tj").unwrap();
+    let tj = ops.iter().find(|op| op.operator == Keyword::Tj).unwrap();
     let text_bytes = tj.operands[0].as_string().unwrap();
 
     assert_eq!(text_bytes, b"Hello");
@@ -131,7 +132,7 @@ fn test_content_stream_text_extraction() {
     let ops = PDFContentParser::parse(content).unwrap();
 
     // Extract all text from Tj operators
-    let text_ops: Vec<_> = ops.iter().filter(|op| op.operator == b"Tj").collect();
+    let text_ops: Vec<_> = ops.iter().filter(|op| op.operator == Keyword::Tj).collect();
 
     assert_eq!(text_ops.len(), 3);
     assert_eq!(text_ops[0].operands[0].as_string().unwrap(), b"Hello ");
@@ -145,7 +146,7 @@ fn test_content_stream_tj_array() {
     let content = b"BT /F1 12 Tf [ (T) -80 (e) -15 (st) ] TJ ET";
     let ops = PDFContentParser::parse(content).unwrap();
 
-    let tj_op = ops.iter().find(|op| op.operator == b"TJ").unwrap();
+    let tj_op = ops.iter().find(|op| op.operator == Keyword::TJ).unwrap();
     let arr = tj_op.operands[0].as_array().unwrap();
 
     // Should have: string, number, string, number, string

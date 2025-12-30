@@ -38,7 +38,7 @@ impl PDFPage {
         &["Resources", "MediaBox", "CropBox", "Rotate"];
 
     /// Create pages iterator from a PDFDocument.
-    pub fn create_pages<'a>(doc: &'a PDFDocument<'a>) -> PageIterator<'a> {
+    pub fn create_pages(doc: &PDFDocument) -> PageIterator<'_> {
         PageIterator::new(doc)
     }
 
@@ -140,7 +140,7 @@ impl PDFPage {
 
 /// Iterator over pages in a PDF document.
 pub struct PageIterator<'a> {
-    doc: &'a PDFDocument<'a>,
+    doc: &'a PDFDocument,
     /// Stack for depth-first traversal: (objid, inherited_attrs)
     stack: Vec<(u32, HashMap<String, PDFObject>)>,
     /// Visited object IDs (to prevent cycles)
@@ -156,7 +156,7 @@ pub struct PageIterator<'a> {
 }
 
 impl<'a> PageIterator<'a> {
-    fn new(doc: &'a PDFDocument<'a>) -> Self {
+    fn new(doc: &'a PDFDocument) -> Self {
         // Try to get page labels
         let labels: Option<Box<dyn Iterator<Item = String> + 'a>> = doc
             .get_page_labels()

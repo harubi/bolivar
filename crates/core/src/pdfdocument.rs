@@ -13,6 +13,7 @@ use crate::pdfparser::PDFParser;
 use crate::pdftypes::PDFObject;
 use crate::security::{PDFSecurityHandler, create_security_handler};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// XRef entry - location of an object in the PDF file.
 #[derive(Debug, Clone)]
@@ -54,30 +55,21 @@ impl XRef {
 }
 
 /// PDF Document - provides access to PDF objects and metadata.
-pub struct PDFDocument<'a> {
-    /// Raw PDF data
-    data: &'a [u8],
-    /// Cross-reference tables (may be multiple for incremental updates)
+/// Owns its data via Arc for thread-safe sharing.
+pub struct PDFDocument {
+    data: Arc<[u8]>,
     xrefs: Vec<XRef>,
-    /// Document catalog dictionary
     catalog: HashMap<String, PDFObject>,
-    /// Document info dictionaries (may be multiple)
     info: Vec<HashMap<String, PDFObject>>,
-    /// Cached objects
     cache: HashMap<u32, PDFObject>,
-    /// Security handler for encrypted PDFs
     security_handler: Option<Box<dyn PDFSecurityHandler + Send + Sync>>,
 }
 
-impl<'a> PDFDocument<'a> {
+impl PDFDocument {
     /// Create a new PDFDocument from raw PDF data.
-    ///
-    /// # Arguments
-    /// * `data` - The raw PDF file bytes
-    /// * `password` - Password for encrypted PDFs (empty string for no password)
-    pub fn new(data: &'a [u8], password: &str) -> Result<Self> {
+    pub fn new<D: AsRef<[u8]>>(data: D, password: &str) -> Result<Self> {
         let mut doc = Self {
-            data,
+            data: Arc::from(data.as_ref()),
             xrefs: Vec::new(),
             catalog: HashMap::new(),
             info: Vec::new(),
@@ -161,7 +153,7 @@ impl<'a> PDFDocument<'a> {
     fn find_startxref(&self) -> Result<usize> {
         // Search backwards for "startxref"
         let search = b"startxref";
-        let data = self.data;
+        let data = &*self.data;
 
         // Start from near end of file
         let search_start = if data.len() > 1024 {
@@ -744,7 +736,7 @@ impl<'a> PDFDocument<'a> {
         xref.is_fallback = true;
         let re = Regex::new(r"(\d+)\s+(\d+)\s+obj\b").unwrap();
 
-        for cap in re.captures_iter(self.data) {
+        for cap in re.captures_iter(&self.data) {
             let objid: u32 = std::str::from_utf8(&cap[1]).unwrap().parse().unwrap();
             let genno: u32 = std::str::from_utf8(&cap[2]).unwrap().parse().unwrap();
             let pos = cap.get(0).unwrap().start();
@@ -1290,29 +1282,20 @@ impl<'a> PDFDocument<'a> {
 
 /// Page label iterator.
 pub struct PageLabels<'a> {
-    /// Reference to doc for future use (e.g., resolving indirect refs in label dicts)
     #[allow(dead_code)]
-    doc: &'a PDFDocument<'a>,
-    /// Sorted list of (page_index, label_dict)
+    doc: &'a PDFDocument,
     ranges: Vec<(i64, HashMap<String, PDFObject>)>,
-    /// Current range index
     range_idx: usize,
-    /// Current value within range
     current_value: i64,
-    /// Current page index
     current_page: i64,
-    /// End of current range (exclusive)
     range_end: Option<i64>,
-    /// Current style
     style: Option<String>,
-    /// Current prefix
     prefix: String,
-    /// Total number of pages in the document
     page_count: usize,
 }
 
 impl<'a> PageLabels<'a> {
-    fn new(doc: &'a PDFDocument<'a>, obj: PDFObject, page_count: usize) -> Result<Self> {
+    fn new(doc: &'a PDFDocument, obj: PDFObject, page_count: usize) -> Result<Self> {
         let dict = obj.as_dict()?;
 
         // Parse number tree
@@ -1345,7 +1328,7 @@ impl<'a> PageLabels<'a> {
     }
 
     fn parse_number_tree(
-        doc: &'a PDFDocument<'a>,
+        doc: &PDFDocument,
         dict: &HashMap<String, PDFObject>,
     ) -> Result<Vec<(i64, HashMap<String, PDFObject>)>> {
         let mut items = Vec::new();
@@ -1509,6 +1492,24 @@ fn format_alpha(n: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test that PDFDocument can be created from owned data and stored.
+    /// This requires Arc ownership - will fail with borrowed reference design.
+    #[test]
+    fn test_pdfdocument_owns_data() {
+        fn create_doc() -> PDFDocument {
+            let data = std::fs::read("tests/fixtures/simple1.pdf").unwrap();
+            PDFDocument::new(data, "").unwrap()
+        }
+        let _doc = create_doc();
+    }
+
+    /// Test that PDFDocument is Send + Sync (thread-safe).
+    #[test]
+    fn test_pdfdocument_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PDFDocument>();
+    }
 
     #[test]
     fn test_format_roman() {

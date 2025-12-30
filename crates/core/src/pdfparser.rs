@@ -4,7 +4,7 @@
 
 use crate::error::{PdfError, Result};
 use crate::pdftypes::{PDFObjRef, PDFObject};
-use crate::psparser::{PSBaseParser, PSToken};
+use crate::psparser::{Keyword, PSBaseParser, PSToken};
 use std::collections::HashMap;
 
 /// PDF Parser - parses PDF object syntax
@@ -61,10 +61,8 @@ impl<'a> PDFParser<'a> {
                 if let Ok(Some(tok2)) = self.next_token() {
                     if let PSToken::Int(m) = tok2 {
                         if let Ok(Some(tok3)) = self.next_token() {
-                            if let PSToken::Keyword(ref kw) = tok3 {
-                                if kw == b"R" {
-                                    return Ok(PDFObject::Ref(PDFObjRef::new(n as u32, m as u32)));
-                                }
+                            if let PSToken::Keyword(Keyword::R) = tok3 {
+                                return Ok(PDFObject::Ref(PDFObjRef::new(n as u32, m as u32)));
                             }
                             // Not R, push back both
                             self.push_back(tok3);
@@ -80,28 +78,17 @@ impl<'a> PDFParser<'a> {
             PSToken::Bool(b) => Ok(PDFObject::Bool(b)),
             PSToken::Literal(s) => Ok(PDFObject::Name(s)),
             PSToken::String(s) => Ok(PDFObject::String(s)),
-            PSToken::Keyword(kw) => {
-                if kw == b"null" {
-                    return Ok(PDFObject::Null);
-                }
-                if kw == b"true" {
-                    return Ok(PDFObject::Bool(true));
-                }
-                if kw == b"false" {
-                    return Ok(PDFObject::Bool(false));
-                }
-                if kw == b"[" {
-                    return self.parse_array();
-                }
-                if kw == b"<<" {
-                    return self.parse_dict();
-                }
-                // Other keywords are errors in object context
-                Err(PdfError::TokenError {
+            PSToken::Keyword(kw) => match kw {
+                Keyword::Null => Ok(PDFObject::Null),
+                Keyword::True => Ok(PDFObject::Bool(true)),
+                Keyword::False => Ok(PDFObject::Bool(false)),
+                Keyword::ArrayStart => self.parse_array(),
+                Keyword::DictStart => self.parse_dict(),
+                _ => Err(PdfError::TokenError {
                     pos: self.base.tell(),
-                    msg: format!("unexpected keyword: {}", String::from_utf8_lossy(&kw)),
-                })
-            }
+                    msg: format!("unexpected keyword: {:?}", kw),
+                }),
+            },
             PSToken::Array(_) | PSToken::Dict(_) => {
                 // These shouldn't come from base parser
                 Err(PdfError::TokenError {
@@ -119,10 +106,8 @@ impl<'a> PDFParser<'a> {
         loop {
             let token = self.next_token()?.ok_or(PdfError::UnexpectedEof)?;
 
-            if let PSToken::Keyword(ref kw) = token {
-                if kw == b"]" {
-                    break;
-                }
+            if let PSToken::Keyword(Keyword::ArrayEnd) = token {
+                break;
             }
 
             arr.push(self.token_to_object(token)?);
@@ -139,10 +124,8 @@ impl<'a> PDFParser<'a> {
             let token = self.next_token()?.ok_or(PdfError::UnexpectedEof)?;
 
             // Check for end of dict
-            if let PSToken::Keyword(ref kw) = token {
-                if kw == b">>" {
-                    break;
-                }
+            if let PSToken::Keyword(Keyword::DictEnd) = token {
+                break;
             }
 
             // Key must be a literal name
@@ -168,8 +151,8 @@ impl<'a> PDFParser<'a> {
 /// Content stream operation
 #[derive(Debug, Clone)]
 pub struct Operation {
-    /// The operator (e.g., "BT", "Tf", "Tj")
-    pub operator: Vec<u8>,
+    /// The operator (e.g., BT, Tf, Tj)
+    pub operator: Keyword,
     /// Operands for this operation
     pub operands: Vec<PDFObject>,
 }
@@ -192,87 +175,85 @@ impl PDFContentParser {
             let (_, token) = result?;
 
             match token {
-                PSToken::Keyword(ref kw) => {
+                PSToken::Keyword(kw) => {
                     // Special handling for array/dict delimiters
-                    if kw == b"[" {
-                        context_stack.push(std::mem::take(&mut operands));
-                        continue;
-                    }
-                    if kw == b"]" {
-                        let array_contents = std::mem::take(&mut operands);
-                        operands = context_stack.pop().unwrap_or_default();
-                        operands.push(PDFObject::Array(array_contents));
-                        continue;
-                    }
-                    if kw == b"<<" {
-                        context_stack.push(std::mem::take(&mut operands));
-                        continue;
-                    }
-                    if kw == b">>" {
-                        let dict_contents = std::mem::take(&mut operands);
-                        operands = context_stack.pop().unwrap_or_default();
-                        // Convert to dict
-                        let mut dict = HashMap::new();
-                        let mut iter = dict_contents.into_iter();
-                        while let Some(key) = iter.next() {
-                            if let PDFObject::Name(name) = key {
-                                if let Some(value) = iter.next() {
-                                    dict.insert(name, value);
+                    match kw {
+                        Keyword::ArrayStart => {
+                            context_stack.push(std::mem::take(&mut operands));
+                            continue;
+                        }
+                        Keyword::ArrayEnd => {
+                            let array_contents = std::mem::take(&mut operands);
+                            operands = context_stack.pop().unwrap_or_default();
+                            operands.push(PDFObject::Array(array_contents));
+                            continue;
+                        }
+                        Keyword::DictStart => {
+                            context_stack.push(std::mem::take(&mut operands));
+                            continue;
+                        }
+                        Keyword::DictEnd => {
+                            let dict_contents = std::mem::take(&mut operands);
+                            operands = context_stack.pop().unwrap_or_default();
+                            // Convert to dict
+                            let mut dict = HashMap::new();
+                            let mut iter = dict_contents.into_iter();
+                            while let Some(key) = iter.next() {
+                                if let PDFObject::Name(name) = key {
+                                    if let Some(value) = iter.next() {
+                                        dict.insert(name, value);
+                                    }
                                 }
                             }
+                            operands.push(PDFObject::Dict(dict));
+                            continue;
                         }
-                        operands.push(PDFObject::Dict(dict));
-                        continue;
-                    }
-
-                    // Handle inline image (BI ... ID ... EI)
-                    if kw == b"BI" {
-                        // Collect until ID
-                        let mut img_params = Vec::new();
-                        while let Some(Ok((_, tok))) = parser.next_token() {
-                            if let PSToken::Keyword(k) = &tok {
-                                if k == b"ID" {
+                        Keyword::BI => {
+                            // Handle inline image (BI ... ID ... EI)
+                            // Collect until ID
+                            let mut img_params = Vec::new();
+                            while let Some(Ok((_, tok))) = parser.next_token() {
+                                if let PSToken::Keyword(Keyword::ID) = &tok {
                                     break;
                                 }
-                            }
-                            if let Ok(obj) = Self::ps_to_pdf(tok) {
-                                img_params.push(obj);
-                            }
-                        }
-                        // Convert params to dict
-                        let mut dict = HashMap::new();
-                        let mut iter = img_params.into_iter();
-                        while let Some(key) = iter.next() {
-                            if let PDFObject::Name(name) = key {
-                                if let Some(value) = iter.next() {
-                                    dict.insert(name, value);
+                                if let Ok(obj) = Self::ps_to_pdf(tok) {
+                                    img_params.push(obj);
                                 }
                             }
-                        }
-                        ops.push(Operation {
-                            operator: b"BI".to_vec(),
-                            operands: vec![PDFObject::Dict(dict)],
-                        });
-                        // Skip until EI (simplified - in real impl would need to read raw bytes)
-                        while let Some(Ok((_, tok))) = parser.next_token() {
-                            if let PSToken::Keyword(k) = &tok {
-                                if k == b"EI" {
+                            // Convert params to dict
+                            let mut dict = HashMap::new();
+                            let mut iter = img_params.into_iter();
+                            while let Some(key) = iter.next() {
+                                if let PDFObject::Name(name) = key {
+                                    if let Some(value) = iter.next() {
+                                        dict.insert(name, value);
+                                    }
+                                }
+                            }
+                            ops.push(Operation {
+                                operator: Keyword::BI,
+                                operands: vec![PDFObject::Dict(dict)],
+                            });
+                            // Skip until EI (simplified - in real impl would need to read raw bytes)
+                            while let Some(Ok((_, tok))) = parser.next_token() {
+                                if let PSToken::Keyword(Keyword::EI) = &tok {
                                     ops.push(Operation {
-                                        operator: b"EI".to_vec(),
+                                        operator: Keyword::EI,
                                         operands: vec![],
                                     });
                                     break;
                                 }
                             }
+                            continue;
                         }
-                        continue;
+                        _ => {
+                            // Regular operator - emit operation
+                            ops.push(Operation {
+                                operator: kw,
+                                operands: std::mem::take(&mut operands),
+                            });
+                        }
                     }
-
-                    // Regular operator - emit operation
-                    ops.push(Operation {
-                        operator: kw.clone(),
-                        operands: std::mem::take(&mut operands),
-                    });
                 }
                 // Accumulate operands
                 _ => {
@@ -305,20 +286,15 @@ impl PDFContentParser {
                 }
                 Ok(PDFObject::Dict(map))
             }
-            PSToken::Keyword(kw) => {
-                if kw == b"null" {
-                    Ok(PDFObject::Null)
-                } else if kw == b"true" {
-                    Ok(PDFObject::Bool(true))
-                } else if kw == b"false" {
-                    Ok(PDFObject::Bool(false))
-                } else {
-                    Err(PdfError::TokenError {
-                        pos: 0,
-                        msg: format!("unexpected keyword: {:?}", String::from_utf8_lossy(&kw)),
-                    })
-                }
-            }
+            PSToken::Keyword(kw) => match kw {
+                Keyword::Null => Ok(PDFObject::Null),
+                Keyword::True => Ok(PDFObject::Bool(true)),
+                Keyword::False => Ok(PDFObject::Bool(false)),
+                _ => Err(PdfError::TokenError {
+                    pos: 0,
+                    msg: format!("unexpected keyword: {:?}", kw),
+                }),
+            },
         }
     }
 }

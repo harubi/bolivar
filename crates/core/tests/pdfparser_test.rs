@@ -3,6 +3,7 @@
 //! Based on pdfminer.six pdfparser.py functionality.
 
 use bolivar_core::pdfparser::{PDFContentParser, PDFParser};
+use bolivar_core::psparser::Keyword;
 
 // === PDFParser tests ===
 
@@ -139,10 +140,10 @@ fn test_content_parser_simple() {
     let ops = PDFContentParser::parse(data).unwrap();
 
     assert_eq!(ops.len(), 3); // BT, Tf, ET
-    assert_eq!(&ops[0].operator, b"BT");
-    assert_eq!(&ops[1].operator, b"Tf");
+    assert_eq!(ops[0].operator, Keyword::BT);
+    assert_eq!(ops[1].operator, Keyword::Tf);
     assert_eq!(ops[1].operands.len(), 2);
-    assert_eq!(&ops[2].operator, b"ET");
+    assert_eq!(ops[2].operator, Keyword::ET);
 }
 
 #[test]
@@ -151,7 +152,7 @@ fn test_content_parser_text() {
     let ops = PDFContentParser::parse(data).unwrap();
 
     // Find Tj operation
-    let tj = ops.iter().find(|op| op.operator == b"Tj").unwrap();
+    let tj = ops.iter().find(|op| op.operator == Keyword::Tj).unwrap();
     assert_eq!(tj.operands.len(), 1);
     assert_eq!(tj.operands[0].as_string().unwrap(), b"Hello");
 }
@@ -162,14 +163,14 @@ fn test_content_parser_graphics() {
     let ops = PDFContentParser::parse(data).unwrap();
 
     assert_eq!(ops.len(), 4); // q, cm, g, Q
-    assert_eq!(&ops[0].operator, b"q");
+    assert_eq!(ops[0].operator, Keyword::Qq);
 
     let cm = &ops[1];
-    assert_eq!(&cm.operator, b"cm");
+    assert_eq!(cm.operator, Keyword::Cm);
     assert_eq!(cm.operands.len(), 6);
 
     let g = &ops[2];
-    assert_eq!(&g.operator, b"g");
+    assert_eq!(g.operator, Keyword::Gg);
     assert_eq!(g.operands.len(), 1);
     assert_eq!(g.operands[0].as_num().unwrap(), 0.5);
 }
@@ -181,7 +182,7 @@ fn test_content_parser_inline_image() {
     let ops = PDFContentParser::parse(data).unwrap();
 
     // Should have BI with dict and EI
-    let bi = ops.iter().find(|op| op.operator == b"BI").unwrap();
+    let bi = ops.iter().find(|op| op.operator == Keyword::BI).unwrap();
     assert!(!bi.operands.is_empty());
 }
 
@@ -191,7 +192,7 @@ fn test_content_parser_array_operand() {
     let ops = PDFContentParser::parse(data).unwrap();
 
     let d = &ops[0];
-    assert_eq!(&d.operator, b"d");
+    assert_eq!(d.operator, Keyword::D);
     assert_eq!(d.operands.len(), 2);
     // First operand is array
     let arr = d.operands[0].as_array().unwrap();
@@ -205,7 +206,7 @@ fn test_content_parser_tj_array() {
     let ops = PDFContentParser::parse(data).unwrap();
 
     let tj = &ops[0];
-    assert_eq!(&tj.operator, b"TJ");
+    assert_eq!(tj.operator, Keyword::TJ);
     assert_eq!(tj.operands.len(), 1);
 
     let arr = tj.operands[0].as_array().unwrap();

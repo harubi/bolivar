@@ -2,7 +2,7 @@
 //!
 //! Tests for PostScript tokenizer and stack parser.
 
-use bolivar_core::psparser::{PSBaseParser, PSStackParser, PSToken};
+use bolivar_core::psparser::{Keyword, PSBaseParser, PSStackParser, PSToken};
 
 /// Test data from pdfminer.six - raw PostScript content
 const TESTDATA: &[u8] = br#"%!PS
@@ -28,13 +28,14 @@ func/a/b{(c)do*}def
 /// Expected tokens from TESTDATA (position, token)
 /// Format matches pdfminer.six TOKENS list
 fn expected_tokens() -> Vec<(usize, PSToken)> {
+    use crate::Keyword as Kw; // Disambiguate from PSToken::Keyword variant
     use PSToken::*;
     vec![
-        (5, Keyword(b"begin".to_vec())),
-        (11, Keyword(b"end".to_vec())),
-        (16, Keyword(b"\"".to_vec())),
-        (19, Keyword(b"@".to_vec())),
-        (21, Keyword(b"#".to_vec())),
+        (5, Keyword(Kw::Begin)),
+        (11, Keyword(Kw::End)),
+        (16, Keyword(Kw::DoubleQuote)),
+        (19, Keyword(Kw::Unknown(b"@".to_vec()))),
+        (21, Keyword(Kw::Unknown(b"#".to_vec()))),
         (23, Literal("a".to_string())),
         (25, Literal("BCD".to_string())),
         (30, Literal("Some_Name".to_string())),
@@ -57,23 +58,23 @@ fn expected_tokens() -> Vec<(usize, PSToken)> {
         (194, String(b" ".to_vec())),        // <20> = space
         (199, String(b"@@ ".to_vec())),      // <404020> with spaces
         (211, String(b"\xab\xcd\x00\x12\x34\x05".to_vec())), // hex with odd digit
-        (226, Keyword(b"func".to_vec())),
+        (226, Keyword(Kw::Unknown(b"func".to_vec()))),
         (230, Literal("a".to_string())),
         (232, Literal("b".to_string())),
-        (234, Keyword(b"{".to_vec())),
+        (234, Keyword(Kw::BraceOpen)),
         (235, String(b"c".to_vec())),
-        (238, Keyword(b"do*".to_vec())),
-        (241, Keyword(b"}".to_vec())),
-        (242, Keyword(b"def".to_vec())),
-        (246, Keyword(b"[".to_vec())),
+        (238, Keyword(Kw::Unknown(b"do*".to_vec()))),
+        (241, Keyword(Kw::BraceClose)),
+        (242, Keyword(Kw::Def)),
+        (246, Keyword(Kw::ArrayStart)),
         (248, Int(1)),
         (250, String(b"z".to_vec())),
-        (254, Keyword(b"!".to_vec())),
-        (256, Keyword(b"]".to_vec())),
-        (258, Keyword(b"<<".to_vec())),
+        (254, Keyword(Kw::Unknown(b"!".to_vec()))),
+        (256, Keyword(Kw::ArrayEnd)),
+        (258, Keyword(Kw::DictStart)),
         (261, Literal("foo".to_string())),
         (266, String(b"bar".to_vec())),
-        (272, Keyword(b">>".to_vec())),
+        (272, Keyword(Kw::DictEnd)),
     ]
 }
 
@@ -199,8 +200,8 @@ fn test_issue_884_keyword_at_stream_end() {
 
     assert_eq!(pos, 0);
     assert!(
-        matches!(token, PSToken::Keyword(ref k) if k == b"Do"),
-        "Expected Keyword(b\"Do\"), got {:?}",
+        matches!(token, PSToken::Keyword(Keyword::Do)),
+        "Expected Keyword(Do), got {:?}",
         token
     );
 }
@@ -221,12 +222,12 @@ fn test_issue_1025_buffer_boundary() {
                 // Check that token at position 4093 is "beginbfchar"
                 if pos == 4093 {
                     assert!(
-                        matches!(&token, PSToken::Keyword(k) if k == b"beginbfchar"),
+                        matches!(&token, PSToken::Keyword(Keyword::BeginBfChar)),
                         "Token at pos 4093 should be 'beginbfchar', got {:?}",
                         token
                     );
                 }
-                if matches!(&token, PSToken::Keyword(k) if k == b"beginbfchar") {
+                if matches!(&token, PSToken::Keyword(Keyword::BeginBfChar)) {
                     beginbfchar_count += 1;
                 }
                 tokens.push(token);
@@ -246,11 +247,11 @@ fn test_issue_1025_buffer_boundary() {
     let len = tokens.len();
     assert!(len >= 2, "Need at least 2 tokens");
     assert!(
-        matches!(&tokens[len - 1], PSToken::Keyword(k) if k == b"end"),
+        matches!(&tokens[len - 1], PSToken::Keyword(Keyword::End)),
         "Last token should be 'end'"
     );
     assert!(
-        matches!(&tokens[len - 2], PSToken::Keyword(k) if k == b"end"),
+        matches!(&tokens[len - 2], PSToken::Keyword(Keyword::End)),
         "Second to last token should be 'end'"
     );
 }
