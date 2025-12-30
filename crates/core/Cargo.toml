@@ -1,0 +1,60 @@
+[package]
+name = "bolivar-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PDF content extraction library"
+
+[dependencies]
+aes.workspace = true
+byteorder.workspace = true
+cbc.workspace = true
+flate2.workspace = true
+html-escape.workspace = true
+indexmap.workspace = true
+itertools.workspace = true
+lazy_static.workspace = true
+md5.workspace = true
+num-traits.workspace = true
+sha2.workspace = true
+once_cell.workspace = true
+regex.workspace = true
+rustc-hash.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+weezl.workspace = true
+geo-index.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+hex.workspace = true
+insta.workspace = true
+
+[[bench]]
+name = "plane_bench"
+harness = false
+
+[[bench]]
+name = "layout_bench"
+harness = false
+
+[[bench]]
+name = "filters_bench"
+harness = false
+
+[[bench]]
+name = "pdfdocument_bench"
+harness = false
+
+[[bench]]
+name = "pdfinterp_bench"
+harness = false
+
+[[bench]]
+name = "psparser_bench"
+harness = false
+
+[[bench]]
+name = "e2e_bench"
+harness = false

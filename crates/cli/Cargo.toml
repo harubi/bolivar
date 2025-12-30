@@ -1,0 +1,19 @@
+[package]
+name = "bolivar-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PDF text extraction CLI tools"
+
+[dependencies]
+bolivar-core = { path = "../core" }
+clap.workspace = true
+
+[[bin]]
+name = "pdf2txt"
+path = "src/pdf2txt.rs"
+
+[[bin]]
+name = "dumppdf"
+path = "src/dumppdf.rs"

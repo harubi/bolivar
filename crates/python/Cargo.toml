@@ -1,0 +1,15 @@
+[package]
+name = "bolivar-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Python bindings for bolivar PDF library"
+
+[lib]
+name = "_bolivar"
+crate-type = ["cdylib"]
+
+[dependencies]
+bolivar-core = { path = "../core" }
+pyo3 = { workspace = true, features = ["extension-module"] }
