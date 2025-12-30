@@ -11,7 +11,9 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::hash::Hash;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use geo_index::rtree::sort::HilbertSort;
+use geo_index::rtree::{RTree, RTreeBuilder, RTreeIndex};
+use rustc_hash::FxHashSet;
 
 /// Maximum integer value for PDF compatibility (32-bit signed max).
 pub const INF: i32 = i32::MAX;
@@ -107,13 +109,6 @@ pub fn apply_matrix_norm(m: Matrix, v: Point) -> Point {
     (a * p + c * q, b * p + d * q)
 }
 
-/// Returns a discrete range for spatial indexing.
-fn drange(v0: f64, v1: f64, d: i32) -> std::ops::Range<i32> {
-    let start = (v0 as i32) / d;
-    let end = ((v1 as i32) + d) / d;
-    start..end
-}
-
 /// Trait for objects that have a bounding box.
 pub trait HasBBox {
     fn x0(&self) -> f64;
@@ -136,96 +131,77 @@ pub trait HasBBox {
 
 /// A set-like data structure for objects placed on a plane.
 ///
-/// Can efficiently find objects in a certain rectangular area using a grid-based
-/// spatial index.
+/// Uses geo-index R-tree for efficient spatial queries on initial items.
+/// Dynamically added items are stored separately and included in iterations.
+/// Uses tombstone pattern for removals (items marked inactive rather than deleted).
 pub struct Plane<T> {
+    /// All items: initial bulk-loaded items followed by dynamically added items
     seq: Vec<T>,
+    /// Number of items in the R-tree (first `initial_count` items in seq)
+    initial_count: usize,
+    /// R-tree spatial index for initial items (immutable after construction)
+    tree: Option<RTree<f64>>,
+    /// Active item indices (for tombstone pattern)
     objs: FxHashSet<usize>,
-    grid: FxHashMap<(i32, i32), Vec<usize>>,
-    gridsize: i32,
-    x0: f64,
-    y0: f64,
-    x1: f64,
-    y1: f64,
 }
 
 impl<T: HasBBox + Eq + Hash> Plane<T> {
     /// Creates a new Plane with the given bounding box and grid size.
-    pub fn new(bbox: Rect, gridsize: i32) -> Self {
-        let (x0, y0, x1, y1) = bbox;
+    /// Note: bbox and gridsize parameters are kept for API compatibility but unused.
+    pub fn new(_bbox: Rect, _gridsize: i32) -> Self {
         Self {
             seq: Vec::new(),
+            initial_count: 0,
+            tree: None,
             objs: FxHashSet::default(),
-            grid: FxHashMap::default(),
-            gridsize,
-            x0,
-            y0,
-            x1,
-            y1,
         }
     }
 
-    /// Returns an iterator over grid cells that intersect the given bbox.
-    fn get_range(&self, bbox: Rect) -> impl Iterator<Item = (i32, i32)> {
-        let (x0, y0, x1, y1) = bbox;
-
-        // Check if bbox is completely outside the plane
-        if x1 <= self.x0 || self.x1 <= x0 || y1 <= self.y0 || self.y1 <= y0 {
-            return itertools::Either::Left(std::iter::empty());
+    /// Adds multiple objects to the plane and builds the R-tree index.
+    /// This should be called once with all initial items for optimal performance.
+    pub fn extend(&mut self, objs: impl IntoIterator<Item = T>) {
+        let items: Vec<T> = objs.into_iter().collect();
+        if items.is_empty() {
+            return;
         }
 
-        let x0 = x0.max(self.x0);
-        let y0 = y0.max(self.y0);
-        let x1 = x1.min(self.x1);
-        let y1 = y1.min(self.y1);
+        let count = items.len();
+        let start_idx = self.seq.len();
 
-        let y_range = drange(y0, y1, self.gridsize);
-        let x_range = drange(x0, x1, self.gridsize);
+        // Pre-allocate
+        self.seq.reserve(count);
+        self.objs.reserve(count);
 
-        itertools::Either::Right(
-            y_range.flat_map(move |gy| x_range.clone().map(move |gx| (gx, gy))),
-        )
+        // Single pass: build R-tree and store items
+        let mut builder = RTreeBuilder::<f64>::new(count as u32);
+        for (i, item) in items.into_iter().enumerate() {
+            let bbox = item.bbox();
+            builder.add(bbox.0, bbox.1, bbox.2, bbox.3);
+            self.objs.insert(start_idx + i);
+            self.seq.push(item);
+        }
+        let tree = builder.finish::<HilbertSort>();
+
+        self.initial_count = self.seq.len();
+        self.tree = Some(tree);
     }
 
-    /// Adds an object to the plane.
+    /// Adds an object to the plane (dynamic addition, not in R-tree).
     pub fn add(&mut self, obj: T) {
         let idx = self.seq.len();
-        let bbox = obj.bbox();
-
-        let keys: Vec<_> = self.get_range(bbox).collect();
-        for k in keys {
-            self.grid
-                .entry(k)
-                .or_insert_with(|| Vec::with_capacity(8))
-                .push(idx);
-        }
-
         self.seq.push(obj);
         self.objs.insert(idx);
     }
 
-    /// Adds multiple objects to the plane.
-    pub fn extend(&mut self, objs: impl IntoIterator<Item = T>) {
-        for obj in objs {
-            self.add(obj);
-        }
-    }
-
-    /// Removes an object from the plane.
+    /// Removes an object from the plane by marking it inactive (tombstone pattern).
+    /// The item remains in memory but is excluded from queries and iterations.
     pub fn remove(&mut self, obj: &T) -> bool
     where
         T: PartialEq,
     {
-        let idx = self.seq.iter().position(|o| o == obj);
-        if let Some(idx) = idx {
+        // Find the item and mark it inactive
+        if let Some(idx) = self.seq.iter().position(|o| o == obj) {
             if self.objs.remove(&idx) {
-                let bbox = self.seq[idx].bbox();
-                let keys: Vec<_> = self.get_range(bbox).collect();
-                for k in keys {
-                    if let Some(v) = self.grid.get_mut(&k) {
-                        v.retain(|&i| i != idx);
-                    }
-                }
                 return true;
             }
         }
@@ -241,36 +217,59 @@ impl<T: HasBBox + Eq + Hash> Plane<T> {
     }
 
     /// Finds objects that intersect the given bounding box, returning (index, object) pairs.
-    /// The index is the position in the internal seq (insertion order).
+    /// Searches R-tree for initial items and does linear scan for dynamically added items.
     pub fn find_with_indices(&self, bbox: Rect) -> Vec<(usize, &T)> {
         let (x0, y0, x1, y1) = bbox;
-        let mut done = FxHashSet::with_capacity_and_hasher(64, Default::default());
         let mut result = Vec::with_capacity(16);
 
-        for k in self.get_range(bbox) {
-            if let Some(indices) = self.grid.get(&k) {
-                for &idx in indices {
-                    // Check validity first, then use insert() return to avoid double lookup
-                    if !self.objs.contains(&idx) || !done.insert(idx) {
-                        continue;
-                    }
+        // Helper to check bbox intersection
+        let intersects = |obj: &T| {
+            let obj_bbox = obj.bbox();
+            !(obj_bbox.2 <= x0 || x1 <= obj_bbox.0 || obj_bbox.3 <= y0 || y1 <= obj_bbox.1)
+        };
 
-                    let obj = &self.seq[idx];
-                    let obj_bbox = obj.bbox();
-                    // Check if object actually intersects the search bbox
-                    // Matches Python: exclude if strictly non-overlapping
-                    if obj_bbox.2 <= x0 || x1 <= obj_bbox.0 || obj_bbox.3 <= y0 || y1 <= obj_bbox.1
-                    {
-                        continue;
-                    }
+        if let Some(tree) = &self.tree {
+            // Query R-tree for initial items
+            let indices = tree.search(x0, y0, x1, y1);
+            for idx in indices {
+                let idx = idx as usize;
+                if !self.objs.contains(&idx) {
+                    continue;
+                }
+                let obj = &self.seq[idx];
+                if intersects(obj) {
+                    result.push((idx, obj));
+                }
+            }
+        } else {
+            // No R-tree: linear scan of all items (items added via add() only)
+            for (idx, obj) in self.seq.iter().enumerate() {
+                if !self.objs.contains(&idx) {
+                    continue;
+                }
+                if intersects(obj) {
                     result.push((idx, obj));
                 }
             }
         }
+
+        // Also search dynamically added items (indices >= initial_count)
+        if self.tree.is_some() {
+            for idx in self.initial_count..self.seq.len() {
+                if !self.objs.contains(&idx) {
+                    continue;
+                }
+                let obj = &self.seq[idx];
+                if intersects(obj) {
+                    result.push((idx, obj));
+                }
+            }
+        }
+
         result
     }
 
-    /// Returns the number of objects in the plane.
+    /// Returns the number of active objects in the plane.
     pub fn len(&self) -> usize {
         self.objs.len()
     }
@@ -291,7 +290,7 @@ impl<T: HasBBox + Eq + Hash> Plane<T> {
             .any(|(i, o)| o == obj && self.objs.contains(&i))
     }
 
-    /// Returns an iterator over all objects in the plane.
+    /// Returns an iterator over all active objects in the plane.
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.seq
             .iter()
@@ -300,8 +299,7 @@ impl<T: HasBBox + Eq + Hash> Plane<T> {
             .map(|(_, obj)| obj)
     }
 
-    /// Returns an iterator over all objects with their indices in the plane.
-    /// The index is the position in the internal seq (insertion order).
+    /// Returns an iterator over all active objects with their indices in the plane.
     pub fn iter_with_indices(&self) -> impl Iterator<Item = (usize, &T)> {
         self.seq
             .iter()

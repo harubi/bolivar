@@ -25,6 +25,7 @@ rustc-hash = "2.0"
 thiserror = "2.0.17"
 unicode-normalization = "0.1"
 weezl = "0.1.12"
+geo-index = "0.3.2"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }

@@ -2219,7 +2219,11 @@ impl LTLayoutContainer {
                 let y0 = entry.elem1.y0().min(entry.elem2.y0());
                 let x1 = entry.elem1.x1().max(entry.elem2.x1());
                 let y1 = entry.elem1.y1().max(entry.elem2.y1());
-                let between = plane.find_with_indices((x0, y0, x1, y1));
+                let between: Vec<_> = plane
+                    .find_with_indices((x0, y0, x1, y1))
+                    .into_iter()
+                    .filter(|(idx, _)| !done.contains(idx))
+                    .collect();
 
                 // Check if there's any element between that isn't id1 or id2
                 let has_other = between
@@ -2242,8 +2246,8 @@ impl LTLayoutContainer {
                 done.insert(entry.id2);
             }
 
-            plane.remove(&entry.elem1);
-            plane.remove(&entry.elem2);
+            // Tombstone pattern: elements are tracked in `done` set instead of
+            // being removed from plane. Query results are filtered against `done`.
 
             let is_vertical = entry.elem1.is_vertical() || entry.elem2.is_vertical();
             let group =
@@ -2252,7 +2256,11 @@ impl LTLayoutContainer {
 
             // Add distances to all remaining elements using iter_with_indices
             // The seq_index from Plane is the element ID for proper tie-breaking
-            for (other_id, other) in plane.iter_with_indices() {
+            // Filter against done (tombstone pattern)
+            for (other_id, other) in plane
+                .iter_with_indices()
+                .filter(|(id, _)| !done.contains(id))
+            {
                 let d = dist(&group_elem, other);
                 heap.push(HeapEntry {
                     dist: d,
@@ -2270,9 +2278,11 @@ impl LTLayoutContainer {
             next_id += 1;
         }
 
-        // Collect remaining elements as groups
-        for elem in plane.iter() {
-            result_elements.push(elem.clone());
+        // Collect remaining elements as groups (filter against done - tombstone pattern)
+        for (id, elem) in plane.iter_with_indices() {
+            if !done.contains(&id) {
+                result_elements.push(elem.clone());
+            }
         }
 
         // Convert to LTTextGroup
