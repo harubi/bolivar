@@ -2177,28 +2177,29 @@ impl LTLayoutContainer {
             .map(|b| TextGroupElement::Box(b.clone()))
             .collect();
 
-        // Add elements to plane - the seq_index in Plane is the element ID
-        // This matches Python's id(obj) which is unique per object
-        for elem in elements.iter() {
-            plane.add(elem.clone());
-        }
+        // Add elements to plane with extend() to build RTree for fast neighbor queries
+        plane.extend(elements.iter().cloned());
         // Now plane.seq[i] == elements[i], so seq_index == element_id
 
         let mut heap: BinaryHeap<HeapEntry> = BinaryHeap::new();
         let mut next_id = elements.len();
 
-        // Initialize heap with all pairwise distances
-        for i in 0..elements.len() {
-            for j in (i + 1)..elements.len() {
-                let d = dist(&elements[i], &elements[j]);
-                heap.push(HeapEntry {
-                    dist: d,
-                    skip_isany: false,
-                    id1: i,
-                    id2: j,
-                    elem1: elements[i].clone(),
-                    elem2: elements[j].clone(),
-                });
+        // Initialize heap with k-nearest neighbor distances
+        const K_NEIGHBORS: usize = 10;
+        for (i, elem) in elements.iter().enumerate() {
+            for (j, neighbor) in plane.neighbors(elem.bbox(), K_NEIGHBORS) {
+                if j > i {
+                    // Avoid duplicate pairs (i,j) and (j,i)
+                    let d = dist(elem, neighbor);
+                    heap.push(HeapEntry {
+                        dist: d,
+                        skip_isany: false,
+                        id1: i,
+                        id2: j,
+                        elem1: elem.clone(),
+                        elem2: neighbor.clone(),
+                    });
+                }
             }
         }
 

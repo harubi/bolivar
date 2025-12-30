@@ -269,6 +269,45 @@ impl<T: HasBBox + Eq + Hash> Plane<T> {
         result
     }
 
+    /// Find k-nearest neighbors to the center of the given bbox.
+    /// Returns (index, &T) pairs sorted by distance from the query point.
+    pub fn neighbors(&self, bbox: Rect, k: usize) -> Vec<(usize, &T)> {
+        let cx = (bbox.0 + bbox.2) / 2.0;
+        let cy = (bbox.1 + bbox.3) / 2.0;
+
+        if let Some(tree) = &self.tree {
+            // Use RTree's k-nearest neighbor query
+            tree.neighbors(cx, cy, Some(k), None)
+                .into_iter()
+                .filter_map(|idx| {
+                    let idx = idx as usize;
+                    if self.objs.contains(&idx) {
+                        Some((idx, &self.seq[idx]))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            // Fallback: linear scan for k nearest (when no RTree built)
+            let mut distances: Vec<(usize, f64, &T)> = self
+                .seq
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| self.objs.contains(i))
+                .map(|(i, obj)| {
+                    let obj_cx = (obj.x0() + obj.x1()) / 2.0;
+                    let obj_cy = (obj.y0() + obj.y1()) / 2.0;
+                    let dist = ((cx - obj_cx).powi(2) + (cy - obj_cy).powi(2)).sqrt();
+                    (i, dist, obj)
+                })
+                .collect();
+
+            distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            distances.into_iter().take(k).map(|(i, _, obj)| (i, obj)).collect()
+        }
+    }
+
     /// Returns the number of active objects in the plane.
     pub fn len(&self) -> usize {
         self.objs.len()

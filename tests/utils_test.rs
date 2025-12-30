@@ -524,3 +524,33 @@ fn test_plane_extend() {
     plane.extend(objs);
     assert_eq!(plane.len(), 2);
 }
+
+#[test]
+fn test_plane_neighbors() {
+    let mut plane: Plane<LTComponent> = Plane::new((0.0, 0.0, 100.0, 100.0), 50);
+
+    // Create objects at known positions:
+    // A at (0,0)-(10,10), center = (5, 5)
+    // B at (20,0)-(30,10), center = (25, 5) - distance ~20 from A
+    // C at (50,0)-(60,10), center = (55, 5) - distance ~50 from A
+    // D at (80,0)-(90,10), center = (85, 5) - distance ~80 from A
+    let objs = vec![
+        LTComponent::new((0, 0, 10, 10)),   // A - closest to query point
+        LTComponent::new((20, 0, 30, 10)),  // B - 2nd closest
+        LTComponent::new((50, 0, 60, 10)),  // C - 3rd closest
+        LTComponent::new((80, 0, 90, 10)),  // D - 4th closest
+    ];
+    plane.extend(objs);
+
+    // Query for 2 nearest neighbors from center of A's bbox
+    let query_bbox = (0.0, 0.0, 10.0, 10.0);
+    let neighbors = plane.neighbors(query_bbox, 2);
+
+    // Should return A and B (the 2 closest)
+    assert_eq!(neighbors.len(), 2);
+
+    // Verify we got the right items (indices 0 and 1)
+    let indices: Vec<usize> = neighbors.iter().map(|(idx, _)| *idx).collect();
+    assert!(indices.contains(&0)); // A
+    assert!(indices.contains(&1)); // B
+}
