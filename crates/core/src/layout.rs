@@ -262,6 +262,10 @@ pub struct LTChar {
     size: f64,
     upright: bool,
     adv: f64,
+    /// Marked Content ID for tagged PDF accessibility
+    mcid: Option<i32>,
+    /// Marked Content tag (e.g., "P", "Span", "H1") for tagged PDF
+    tag: Option<String>,
 }
 
 impl LTChar {
@@ -273,6 +277,51 @@ impl LTChar {
             size,
             upright,
             adv,
+            mcid: None,
+            tag: None,
+        }
+    }
+
+    pub fn with_mcid(
+        bbox: Rect,
+        text: &str,
+        fontname: &str,
+        size: f64,
+        upright: bool,
+        adv: f64,
+        mcid: Option<i32>,
+    ) -> Self {
+        Self {
+            component: LTComponent::new(bbox),
+            text: text.to_string(),
+            fontname: fontname.to_string(),
+            size,
+            upright,
+            adv,
+            mcid,
+            tag: None,
+        }
+    }
+
+    pub fn with_marked_content(
+        bbox: Rect,
+        text: &str,
+        fontname: &str,
+        size: f64,
+        upright: bool,
+        adv: f64,
+        mcid: Option<i32>,
+        tag: Option<String>,
+    ) -> Self {
+        Self {
+            component: LTComponent::new(bbox),
+            text: text.to_string(),
+            fontname: fontname.to_string(),
+            size,
+            upright,
+            adv,
+            mcid,
+            tag,
         }
     }
 
@@ -294,6 +343,14 @@ impl LTChar {
 
     pub fn adv(&self) -> f64 {
         self.adv
+    }
+
+    pub fn mcid(&self) -> Option<i32> {
+        self.mcid
+    }
+
+    pub fn tag(&self) -> Option<String> {
+        self.tag.clone()
     }
 }
 

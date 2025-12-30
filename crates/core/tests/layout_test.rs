@@ -677,3 +677,49 @@ fn test_ltitem_bbox() {
     assert_eq!(char_item.x1(), 15.0);
     assert_eq!(char_item.y1(), 20.0);
 }
+
+// ============================================================================
+// MCID (Marked Content ID) support tests
+// ============================================================================
+
+#[test]
+fn test_ltchar_mcid_defaults_to_none() {
+    let char1 = LTChar::new((10.0, 10.0, 20.0, 20.0), "A", "Helvetica", 10.0, true, 10.0);
+    assert_eq!(char1.mcid(), None);
+}
+
+#[test]
+fn test_ltchar_with_mcid() {
+    let char1 = LTChar::with_mcid(
+        (10.0, 10.0, 20.0, 20.0),
+        "A",
+        "Helvetica",
+        10.0,
+        true,
+        10.0,
+        Some(42),
+    );
+    assert_eq!(char1.mcid(), Some(42));
+}
+
+#[test]
+fn test_ltchar_tag_defaults_to_none() {
+    let char1 = LTChar::new((10.0, 10.0, 20.0, 20.0), "A", "Helvetica", 10.0, true, 10.0);
+    assert_eq!(char1.tag(), None);
+}
+
+#[test]
+fn test_ltchar_with_marked_content() {
+    let char1 = LTChar::with_marked_content(
+        (10.0, 10.0, 20.0, 20.0),
+        "A",
+        "Helvetica",
+        10.0,
+        true,
+        10.0,
+        Some(42),
+        Some("P".to_string()),
+    );
+    assert_eq!(char1.mcid(), Some(42));
+    assert_eq!(char1.tag(), Some("P".to_string()));
+}

@@ -80,6 +80,15 @@ impl LTContainer {
 /// This device receives rendering commands from PDFPageInterpreter and
 /// constructs layout objects (LTPage, LTFigure, LTChar, LTLine, etc.)
 /// for downstream analysis or conversion.
+/// State for tracking marked content.
+#[derive(Debug, Clone)]
+struct MarkedContentState {
+    /// Tag name (e.g., "P", "Span", "H1")
+    tag: String,
+    /// Marked Content ID from properties dict
+    mcid: Option<i32>,
+}
+
 pub struct PDFLayoutAnalyzer {
     /// Current page number (1-indexed)
     pageno: i32,
@@ -93,6 +102,8 @@ pub struct PDFLayoutAnalyzer {
     ctm: Matrix,
     /// Optional image writer for exporting images
     image_writer: Option<Rc<RefCell<ImageWriter>>>,
+    /// Stack of marked content states (for BMC/BDC/EMC operators)
+    marked_content_stack: Vec<MarkedContentState>,
 }
 
 impl PDFLayoutAnalyzer {
@@ -118,6 +129,7 @@ impl PDFLayoutAnalyzer {
             cur_item: None,
             ctm: (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
             image_writer,
+            marked_content_stack: Vec::new(),
         }
     }
 
@@ -632,6 +644,49 @@ impl PDFLayoutAnalyzer {
     pub fn handle_undefined_char(&self, _cid: u32) -> String {
         format!("(cid:{})", _cid)
     }
+
+    // ========================================================================
+    // Marked Content Support
+    // ========================================================================
+
+    /// Get the current MCID (Marked Content ID) if inside marked content.
+    pub fn current_mcid(&self) -> Option<i32> {
+        // Return the MCID from the topmost marked content with an MCID
+        self.marked_content_stack
+            .iter()
+            .rev()
+            .find_map(|mc| mc.mcid)
+    }
+
+    /// Get the current marked content tag if inside marked content.
+    pub fn current_tag(&self) -> Option<&str> {
+        self.marked_content_stack.last().map(|mc| mc.tag.as_str())
+    }
+
+    /// Begin a marked content section.
+    pub fn begin_tag(
+        &mut self,
+        tag: &crate::psparser::PSLiteral,
+        props: Option<&crate::pdfdevice::PDFStackT>,
+    ) {
+        // Extract MCID from properties if present
+        let mcid = props.and_then(|p| {
+            p.get("MCID").and_then(|v| match v {
+                crate::pdfdevice::PDFStackValue::Int(n) => Some(*n as i32),
+                _ => None,
+            })
+        });
+
+        self.marked_content_stack.push(MarkedContentState {
+            tag: tag.name().to_string(),
+            mcid,
+        });
+    }
+
+    /// End a marked content section.
+    pub fn end_tag(&mut self) {
+        self.marked_content_stack.pop();
+    }
 }
 
 /// Approximate equality for floating point.
@@ -684,6 +739,16 @@ impl PDFPageAggregator {
     /// Get the result, panicking if none.
     pub fn get_result(&self) -> &LTPage {
         self.result.as_ref().expect("No result available")
+    }
+
+    /// Get the current MCID (Marked Content ID) if inside marked content.
+    pub fn current_mcid(&self) -> Option<i32> {
+        self.analyzer.current_mcid()
+    }
+
+    /// Get the current marked content tag if inside marked content.
+    pub fn current_tag(&self) -> Option<&str> {
+        self.analyzer.current_tag()
     }
 }
 
@@ -897,9 +962,11 @@ impl PDFDevice for PDFPageAggregator {
                         };
 
                         // Create LTChar and add to container
-                        let ltchar = LTChar::new(
+                        // Pass current MCID from marked content stack
+                        let mcid = self.analyzer.current_mcid();
+                        let ltchar = LTChar::with_mcid(
                             bbox, &text, "unknown", // Font name - would come from font
-                            size, upright, char_width,
+                            size, upright, char_width, mcid,
                         );
 
                         if let Some(ref mut container) = self.analyzer.cur_item {
@@ -930,6 +997,18 @@ impl PDFDevice for PDFPageAggregator {
 
         // Update text state line matrix
         textstate.linematrix = (x, y);
+    }
+
+    fn begin_tag(
+        &mut self,
+        tag: &crate::psparser::PSLiteral,
+        props: Option<&crate::pdfdevice::PDFStackT>,
+    ) {
+        self.analyzer.begin_tag(tag, props);
+    }
+
+    fn end_tag(&mut self) {
+        self.analyzer.end_tag();
     }
 }
 

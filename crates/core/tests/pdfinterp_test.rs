@@ -693,9 +693,10 @@ fn test_resource_manager_get_cmap_one_byte_identity() {
 // PDFPageInterpreter tests - Graphics operators
 // ============================================================================
 
-use bolivar_core::pdfdevice::{PDFDevice, PathSegment};
+use bolivar_core::pdfdevice::{PDFDevice, PDFStackT, PathSegment};
 use bolivar_core::pdfinterp::PDFPageInterpreter;
 use bolivar_core::pdfstate::PDFGraphicState;
+use bolivar_core::psparser::PSLiteral;
 use bolivar_core::utils::{MATRIX_IDENTITY, Matrix};
 
 /// Mock device for testing - records operations called.
@@ -705,6 +706,10 @@ struct MockDevice {
     paths_painted: Vec<(bool, bool, bool, Vec<PathSegment>)>,
     pages_begun: Vec<(u32, (f64, f64, f64, f64), Matrix)>,
     pages_ended: Vec<u32>,
+    /// Tracks begin_tag calls: (tag_name, has_props)
+    tags_begun: Vec<(String, bool)>,
+    /// Counts end_tag calls
+    tags_ended: u32,
 }
 
 impl PDFDevice for MockDevice {
@@ -734,6 +739,15 @@ impl PDFDevice for MockDevice {
     ) {
         self.paths_painted
             .push((stroke, fill, evenodd, path.to_vec()));
+    }
+
+    fn begin_tag(&mut self, tag: &PSLiteral, props: Option<&PDFStackT>) {
+        self.tags_begun
+            .push((tag.name().to_string(), props.is_some()));
+    }
+
+    fn end_tag(&mut self) {
+        self.tags_ended += 1;
     }
 }
 
@@ -1912,4 +1926,56 @@ fn test_interpreter_complete_text_sequence() {
 
     // Two text rendering calls
     assert_eq!(device.text_rendered.len(), 2);
+}
+
+// ============================================================================
+// Marked Content (BMC/BDC/EMC) tests
+// ============================================================================
+
+/// Test: BMC operator calls device.begin_tag with tag name.
+#[test]
+fn test_interpreter_bmc_calls_begin_tag() {
+    let mut rsrcmgr = PDFResourceManager::new();
+    let mut device = MockDevice::default();
+    let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
+    interp.init_state(MATRIX_IDENTITY);
+
+    // BMC with tag name
+    let tag = PSLiteral::new("Span");
+    interp.do_BMC(&tag);
+
+    assert_eq!(device.tags_begun.len(), 1);
+    assert_eq!(device.tags_begun[0].0, "Span");
+    assert!(!device.tags_begun[0].1); // No properties for BMC
+}
+
+/// Test: BDC operator calls device.begin_tag with tag and properties.
+#[test]
+fn test_interpreter_bdc_calls_begin_tag_with_props() {
+    let mut rsrcmgr = PDFResourceManager::new();
+    let mut device = MockDevice::default();
+    let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
+    interp.init_state(MATRIX_IDENTITY);
+
+    // BDC with tag name and properties dict
+    let tag = PSLiteral::new("P");
+    let props = std::collections::HashMap::new(); // Empty props for now, just testing it's passed
+    interp.do_BDC(&tag, &props);
+
+    assert_eq!(device.tags_begun.len(), 1);
+    assert_eq!(device.tags_begun[0].0, "P");
+    assert!(device.tags_begun[0].1); // Has properties for BDC
+}
+
+/// Test: EMC operator calls device.end_tag.
+#[test]
+fn test_interpreter_emc_calls_end_tag() {
+    let mut rsrcmgr = PDFResourceManager::new();
+    let mut device = MockDevice::default();
+    let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
+    interp.init_state(MATRIX_IDENTITY);
+
+    interp.do_EMC();
+
+    assert_eq!(device.tags_ended, 1);
 }

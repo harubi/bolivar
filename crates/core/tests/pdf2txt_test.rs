@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Once;
 
 // ============================================================================
 // Helper functions
@@ -17,14 +18,41 @@ use std::process::Command;
 
 /// Get the path to the test binary.
 fn pdf2txt_binary() -> PathBuf {
+    let workspace_root = workspace_root();
+
+    // Use Cargo-provided path when available (only for this package's bins)
+    if let Some(path) = option_env!("CARGO_BIN_EXE_pdf2txt") {
+        return PathBuf::from(path);
+    }
+
+    // Ensure the CLI binaries are built for core crate tests.
+    ensure_cli_bins(&workspace_root);
+
+    // Navigate from crate manifest to workspace root
+    workspace_root.join("target").join("debug").join("pdf2txt")
+}
+
+fn workspace_root() -> PathBuf {
     // Navigate from crate manifest to workspace root
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.pop(); // crates/
     path.pop(); // workspace root
-    path.push("target");
-    path.push("debug");
-    path.push("pdf2txt");
     path
+}
+
+fn ensure_cli_bins(workspace_root: &PathBuf) {
+    static BUILD_ONCE: Once = Once::new();
+    BUILD_ONCE.call_once(|| {
+        let status = Command::new("cargo")
+            .arg("build")
+            .arg("-p")
+            .arg("bolivar-cli")
+            .arg("--bins")
+            .current_dir(workspace_root)
+            .status()
+            .expect("Failed to execute cargo build for bolivar-cli");
+        assert!(status.success(), "cargo build for bolivar-cli failed");
+    });
 }
 
 /// Get absolute path to a test fixture file.

@@ -12,7 +12,7 @@ use crate::cmapdb::{CMap, CMapDB};
 use crate::error::{PdfError, Result};
 use crate::pdfcolor::{PDFColorSpace, PREDEFINED_COLORSPACE};
 use crate::pdftypes::{PDFObject, PDFStream};
-use crate::psparser::{Keyword, PSBaseParser, PSToken};
+use crate::psparser::{Keyword, PSBaseParser, PSLiteral, PSToken};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
@@ -471,7 +471,7 @@ impl Default for PDFResourceManager {
 // PDFPageInterpreter
 // ============================================================================
 
-use crate::pdfdevice::{PDFDevice, PDFTextSeq, PDFTextSeqItem, PathSegment};
+use crate::pdfdevice::{PDFDevice, PDFStackT, PDFTextSeq, PDFTextSeqItem, PathSegment};
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
 use crate::utils::{MATRIX_IDENTITY, Matrix, mult_matrix};
 
@@ -1284,6 +1284,25 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     // ========================================================================
+    // Marked Content Operators
+    // ========================================================================
+
+    /// BMC - Begin Marked Content
+    pub fn do_BMC(&mut self, tag: &PSLiteral) {
+        self.device.begin_tag(tag, None);
+    }
+
+    /// BDC - Begin Marked Content with property dictionary
+    pub fn do_BDC(&mut self, tag: &PSLiteral, props: &PDFStackT) {
+        self.device.begin_tag(tag, Some(props));
+    }
+
+    /// EMC - End Marked Content
+    pub fn do_EMC(&mut self) {
+        self.device.end_tag();
+    }
+
+    // ========================================================================
     // Page Processing
     // ========================================================================
 
@@ -1476,6 +1495,27 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 if let Some(name) = Self::pop_name(args) {
                     self.do_Do(name);
                 }
+            }
+
+            // Marked content operators
+            Keyword::BMC => {
+                if let Some(name) = Self::pop_name(args) {
+                    let tag = PSLiteral::new(&name);
+                    self.do_BMC(&tag);
+                }
+            }
+            Keyword::BDC => {
+                // BDC takes tag and properties dict
+                // For now, just extract the tag; dict handling TBD
+                let _props = args.pop(); // Pop properties (dict or name reference)
+                if let Some(name) = Self::pop_name(args) {
+                    let tag = PSLiteral::new(&name);
+                    let props_map = std::collections::HashMap::new();
+                    self.do_BDC(&tag, &props_map);
+                }
+            }
+            Keyword::EMC => {
+                self.do_EMC();
             }
 
             // Path construction operators

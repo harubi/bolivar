@@ -825,3 +825,185 @@ mod integration_tests {
         analyzer.end_page();
     }
 }
+
+// ============================================================================
+// Marked Content Tracking Tests
+// ============================================================================
+
+mod marked_content_tests {
+    use super::*;
+    use bolivar_core::layout::LTItem;
+    use bolivar_core::pdfdevice::{
+        PDFDevice, PDFStackT, PDFStackValue, PDFTextSeq, PDFTextSeqItem,
+    };
+    use bolivar_core::pdfstate::PDFTextState;
+    use bolivar_core::psparser::PSLiteral;
+
+    #[test]
+    fn test_page_aggregator_tracks_marked_content_stack() {
+        let mut aggregator = PDFPageAggregator::new(Some(LAParams::default()), 1);
+        aggregator.begin_page(1, (0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
+
+        // Initially no marked content
+        assert_eq!(aggregator.current_mcid(), None);
+
+        // Begin marked content with MCID
+        let tag = PSLiteral::new("Span");
+        let mut props = PDFStackT::new();
+        props.insert("MCID".to_string(), PDFStackValue::Int(42));
+        aggregator.begin_tag(&tag, Some(&props));
+
+        // Should now have MCID 42
+        assert_eq!(aggregator.current_mcid(), Some(42));
+
+        // End marked content
+        aggregator.end_tag();
+
+        // Should be back to no MCID
+        assert_eq!(aggregator.current_mcid(), None);
+    }
+
+    #[test]
+    fn test_page_aggregator_nested_marked_content() {
+        let mut aggregator = PDFPageAggregator::new(Some(LAParams::default()), 1);
+        aggregator.begin_page(1, (0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
+
+        // Outer marked content with MCID 1
+        let tag_outer = PSLiteral::new("P");
+        let mut props_outer = PDFStackT::new();
+        props_outer.insert("MCID".to_string(), PDFStackValue::Int(1));
+        aggregator.begin_tag(&tag_outer, Some(&props_outer));
+        assert_eq!(aggregator.current_mcid(), Some(1));
+
+        // Inner marked content with MCID 2
+        let tag_inner = PSLiteral::new("Span");
+        let mut props_inner = PDFStackT::new();
+        props_inner.insert("MCID".to_string(), PDFStackValue::Int(2));
+        aggregator.begin_tag(&tag_inner, Some(&props_inner));
+        assert_eq!(aggregator.current_mcid(), Some(2));
+
+        // End inner
+        aggregator.end_tag();
+        assert_eq!(aggregator.current_mcid(), Some(1));
+
+        // End outer
+        aggregator.end_tag();
+        assert_eq!(aggregator.current_mcid(), None);
+    }
+
+    #[test]
+    fn test_page_aggregator_marked_content_without_mcid() {
+        let mut aggregator = PDFPageAggregator::new(Some(LAParams::default()), 1);
+        aggregator.begin_page(1, (0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
+
+        // Begin marked content without MCID (just tag name, no properties)
+        let tag = PSLiteral::new("Artifact");
+        aggregator.begin_tag(&tag, None);
+
+        // Should have no MCID (None)
+        assert_eq!(aggregator.current_mcid(), None);
+
+        aggregator.end_tag();
+    }
+
+    /// Test that LTChar.with_mcid() correctly stores MCID.
+    /// This tests the interface that render_string should use.
+    #[test]
+    fn test_ltchar_with_mcid_interface() {
+        use bolivar_core::layout::LTChar;
+
+        // Test directly with PDFLayoutAnalyzer to verify MCID tracking
+        let mut analyzer = PDFLayoutAnalyzer::new(Some(LAParams::default()), 1);
+        analyzer.set_ctm(MATRIX_IDENTITY);
+        analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
+
+        // Begin marked content with MCID
+        let tag = PSLiteral::new("P");
+        let mut props = PDFStackT::new();
+        props.insert("MCID".to_string(), PDFStackValue::Int(42));
+        analyzer.begin_tag(&tag, Some(&props));
+
+        // Verify current_mcid returns 42
+        assert_eq!(
+            analyzer.current_mcid(),
+            Some(42),
+            "Analyzer should track MCID 42"
+        );
+
+        // When we create an LTChar with the analyzer's current_mcid,
+        // the MCID should be populated.
+        let mcid = analyzer.current_mcid();
+        let ltchar = LTChar::with_mcid(
+            (100.0, 700.0, 110.0, 712.0), // bbox
+            "A",                          // text
+            "Helvetica",                  // fontname
+            12.0,                         // size
+            true,                         // upright
+            10.0,                         // adv
+            mcid,                         // MCID from analyzer
+        );
+
+        assert_eq!(ltchar.mcid(), Some(42), "LTChar should have MCID 42");
+
+        // End marked content
+        analyzer.end_tag();
+        assert_eq!(analyzer.current_mcid(), None);
+
+        analyzer.end_page();
+    }
+
+    /// Test that PDFPageAggregator's render_string passes current MCID to LTChars.
+    /// This is the RED test - render_string doesn't yet use current_mcid().
+    #[test]
+    fn test_render_string_passes_mcid_to_ltchar() {
+        use bolivar_core::pdfcolor::PREDEFINED_COLORSPACE;
+
+        let mut aggregator = PDFPageAggregator::new(None, 1); // No laparams to skip analysis
+        aggregator.begin_page(1, (0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
+
+        // Begin marked content with MCID
+        let tag = PSLiteral::new("P");
+        let mut props = PDFStackT::new();
+        props.insert("MCID".to_string(), PDFStackValue::Int(42));
+        aggregator.begin_tag(&tag, Some(&props));
+
+        // Create text state with minimal config
+        let mut textstate = PDFTextState::default();
+        textstate.fontsize = 12.0;
+        textstate.matrix = MATRIX_IDENTITY;
+        textstate.linematrix = (100.0, 700.0);
+
+        // Render a simple ASCII character
+        let seq: PDFTextSeq = vec![PDFTextSeqItem::Bytes(vec![65])]; // 'A'
+        let colorspace = PREDEFINED_COLORSPACE.get("DeviceGray").unwrap();
+        let graphicstate = PDFGraphicState::default();
+
+        aggregator.render_string(&mut textstate, &seq, colorspace, &graphicstate);
+
+        // End marked content and page
+        aggregator.end_tag();
+        aggregator.end_page(1);
+
+        // Get the result
+        let page = aggregator.get_result();
+
+        // Find any LTChar and check its MCID
+        let mut found_char = false;
+        for item in page.iter() {
+            if let LTItem::Char(c) = item {
+                found_char = true;
+                // This assertion should fail because render_string doesn't pass MCID yet
+                assert_eq!(
+                    c.mcid(),
+                    Some(42),
+                    "LTChar from render_string should have MCID 42"
+                );
+            }
+        }
+
+        assert!(
+            found_char,
+            "Should have found at least one LTChar from render_string"
+        );
+    }
+}
