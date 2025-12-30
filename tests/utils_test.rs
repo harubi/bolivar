@@ -535,10 +535,10 @@ fn test_plane_neighbors() {
     // C at (50,0)-(60,10), center = (55, 5) - distance ~50 from A
     // D at (80,0)-(90,10), center = (85, 5) - distance ~80 from A
     let objs = vec![
-        LTComponent::new((0, 0, 10, 10)),   // A - closest to query point
-        LTComponent::new((20, 0, 30, 10)),  // B - 2nd closest
-        LTComponent::new((50, 0, 60, 10)),  // C - 3rd closest
-        LTComponent::new((80, 0, 90, 10)),  // D - 4th closest
+        LTComponent::new((0, 0, 10, 10)),  // A - closest to query point
+        LTComponent::new((20, 0, 30, 10)), // B - 2nd closest
+        LTComponent::new((50, 0, 60, 10)), // C - 3rd closest
+        LTComponent::new((80, 0, 90, 10)), // D - 4th closest
     ];
     plane.extend(objs);
 

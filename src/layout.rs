@@ -2185,7 +2185,9 @@ impl LTLayoutContainer {
         let mut next_id = elements.len();
 
         // Initialize heap with k-nearest neighbor distances
-        const K_NEIGHBORS: usize = 10;
+        // K=20 captures ~96% of merges based on empirical measurement
+        // (see examples/measure_neighbors.rs for analysis)
+        const K_NEIGHBORS: usize = 20;
         for (i, elem) in elements.iter().enumerate() {
             for (j, neighbor) in plane.neighbors(elem.bbox(), K_NEIGHBORS) {
                 if j > i {

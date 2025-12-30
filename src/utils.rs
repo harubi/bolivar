@@ -304,7 +304,11 @@ impl<T: HasBBox + Eq + Hash> Plane<T> {
                 .collect();
 
             distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            distances.into_iter().take(k).map(|(i, _, obj)| (i, obj)).collect()
+            distances
+                .into_iter()
+                .take(k)
+                .map(|(i, _, obj)| (i, obj))
+                .collect()
         }
     }
 
