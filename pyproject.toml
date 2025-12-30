@@ -22,3 +22,5 @@ manifest-path = "crates/python/Cargo.toml"
 python-source = "crates/python/python"
 module-name = "bolivar._bolivar"
 features = ["pyo3/extension-module"]
+# Include the pdfminer compatibility shim
+python-packages = ["bolivar", "pdfminer"]
