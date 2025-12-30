@@ -3,7 +3,7 @@
 //! These benchmarks target `PDFContentParser::next_with_pos()` which parses
 //! content streams containing operators like BT, ET, Tm, Tj, and graphics ops.
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
 use bolivar::pdfinterp::PDFContentParser;
@@ -158,8 +158,8 @@ fn generate_nested_structures(depth: usize, width: usize) -> Vec<u8> {
             stream.extend_from_slice(b"]");
         }
 
-        // Use the array in an operator
-        stream.extend_from_slice(b" pop\n");
+        // Use the array in setdash operator (array phase d)
+        stream.extend_from_slice(b" 0 d\n");
     }
 
     // Generate nested dictionaries
@@ -178,8 +178,8 @@ fn generate_nested_structures(depth: usize, width: usize) -> Vec<u8> {
             stream.extend_from_slice(b">>");
         }
 
-        // Use the dict in an operator
-        stream.extend_from_slice(b" pop\n");
+        // Dict parsed as operand; use no-op graphics state save/restore
+        stream.extend_from_slice(b" q Q\n");
     }
 
     stream
@@ -215,9 +215,25 @@ fn generate_deeply_nested(n: usize) -> Vec<u8> {
             stream.extend_from_slice(b"]");
         }
 
-        stream.extend_from_slice(b" pop\n");
+        // Use outer array in setdash
+        stream.extend_from_slice(b" 0 d\n");
     }
 
+    stream
+}
+
+/// Generate a content stream with inline images.
+///
+/// Creates BI/ID/EI (begin inline image, image data, end inline image)
+/// sequences which are the most complex PDF content stream parsing case.
+fn generate_inline_images(n: usize) -> Vec<u8> {
+    let mut stream = Vec::with_capacity(n * 100);
+    for _ in 0..n {
+        // BI <dict> ID <data> EI
+        stream.extend_from_slice(b"BI /W 8 /H 8 /BPC 8 /CS /G ID ");
+        stream.extend_from_slice(&[0u8; 64]); // 8x8 grayscale
+        stream.extend_from_slice(b" EI\n");
+    }
     stream
 }
 
@@ -247,10 +263,11 @@ fn bench_pdfinterp_content(c: &mut Criterion) {
         let stream = generate_text_ops(n);
 
         group.bench_with_input(BenchmarkId::new("text_ops", n), &stream, |b, stream| {
-            b.iter(|| {
-                let mut parser = PDFContentParser::new(vec![black_box(stream.clone())]);
-                black_box(consume_all_tokens(&mut parser))
-            })
+            b.iter_batched(
+                || PDFContentParser::new(vec![stream.clone()]),
+                |mut parser| black_box(consume_all_tokens(&mut parser)),
+                BatchSize::SmallInput,
+            )
         });
     }
 
@@ -259,10 +276,11 @@ fn bench_pdfinterp_content(c: &mut Criterion) {
         let stream = generate_graphics_ops(n);
 
         group.bench_with_input(BenchmarkId::new("graphics_ops", n), &stream, |b, stream| {
-            b.iter(|| {
-                let mut parser = PDFContentParser::new(vec![black_box(stream.clone())]);
-                black_box(consume_all_tokens(&mut parser))
-            })
+            b.iter_batched(
+                || PDFContentParser::new(vec![stream.clone()]),
+                |mut parser| black_box(consume_all_tokens(&mut parser)),
+                BatchSize::SmallInput,
+            )
         });
     }
 
@@ -271,11 +289,29 @@ fn bench_pdfinterp_content(c: &mut Criterion) {
         let stream = generate_mixed_ops(n);
 
         group.bench_with_input(BenchmarkId::new("mixed_ops", n), &stream, |b, stream| {
-            b.iter(|| {
-                let mut parser = PDFContentParser::new(vec![black_box(stream.clone())]);
-                black_box(consume_all_tokens(&mut parser))
-            })
+            b.iter_batched(
+                || PDFContentParser::new(vec![stream.clone()]),
+                |mut parser| black_box(consume_all_tokens(&mut parser)),
+                BatchSize::SmallInput,
+            )
         });
+    }
+
+    // Inline images (BI/ID/EI) - most complex parsing case
+    for n in [100, 1_000] {
+        let stream = generate_inline_images(n);
+
+        group.bench_with_input(
+            BenchmarkId::new("inline_images", n),
+            &stream,
+            |b, stream| {
+                b.iter_batched(
+                    || PDFContentParser::new(vec![stream.clone()]),
+                    |mut parser| black_box(consume_all_tokens(&mut parser)),
+                    BatchSize::SmallInput,
+                )
+            },
+        );
     }
 
     group.finish();
@@ -290,10 +326,11 @@ fn bench_pdfinterp_nested(c: &mut Criterion) {
         let stream = generate_nested_structures(depth, 100);
 
         group.bench_with_input(BenchmarkId::new("depth", depth), &stream, |b, stream| {
-            b.iter(|| {
-                let mut parser = PDFContentParser::new(vec![black_box(stream.clone())]);
-                black_box(consume_all_tokens(&mut parser))
-            })
+            b.iter_batched(
+                || PDFContentParser::new(vec![stream.clone()]),
+                |mut parser| black_box(consume_all_tokens(&mut parser)),
+                BatchSize::SmallInput,
+            )
         });
     }
 
@@ -302,10 +339,11 @@ fn bench_pdfinterp_nested(c: &mut Criterion) {
         let stream = generate_nested_structures(3, width);
 
         group.bench_with_input(BenchmarkId::new("width", width), &stream, |b, stream| {
-            b.iter(|| {
-                let mut parser = PDFContentParser::new(vec![black_box(stream.clone())]);
-                black_box(consume_all_tokens(&mut parser))
-            })
+            b.iter_batched(
+                || PDFContentParser::new(vec![stream.clone()]),
+                |mut parser| black_box(consume_all_tokens(&mut parser)),
+                BatchSize::SmallInput,
+            )
         });
     }
 
@@ -317,10 +355,11 @@ fn bench_pdfinterp_nested(c: &mut Criterion) {
             BenchmarkId::new("deeply_nested", n),
             &stream,
             |b, stream| {
-                b.iter(|| {
-                    let mut parser = PDFContentParser::new(vec![black_box(stream.clone())]);
-                    black_box(consume_all_tokens(&mut parser))
-                })
+                b.iter_batched(
+                    || PDFContentParser::new(vec![stream.clone()]),
+                    |mut parser| black_box(consume_all_tokens(&mut parser)),
+                    BatchSize::SmallInput,
+                )
             },
         );
     }

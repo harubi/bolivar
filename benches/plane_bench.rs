@@ -79,7 +79,7 @@ fn generate_items(n: usize) -> Vec<BBoxItem> {
 fn bench_construct(c: &mut Criterion) {
     let mut group = c.benchmark_group("plane_construct");
 
-    for size in [100, 1_000, 10_000] {
+    for size in [100, 1_000, 10_000, 100_000, 1_000_000] {
         let items = generate_items(size);
         let page_bbox = (0.0, 0.0, 612.0, 792.0);
 
@@ -97,7 +97,7 @@ fn bench_construct(c: &mut Criterion) {
 fn bench_find(c: &mut Criterion) {
     let mut group = c.benchmark_group("plane_find");
 
-    for size in [100, 1_000, 10_000] {
+    for size in [100, 1_000, 10_000, 100_000, 1_000_000] {
         let items = generate_items(size);
         let page_bbox = (0.0, 0.0, 612.0, 792.0);
         let mut plane = bolivar::utils::Plane::new(page_bbox, 50);
@@ -116,7 +116,7 @@ fn bench_find(c: &mut Criterion) {
 fn bench_remove(c: &mut Criterion) {
     let mut group = c.benchmark_group("plane_remove");
 
-    for size in [100, 1_000, 10_000] {
+    for size in [100, 1_000, 10_000, 100_000, 1_000_000] {
         let items = generate_items(size);
         let page_bbox = (0.0, 0.0, 612.0, 792.0);
 

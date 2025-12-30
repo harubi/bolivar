@@ -205,11 +205,52 @@ fn bench_e2e_first_page(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark text extraction with encrypted PDFs.
+///
+/// Tests decryption overhead for various encryption methods:
+/// - base: Unencrypted baseline
+/// - aes128: AES-128 encryption
+/// - aes256: AES-256 encryption
+/// - rc4_128: RC4-128 encryption
+fn bench_e2e_encrypted(c: &mut Criterion) {
+    let mut group = c.benchmark_group("e2e_encrypted");
+
+    // Encrypted fixtures require password "foo" (from tests/fixtures/README)
+    let password = "foo";
+
+    let fixtures = [
+        ("base", "encryption/base.pdf", false),
+        ("aes128", "encryption/aes-128.pdf", true),
+        ("aes256", "encryption/aes-256.pdf", true),
+        ("rc4_128", "encryption/rc4-128.pdf", true),
+    ];
+
+    for (name, filename, needs_password) in fixtures {
+        let data = load_fixture(filename);
+
+        let opts = if needs_password {
+            Some(ExtractOptions {
+                password: password.to_string(),
+                ..Default::default()
+            })
+        } else {
+            None
+        };
+
+        group.bench_with_input(BenchmarkId::from_parameter(name), &data, |b, data| {
+            b.iter(|| extract_text(black_box(data), opts.clone()).expect("extraction"))
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_e2e_extract_text,
     bench_e2e_laparams,
     bench_e2e_extract_pages,
-    bench_e2e_first_page
+    bench_e2e_first_page,
+    bench_e2e_encrypted
 );
 criterion_main!(benches);

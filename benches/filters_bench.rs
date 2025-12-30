@@ -17,10 +17,22 @@ use bolivar::runlength::rldecode;
 // Test Data Generation
 // =============================================================================
 
-/// Generate raw bytes for testing (repeating pattern).
+/// Generate raw bytes for testing (repeating pattern - compresses well).
 fn generate_raw_bytes(size: usize) -> Vec<u8> {
     // Repeating pattern that compresses well
     (0..size).map(|i| (i % 256) as u8).collect()
+}
+
+/// Generate random bytes for testing (doesn't compress well).
+/// Uses simple PRNG for reproducibility.
+fn generate_random_bytes(size: usize) -> Vec<u8> {
+    let mut data = Vec::with_capacity(size);
+    let mut seed: u64 = 42;
+    for _ in 0..size {
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        data.push((seed >> 16) as u8);
+    }
+    data
 }
 
 /// Encode data to ASCII85 format.
@@ -133,6 +145,7 @@ fn runlength_encode(data: &[u8]) -> Vec<u8> {
 
 /// Pre-encoded test data for each filter at various sizes.
 struct TestData {
+    // Compressible (repeating pattern)
     ascii85_1k: Vec<u8>,
     ascii85_10k: Vec<u8>,
     ascii85_100k: Vec<u8>,
@@ -142,6 +155,16 @@ struct TestData {
     runlength_1k: Vec<u8>,
     runlength_10k: Vec<u8>,
     runlength_100k: Vec<u8>,
+    // Random (doesn't compress well - realistic worst case)
+    ascii85_random_1k: Vec<u8>,
+    ascii85_random_10k: Vec<u8>,
+    ascii85_random_100k: Vec<u8>,
+    lzw_random_1k: Vec<u8>,
+    lzw_random_10k: Vec<u8>,
+    lzw_random_100k: Vec<u8>,
+    runlength_random_1k: Vec<u8>,
+    runlength_random_10k: Vec<u8>,
+    runlength_random_100k: Vec<u8>,
 }
 
 impl TestData {
@@ -149,6 +172,10 @@ impl TestData {
         let raw_1k = generate_raw_bytes(1024);
         let raw_10k = generate_raw_bytes(10 * 1024);
         let raw_100k = generate_raw_bytes(100 * 1024);
+
+        let random_1k = generate_random_bytes(1024);
+        let random_10k = generate_random_bytes(10 * 1024);
+        let random_100k = generate_random_bytes(100 * 1024);
 
         Self {
             ascii85_1k: ascii85_encode(&raw_1k),
@@ -160,6 +187,16 @@ impl TestData {
             runlength_1k: runlength_encode(&raw_1k),
             runlength_10k: runlength_encode(&raw_10k),
             runlength_100k: runlength_encode(&raw_100k),
+            // Random data
+            ascii85_random_1k: ascii85_encode(&random_1k),
+            ascii85_random_10k: ascii85_encode(&random_10k),
+            ascii85_random_100k: ascii85_encode(&random_100k),
+            lzw_random_1k: lzw_encode(&random_1k),
+            lzw_random_10k: lzw_encode(&random_10k),
+            lzw_random_100k: lzw_encode(&random_100k),
+            runlength_random_1k: runlength_encode(&random_1k),
+            runlength_random_10k: runlength_encode(&random_10k),
+            runlength_random_100k: runlength_encode(&random_100k),
         }
     }
 }
@@ -286,11 +323,68 @@ fn bench_chained(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark ASCII85 decoding with random data (worst case).
+fn bench_ascii85_random(c: &mut Criterion) {
+    let mut group = c.benchmark_group("filters_ascii85_random");
+    let data = TestData::new();
+
+    for (name, encoded) in [
+        ("1K", &data.ascii85_random_1k),
+        ("10K", &data.ascii85_random_10k),
+        ("100K", &data.ascii85_random_100k),
+    ] {
+        group.bench_with_input(BenchmarkId::from_parameter(name), encoded, |b, encoded| {
+            b.iter(|| ascii85decode(black_box(encoded)))
+        });
+    }
+
+    group.finish();
+}
+
+/// Benchmark LZW decoding with random data (worst case).
+fn bench_lzw_random(c: &mut Criterion) {
+    let mut group = c.benchmark_group("filters_lzw_random");
+    let data = TestData::new();
+
+    for (name, encoded) in [
+        ("1K", &data.lzw_random_1k),
+        ("10K", &data.lzw_random_10k),
+        ("100K", &data.lzw_random_100k),
+    ] {
+        group.bench_with_input(BenchmarkId::from_parameter(name), encoded, |b, encoded| {
+            b.iter(|| lzwdecode(black_box(encoded)))
+        });
+    }
+
+    group.finish();
+}
+
+/// Benchmark RunLength decoding with random data (worst case).
+fn bench_runlength_random(c: &mut Criterion) {
+    let mut group = c.benchmark_group("filters_runlength_random");
+    let data = TestData::new();
+
+    for (name, encoded) in [
+        ("1K", &data.runlength_random_1k),
+        ("10K", &data.runlength_random_10k),
+        ("100K", &data.runlength_random_100k),
+    ] {
+        group.bench_with_input(BenchmarkId::from_parameter(name), encoded, |b, encoded| {
+            b.iter(|| rldecode(black_box(encoded)))
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_ascii85,
     bench_lzw,
     bench_runlength,
+    bench_ascii85_random,
+    bench_lzw_random,
+    bench_runlength_random,
     bench_chained
 );
 criterion_main!(benches);

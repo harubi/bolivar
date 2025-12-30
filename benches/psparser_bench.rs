@@ -84,11 +84,13 @@ fn generate_real_tokens(n: usize) -> Vec<u8> {
     let mut data = Vec::with_capacity(n * 10);
 
     for i in 0..n {
-        let value = match i % 4 {
+        let value = match i % 6 {
             0 => format!("{}.{} ", i % 100, (i * 7) % 100),
             1 => format!("-{}.{} ", i % 50, (i * 3) % 100),
             2 => format!("0.{:03} ", i % 1000),
-            _ => format!(".{} ", (i % 99) + 1),
+            3 => format!(".{} ", (i % 99) + 1),
+            4 => format!("{}. ", i % 100),       // trailing dot "123."
+            _ => format!("-.{} ", (i % 99) + 1), // negative no leading zero "-.5"
         };
         data.extend_from_slice(value.as_bytes());
     }
@@ -176,8 +178,8 @@ fn generate_cmap_data(entries: usize) -> Vec<u8> {
     // Generate bfchar entries (single character mappings)
     let bfchar_count = entries / 2;
     if bfchar_count > 0 {
-        data.extend_from_slice(format!("{} beginbfchar\n", bfchar_count.min(100)).as_bytes());
-        for i in 0..bfchar_count.min(100) {
+        data.extend_from_slice(format!("{} beginbfchar\n", bfchar_count).as_bytes());
+        for i in 0..bfchar_count {
             // Map CID to Unicode
             let cid = i + 1;
             let unicode = 0x0041 + (i % 26); // A-Z cycling
@@ -189,8 +191,8 @@ fn generate_cmap_data(entries: usize) -> Vec<u8> {
     // Generate bfrange entries (range mappings)
     let bfrange_count = entries / 2;
     if bfrange_count > 0 {
-        data.extend_from_slice(format!("{} beginbfrange\n", bfrange_count.min(100)).as_bytes());
-        for i in 0..bfrange_count.min(100) {
+        data.extend_from_slice(format!("{} beginbfrange\n", bfrange_count).as_bytes());
+        for i in 0..bfrange_count {
             // Range of CIDs to Unicode range
             let start_cid = 0x1000 + (i * 16);
             let end_cid = start_cid + 15;
