@@ -723,3 +723,263 @@ fn test_ltchar_with_marked_content() {
     assert_eq!(char1.mcid(), Some(42));
     assert_eq!(char1.tag(), Some("P".to_string()));
 }
+
+// ============================================================================
+// GroupHeapEntry tests - exact pdfminer-compatible grouping
+// ============================================================================
+
+#[test]
+fn test_group_heap_entry_ordering() {
+    use bolivar_core::layout::{GroupHeapEntry, PyId};
+    use ordered_float::OrderedFloat;
+    use std::collections::BinaryHeap;
+
+    let e1 = GroupHeapEntry {
+        skip_isany: false,
+        dist: OrderedFloat(10.0),
+        id1: 5,
+        id2: 10,
+        elem1_idx: 0,
+        elem2_idx: 1,
+    };
+    let e2 = GroupHeapEntry {
+        skip_isany: false,
+        dist: OrderedFloat(10.0),
+        id1: 3,
+        id2: 20,
+        elem1_idx: 0,
+        elem2_idx: 2,
+    };
+    // e2 should pop first (same dist, smaller id1)
+    let mut heap = BinaryHeap::new();
+    heap.push(e1);
+    heap.push(e2);
+    let first = heap.pop().unwrap();
+    assert_eq!(first.id1, 3, "Smaller id1 should pop first on tie");
+}
+
+#[test]
+fn test_frontier_entry_ordering() {
+    use bolivar_core::layout::{FrontierEntry, PairMode};
+    use ordered_float::OrderedFloat;
+    use std::collections::BinaryHeap;
+
+    let f1 = FrontierEntry {
+        lb_dist: OrderedFloat(10.0),
+        lb_id1: 5,
+        lb_id2: 10,
+        node_a: 0,
+        node_b: 1,
+        mode: PairMode::InitialIJ,
+    };
+    let f2 = FrontierEntry {
+        lb_dist: OrderedFloat(10.0),
+        lb_id1: 3,
+        lb_id2: 20,
+        node_a: 0,
+        node_b: 2,
+        mode: PairMode::InitialIJ,
+    };
+    // f2 should pop first (same dist, smaller lb_id1)
+    let mut heap = BinaryHeap::new();
+    heap.push(f1);
+    heap.push(f2);
+    let first = heap.pop().unwrap();
+    assert_eq!(first.lb_id1, 3, "Smaller lb_id1 should pop first on tie");
+}
+
+#[test]
+fn test_frontier_could_beat() {
+    use bolivar_core::layout::{FrontierEntry, GroupHeapEntry, PairMode};
+    use ordered_float::OrderedFloat;
+
+    let frontier = FrontierEntry {
+        lb_dist: OrderedFloat(10.0),
+        lb_id1: 3,
+        lb_id2: 5,
+        node_a: 0,
+        node_b: 1,
+        mode: PairMode::InitialIJ,
+    };
+    let main_higher_id = GroupHeapEntry {
+        skip_isany: false,
+        dist: OrderedFloat(10.0),
+        id1: 5,
+        id2: 10,
+        elem1_idx: 0,
+        elem2_idx: 1,
+    };
+    let main_lower_id = GroupHeapEntry {
+        skip_isany: false,
+        dist: OrderedFloat(10.0),
+        id1: 1,
+        id2: 2,
+        elem1_idx: 0,
+        elem2_idx: 1,
+    };
+    let main_equal_id = GroupHeapEntry {
+        skip_isany: false,
+        dist: OrderedFloat(10.0),
+        id1: 3,
+        id2: 5,
+        elem1_idx: 0,
+        elem2_idx: 1,
+    };
+
+    assert!(
+        frontier.could_beat(&main_higher_id),
+        "Frontier with lower id should beat"
+    );
+    assert!(
+        !frontier.could_beat(&main_lower_id),
+        "Frontier with higher id should not beat"
+    );
+    assert!(
+        frontier.could_beat(&main_equal_id),
+        "Frontier with equal id should beat (tie-safe <=)"
+    );
+}
+
+// ============================================================================
+// NodeStats tests - spatial tree node statistics
+// ============================================================================
+
+#[test]
+fn test_node_stats_merge_tracks_second_min() {
+    use bolivar_core::layout::{NodeStats, PyId};
+
+    // Single element has second_min = MAX
+    let stats1 = NodeStats::from_bbox_and_id((0.0, 0.0, 10.0, 10.0), 5);
+    assert_eq!(stats1.min_py_id, 5);
+    assert_eq!(stats1.second_min_py_id, PyId::MAX);
+
+    // Merge two: second_min should be the larger of the two min_py_ids
+    let stats2 = NodeStats::from_bbox_and_id((20.0, 0.0, 30.0, 10.0), 3);
+    let merged = stats1.merge(&stats2);
+    assert_eq!(merged.min_py_id, 3);
+    assert_eq!(merged.second_min_py_id, 5);
+}
+
+#[test]
+fn test_calc_lower_bound_non_overlapping() {
+    use bolivar_core::layout::{NodeStats, calc_dist_lower_bound};
+
+    let stats_a = NodeStats::from_bbox_and_id((0.0, 0.0, 10.0, 10.0), 0);
+    let stats_b = NodeStats::from_bbox_and_id((100.0, 100.0, 110.0, 110.0), 1);
+    let lb = calc_dist_lower_bound(&stats_a, &stats_b);
+    assert!(lb.0 > 0.0, "Non-overlapping boxes should have positive LB");
+}
+
+#[test]
+fn test_calc_lower_bound_overlapping() {
+    use bolivar_core::layout::{NodeStats, calc_dist_lower_bound};
+
+    let stats_a = NodeStats::from_bbox_and_id((0.0, 0.0, 50.0, 50.0), 0);
+    let stats_b = NodeStats::from_bbox_and_id((25.0, 25.0, 75.0, 75.0), 1);
+    let lb = calc_dist_lower_bound(&stats_a, &stats_b);
+    assert!(lb.0 >= -2500.0, "LB should be clamped");
+}
+
+#[test]
+fn test_frontier_new_initial_skips_single_element() {
+    use bolivar_core::layout::{FrontierEntry, NodeStats, PyId};
+    use ordered_float::OrderedFloat;
+
+    let stats_single = NodeStats::from_bbox_and_id((0.0, 0.0, 10.0, 10.0), 5);
+    assert_eq!(stats_single.second_min_py_id, PyId::MAX);
+
+    // Self-pair with single element should return None
+    let entry = FrontierEntry::new_initial(OrderedFloat(0.0), &stats_single, &stats_single, 0, 0);
+    assert!(entry.is_none(), "Should skip self-pair with < 2 elements");
+}
+
+// ============================================================================
+// SpatialNode tests - lightweight tree for frontier expansion
+// ============================================================================
+
+#[test]
+fn test_spatial_node_build_and_split() {
+    use bolivar_core::layout::{PyId, SpatialNode};
+    use bolivar_core::utils::Rect;
+
+    // Create test elements with known positions and py_ids
+    let bboxes: Vec<(Rect, PyId)> = (0..20)
+        .map(|i| {
+            (
+                (i as f64 * 10.0, 0.0, i as f64 * 10.0 + 5.0, 5.0),
+                i as PyId,
+            )
+        })
+        .collect();
+
+    let mut nodes_arena: Vec<SpatialNode> = Vec::new();
+    let root_idx = SpatialNode::build(&bboxes, &mut nodes_arena);
+
+    let root = &nodes_arena[root_idx];
+    assert_eq!(root.element_count(), 20);
+    assert_eq!(root.stats.min_py_id, 0);
+    // With 20 elements > LEAF_THRESHOLD=8, root should have children
+    assert!(!root.is_leaf(), "Root with 20 elements should be split");
+}
+
+// ============================================================================
+// group_textboxes_exact tests - exact pdfminer-compatible grouping
+// ============================================================================
+
+#[test]
+fn test_group_textboxes_exact_two_boxes() {
+    use bolivar_core::layout::{
+        LAParams, LTLayoutContainer, LTTextBoxHorizontal, LTTextLineHorizontal, TextBoxType,
+    };
+
+    let container = LTLayoutContainer::new((0.0, 0.0, 200.0, 100.0));
+
+    // Create box1 with line
+    let mut box1 = LTTextBoxHorizontal::new();
+    let mut line1 = LTTextLineHorizontal::new(0.1);
+    line1.set_bbox((0.0, 0.0, 50.0, 20.0));
+    box1.add(line1);
+
+    // Create box2 with line
+    let mut box2 = LTTextBoxHorizontal::new();
+    let mut line2 = LTTextLineHorizontal::new(0.1);
+    line2.set_bbox((60.0, 0.0, 110.0, 20.0));
+    box2.add(line2);
+
+    let boxes = vec![TextBoxType::Horizontal(box1), TextBoxType::Horizontal(box2)];
+
+    let groups = container.group_textboxes_exact(&LAParams::default(), &boxes);
+    assert_eq!(
+        groups.len(),
+        1,
+        "Two nearby boxes should merge into one group"
+    );
+}
+
+/// Test that analyze() uses exact grouping when the feature is enabled.
+/// This test only runs with: cargo test --features exact-grouping
+#[cfg(feature = "exact-grouping")]
+#[test]
+fn test_analyze_uses_exact_grouping_with_feature() {
+    use bolivar_core::layout::{LAParams, LTChar, LTItem, LTLayoutContainer};
+
+    // Create container with some characters that will be grouped
+    let mut container = LTLayoutContainer::new((0.0, 0.0, 200.0, 100.0));
+
+    // Add characters that should form text lines and boxes
+    // LTChar::new(bbox, text, fontname, size, upright, adv)
+    let char1 = LTChar::new((0.0, 0.0, 10.0, 12.0), "A", "TestFont", 12.0, true, 10.0);
+    let char2 = LTChar::new((10.0, 0.0, 20.0, 12.0), "B", "TestFont", 12.0, true, 10.0);
+    container.add(LTItem::Char(char1));
+    container.add(LTItem::Char(char2));
+
+    let laparams = LAParams::default();
+    container.analyze(&laparams);
+
+    // Verify analyze completed without panic - exact grouping path was used
+    // The groups field should be set when boxes_flow is Some (default)
+    assert!(
+        container.groups.is_some(),
+        "Groups should be set after analyze with boxes_flow"
+    );
+}

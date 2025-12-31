@@ -13,3 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 bolivar-core = { path = "../core" }
 pyo3 = { workspace = true, features = ["extension-module"] }
+
+[features]
+# Forward exact-grouping feature to bolivar-core for pdfminer.six parity
+exact-grouping = ["bolivar-core/exact-grouping"]

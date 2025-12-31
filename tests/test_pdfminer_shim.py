@@ -485,3 +485,47 @@ class TestLTAnno:
                 annos = [item for item in layout if isinstance(item, LTAnno)]
                 assert len(annos) > 0, "Should include LTAnno objects for spaces"
                 break
+
+
+class TestPdfplumberParity:
+    """Test exact parity with pdfminer.six character ordering.
+
+    These tests verify that character indices match pdfminer.six exactly,
+    which is required for pdfplumber compatibility.
+    """
+
+    def test_char_3358_is_red_n(self):
+        """chars[3358] should be a red 'N' from 'November'.
+
+        This is the specific test that motivated the exact grouping algorithm.
+        pdfplumber accesses chars by index, so ordering must match pdfminer.six.
+        """
+        try:
+            import pdfplumber
+        except ImportError:
+            pytest.skip("pdfplumber not installed")
+
+        pdf_path = FIXTURES_DIR / "pdfplumber/nics-background-checks-2015-11.pdf"
+        if not pdf_path.exists():
+            pytest.skip(f"Test fixture not found: {pdf_path}")
+
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[0]
+            chars = page.chars
+
+            # Verify we have enough characters
+            assert len(chars) > 3358, f"Expected > 3358 chars, got {len(chars)}"
+
+            char = chars[3358]
+
+            # The character should be "N" (from "November")
+            assert char["text"] == "N", f"Expected 'N', got {char['text']!r}"
+
+            # The character should have red non-stroking color
+            color = char.get("non_stroking_color")
+            assert color is not None, "Expected non_stroking_color"
+
+            # Red color: R > 0.9, G < 0.1, B < 0.1
+            if isinstance(color, tuple) and len(color) == 3:
+                r, g, b = color
+                assert r > 0.9 and g < 0.1 and b < 0.1, f"Expected red color, got RGB{color}"

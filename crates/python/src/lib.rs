@@ -673,14 +673,14 @@ fn process_page(
     page: &PyPDFPage,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<PyLTPage> {
-    let la: bolivar_core::layout::LAParams = laparams.map(|p| p.clone().into()).unwrap_or_default();
+    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
 
     // Create resource manager
     let mut rsrcmgr = bolivar_core::pdfinterp::PDFResourceManager::with_caching(true);
 
     // Create aggregator for this page
     let mut aggregator =
-        bolivar_core::converter::PDFPageAggregator::new(Some(la.clone()), page.pageid as i32);
+        bolivar_core::converter::PDFPageAggregator::new(la, page.pageid as i32);
 
     // Recreate the core PDFPage with contents
     // This is a workaround since we can't store references across Python calls
