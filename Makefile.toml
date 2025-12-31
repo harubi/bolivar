@@ -1,0 +1,90 @@
+# cargo-make task definitions
+# Install: cargo install cargo-make
+# Run: cargo make <task>
+
+[config]
+default_to_workspace = false
+
+# ============================================================================
+# Python Extension Tasks
+# ============================================================================
+
+[tasks.build-py]
+description = "Build Python extension (default, without exact-grouping)"
+command = "maturin"
+args = ["develop"]
+
+[tasks.build-py-exact]
+description = "Build Python extension with exact-grouping feature"
+command = "maturin"
+args = ["develop", "--features", "exact-grouping"]
+
+[tasks.test-py]
+description = "Run Python tests"
+command = ".venv/bin/python3"
+args = ["-m", "pytest", "tests/", "-v"]
+dependencies = ["build-py"]
+
+[tasks.test-parity]
+description = "Run pdfplumber parity test (requires exact-grouping)"
+command = ".venv/bin/python3"
+args = ["-m", "pytest", "tests/test_pdfminer_shim.py::TestPdfplumberParity", "-v"]
+dependencies = ["build-py-exact"]
+
+[tasks.check-char-3358]
+description = "Check what character is at index 3358 in NICS PDF"
+script = '''
+.venv/bin/python3 -c "
+import pdfplumber
+with pdfplumber.open('crates/core/tests/fixtures/pdfplumber/nics-background-checks-2015-11.pdf') as pdf:
+    chars = pdf.pages[0].chars
+    print(f'Total chars: {len(chars)}')
+    print(f'chars[3358] = {chars[3358][\"text\"]!r}')
+    # Show context
+    for i in range(3355, 3365):
+        if i < len(chars):
+            print(f'  [{i}]: {chars[i][\"text\"]!r}')
+"
+'''
+dependencies = ["build-py-exact"]
+
+# ============================================================================
+# Rust Tasks
+# ============================================================================
+
+[tasks.test]
+description = "Run all Rust tests"
+command = "cargo"
+args = ["test"]
+
+[tasks.test-layout]
+description = "Run layout tests only"
+command = "cargo"
+args = ["test", "-p", "bolivar-core", "--test", "layout_test"]
+
+[tasks.test-exact]
+description = "Run tests with exact-grouping feature"
+command = "cargo"
+args = ["test", "-p", "bolivar-core", "--features", "exact-grouping"]
+
+[tasks.clippy]
+description = "Run clippy lints"
+command = "cargo"
+args = ["clippy", "--all-targets"]
+
+[tasks.bench]
+description = "Run benchmarks"
+command = "cargo"
+args = ["bench", "-p", "bolivar-core"]
+
+# ============================================================================
+# Development Workflow
+# ============================================================================
+
+[tasks.dev]
+description = "Build and test everything"
+dependencies = ["test", "test-py", "clippy"]
+
+[tasks.ci]
+description = "CI pipeline: test + clippy"
+dependencies = ["test", "clippy"]
