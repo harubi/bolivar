@@ -3,16 +3,21 @@
 # PDFPageAggregator is kept in pure Python for subclassability.
 # pdfplumber subclasses it as PDFPageAggregatorWithMarkedContent.
 
+from .layout import LTPage
+
 
 class PDFPageAggregator:
     """Collects layout items from a PDF page.
 
     Pure Python implementation for subclassability.
+    pdfplumber subclasses this as PDFPageAggregatorWithMarkedContent.
     """
 
     def __init__(self, rsrcmgr, pageno=1, laparams=None):
         self.rsrcmgr = rsrcmgr
         self.pageno = pageno
+        # Store laparams for interpreter to access
+        self._laparams = laparams
         self.laparams = laparams
         self.cur_item = None
 
@@ -33,8 +38,17 @@ class PDFPageAggregator:
         pass
 
     def receive_layout(self, ltpage):
-        """Receive the analyzed layout for a page."""
+        """Receive the analyzed layout for a page (public API)."""
         self.cur_item = ltpage
+
+    def _receive_layout(self, rust_ltpage):
+        """Receive layout from Rust (internal API).
+
+        Wraps the Rust LTPage in a Python-compatible LTPage.
+        """
+        # Wrap Rust LTPage in our shim LTPage
+        wrapped = LTPage(rust_ltpage)
+        self.receive_layout(wrapped)
 
     def get_result(self):
         """Get the current page's layout result."""
