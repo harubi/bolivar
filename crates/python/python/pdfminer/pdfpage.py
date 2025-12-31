@@ -41,8 +41,14 @@ class PDFPage:
         self.annots = None
         self.beads = None  # Reading order chain
 
+        # Optional box types - get from Rust if available
+        self.bleedbox = list(rust_page.bleedbox) if hasattr(rust_page, 'bleedbox') and rust_page.bleedbox else None
+        self.trimbox = list(rust_page.trimbox) if hasattr(rust_page, 'trimbox') and rust_page.trimbox else None
+        self.artbox = list(rust_page.artbox) if hasattr(rust_page, 'artbox') and rust_page.artbox else None
+
         # Populate attrs dict with uppercase keys for pdfplumber compatibility
         # pdfplumber accesses page_obj.attrs.get("MediaBox") etc.
+        # Only include optional boxes if they have values (pdfplumber crashes on None)
         self.attrs = {
             "MediaBox": self.mediabox,
             "CropBox": self.cropbox,
@@ -50,6 +56,12 @@ class PDFPage:
             "Annots": self.annots,
             "B": self.beads,
         }
+        if self.bleedbox:
+            self.attrs["BleedBox"] = self.bleedbox
+        if self.trimbox:
+            self.attrs["TrimBox"] = self.trimbox
+        if self.artbox:
+            self.attrs["ArtBox"] = self.artbox
 
     @classmethod
     def create_pages(cls, document, caching=True, check_extractable=True):

@@ -954,6 +954,90 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     // ========================================================================
+    // Color Operators
+    // ========================================================================
+
+    /// G - Set stroking color space to DeviceGray and set gray level.
+    pub fn do_G(&mut self, gray: f64) {
+        self.graphicstate.scolor = crate::pdfstate::Color::Gray(gray);
+    }
+
+    /// g - Set non-stroking color space to DeviceGray and set gray level.
+    pub fn do_g(&mut self, gray: f64) {
+        self.graphicstate.ncolor = crate::pdfstate::Color::Gray(gray);
+    }
+
+    /// RG - Set stroking color space to DeviceRGB and set color.
+    pub fn do_RG(&mut self, r: f64, g: f64, b: f64) {
+        self.graphicstate.scolor = crate::pdfstate::Color::Rgb(r, g, b);
+    }
+
+    /// rg - Set non-stroking color space to DeviceRGB and set color.
+    pub fn do_rg(&mut self, r: f64, g: f64, b: f64) {
+        self.graphicstate.ncolor = crate::pdfstate::Color::Rgb(r, g, b);
+    }
+
+    /// K - Set stroking color space to DeviceCMYK and set color.
+    pub fn do_K(&mut self, c: f64, m: f64, y: f64, k: f64) {
+        self.graphicstate.scolor = crate::pdfstate::Color::Cmyk(c, m, y, k);
+    }
+
+    /// k - Set non-stroking color space to DeviceCMYK and set color.
+    pub fn do_k(&mut self, c: f64, m: f64, y: f64, k: f64) {
+        self.graphicstate.ncolor = crate::pdfstate::Color::Cmyk(c, m, y, k);
+    }
+
+    /// SC/SCN - Set stroking color in current color space.
+    pub fn do_SC(&mut self, args: &mut Vec<PSToken>) {
+        // For now, just handle the simple case of numeric color components
+        let values: Vec<f64> = args
+            .iter()
+            .filter_map(|arg| match arg {
+                PSToken::Real(n) => Some(*n),
+                PSToken::Int(n) => Some(*n as f64),
+                _ => None,
+            })
+            .collect();
+        match values.len() {
+            1 => self.graphicstate.scolor = crate::pdfstate::Color::Gray(values[0]),
+            3 => {
+                self.graphicstate.scolor =
+                    crate::pdfstate::Color::Rgb(values[0], values[1], values[2])
+            }
+            4 => {
+                self.graphicstate.scolor =
+                    crate::pdfstate::Color::Cmyk(values[0], values[1], values[2], values[3])
+            }
+            _ => {} // Unknown color space, ignore
+        }
+    }
+
+    /// sc/scn - Set non-stroking color in current color space.
+    pub fn do_sc(&mut self, args: &mut Vec<PSToken>) {
+        // For now, just handle the simple case of numeric color components
+        let values: Vec<f64> = args
+            .iter()
+            .filter_map(|arg| match arg {
+                PSToken::Real(n) => Some(*n),
+                PSToken::Int(n) => Some(*n as f64),
+                _ => None,
+            })
+            .collect();
+        match values.len() {
+            1 => self.graphicstate.ncolor = crate::pdfstate::Color::Gray(values[0]),
+            3 => {
+                self.graphicstate.ncolor =
+                    crate::pdfstate::Color::Rgb(values[0], values[1], values[2])
+            }
+            4 => {
+                self.graphicstate.ncolor =
+                    crate::pdfstate::Color::Cmyk(values[0], values[1], values[2], values[3])
+            }
+            _ => {} // Unknown color space, ignore
+        }
+    }
+
+    // ========================================================================
     // Path Construction Operators
     // ========================================================================
 
@@ -1579,6 +1663,60 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             Keyword::Bb => self.do_b(),
             Keyword::BbStar => self.do_b_star(),
             Keyword::N => self.do_n(),
+
+            // Color operators
+            Keyword::G => {
+                if let Some(g) = Self::pop_number(args) {
+                    self.do_G(g);
+                }
+            }
+            Keyword::Gg => {
+                if let Some(g) = Self::pop_number(args) {
+                    self.do_g(g);
+                }
+            }
+            Keyword::RG => {
+                if args.len() >= 3 {
+                    let b = Self::pop_number(args).unwrap_or(0.0);
+                    let g = Self::pop_number(args).unwrap_or(0.0);
+                    let r = Self::pop_number(args).unwrap_or(0.0);
+                    self.do_RG(r, g, b);
+                }
+            }
+            Keyword::Rg => {
+                if args.len() >= 3 {
+                    let b = Self::pop_number(args).unwrap_or(0.0);
+                    let g = Self::pop_number(args).unwrap_or(0.0);
+                    let r = Self::pop_number(args).unwrap_or(0.0);
+                    self.do_rg(r, g, b);
+                }
+            }
+            Keyword::K => {
+                if args.len() >= 4 {
+                    let k = Self::pop_number(args).unwrap_or(0.0);
+                    let y = Self::pop_number(args).unwrap_or(0.0);
+                    let m = Self::pop_number(args).unwrap_or(0.0);
+                    let c = Self::pop_number(args).unwrap_or(0.0);
+                    self.do_K(c, m, y, k);
+                }
+            }
+            Keyword::Kk => {
+                if args.len() >= 4 {
+                    let k = Self::pop_number(args).unwrap_or(0.0);
+                    let y = Self::pop_number(args).unwrap_or(0.0);
+                    let m = Self::pop_number(args).unwrap_or(0.0);
+                    let c = Self::pop_number(args).unwrap_or(0.0);
+                    self.do_k(c, m, y, k);
+                }
+            }
+            Keyword::SC | Keyword::SCN => {
+                // SC/SCN - set stroking color in current color space
+                self.do_SC(args);
+            }
+            Keyword::Sc | Keyword::Scn => {
+                // sc/scn - set non-stroking color in current color space
+                self.do_sc(args);
+            }
 
             // Clipping operators
             Keyword::WClip => self.do_W(),

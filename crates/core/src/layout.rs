@@ -266,6 +266,10 @@ pub struct LTChar {
     mcid: Option<i32>,
     /// Marked Content tag (e.g., "P", "Span", "H1") for tagged PDF
     tag: Option<String>,
+    /// Non-stroking (fill) color
+    non_stroking_color: Color,
+    /// Stroking color
+    stroking_color: Color,
 }
 
 impl LTChar {
@@ -279,6 +283,8 @@ impl LTChar {
             adv,
             mcid: None,
             tag: None,
+            non_stroking_color: None,
+            stroking_color: None,
         }
     }
 
@@ -300,6 +306,8 @@ impl LTChar {
             adv,
             mcid,
             tag: None,
+            non_stroking_color: None,
+            stroking_color: None,
         }
     }
 
@@ -322,6 +330,36 @@ impl LTChar {
             adv,
             mcid,
             tag,
+            non_stroking_color: None,
+            stroking_color: None,
+        }
+    }
+
+    /// Create a character with full color information.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_colors(
+        bbox: Rect,
+        text: &str,
+        fontname: &str,
+        size: f64,
+        upright: bool,
+        adv: f64,
+        mcid: Option<i32>,
+        tag: Option<String>,
+        non_stroking_color: Color,
+        stroking_color: Color,
+    ) -> Self {
+        Self {
+            component: LTComponent::new(bbox),
+            text: text.to_string(),
+            fontname: fontname.to_string(),
+            size,
+            upright,
+            adv,
+            mcid,
+            tag,
+            non_stroking_color,
+            stroking_color,
         }
     }
 
@@ -351,6 +389,14 @@ impl LTChar {
 
     pub fn tag(&self) -> Option<String> {
         self.tag.clone()
+    }
+
+    pub fn non_stroking_color(&self) -> &Color {
+        &self.non_stroking_color
+    }
+
+    pub fn stroking_color(&self) -> &Color {
+        &self.stroking_color
     }
 }
 

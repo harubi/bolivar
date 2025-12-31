@@ -76,7 +76,8 @@ class TestPDFDocument:
         from pdfminer.pdfparser import PDFParser
         from pdfminer.pdfdocument import PDFDocument
 
-        pdf_path = FIXTURES_DIR / "simple1.pdf"
+        # Use annotations.pdf which has Producer/Creator metadata
+        pdf_path = FIXTURES_DIR / "pdfplumber/annotations.pdf"
         with open(pdf_path, "rb") as f:
             parser = PDFParser(f)
             doc = PDFDocument(parser)
@@ -91,6 +92,27 @@ class TestPDFDocument:
 
 class TestPDFPage:
     """Test pdfminer.pdfpage.PDFPage shim"""
+
+    def test_page_box_types_optional(self):
+        """PDFPage exposes BleedBox, TrimBox, ArtBox as attributes (None if not in PDF)."""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+
+        pdf_path = FIXTURES_DIR / "simple1.pdf"
+        with open(pdf_path, "rb") as f:
+            parser = PDFParser(f)
+            doc = PDFDocument(parser)
+            for page in PDFPage.create_pages(doc):
+                # These are accessible as attributes (None if not in PDF)
+                assert hasattr(page, "bleedbox")
+                assert hasattr(page, "trimbox")
+                assert hasattr(page, "artbox")
+                # simple1.pdf doesn't have these boxes, so they should be None
+                assert page.bleedbox is None
+                assert page.trimbox is None
+                assert page.artbox is None
+                break
 
     def test_create_pages_iterator(self):
         """PDFPage.create_pages returns iterator over pages"""
@@ -251,4 +273,215 @@ class TestPDFPageAggregator:
                 interpreter.process_page(page)
                 layout = device.get_result()
                 assert isinstance(layout, LTPage)
+                break
+
+
+class TestColorExtraction:
+    """Test color extraction from layout items"""
+
+    def test_ltchar_has_color_from_graphicstate(self):
+        """LTChar.graphicstate should have actual colors, not defaults."""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+        from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
+        from pdfminer.converter import PDFPageAggregator
+        from pdfminer.layout import LAParams, LTChar
+
+        # pdffill-demo.pdf has colored text
+        pdf_path = FIXTURES_DIR / "pdfplumber/pdffill-demo.pdf"
+        with open(pdf_path, "rb") as f:
+            parser = PDFParser(f)
+            doc = PDFDocument(parser)
+            rsrcmgr = PDFResourceManager()
+            laparams = LAParams()
+            device = PDFPageAggregator(rsrcmgr, laparams=laparams)
+            interpreter = PDFPageInterpreter(rsrcmgr, device)
+
+            for page in PDFPage.create_pages(doc):
+                interpreter.process_page(page)
+                layout = device.get_result()
+
+                # Find LTChar items and check their colors
+                chars_with_color = []
+                for item in layout:
+                    if isinstance(item, LTChar):
+                        if hasattr(item, 'graphicstate') and item.graphicstate:
+                            ncolor = item.graphicstate.ncolor
+                            # Should NOT be default (0) for colored text
+                            if ncolor != 0 and ncolor != (0,):
+                                chars_with_color.append(item)
+
+                # pdffill-demo.pdf should have some colored text
+                assert len(chars_with_color) > 0, "Expected some chars with non-default colors"
+                break
+
+    def test_rgb_color_extraction(self):
+        """PDF with RGB text should extract RGB color values correctly."""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+        from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
+        from pdfminer.converter import PDFPageAggregator
+        from pdfminer.layout import LAParams, LTChar
+
+        # nics PDF has red text "November - 2015"
+        pdf_path = FIXTURES_DIR / "pdfplumber/nics-background-checks-2015-11.pdf"
+        with open(pdf_path, "rb") as f:
+            parser = PDFParser(f)
+            doc = PDFDocument(parser)
+            rsrcmgr = PDFResourceManager()
+            laparams = LAParams()
+            device = PDFPageAggregator(rsrcmgr, laparams=laparams)
+            interpreter = PDFPageInterpreter(rsrcmgr, device)
+
+            for page in PDFPage.create_pages(doc):
+                interpreter.process_page(page)
+                layout = device.get_result()
+
+                # Find red chars (R > 0.9, G < 0.1, B < 0.1)
+                red_chars = []
+                for item in layout:
+                    if isinstance(item, LTChar):
+                        if hasattr(item, 'graphicstate') and item.graphicstate:
+                            nc = item.graphicstate.ncolor
+                            if isinstance(nc, tuple) and len(nc) == 3:
+                                r, g, b = nc
+                                if r > 0.9 and g < 0.1 and b < 0.1:
+                                    red_chars.append(item.get_text())
+
+                # Should find the red "November - 2015" text
+                red_text = ''.join(red_chars)
+                assert "November" in red_text, f"Expected 'November' in red text, got: {red_text}"
+                break
+
+
+class TestErrorHandling:
+    """Test error handling in pdfminer shim"""
+
+    def test_invalid_pdf_raises_value_error(self):
+        """Opening invalid PDF should raise ValueError, not panic."""
+        from bolivar import PDFDocument
+        import pytest
+
+        with pytest.raises(ValueError):
+            PDFDocument(b"not a valid pdf", "")
+
+
+class TestObjectExtraction:
+    """Test extraction of graphical objects (rects, lines, curves) - TDD"""
+
+    def test_ltpage_contains_rects(self):
+        """LTPage should yield LTRect objects when iterating"""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+        from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
+        from pdfminer.converter import PDFPageAggregator
+        from pdfminer.layout import LAParams, LTRect
+
+        # pdffill-demo.pdf has rectangles
+        pdf_path = FIXTURES_DIR / "pdfplumber/pdffill-demo.pdf"
+        with open(pdf_path, "rb") as f:
+            parser = PDFParser(f)
+            doc = PDFDocument(parser)
+            rsrcmgr = PDFResourceManager()
+            laparams = LAParams()
+            device = PDFPageAggregator(rsrcmgr, laparams=laparams)
+            interpreter = PDFPageInterpreter(rsrcmgr, device)
+
+            for page in PDFPage.create_pages(doc):
+                interpreter.process_page(page)
+                layout = device.get_result()
+
+                # Find LTRect objects
+                rects = [item for item in layout if isinstance(item, LTRect)]
+                assert len(rects) > 0, "Should extract LTRect objects from pdffill-demo.pdf"
+                break
+
+    def test_ltpage_contains_lines(self):
+        """LTPage should yield LTLine objects when iterating"""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+        from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
+        from pdfminer.converter import PDFPageAggregator
+        from pdfminer.layout import LAParams, LTLine
+
+        # nics PDF has lines (table borders, etc.)
+        pdf_path = FIXTURES_DIR / "pdfplumber/nics-background-checks-2015-11.pdf"
+        with open(pdf_path, "rb") as f:
+            parser = PDFParser(f)
+            doc = PDFDocument(parser)
+            rsrcmgr = PDFResourceManager()
+            laparams = LAParams()
+            device = PDFPageAggregator(rsrcmgr, laparams=laparams)
+            interpreter = PDFPageInterpreter(rsrcmgr, device)
+
+            for page in PDFPage.create_pages(doc):
+                interpreter.process_page(page)
+                layout = device.get_result()
+
+                # Find LTLine objects
+                lines = [item for item in layout if isinstance(item, LTLine)]
+                assert len(lines) > 0, "Should extract LTLine objects from nics PDF"
+                break
+
+    def test_ltcurve_class_available(self):
+        """LTCurve class should be importable and usable"""
+        from pdfminer.layout import LTCurve
+
+        # Create a curve manually to verify the class works
+        curve = LTCurve(
+            linewidth=1.0,
+            pts=[(0, 0), (50, 100), (100, 0)],
+            stroke=True,
+            fill=False,
+        )
+        assert curve.pts == [(0, 0), (50, 100), (100, 0)]
+        assert curve.linewidth == 1.0
+        assert curve.stroke is True
+        assert curve.fill is False
+        # Verify bbox is computed from points
+        assert curve.x0 == 0
+        assert curve.y0 == 0
+        assert curve.x1 == 100
+        assert curve.y1 == 100
+
+
+class TestLTAnno:
+    """Test LTAnno (virtual annotations) for char indexing compatibility"""
+
+    def test_ltanno_class_available(self):
+        """LTAnno class should be importable"""
+        from pdfminer.layout import LTAnno
+
+        anno = LTAnno(" ")
+        assert anno.get_text() == " "
+
+    def test_layout_includes_ltanno(self):
+        """LTPage iteration should include LTAnno objects for spaces"""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+        from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
+        from pdfminer.converter import PDFPageAggregator
+        from pdfminer.layout import LAParams, LTAnno
+
+        pdf_path = FIXTURES_DIR / "pdfplumber/nics-background-checks-2015-11.pdf"
+        with open(pdf_path, "rb") as f:
+            parser = PDFParser(f)
+            doc = PDFDocument(parser)
+            rsrcmgr = PDFResourceManager()
+            laparams = LAParams()
+            device = PDFPageAggregator(rsrcmgr, laparams=laparams)
+            interpreter = PDFPageInterpreter(rsrcmgr, device)
+
+            for page in PDFPage.create_pages(doc):
+                interpreter.process_page(page)
+                layout = device.get_result()
+
+                # Find LTAnno objects
+                annos = [item for item in layout if isinstance(item, LTAnno)]
+                assert len(annos) > 0, "Should include LTAnno objects for spaces"
                 break

@@ -34,7 +34,7 @@ class PDFDocument:
 
         # Compatibility attributes
         self.xrefs = []
-        self.info = []  # TODO: Extract metadata from Rust doc
+        self.info = self._rust_doc.info  # List of info dicts from Rust
         self.catalog = {}
         self.encryption = None
         self.decipher = None

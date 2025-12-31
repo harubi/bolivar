@@ -29,6 +29,17 @@ impl Default for Color {
     }
 }
 
+impl Color {
+    /// Convert to a Vec<f64> for layout types.
+    pub fn to_vec(&self) -> Vec<f64> {
+        match self {
+            Color::Gray(g) => vec![*g],
+            Color::Rgb(r, g, b) => vec![*r, *g, *b],
+            Color::Cmyk(c, m, y, k) => vec![*c, *m, *y, *k],
+        }
+    }
+}
+
 /// PDF Text State - manages text positioning and rendering parameters.
 ///
 /// Port of PDFTextState from pdfminer.six pdfinterp.py

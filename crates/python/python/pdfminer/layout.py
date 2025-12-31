@@ -96,6 +96,8 @@ class LTAnno(LTItem):
     def __init__(self, text: str):
         super().__init__((0, 0, 0, 0))
         self._text = text
+        # Store as 'text' in __dict__ for pdfplumber compatibility
+        self.text = text
 
     def get_text(self) -> str:
         return self._text
@@ -143,8 +145,14 @@ class LTChar(LTComponent):
             self.adv = _rust_char.adv  # Alias for pdfplumber
             self.upright = True  # Default - TODO: get from Rust
             self.textdisp = None
-            # Provide a stub graphicstate for pdfplumber color access
-            self.graphicstate = PDFGraphicState()
+            # Create graphicstate with actual colors from Rust
+            gs = PDFGraphicState()
+            # pdfplumber expects colors as tuples - (r, g, b) or (gray,)
+            if hasattr(_rust_char, 'non_stroking_color') and _rust_char.non_stroking_color:
+                gs.ncolor = tuple(_rust_char.non_stroking_color)
+            if hasattr(_rust_char, 'stroking_color') and _rust_char.stroking_color:
+                gs.scolor = tuple(_rust_char.stroking_color)
+            self.graphicstate = gs
             # Don't set ncs - pdfplumber uses hasattr() check for colorspace
             # Setting to None would make hasattr return True but .name access fails
         else:
@@ -229,15 +237,126 @@ class LTCurve(LTComponent):
             bbox = (0, 0, 0, 0)
         super().__init__(bbox)
 
+    @classmethod
+    def from_rust(cls, rust_curve) -> "LTCurve":
+        """Create an LTCurve from a Rust LTCurve."""
+        # Get colors from Rust
+        non_stroking = tuple(rust_curve.non_stroking_color) if rust_curve.non_stroking_color else None
+        stroking = tuple(rust_curve.stroking_color) if rust_curve.stroking_color else None
+        # Get points
+        pts = list(rust_curve.pts)
+        curve = cls(
+            linewidth=rust_curve.linewidth,
+            pts=pts,
+            stroke=rust_curve.stroke,
+            fill=rust_curve.fill,
+            evenodd=rust_curve.evenodd,
+            non_stroking_color=non_stroking,
+            stroking_color=stroking,
+        )
+        # Copy original_path from Rust (pdfplumber expects this)
+        if rust_curve.original_path:
+            curve.original_path = [
+                (cmd, *pts) for cmd, pts in rust_curve.original_path
+            ]
+        else:
+            curve.original_path = None
+        # Copy dashing_style
+        curve.dashing_style = rust_curve.dashing_style
+        # Delete ncs/scs if None to avoid pdfplumber AttributeError
+        if curve.ncs is None:
+            del curve.ncs
+        if curve.scs is None:
+            del curve.scs
+        # Store height/width as instance attrs for pdfplumber __dict__ iteration
+        # Use __dict__ to shadow the @property from parent class
+        curve.__dict__['height'] = curve.y1 - curve.y0
+        curve.__dict__['width'] = curve.x1 - curve.x0
+        return curve
+
 
 class LTLine(LTCurve):
     """A straight line."""
-    pass
+
+    @classmethod
+    def from_rust(cls, rust_line) -> "LTLine":
+        """Create an LTLine from a Rust LTLine."""
+        # Get colors from Rust
+        non_stroking = tuple(rust_line.non_stroking_color) if rust_line.non_stroking_color else None
+        stroking = tuple(rust_line.stroking_color) if rust_line.stroking_color else None
+        # Get points
+        pts = list(rust_line.pts)
+        line = cls(
+            linewidth=rust_line.linewidth,
+            pts=pts,
+            stroke=rust_line.stroke,
+            fill=rust_line.fill,
+            non_stroking_color=non_stroking,
+            stroking_color=stroking,
+        )
+        # Copy original_path from Rust (pdfplumber expects this)
+        if rust_line.original_path:
+            line.original_path = [
+                (cmd, *pts) for cmd, pts in rust_line.original_path
+            ]
+        else:
+            line.original_path = None
+        # Copy dashing_style
+        line.dashing_style = rust_line.dashing_style
+        # Delete ncs/scs if None to avoid pdfplumber AttributeError
+        if line.ncs is None:
+            del line.ncs
+        if line.scs is None:
+            del line.scs
+        # Store height/width as instance attrs for pdfplumber __dict__ iteration
+        # Use __dict__ to shadow the @property from parent class
+        line.__dict__['height'] = line.y1 - line.y0
+        line.__dict__['width'] = line.x1 - line.x0
+        return line
 
 
 class LTRect(LTCurve):
     """A rectangle."""
-    pass
+
+    @classmethod
+    def from_rust(cls, rust_rect) -> "LTRect":
+        """Create an LTRect from a Rust LTRect."""
+        bbox = rust_rect.bbox
+        # Get colors from Rust
+        non_stroking = tuple(rust_rect.non_stroking_color) if rust_rect.non_stroking_color else None
+        stroking = tuple(rust_rect.stroking_color) if rust_rect.stroking_color else None
+        # Create with pts from bbox (4 corners of rectangle)
+        x0, y0, x1, y1 = bbox
+        pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        rect = cls(
+            linewidth=rust_rect.linewidth,
+            pts=pts,
+            stroke=rust_rect.stroke,
+            fill=rust_rect.fill,
+            non_stroking_color=non_stroking,
+            stroking_color=stroking,
+        )
+        # Copy original_path from Rust (pdfplumber expects this)
+        # Format: [(cmd, pt1, pt2, ...), ...] not [(cmd, [pt1, ...]), ...]
+        if rust_rect.original_path:
+            rect.original_path = [
+                (cmd, *pts) for cmd, pts in rust_rect.original_path
+            ]
+        else:
+            rect.original_path = None
+        # Copy dashing_style from Rust
+        rect.dashing_style = rust_rect.dashing_style
+        # pdfplumber checks hasattr(obj, 'ncs') and accesses .name
+        # Delete these attrs if None to avoid AttributeError
+        if rect.ncs is None:
+            del rect.ncs
+        if rect.scs is None:
+            del rect.scs
+        # Store height/width as instance attrs for pdfplumber __dict__ iteration
+        # Use __dict__ to shadow the @property from parent class
+        rect.__dict__['height'] = rect.y1 - rect.y0
+        rect.__dict__['width'] = rect.x1 - rect.x0
+        return rect
 
 
 class LTFigure(LTContainer):
@@ -320,8 +439,20 @@ class LTPage(LTContainer):
 
             # Wrap Rust items in Python shims
             for rust_item in rust_page:
-                # Currently all items from Rust are LTChar
-                self._objs.append(LTChar.from_rust(rust_item))
+                # Check type and wrap appropriately
+                type_name = type(rust_item).__name__
+                if type_name == 'LTRect':
+                    self._objs.append(LTRect.from_rust(rust_item))
+                elif type_name == 'LTLine':
+                    self._objs.append(LTLine.from_rust(rust_item))
+                elif type_name == 'LTCurve':
+                    self._objs.append(LTCurve.from_rust(rust_item))
+                elif type_name == 'LTAnno':
+                    # Wrap Anno directly - it already has get_text()
+                    self._objs.append(LTAnno(rust_item.get_text()))
+                else:
+                    # Default to LTChar
+                    self._objs.append(LTChar.from_rust(rust_item))
         else:
             # Traditional pdfminer.six constructor
             self._rust_page = None

@@ -3,10 +3,39 @@
 //! This crate provides PyO3 bindings to expose bolivar's PDF parsing
 //! functionality to Python, with a pdfminer.six-compatible API.
 
-use pyo3::prelude::*;
-use pyo3::exceptions::PyValueError;
 use bolivar_core::pdfdocument::PDFDocument;
+use bolivar_core::pdftypes::PDFObject;
 use bolivar_core::utils::HasBBox;
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
+
+/// Convert a PDFObject to a string representation for Python.
+fn pdf_object_to_string(obj: &PDFObject) -> String {
+    match obj {
+        PDFObject::Null => "null".to_string(),
+        PDFObject::Bool(b) => b.to_string(),
+        PDFObject::Int(i) => i.to_string(),
+        PDFObject::Real(r) => r.to_string(),
+        PDFObject::Name(n) => n.clone(),
+        PDFObject::String(s) => {
+            // Try to decode as UTF-8, fall back to lossy
+            String::from_utf8(s.clone()).unwrap_or_else(|_| String::from_utf8_lossy(s).to_string())
+        }
+        PDFObject::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(pdf_object_to_string).collect();
+            format!("[{}]", items.join(", "))
+        }
+        PDFObject::Dict(dict) => {
+            let items: Vec<String> = dict
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k, pdf_object_to_string(v)))
+                .collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        PDFObject::Stream(_) => "<stream>".to_string(),
+        PDFObject::Ref(objref) => format!("{} {} R", objref.objid, objref.genno),
+    }
+}
 
 /// Layout analysis parameters.
 ///
@@ -140,12 +169,31 @@ impl PyPDFDocument {
     ///     List of PDFPage objects
     fn get_pages(&self) -> PyResult<Vec<PyPDFPage>> {
         let mut pages = Vec::new();
-        for (idx, page_result) in bolivar_core::pdfpage::PDFPage::create_pages(&self.inner).enumerate() {
+        for (idx, page_result) in
+            bolivar_core::pdfpage::PDFPage::create_pages(&self.inner).enumerate()
+        {
             let page = page_result
                 .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", idx, e)))?;
             pages.push(PyPDFPage::from_core(page));
         }
         Ok(pages)
+    }
+
+    /// Get document info dictionaries.
+    ///
+    /// Returns:
+    ///     List of dictionaries containing document metadata (Producer, Creator, etc.)
+    #[getter]
+    fn info(&self) -> Vec<std::collections::HashMap<String, String>> {
+        self.inner
+            .info()
+            .iter()
+            .map(|dict| {
+                dict.iter()
+                    .map(|(k, v)| (k.clone(), pdf_object_to_string(v)))
+                    .collect()
+            })
+            .collect()
     }
 }
 
@@ -162,6 +210,15 @@ pub struct PyPDFPage {
     /// Crop box (if different from mediabox)
     #[pyo3(get)]
     pub cropbox: Option<(f64, f64, f64, f64)>,
+    /// Bleed box (printing bleed area)
+    #[pyo3(get)]
+    pub bleedbox: Option<(f64, f64, f64, f64)>,
+    /// Trim box (finished page size)
+    #[pyo3(get)]
+    pub trimbox: Option<(f64, f64, f64, f64)>,
+    /// Art box (meaningful content area)
+    #[pyo3(get)]
+    pub artbox: Option<(f64, f64, f64, f64)>,
     /// Page rotation in degrees
     #[pyo3(get)]
     pub rotate: i64,
@@ -181,6 +238,9 @@ impl PyPDFPage {
             pageid: page.pageid,
             mediabox: page.mediabox.map(|b| (b[0], b[1], b[2], b[3])),
             cropbox: page.cropbox.map(|b| (b[0], b[1], b[2], b[3])),
+            bleedbox: page.bleedbox.map(|b| (b[0], b[1], b[2], b[3])),
+            trimbox: page.trimbox.map(|b| (b[0], b[1], b[2], b[3])),
+            artbox: page.artbox.map(|b| (b[0], b[1], b[2], b[3])),
             rotate: page.rotate,
             label: page.label.clone(),
             contents: page.contents.clone(),
@@ -267,7 +327,10 @@ impl PyLTPageIter {
 #[derive(Clone)]
 pub enum PyLTItem {
     Char(PyLTChar),
-    // Future: Line, TextBox, Figure, etc.
+    Rect(PyLTRect),
+    Line(PyLTLine),
+    Curve(PyLTCurve),
+    Anno(PyLTAnno),
 }
 
 impl<'py> IntoPyObject<'py> for PyLTItem {
@@ -278,6 +341,10 @@ impl<'py> IntoPyObject<'py> for PyLTItem {
     fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
         match self {
             PyLTItem::Char(c) => Ok(Bound::new(py, c)?.into_any()),
+            PyLTItem::Rect(r) => Ok(Bound::new(py, r)?.into_any()),
+            PyLTItem::Line(l) => Ok(Bound::new(py, l)?.into_any()),
+            PyLTItem::Curve(c) => Ok(Bound::new(py, c)?.into_any()),
+            PyLTItem::Anno(a) => Ok(Bound::new(py, a)?.into_any()),
         }
     }
 }
@@ -308,6 +375,12 @@ pub struct PyLTChar {
     /// Marked Content tag (e.g., "P", "Span", "H1")
     #[pyo3(get)]
     pub tag: Option<String>,
+    /// Non-stroking (fill) color as tuple of floats
+    #[pyo3(get)]
+    pub non_stroking_color: Option<Vec<f64>>,
+    /// Stroking color as tuple of floats
+    #[pyo3(get)]
+    pub stroking_color: Option<Vec<f64>>,
 }
 
 impl PyLTChar {
@@ -321,6 +394,8 @@ impl PyLTChar {
             adv: c.adv(),
             mcid: c.mcid(),
             tag: c.tag(),
+            non_stroking_color: c.non_stroking_color().clone(),
+            stroking_color: c.stroking_color().clone(),
         }
     }
 }
@@ -343,6 +418,245 @@ impl PyLTChar {
     }
 }
 
+/// Layout rectangle - a rectangle in the PDF.
+#[pyclass(name = "LTRect")]
+#[derive(Clone)]
+pub struct PyLTRect {
+    /// Bounding box as (x0, y0, x1, y1)
+    bbox: (f64, f64, f64, f64),
+    /// Line width
+    #[pyo3(get)]
+    pub linewidth: f64,
+    /// Whether the path is stroked
+    #[pyo3(get)]
+    pub stroke: bool,
+    /// Whether the path is filled
+    #[pyo3(get)]
+    pub fill: bool,
+    /// Non-stroking (fill) color
+    #[pyo3(get)]
+    pub non_stroking_color: Option<Vec<f64>>,
+    /// Stroking color
+    #[pyo3(get)]
+    pub stroking_color: Option<Vec<f64>>,
+    /// Original path operations: list of (cmd, points) tuples
+    #[pyo3(get)]
+    pub original_path: Option<Vec<(char, Vec<(f64, f64)>)>>,
+    /// Dashing style: (pattern, phase)
+    #[pyo3(get)]
+    pub dashing_style: Option<(Vec<f64>, f64)>,
+}
+
+impl PyLTRect {
+    fn from_core(r: &bolivar_core::layout::LTRect) -> Self {
+        // Convert original_path from Option<Vec<(char, Vec<Point>)>> to Python-friendly format
+        let original_path = r
+            .original_path
+            .as_ref()
+            .map(|path| path.iter().map(|(cmd, pts)| (*cmd, pts.clone())).collect());
+        Self {
+            bbox: (r.x0(), r.y0(), r.x1(), r.y1()),
+            linewidth: r.linewidth,
+            stroke: r.stroke,
+            fill: r.fill,
+            non_stroking_color: r.non_stroking_color.clone(),
+            stroking_color: r.stroking_color.clone(),
+            original_path,
+            dashing_style: r.dashing_style.clone(),
+        }
+    }
+}
+
+#[pymethods]
+impl PyLTRect {
+    /// Get bounding box as (x0, y0, x1, y1)
+    #[getter]
+    fn bbox(&self) -> (f64, f64, f64, f64) {
+        self.bbox
+    }
+
+    fn __repr__(&self) -> String {
+        format!("LTRect(bbox={:?}, linewidth={})", self.bbox, self.linewidth)
+    }
+}
+
+/// Layout line - a straight line in the PDF.
+#[pyclass(name = "LTLine")]
+#[derive(Clone)]
+pub struct PyLTLine {
+    /// Bounding box as (x0, y0, x1, y1)
+    bbox: (f64, f64, f64, f64),
+    /// Start point
+    #[pyo3(get)]
+    pub p0: (f64, f64),
+    /// End point
+    #[pyo3(get)]
+    pub p1: (f64, f64),
+    /// Line width
+    #[pyo3(get)]
+    pub linewidth: f64,
+    /// Whether the path is stroked
+    #[pyo3(get)]
+    pub stroke: bool,
+    /// Whether the path is filled
+    #[pyo3(get)]
+    pub fill: bool,
+    /// Non-stroking (fill) color
+    #[pyo3(get)]
+    pub non_stroking_color: Option<Vec<f64>>,
+    /// Stroking color
+    #[pyo3(get)]
+    pub stroking_color: Option<Vec<f64>>,
+    /// Original path operations
+    #[pyo3(get)]
+    pub original_path: Option<Vec<(char, Vec<(f64, f64)>)>>,
+    /// Dashing style: (pattern, phase)
+    #[pyo3(get)]
+    pub dashing_style: Option<(Vec<f64>, f64)>,
+}
+
+impl PyLTLine {
+    fn from_core(l: &bolivar_core::layout::LTLine) -> Self {
+        let original_path = l
+            .original_path
+            .as_ref()
+            .map(|path| path.iter().map(|(cmd, pts)| (*cmd, pts.clone())).collect());
+        Self {
+            bbox: (l.x0(), l.y0(), l.x1(), l.y1()),
+            p0: l.p0(),
+            p1: l.p1(),
+            linewidth: l.linewidth,
+            stroke: l.stroke,
+            fill: l.fill,
+            non_stroking_color: l.non_stroking_color.clone(),
+            stroking_color: l.stroking_color.clone(),
+            original_path,
+            dashing_style: l.dashing_style.clone(),
+        }
+    }
+}
+
+#[pymethods]
+impl PyLTLine {
+    /// Get bounding box as (x0, y0, x1, y1)
+    #[getter]
+    fn bbox(&self) -> (f64, f64, f64, f64) {
+        self.bbox
+    }
+
+    /// Get points as list for pdfplumber compatibility
+    #[getter]
+    fn pts(&self) -> Vec<(f64, f64)> {
+        vec![self.p0, self.p1]
+    }
+
+    fn __repr__(&self) -> String {
+        format!("LTLine(p0={:?}, p1={:?})", self.p0, self.p1)
+    }
+}
+
+/// Python wrapper for LTCurve
+#[pyclass(name = "LTCurve")]
+#[derive(Clone)]
+pub struct PyLTCurve {
+    /// Bounding box as (x0, y0, x1, y1)
+    bbox: (f64, f64, f64, f64),
+    /// Control points
+    #[pyo3(get)]
+    pub pts: Vec<(f64, f64)>,
+    /// Line width
+    #[pyo3(get)]
+    pub linewidth: f64,
+    /// Whether the path is stroked
+    #[pyo3(get)]
+    pub stroke: bool,
+    /// Whether the path is filled
+    #[pyo3(get)]
+    pub fill: bool,
+    /// Even-odd fill rule
+    #[pyo3(get)]
+    pub evenodd: bool,
+    /// Non-stroking (fill) color
+    #[pyo3(get)]
+    pub non_stroking_color: Option<Vec<f64>>,
+    /// Stroking color
+    #[pyo3(get)]
+    pub stroking_color: Option<Vec<f64>>,
+    /// Original path operations
+    #[pyo3(get)]
+    pub original_path: Option<Vec<(char, Vec<(f64, f64)>)>>,
+    /// Dashing style: (pattern, phase)
+    #[pyo3(get)]
+    pub dashing_style: Option<(Vec<f64>, f64)>,
+}
+
+impl PyLTCurve {
+    fn from_core(c: &bolivar_core::layout::LTCurve) -> Self {
+        let original_path = c
+            .original_path
+            .as_ref()
+            .map(|path| path.iter().map(|(cmd, pts)| (*cmd, pts.clone())).collect());
+        Self {
+            bbox: (c.x0(), c.y0(), c.x1(), c.y1()),
+            pts: c.pts.clone(),
+            linewidth: c.linewidth,
+            stroke: c.stroke,
+            fill: c.fill,
+            evenodd: c.evenodd,
+            non_stroking_color: c.non_stroking_color.clone(),
+            stroking_color: c.stroking_color.clone(),
+            original_path,
+            dashing_style: c.dashing_style.clone(),
+        }
+    }
+}
+
+#[pymethods]
+impl PyLTCurve {
+    /// Get bounding box as (x0, y0, x1, y1)
+    #[getter]
+    fn bbox(&self) -> (f64, f64, f64, f64) {
+        self.bbox
+    }
+
+    fn __repr__(&self) -> String {
+        format!("LTCurve(pts={:?})", self.pts.len())
+    }
+}
+
+/// Python wrapper for LTAnno (virtual annotation like spaces/newlines)
+#[pyclass(name = "LTAnno")]
+#[derive(Clone)]
+pub struct PyLTAnno {
+    /// The text content (space, newline, etc.)
+    #[pyo3(get)]
+    pub text: String,
+}
+
+impl PyLTAnno {
+    fn from_core(a: &bolivar_core::layout::LTAnno) -> Self {
+        Self {
+            text: a.get_text().to_string(),
+        }
+    }
+}
+
+#[pymethods]
+impl PyLTAnno {
+    #[new]
+    fn new(text: String) -> Self {
+        Self { text }
+    }
+
+    fn get_text(&self) -> &str {
+        &self.text
+    }
+
+    fn __repr__(&self) -> String {
+        format!("LTAnno({:?})", self.text)
+    }
+}
+
 /// Process a PDF page and return its layout.
 ///
 /// Args:
@@ -359,18 +673,14 @@ fn process_page(
     page: &PyPDFPage,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<PyLTPage> {
-    let la: bolivar_core::layout::LAParams = laparams
-        .map(|p| p.clone().into())
-        .unwrap_or_default();
+    let la: bolivar_core::layout::LAParams = laparams.map(|p| p.clone().into()).unwrap_or_default();
 
     // Create resource manager
     let mut rsrcmgr = bolivar_core::pdfinterp::PDFResourceManager::with_caching(true);
 
     // Create aggregator for this page
-    let mut aggregator = bolivar_core::converter::PDFPageAggregator::new(
-        Some(la.clone()),
-        page.pageid as i32,
-    );
+    let mut aggregator =
+        bolivar_core::converter::PDFPageAggregator::new(Some(la.clone()), page.pageid as i32);
 
     // Recreate the core PDFPage with contents
     // This is a workaround since we can't store references across Python calls
@@ -380,6 +690,9 @@ fn process_page(
         label: page.label.clone(),
         mediabox: page.mediabox.map(|b| [b.0, b.1, b.2, b.3]),
         cropbox: page.cropbox.map(|b| [b.0, b.1, b.2, b.3]),
+        bleedbox: page.bleedbox.map(|b| [b.0, b.1, b.2, b.3]),
+        trimbox: page.trimbox.map(|b| [b.0, b.1, b.2, b.3]),
+        artbox: page.artbox.map(|b| [b.0, b.1, b.2, b.3]),
         rotate: page.rotate,
         annots: None,
         resources: page.resources.clone(),
@@ -388,10 +701,8 @@ fn process_page(
     };
 
     // Create interpreter and process page
-    let mut interpreter = bolivar_core::pdfinterp::PDFPageInterpreter::new(
-        &mut rsrcmgr,
-        &mut aggregator,
-    );
+    let mut interpreter =
+        bolivar_core::pdfinterp::PDFPageInterpreter::new(&mut rsrcmgr, &mut aggregator);
     interpreter.process_page(&core_page, Some(&doc.inner));
 
     // Get the result
@@ -413,7 +724,7 @@ fn process_page(
 
 /// Recursively collect LTChar items from layout tree
 fn collect_chars(item: &bolivar_core::layout::LTItem, chars: &mut Vec<PyLTItem>) {
-    use bolivar_core::layout::{LTItem, TextLineType, TextBoxType, TextLineElement};
+    use bolivar_core::layout::{LTItem, TextBoxType, TextLineElement, TextLineType};
 
     match item {
         LTItem::Char(c) => {
@@ -424,15 +735,25 @@ fn collect_chars(item: &bolivar_core::layout::LTItem, chars: &mut Vec<PyLTItem>)
             match line {
                 TextLineType::Horizontal(l) => {
                     for elem in l.iter() {
-                        if let TextLineElement::Char(c) = elem {
-                            chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
+                        match elem {
+                            TextLineElement::Char(c) => {
+                                chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
+                            }
+                            TextLineElement::Anno(a) => {
+                                chars.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
+                            }
                         }
                     }
                 }
                 TextLineType::Vertical(l) => {
                     for elem in l.iter() {
-                        if let TextLineElement::Char(c) = elem {
-                            chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
+                        match elem {
+                            TextLineElement::Char(c) => {
+                                chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
+                            }
+                            TextLineElement::Anno(a) => {
+                                chars.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
+                            }
                         }
                     }
                 }
@@ -444,8 +765,13 @@ fn collect_chars(item: &bolivar_core::layout::LTItem, chars: &mut Vec<PyLTItem>)
                 TextBoxType::Horizontal(b) => {
                     for line in b.iter() {
                         for elem in line.iter() {
-                            if let TextLineElement::Char(c) = elem {
-                                chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
+                            match elem {
+                                TextLineElement::Char(c) => {
+                                    chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
+                                }
+                                TextLineElement::Anno(a) => {
+                                    chars.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
+                                }
                             }
                         }
                     }
@@ -453,8 +779,13 @@ fn collect_chars(item: &bolivar_core::layout::LTItem, chars: &mut Vec<PyLTItem>)
                 TextBoxType::Vertical(b) => {
                     for line in b.iter() {
                         for elem in line.iter() {
-                            if let TextLineElement::Char(c) = elem {
-                                chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
+                            match elem {
+                                TextLineElement::Char(c) => {
+                                    chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
+                                }
+                                TextLineElement::Anno(a) => {
+                                    chars.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
+                                }
                             }
                         }
                     }
@@ -471,7 +802,19 @@ fn collect_chars(item: &bolivar_core::layout::LTItem, chars: &mut Vec<PyLTItem>)
                 collect_chars(child, chars);
             }
         }
-        // Skip non-text items (Anno, Curve, Line, Rect, Image)
+        LTItem::Rect(r) => {
+            chars.push(PyLTItem::Rect(PyLTRect::from_core(r)));
+        }
+        LTItem::Line(l) => {
+            chars.push(PyLTItem::Line(PyLTLine::from_core(l)));
+        }
+        LTItem::Curve(c) => {
+            chars.push(PyLTItem::Curve(PyLTCurve::from_core(c)));
+        }
+        LTItem::Anno(a) => {
+            chars.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
+        }
+        // Skip other non-text items (Image)
         _ => {}
     }
 }
@@ -485,6 +828,10 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPDFPage>()?;
     m.add_class::<PyLTPage>()?;
     m.add_class::<PyLTChar>()?;
+    m.add_class::<PyLTRect>()?;
+    m.add_class::<PyLTLine>()?;
+    m.add_class::<PyLTCurve>()?;
+    m.add_class::<PyLTAnno>()?;
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     Ok(())
 }

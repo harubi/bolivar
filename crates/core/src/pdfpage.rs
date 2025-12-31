@@ -20,6 +20,12 @@ pub struct PDFPage {
     pub mediabox: Option<[f64; 4]>,
     /// Crop box
     pub cropbox: Option<[f64; 4]>,
+    /// Bleed box (printing bleed area)
+    pub bleedbox: Option<[f64; 4]>,
+    /// Trim box (finished page size after trimming)
+    pub trimbox: Option<[f64; 4]>,
+    /// Art box (meaningful content area)
+    pub artbox: Option<[f64; 4]>,
     /// Page rotation in degrees
     pub rotate: i64,
     /// Page annotations
@@ -51,6 +57,9 @@ impl PDFPage {
     ) -> Result<Self> {
         let mediabox = Self::parse_box(&attrs, "MediaBox", doc);
         let cropbox = Self::parse_box(&attrs, "CropBox", doc).or(mediabox);
+        let bleedbox = Self::parse_box(&attrs, "BleedBox", doc);
+        let trimbox = Self::parse_box(&attrs, "TrimBox", doc);
+        let artbox = Self::parse_box(&attrs, "ArtBox", doc);
         let rotate = attrs
             .get("Rotate")
             .and_then(|r| r.as_int().ok())
@@ -74,6 +83,9 @@ impl PDFPage {
             label,
             mediabox,
             cropbox,
+            bleedbox,
+            trimbox,
+            artbox,
             rotate,
             annots,
             resources,

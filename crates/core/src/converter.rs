@@ -343,9 +343,9 @@ impl PDFLayoutAnalyzer {
         // Get dashing style
         let dashing_style = gstate.dash.clone();
 
-        // Get colors
-        let scolor = Some(vec![0.0]); // placeholder
-        let ncolor = Some(vec![0.0]); // placeholder
+        // Get colors from graphic state
+        let scolor = Some(gstate.scolor.to_vec());
+        let ncolor = Some(gstate.ncolor.to_vec());
 
         // Create appropriate layout object
         let item = match shape.as_str() {
@@ -812,7 +812,7 @@ impl PDFDevice for PDFPageAggregator {
         textstate: &mut PDFTextState,
         seq: &PDFTextSeq,
         _ncs: &PDFColorSpace,
-        _graphicstate: &PDFGraphicState,
+        graphicstate: &PDFGraphicState,
     ) {
         // Skip invisible text (render mode 3 or 7 which includes clipping)
         // Modes: 0=fill, 1=stroke, 2=fill+stroke, 3=invisible,
@@ -962,11 +962,14 @@ impl PDFDevice for PDFPageAggregator {
                         };
 
                         // Create LTChar and add to container
-                        // Pass current MCID from marked content stack
+                        // Pass current MCID from marked content stack and colors from graphic state
                         let mcid = self.analyzer.current_mcid();
-                        let ltchar = LTChar::with_mcid(
+                        let tag = self.analyzer.current_tag().map(|s| s.to_string());
+                        let ncolor = Some(graphicstate.ncolor.to_vec());
+                        let scolor = Some(graphicstate.scolor.to_vec());
+                        let ltchar = LTChar::with_colors(
                             bbox, &text, "unknown", // Font name - would come from font
-                            size, upright, char_width, mcid,
+                            size, upright, char_width, mcid, tag, ncolor, scolor,
                         );
 
                         if let Some(ref mut container) = self.analyzer.cur_item {

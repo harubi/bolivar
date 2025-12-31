@@ -162,6 +162,10 @@ impl PDFDocument {
             0
         };
 
+        // Handle files too small to contain startxref
+        if data.len() < search.len() {
+            return Err(crate::error::PdfError::SyntaxError("PDF too small".into()));
+        }
         for i in (search_start..data.len() - search.len()).rev() {
             if &data[i..i + search.len()] == search {
                 // Found startxref, now find the number after it
