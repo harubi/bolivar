@@ -36,9 +36,8 @@ class PDFPage:
         self.resources = {}  # TODO: Populate from Rust if needed
         self.label = rust_page.label
 
-        # Annotations - TODO: Expose from Rust PDFPage
-        # For now, return None (pdfplumber handles this gracefully)
-        self.annots = None
+        # Get annotations from Rust page
+        self.annots = rust_page.annots if hasattr(rust_page, 'annots') else None
         self.beads = None  # Reading order chain
 
         # Optional box types - get from Rust if available

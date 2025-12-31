@@ -913,7 +913,8 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
     /// w - Set line width.
     pub fn do_w(&mut self, linewidth: f64) {
-        self.graphicstate.linewidth = linewidth;
+        let scale = (self.ctm.0.powi(2) + self.ctm.1.powi(2)).sqrt();
+        self.graphicstate.linewidth = linewidth * scale;
     }
 
     /// J - Set line cap style.
@@ -988,33 +989,104 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     /// SC/SCN - Set stroking color in current color space.
+    ///
+    /// Handles Pattern color spaces per ISO 32000-1:2008 4.5.5 (PDF 1.7)
+    /// and ISO 32000-2:2020 8.7.3 (PDF 2.0):
+    /// - Colored patterns (PaintType=1): single operand (pattern name)
+    /// - Uncolored patterns (PaintType=2): n+1 operands (colors + pattern name)
     pub fn do_SC(&mut self, args: &mut Vec<PSToken>) {
-        // For now, just handle the simple case of numeric color components
-        let values: Vec<f64> = args
-            .iter()
-            .filter_map(|arg| match arg {
-                PSToken::Real(n) => Some(*n),
-                PSToken::Int(n) => Some(*n as f64),
-                _ => None,
-            })
-            .collect();
-        match values.len() {
-            1 => self.graphicstate.scolor = crate::pdfstate::Color::Gray(values[0]),
-            3 => {
-                self.graphicstate.scolor =
-                    crate::pdfstate::Color::Rgb(values[0], values[1], values[2])
+        use crate::pdfstate::Color;
+
+        // Check if current stroking colorspace is Pattern
+        if self.graphicstate.scs.name == "Pattern" {
+            // Pattern color space - last component should be pattern name
+            if args.is_empty() {
+                return;
             }
-            4 => {
-                self.graphicstate.scolor =
-                    crate::pdfstate::Color::Cmyk(values[0], values[1], values[2], values[3])
+
+            // Check if last argument is a name (pattern name)
+            let last_is_name = matches!(args.last(), Some(PSToken::Literal(_)));
+
+            if last_is_name {
+                let pattern_name = match args.pop() {
+                    Some(PSToken::Literal(name)) => name,
+                    _ => return,
+                };
+
+                if args.is_empty() {
+                    // Colored tiling pattern (PaintType=1): just pattern name
+                    self.graphicstate.scolor = Color::PatternColored(pattern_name);
+                } else {
+                    // Uncolored tiling pattern (PaintType=2): color components + pattern name
+                    let base_color = Self::parse_color_components(args);
+                    if let Some(base) = base_color {
+                        self.graphicstate.scolor =
+                            Color::PatternUncolored(Box::new(base), pattern_name);
+                    }
+                }
             }
-            _ => {} // Unknown color space, ignore
+        } else {
+            // Standard color space - parse numeric components
+            if let Some(color) = Self::parse_color_components(args) {
+                self.graphicstate.scolor = color;
+            }
         }
     }
 
     /// sc/scn - Set non-stroking color in current color space.
+    ///
+    /// Handles Pattern color spaces per ISO 32000-1:2008 4.5.5 (PDF 1.7)
+    /// and ISO 32000-2:2020 8.7.3 (PDF 2.0):
+    /// - Colored patterns (PaintType=1): single operand (pattern name)
+    /// - Uncolored patterns (PaintType=2): n+1 operands (colors + pattern name)
     pub fn do_sc(&mut self, args: &mut Vec<PSToken>) {
-        // For now, just handle the simple case of numeric color components
+        use crate::pdfstate::Color;
+
+        // Check if current non-stroking colorspace is Pattern
+        if self.graphicstate.ncs.name == "Pattern" {
+            // Pattern color space - last component should be pattern name
+            if args.is_empty() {
+                return;
+            }
+
+            // Check if last argument is a name (pattern name)
+            let last_is_name = matches!(args.last(), Some(PSToken::Literal(_)));
+
+            if last_is_name {
+                let pattern_name = match args.pop() {
+                    Some(PSToken::Literal(name)) => name,
+                    _ => return,
+                };
+
+                if args.is_empty() {
+                    // Colored tiling pattern (PaintType=1): just pattern name
+                    self.graphicstate.ncolor = Color::PatternColored(pattern_name);
+                } else {
+                    // Uncolored tiling pattern (PaintType=2): color components + pattern name
+                    let base_color = Self::parse_color_components(args);
+                    if let Some(base) = base_color {
+                        self.graphicstate.ncolor =
+                            Color::PatternUncolored(Box::new(base), pattern_name);
+                    }
+                }
+            }
+        } else {
+            // Standard color space - parse numeric components
+            if let Some(color) = Self::parse_color_components(args) {
+                self.graphicstate.ncolor = color;
+            }
+        }
+    }
+
+    /// Parse color components from operand stack.
+    ///
+    /// Returns a Color based on the number of numeric components:
+    /// - 1 component: Gray
+    /// - 3 components: RGB
+    /// - 4 components: CMYK
+    fn parse_color_components(args: &[PSToken]) -> Option<crate::pdfstate::Color> {
+        use crate::pdfstate::Color;
+
         let values: Vec<f64> = args
             .iter()
             .filter_map(|arg| match arg {
@@ -1023,17 +1095,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 _ => None,
             })
             .collect();
+
         match values.len() {
-            1 => self.graphicstate.ncolor = crate::pdfstate::Color::Gray(values[0]),
-            3 => {
-                self.graphicstate.ncolor =
-                    crate::pdfstate::Color::Rgb(values[0], values[1], values[2])
-            }
-            4 => {
-                self.graphicstate.ncolor =
-                    crate::pdfstate::Color::Cmyk(values[0], values[1], values[2], values[3])
-            }
-            _ => {} // Unknown color space, ignore
+            1 => Some(Color::Gray(values[0])),
+            3 => Some(Color::Rgb(values[0], values[1], values[2])),
+            4 => Some(Color::Cmyk(values[0], values[1], values[2], values[3])),
+            _ => None,
         }
     }
 

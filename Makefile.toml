@@ -65,7 +65,7 @@ args = ["test", "-p", "bolivar-core", "--test", "layout_test"]
 [tasks.test-exact]
 description = "Run tests with exact-grouping feature"
 command = "cargo"
-args = ["test", "-p", "bolivar-core", "--features", "exact-grouping"]
+args = ["test", "--features", "exact-grouping"]
 
 [tasks.clippy]
 description = "Run clippy lints"

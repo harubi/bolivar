@@ -8,6 +8,8 @@ use bolivar_core::pdftypes::PDFObject;
 use bolivar_core::utils::HasBBox;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict, PyList};
+use std::collections::HashSet;
 
 /// Convert a PDFObject to a string representation for Python.
 fn pdf_object_to_string(obj: &PDFObject) -> String {
@@ -34,6 +36,60 @@ fn pdf_object_to_string(obj: &PDFObject) -> String {
         }
         PDFObject::Stream(_) => "<stream>".to_string(),
         PDFObject::Ref(objref) => format!("{} {} R", objref.objid, objref.genno),
+    }
+}
+
+/// Convert a PDFObject to a Python object, resolving references.
+/// Uses visited set to prevent infinite loops on circular references.
+fn pdf_object_to_py(
+    py: Python<'_>,
+    obj: &PDFObject,
+    doc: &PDFDocument,
+    visited: &mut HashSet<(u32, u32)>,
+) -> PyResult<Py<PyAny>> {
+    match obj {
+        PDFObject::Null => Ok(py.None()),
+        PDFObject::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
+        PDFObject::Int(i) => Ok(i.into_pyobject(py)?.to_owned().into_any().unbind()),
+        PDFObject::Real(f) => Ok(f.into_pyobject(py)?.to_owned().into_any().unbind()),
+        PDFObject::Name(n) => Ok(n.clone().into_pyobject(py)?.to_owned().into_any().unbind()),
+        PDFObject::String(s) => {
+            // Return as bytes like pdfminer.six - caller handles decoding
+            Ok(PyBytes::new(py, s).into_any().unbind())
+        }
+        PDFObject::Array(arr) => {
+            let list = PyList::empty(py);
+            for item in arr {
+                list.append(pdf_object_to_py(py, item, doc, visited)?)?;
+            }
+            Ok(list.into_any().unbind())
+        }
+        PDFObject::Dict(dict) => {
+            let py_dict = PyDict::new(py);
+            for (k, v) in dict.iter() {
+                py_dict.set_item(k, pdf_object_to_py(py, v, doc, visited)?)?;
+            }
+            Ok(py_dict.into_any().unbind())
+        }
+        PDFObject::Stream(stream) => {
+            // Return attrs part only for annotations
+            let py_dict = PyDict::new(py);
+            for (k, v) in stream.attrs.iter() {
+                py_dict.set_item(k, pdf_object_to_py(py, v, doc, visited)?)?;
+            }
+            Ok(py_dict.into_any().unbind())
+        }
+        PDFObject::Ref(objref) => {
+            let id = (objref.objid, objref.genno);
+            // Cycle detection
+            if !visited.insert(id) {
+                return Ok(py.None()); // Break cycle
+            }
+            match doc.getobj(objref.objid) {
+                Ok(resolved) => pdf_object_to_py(py, &resolved, doc, visited),
+                Err(_) => Ok(py.None()),
+            }
+        }
     }
 }
 
@@ -167,14 +223,14 @@ impl PyPDFDocument {
     ///
     /// Returns:
     ///     List of PDFPage objects
-    fn get_pages(&self) -> PyResult<Vec<PyPDFPage>> {
+    fn get_pages(&self, py: Python<'_>) -> PyResult<Vec<PyPDFPage>> {
         let mut pages = Vec::new();
         for (idx, page_result) in
             bolivar_core::pdfpage::PDFPage::create_pages(&self.inner).enumerate()
         {
             let page = page_result
                 .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", idx, e)))?;
-            pages.push(PyPDFPage::from_core(page));
+            pages.push(PyPDFPage::from_core(py, page, &self.inner)?);
         }
         Ok(pages)
     }
@@ -199,7 +255,6 @@ impl PyPDFDocument {
 
 /// PDF Page - represents a single page in a PDF document.
 #[pyclass(name = "PDFPage")]
-#[derive(Clone)]
 pub struct PyPDFPage {
     /// Page object ID
     #[pyo3(get)]
@@ -229,12 +284,45 @@ pub struct PyPDFPage {
     contents: Vec<Vec<u8>>,
     /// Internal: page resources (serialized for later use)
     resources: std::collections::HashMap<String, bolivar_core::pdftypes::PDFObject>,
+    /// Page annotations (resolved to Python objects)
+    annots_list: Py<PyAny>,
 }
 
 impl PyPDFPage {
-    /// Create from core PDFPage
-    fn from_core(page: bolivar_core::pdfpage::PDFPage) -> Self {
-        Self {
+    /// Create from core PDFPage, resolving annotations
+    fn from_core(
+        py: Python<'_>,
+        page: bolivar_core::pdfpage::PDFPage,
+        doc: &PDFDocument,
+    ) -> PyResult<Self> {
+        // Extract and resolve annotations
+        let annots_list: Py<PyAny> = if let Some(ref annots_obj) = page.annots {
+            // Resolve if it's a reference
+            let resolved = match annots_obj {
+                PDFObject::Ref(objref) => doc
+                    .getobj(objref.objid)
+                    .unwrap_or_else(|_| annots_obj.clone()),
+                _ => annots_obj.clone(),
+            };
+
+            // Convert array elements
+            if let PDFObject::Array(arr) = resolved {
+                let list = PyList::empty(py);
+                for item in arr {
+                    // Fresh visited set per annotation to prevent cross-contamination
+                    let mut visited = HashSet::new();
+                    let py_item = pdf_object_to_py(py, &item, doc, &mut visited)?;
+                    list.append(py_item)?;
+                }
+                list.into_any().unbind()
+            } else {
+                PyList::empty(py).into_any().unbind()
+            }
+        } else {
+            PyList::empty(py).into_any().unbind()
+        };
+
+        Ok(Self {
             pageid: page.pageid,
             mediabox: page.mediabox.map(|b| (b[0], b[1], b[2], b[3])),
             cropbox: page.cropbox.map(|b| (b[0], b[1], b[2], b[3])),
@@ -245,7 +333,8 @@ impl PyPDFPage {
             label: page.label.clone(),
             contents: page.contents.clone(),
             resources: page.resources.clone(),
-        }
+            annots_list,
+        })
     }
 }
 
@@ -256,6 +345,12 @@ impl PyPDFPage {
             "PDFPage(pageid={}, mediabox={:?}, rotate={})",
             self.pageid, self.mediabox, self.rotate
         )
+    }
+
+    /// Get page annotations as list of dicts
+    #[getter]
+    fn annots(&self, py: Python<'_>) -> Py<PyAny> {
+        self.annots_list.clone_ref(py)
     }
 }
 

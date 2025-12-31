@@ -13,6 +13,8 @@ use std::sync::Arc;
 /// - float for Greyscale
 /// - (float, float, float) for R, G, B
 /// - (float, float, float, float) for C, M, Y, K
+/// - str for Pattern name (colored pattern, PaintType=1)
+/// - (StandardColor, str) for (base_color, pattern_name) (uncolored pattern, PaintType=2)
 #[derive(Debug, Clone, PartialEq)]
 pub enum Color {
     /// Greyscale color (0.0 = black, 1.0 = white)
@@ -21,6 +23,10 @@ pub enum Color {
     Rgb(f64, f64, f64),
     /// CMYK color
     Cmyk(f64, f64, f64, f64),
+    /// Colored tiling pattern (PaintType=1) - just the pattern name
+    PatternColored(String),
+    /// Uncolored tiling pattern (PaintType=2) - base color + pattern name
+    PatternUncolored(Box<Color>, String),
 }
 
 impl Default for Color {
@@ -31,12 +37,38 @@ impl Default for Color {
 
 impl Color {
     /// Convert to a Vec<f64> for layout types.
+    ///
+    /// For pattern colors:
+    /// - PatternColored: returns empty vec (no numeric components)
+    /// - PatternUncolored: returns the base color's components
     pub fn to_vec(&self) -> Vec<f64> {
         match self {
             Color::Gray(g) => vec![*g],
             Color::Rgb(r, g, b) => vec![*r, *g, *b],
             Color::Cmyk(c, m, y, k) => vec![*c, *m, *y, *k],
+            Color::PatternColored(_) => vec![], // No numeric components
+            Color::PatternUncolored(base, _) => base.to_vec(),
         }
+    }
+
+    /// Get the pattern name if this is a pattern color.
+    ///
+    /// Returns `Some(&str)` for PatternColored and PatternUncolored,
+    /// `None` for standard colors.
+    pub fn pattern_name(&self) -> Option<&str> {
+        match self {
+            Color::PatternColored(name) => Some(name),
+            Color::PatternUncolored(_, name) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// Check if this color is a pattern color.
+    pub fn is_pattern(&self) -> bool {
+        matches!(
+            self,
+            Color::PatternColored(_) | Color::PatternUncolored(_, _)
+        )
     }
 }
 

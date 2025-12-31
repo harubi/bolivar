@@ -5,7 +5,9 @@
 //!
 //! Port of pdfminer.six tools/pdf2txt.py
 
-use bolivar_core::converter::{HTMLConverter, PDFPageAggregator, TextConverter, XMLConverter};
+use bolivar_core::converter::{
+    HOCRConverter, HTMLConverter, PDFPageAggregator, TextConverter, XMLConverter,
+};
 use bolivar_core::error::{PdfError, Result};
 use bolivar_core::high_level::{ExtractOptions, extract_pages};
 use bolivar_core::image::ImageWriter;
@@ -343,12 +345,26 @@ fn process_file<W: Write>(
                 })?;
                 converter.close();
             }
-            OutputType::Tag | OutputType::Hocr => {
+            OutputType::Tag => {
                 let laparams = build_laparams(args)?;
                 let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
                 for_each_page_with_images(&pdf_data, &options, image_writer, |page| {
                     converter.receive_layout(page);
                 })?;
+            }
+            OutputType::Hocr => {
+                let laparams = build_laparams(args)?;
+                let mut converter = HOCRConverter::with_options(
+                    writer,
+                    &args.codec,
+                    1,
+                    laparams,
+                    args.strip_control,
+                );
+                for_each_page_with_images(&pdf_data, &options, image_writer, |page| {
+                    converter.receive_layout(page);
+                })?;
+                converter.close();
             }
         }
 
@@ -391,14 +407,24 @@ fn process_file<W: Write>(
             }
             converter.close();
         }
-        OutputType::Tag | OutputType::Hocr => {
-            // Tag/hOCR output - fall back to text for now
+        OutputType::Tag => {
+            // Tag output - fall back to text for now
             let laparams = build_laparams(args)?;
             let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
             for page_result in extract_pages(&pdf_data, Some(options.clone()))? {
                 let page = page_result?;
                 converter.receive_layout(page);
             }
+        }
+        OutputType::Hocr => {
+            let laparams = build_laparams(args)?;
+            let mut converter =
+                HOCRConverter::with_options(writer, &args.codec, 1, laparams, args.strip_control);
+            for page_result in extract_pages(&pdf_data, Some(options.clone()))? {
+                let page = page_result?;
+                converter.receive_layout(page);
+            }
+            converter.close();
         }
     }
 

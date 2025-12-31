@@ -153,6 +153,32 @@ class TestPDFPage:
             pages = list(PDFPage.create_pages(doc))
             assert hasattr(pages[0], "mediabox")
 
+    def test_page_has_annots(self):
+        """PDFPage.annots returns list of annotation dicts for PDF with annotations."""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+
+        # pdffill-demo.pdf has annotations (links)
+        pdf_path = FIXTURES_DIR / "pdfplumber/pdffill-demo.pdf"
+        with open(pdf_path, "rb") as f:
+            parser = PDFParser(f)
+            doc = PDFDocument(parser)
+            pages = list(PDFPage.create_pages(doc))
+            page = pages[0]
+
+            # annots should be a list (not None)
+            assert page.annots is not None, "page.annots should not be None"
+            assert isinstance(page.annots, list), "page.annots should be a list"
+
+            # This PDF has annotations
+            assert len(page.annots) > 0, "Expected annotations in pdffill-demo.pdf"
+
+            # Each annotation should be a dict with Rect
+            for annot in page.annots:
+                assert isinstance(annot, dict), f"Annotation should be dict, got {type(annot)}"
+                assert "Rect" in annot, "Annotation should have Rect field"
+
 
 class TestPDFResourceManager:
     """Test pdfminer.pdfinterp.PDFResourceManager shim"""

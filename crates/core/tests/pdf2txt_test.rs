@@ -12,6 +12,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Once;
 
+use bolivar_core::high_level::extract_text;
+
 // ============================================================================
 // Helper functions
 // ============================================================================
@@ -734,4 +736,62 @@ fn test_dump_images_contrib_issue_1057_tiff_predictor() {
         "Image should be a BMP file, got: {:?}",
         image_files
     );
+}
+
+// ============================================================================
+// TestPdf2Txt - contrib and scancode high-level API tests
+// ============================================================================
+
+#[test]
+fn test_contrib_issue_350() {
+    let pdf = include_bytes!("fixtures/contrib/issue-00352-asw-oct96-p41.pdf");
+    let text = extract_text(pdf, None).unwrap();
+    assert!(!text.is_empty());
+}
+
+#[test]
+fn test_contrib_issue_1059_textseq() {
+    let pdf = include_bytes!("fixtures/contrib/issue-1059-cmap-decode.pdf");
+    let text = extract_text(pdf, None).unwrap();
+    assert!(!text.is_empty());
+}
+
+#[test]
+fn test_contrib_issue_1061_inline() {
+    let pdf = include_bytes!("fixtures/contrib/issue-1061-colour-space-stack.pdf");
+    let text = extract_text(pdf, None).unwrap();
+    assert!(!text.is_empty());
+}
+
+/// Test issue-1062-filters.pdf - PDF with complex filter chains.
+/// This test is ignored by default due to long processing time (10+ minutes).
+/// Run with: cargo test --test pdf2txt_test -- --ignored test_contrib_issue_1062_inline
+#[test]
+#[ignore]
+fn test_contrib_issue_1062_inline() {
+    let pdf = include_bytes!("fixtures/contrib/issue-1062-filters.pdf");
+    let text = extract_text(pdf, None).unwrap();
+    assert!(!text.is_empty());
+}
+
+#[test]
+fn test_scancode_patchelf() {
+    let pdf = include_bytes!("fixtures/scancode/patchelf.pdf");
+    let text = extract_text(pdf, None).unwrap();
+    assert!(!text.is_empty());
+}
+
+#[test]
+fn test_contrib_hash_two_complement() {
+    let pdf = include_bytes!("fixtures/contrib/issue-00352-hash-twos-complement.pdf");
+    let text = extract_text(pdf, None).unwrap();
+    assert!(!text.is_empty());
+}
+
+#[test]
+fn test_contrib_issue_1113_evil_xobjects() {
+    let pdf = include_bytes!("fixtures/contrib/issue-1113-evil-xobjects.pdf");
+    // Test for circular form xobjects - should not infinite loop
+    // The unwrap() verifies no error; completing the function verifies no infinite loop
+    let _text = extract_text(pdf, None).unwrap();
 }
