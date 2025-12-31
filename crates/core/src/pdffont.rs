@@ -213,6 +213,28 @@ impl DynCMap {
     pub fn is_identity_cmap_byte(&self) -> bool {
         matches!(self, DynCMap::IdentityCMapByte(_))
     }
+
+    /// Check if this CMap has any mappings.
+    ///
+    /// For identity CMaps, this always returns true since they map all codes.
+    /// For standard CMaps, this checks if any code-to-CID mappings exist.
+    pub fn has_mappings(&self) -> bool {
+        match self {
+            DynCMap::CMap(c) => c.has_mappings(),
+            // Identity CMaps always have mappings (they map all valid codes)
+            DynCMap::IdentityCMap(_) | DynCMap::IdentityCMapByte(_) => true,
+        }
+    }
+
+    /// Get the CMap name from attrs, if this is a standard CMap with a name set.
+    ///
+    /// Returns None for identity CMaps (they don't store attrs).
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            DynCMap::CMap(c) => c.name(),
+            DynCMap::IdentityCMap(_) | DynCMap::IdentityCMapByte(_) => None,
+        }
+    }
 }
 
 /// Unicode map holder for runtime type dispatch.
@@ -614,12 +636,14 @@ impl PDFCIDFont {
             Some(name) if CMapDB::is_cjk_2byte_cmap(name) => {
                 let mut cmap = CMap::new();
                 cmap.set_vertical(CMapDB::is_vertical(name));
+                cmap.attrs.insert("CMapName".to_string(), name.to_string());
                 cmap.add_cid_range(&[0x00, 0x00], &[0xFF, 0xFF], 0);
                 DynCMap::CMap(Box::new(cmap))
             }
             Some(name) => {
                 let mut cmap = CMap::new();
                 cmap.set_vertical(CMapDB::is_vertical(name));
+                cmap.attrs.insert("CMapName".to_string(), name.to_string());
                 DynCMap::CMap(Box::new(cmap))
             }
             None => DynCMap::CMap(Box::new(CMap::new())),

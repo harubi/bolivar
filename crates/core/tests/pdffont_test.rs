@@ -10,6 +10,8 @@ use std::collections::HashMap;
 ///
 /// Adapted from Python test_get_cmap_from_pickle - since we don't use pickle files,
 /// we verify that PDFCIDFont can be constructed with a named CMap encoding.
+/// Python assertion: `cmap.attrs.get("CMapName") == cmap_name`
+/// Python assertion: `len(cmap.code2cid) > 0`
 #[test]
 fn test_get_cmap_from_spec() {
     let cmap_name = "UniGB-UCS2-H";
@@ -19,8 +21,13 @@ fn test_get_cmap_from_spec() {
         PDFObject::Name(cmap_name.to_string()),
     );
 
-    // Should not panic - creates font with default CMap for unknown encoding names
-    let _font = PDFCIDFont::new(&spec, None);
+    let font = PDFCIDFont::new(&spec, None);
+
+    // Python: assert cmap.attrs.get("CMapName") == cmap_name
+    assert_eq!(font.cmap.name(), Some(cmap_name));
+
+    // Python: assert len(cmap.code2cid) > 0
+    assert!(font.cmap.has_mappings());
 }
 
 /// Test that PDFCIDFont correctly identifies Identity-H CMap.
@@ -81,12 +88,23 @@ fn test_pdffont_char_width_int_cid() {
 }
 
 /// Str cid widths should be used.
+///
+/// Python test: `("Str cid widths should be used", {"0": 200.0}, 0.2)`
+/// In Python, widths can be keyed by string (unicode char) or int (CID).
+/// The Rust implementation uses only integer CID keys (HashMap<u32, Option<f64>>).
+/// This test verifies the same expected output (0.2) using an integer key.
+///
+/// Note: The Python implementation first tries `widths.get(cid)` (int lookup),
+/// then tries `widths.get(to_unichr(cid))` (string lookup). The Rust
+/// implementation only supports integer CID keys since Rust HashMaps require
+/// homogeneous key types.
 #[test]
 fn test_pdffont_char_width_str_cid() {
+    // Python test uses {"0": 200.0} where "0" is the unicode string.
+    // In Rust, we use the integer CID directly since FontWidthDict is HashMap<u32, Option<f64>>.
     let mut widths = HashMap::new();
     widths.insert(0, Some(200.0));
     let pdffont = MockPdfFont::new(HashMap::new(), widths, 100.0);
-    // MockPdfFont.to_unichr returns the string representation of the cid
     assert_eq!(pdffont.char_width(0), 0.2);
 }
 
@@ -100,9 +118,17 @@ fn test_pdffont_char_width_invalid_int() {
 }
 
 /// Invalid cid widths (None with str key) should use default.
+///
+/// Python test: `("Invalid cid widths should use default", {"0": None}, 0.1)`
+/// In Python, a None width value means the width is invalid/missing.
+/// The Rust implementation represents this with `Option<f64>` where `None` = invalid.
+///
+/// Note: In Python, the key "0" is a string. In Rust, we use integer CID keys.
+/// The behavior is the same: when the width value is None/invalid, use default.
 #[test]
 fn test_pdffont_char_width_invalid_str() {
-    // In Rust we use u32 keys, so this tests the same path as above
+    // Python test uses {"0": None} where "0" is the unicode string.
+    // In Rust, we use the integer CID directly.
     let mut widths: HashMap<u32, Option<f64>> = HashMap::new();
     widths.insert(0, None);
     let pdffont = MockPdfFont::new(HashMap::new(), widths, 100.0);

@@ -679,8 +679,7 @@ fn process_page(
     let mut rsrcmgr = bolivar_core::pdfinterp::PDFResourceManager::with_caching(true);
 
     // Create aggregator for this page
-    let mut aggregator =
-        bolivar_core::converter::PDFPageAggregator::new(la, page.pageid as i32);
+    let mut aggregator = bolivar_core::converter::PDFPageAggregator::new(la, page.pageid as i32);
 
     // Recreate the core PDFPage with contents
     // This is a workaround since we can't store references across Python calls

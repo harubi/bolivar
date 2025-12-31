@@ -204,6 +204,18 @@ impl PDFLayoutAnalyzer {
             })
     }
 
+    /// Get original_path of first curve item (for testing).
+    pub fn cur_item_first_original_path(&self) -> Option<Vec<(char, Vec<Point>)>> {
+        self.cur_item
+            .as_ref()
+            .and_then(|c| c.items.first())
+            .and_then(|item| match item {
+                LTItem::Curve(c) => c.original_path.clone(),
+                LTItem::Line(l) => l.original_path.clone(),
+                _ => None,
+            })
+    }
+
     /// Check if currently in a figure.
     pub fn in_figure(&self) -> bool {
         !self.stack.is_empty()

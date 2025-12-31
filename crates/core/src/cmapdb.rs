@@ -174,6 +174,19 @@ impl CMap {
         }
         result
     }
+
+    /// Get the CMapName from attrs, if set.
+    pub fn name(&self) -> Option<&str> {
+        self.attrs.get("CMapName").map(|s| s.as_str())
+    }
+
+    /// Check if this CMap has any code-to-CID mappings.
+    pub fn has_mappings(&self) -> bool {
+        !self.code1_to_cid.is_empty()
+            || !self.code2_to_cid.is_empty()
+            || !self.code_to_cid.is_empty()
+            || !self.ranges.is_empty()
+    }
 }
 
 impl Default for CMap {

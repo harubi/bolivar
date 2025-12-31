@@ -28,11 +28,20 @@ pub fn safe_int(obj: &PDFObject) -> Option<i64> {
 
 /// Safely convert a PDFObject to a float.
 ///
-/// Returns `Some(f64)` if the object is numeric (Int or Real), `None` otherwise.
+/// Returns `Some(f64)` if the object is numeric (Int, Real, or parseable String), `None` otherwise.
+/// For String inputs, attempts to parse the UTF-8 string as a float.
+/// Returns `None` for values that would overflow f64 (infinity).
 pub fn safe_float(obj: &PDFObject) -> Option<f64> {
     match obj {
         PDFObject::Int(n) => Some(*n as f64),
         PDFObject::Real(n) => Some(*n),
+        PDFObject::String(bytes) => {
+            // Try to parse string as float, matching Python's safe_float behavior
+            let s = std::str::from_utf8(bytes).ok()?;
+            let f = s.parse::<f64>().ok()?;
+            // Return None for infinity (overflow), matching Python behavior
+            if f.is_infinite() { None } else { Some(f) }
+        }
         _ => None,
     }
 }

@@ -117,8 +117,10 @@ fn test_tokenization() {
 }
 
 /// Expected objects from TESTDATA (after stack parsing)
+/// Matches Python's OBJS list exactly (27 objects)
 fn expected_objects() -> Vec<(usize, PSToken)> {
     use PSToken::*;
+    use std::collections::HashMap;
     vec![
         (23, Literal("a".to_string())),
         (25, Literal("BCD".to_string())),
@@ -144,9 +146,19 @@ fn expected_objects() -> Vec<(usize, PSToken)> {
         (211, String(b"\xab\xcd\x00\x12\x34\x05".to_vec())),
         (230, Literal("a".to_string())),
         (232, Literal("b".to_string())),
-        // (234, Array([String(b"c".to_vec())])) - proc becomes array
-        // (246, Array([Int(1), String(b"z".to_vec())])) - array
-        // (258, Dict({"foo": String(b"bar".to_vec())})) - dict
+        // Proc {(c)do*} becomes Array([String(b"c")])
+        (234, Array(vec![String(b"c".to_vec())])),
+        // Array [ 1 (z) ! ] - ! is a keyword that's not pushed as object
+        (246, Array(vec![Int(1), String(b"z".to_vec())])),
+        // Dict << /foo (bar) >>
+        (
+            258,
+            Dict({
+                let mut d = HashMap::new();
+                d.insert("foo".to_string(), String(b"bar".to_vec()));
+                d
+            }),
+        ),
     ]
 }
 
@@ -163,19 +175,18 @@ fn test_object_parsing() {
         }
     }
 
-    // Should have 27 objects (including array, proc, dict)
-    // The exact count depends on how we handle composite objects
-    assert!(
-        objs.len() >= 22,
-        "Expected at least 22 objects, got {}",
+    // Should have exactly 27 objects (matching Python OBJS list)
+    let expected = expected_objects();
+    assert_eq!(
+        objs.len(),
+        expected.len(),
+        "Should parse exactly {} objects from TESTDATA (got {})",
+        expected.len(),
         objs.len()
     );
 
-    // Verify first few objects match
-    let expected = expected_objects();
-    for (i, ((pos, obj), (exp_pos, exp_obj))) in
-        objs.iter().take(22).zip(expected.iter()).enumerate()
-    {
+    // Verify all objects match expected
+    for (i, ((pos, obj), (exp_pos, exp_obj))) in objs.iter().zip(expected.iter()).enumerate() {
         assert_eq!(
             *pos, *exp_pos,
             "Object {} position mismatch: got {}, expected {}",

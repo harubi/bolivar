@@ -203,3 +203,108 @@ fn test_is_identity_cmap_byte_name() {
     assert!(CMapDB::is_identity_cmap_byte("OneByteIdentityV"));
     assert!(!CMapDB::is_identity_cmap_byte("Identity-H"));
 }
+
+// === Additional IdentityCMap tests matching Python parity ===
+
+#[test]
+fn test_identity_cmap_odd_length_buffer() {
+    // Python: struct.pack(">10H", *range(10)) + b"\x00" = 21 bytes
+    // Decodes to (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+    let cmap = IdentityCMap::new(false);
+
+    // Build buffer: 10 big-endian u16 shorts (0-9) + 1 extra byte
+    let mut buffer: Vec<u8> = Vec::new();
+    for i in 0u16..10 {
+        buffer.extend_from_slice(&i.to_be_bytes());
+    }
+    buffer.push(0x00); // Extra byte to make it odd (21 bytes)
+
+    assert_eq!(buffer.len(), 21);
+
+    let result: Vec<u32> = cmap.decode(&buffer).collect();
+    assert_eq!(result.len(), 10);
+    assert_eq!(result, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+}
+
+#[test]
+fn test_identity_cmap_even_length_buffer() {
+    // Python: struct.pack(">10H", *range(10)) = 20 bytes
+    let cmap = IdentityCMap::new(false);
+
+    let mut buffer: Vec<u8> = Vec::new();
+    for i in 0u16..10 {
+        buffer.extend_from_slice(&i.to_be_bytes());
+    }
+
+    assert_eq!(buffer.len(), 20);
+
+    let result: Vec<u32> = cmap.decode(&buffer).collect();
+    assert_eq!(result.len(), 10);
+    assert_eq!(result, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+}
+
+#[test]
+fn test_identity_cmap_single_byte_buffer() {
+    // Python: b"\x00" -> () (empty tuple since 1 // 2 = 0)
+    let cmap = IdentityCMap::new(false);
+    let result: Vec<u32> = cmap.decode(&[0x00]).collect();
+    assert_eq!(result, Vec::<u32>::new());
+}
+
+#[test]
+fn test_identity_cmap_various_odd_lengths() {
+    // Python: Test various odd lengths 3, 5, 7, 9, 11, 13, 15, 17, 19, 21
+    let cmap = IdentityCMap::new(false);
+
+    for num_shorts in 1..=10 {
+        let buffer_size = num_shorts * 2 + 1; // Add 1 to make it odd
+
+        let mut buffer: Vec<u8> = Vec::new();
+        for i in 0..num_shorts as u16 {
+            buffer.extend_from_slice(&i.to_be_bytes());
+        }
+        buffer.push(0x00); // Extra byte
+
+        assert_eq!(buffer.len(), buffer_size);
+
+        let result: Vec<u32> = cmap.decode(&buffer).collect();
+        assert_eq!(result.len(), num_shorts);
+
+        let expected: Vec<u32> = (0..num_shorts as u32).collect();
+        assert_eq!(result, expected);
+    }
+}
+
+#[test]
+fn test_identity_cmap_max_values() {
+    // Python: max_values = [65535, 65534, 65533, 65532, 65531]
+    let cmap = IdentityCMap::new(false);
+
+    let max_values: Vec<u16> = vec![65535, 65534, 65533, 65532, 65531];
+    let mut buffer: Vec<u8> = Vec::new();
+    for v in &max_values {
+        buffer.extend_from_slice(&v.to_be_bytes());
+    }
+
+    let result: Vec<u32> = cmap.decode(&buffer).collect();
+    assert_eq!(result.len(), max_values.len());
+
+    let expected: Vec<u32> = max_values.iter().map(|&v| v as u32).collect();
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_identity_cmap_byte_odd_length_parametrized() {
+    // Python: for length in [1, 5, 11, 13, 21, 255]
+    let cmap = IdentityCMapByte::new(false);
+
+    for length in [1usize, 5, 11, 13, 21, 255] {
+        let test_buffer: Vec<u8> = (0u8..).take(length).collect();
+
+        let result: Vec<u32> = cmap.decode(&test_buffer).collect();
+        assert_eq!(result.len(), length, "Failed for length {}", length);
+
+        let expected: Vec<u32> = (0u32..).take(length).collect();
+        assert_eq!(result, expected, "Values mismatch for length {}", length);
+    }
+}
