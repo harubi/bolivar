@@ -27,6 +27,21 @@ def test_pdfplumber_patch_default_on(monkeypatch):
     )
 
 
+def test_pdfplumber_patch_default_on_without_reload(monkeypatch):
+    # Clean import state so pdfminer/__init__.py runs
+    for name in list(sys.modules.keys()):
+        if name.startswith("pdfplumber") or name.startswith("pdfminer"):
+            sys.modules.pop(name, None)
+
+    monkeypatch.delenv("BOLIVAR_PDFPLUMBER_PATCH", raising=False)
+
+    import pdfplumber
+
+    assert (
+        getattr(pdfplumber.page.Page.extract_tables, "_bolivar_patched", False) is True
+    )
+
+
 def test_pdfplumber_patch_env_opt_out(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch, "0")
     assert (
