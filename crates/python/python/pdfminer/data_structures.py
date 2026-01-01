@@ -41,6 +41,13 @@ class NumberTree:
             self._cache = list(self._parse(self.obj))
         return iter(self._cache)
 
+    @property
+    def values(self) -> List[Tuple[int, Any]]:
+        """Return cached (number, value) pairs."""
+        if self._cache is None:
+            self._cache = list(self._parse(self.obj))
+        return self._cache
+
     def lookup(self, key: int) -> Optional[Any]:
         """Look up a value by its number key."""
         for k, v in self:

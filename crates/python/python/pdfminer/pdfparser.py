@@ -70,3 +70,7 @@ class PDFParser:
     def get_path(self):
         """Get the PDF path if available (preferred for mmap)."""
         return self._path
+
+
+# pdfminer.six uses a PSKeyword for null; our objects resolve to None
+PDFParser.KEYWORD_NULL = None

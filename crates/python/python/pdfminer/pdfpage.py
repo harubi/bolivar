@@ -35,7 +35,7 @@ class PDFPage:
             self.cropbox = self.mediabox  # Default to mediabox
 
         self.rotate = rust_page.rotate
-        self.resources = {}  # TODO: Populate from Rust if needed
+        self.resources = rust_page.resources if hasattr(rust_page, "resources") else {}
         self.label = rust_page.label
 
         # Get annotations from Rust page
@@ -47,22 +47,23 @@ class PDFPage:
         self.trimbox = list(rust_page.trimbox) if hasattr(rust_page, 'trimbox') and rust_page.trimbox else None
         self.artbox = list(rust_page.artbox) if hasattr(rust_page, 'artbox') and rust_page.artbox else None
 
-        # Populate attrs dict with uppercase keys for pdfplumber compatibility
-        # pdfplumber accesses page_obj.attrs.get("MediaBox") etc.
-        # Only include optional boxes if they have values (pdfplumber crashes on None)
-        self.attrs = {
-            "MediaBox": self.mediabox,
-            "CropBox": self.cropbox,
-            "Rotate": self.rotate,
-            "Annots": self.annots,
-            "B": self.beads,
-        }
-        if self.bleedbox:
-            self.attrs["BleedBox"] = self.bleedbox
-        if self.trimbox:
-            self.attrs["TrimBox"] = self.trimbox
-        if self.artbox:
-            self.attrs["ArtBox"] = self.artbox
+        # Populate attrs dict from Rust when available
+        if hasattr(rust_page, "attrs"):
+            self.attrs = rust_page.attrs
+        else:
+            self.attrs = {
+                "MediaBox": self.mediabox,
+                "CropBox": self.cropbox,
+                "Rotate": self.rotate,
+                "Annots": self.annots,
+                "B": self.beads,
+            }
+            if self.bleedbox:
+                self.attrs["BleedBox"] = self.bleedbox
+            if self.trimbox:
+                self.attrs["TrimBox"] = self.trimbox
+            if self.artbox:
+                self.attrs["ArtBox"] = self.artbox
 
     @classmethod
     def create_pages(cls, document, caching=True, check_extractable=True):

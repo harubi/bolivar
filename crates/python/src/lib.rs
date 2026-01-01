@@ -54,18 +54,34 @@ fn pdf_object_to_string(obj: &PDFObject) -> String {
 
 /// Convert a PDFObject to a Python object, resolving references.
 /// Uses visited set to prevent infinite loops on circular references.
-fn pdf_object_to_py(
+fn name_to_psliteral(py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
+    let psparser = py.import("pdfminer.psparser")?;
+    let cls = psparser.getattr("PSLiteral")?;
+    let obj = cls.call1((PyBytes::new(py, name.as_bytes()),))?;
+    Ok(obj.into_any().unbind())
+}
+
+fn pdf_object_to_py_internal(
     py: Python<'_>,
     obj: &PDFObject,
     doc: &PDFDocument,
     visited: &mut HashSet<(u32, u32)>,
+    name_as_psliteral: bool,
+    resolve_refs: bool,
+    py_doc: Option<&Py<PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     match obj {
         PDFObject::Null => Ok(py.None()),
         PDFObject::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
         PDFObject::Int(i) => Ok(i.into_pyobject(py)?.to_owned().into_any().unbind()),
         PDFObject::Real(f) => Ok(f.into_pyobject(py)?.to_owned().into_any().unbind()),
-        PDFObject::Name(n) => Ok(n.clone().into_pyobject(py)?.to_owned().into_any().unbind()),
+        PDFObject::Name(n) => {
+            if name_as_psliteral {
+                name_to_psliteral(py, n)
+            } else {
+                Ok(n.clone().into_pyobject(py)?.to_owned().into_any().unbind())
+            }
+        }
         PDFObject::String(s) => {
             // Return as bytes like pdfminer.six - caller handles decoding
             Ok(PyBytes::new(py, s).into_any().unbind())
@@ -73,14 +89,33 @@ fn pdf_object_to_py(
         PDFObject::Array(arr) => {
             let list = PyList::empty(py);
             for item in arr {
-                list.append(pdf_object_to_py(py, item, doc, visited)?)?;
+                list.append(pdf_object_to_py_internal(
+                    py,
+                    item,
+                    doc,
+                    visited,
+                    name_as_psliteral,
+                    resolve_refs,
+                    py_doc,
+                )?)?;
             }
             Ok(list.into_any().unbind())
         }
         PDFObject::Dict(dict) => {
             let py_dict = PyDict::new(py);
             for (k, v) in dict.iter() {
-                py_dict.set_item(k, pdf_object_to_py(py, v, doc, visited)?)?;
+                py_dict.set_item(
+                    k,
+                    pdf_object_to_py_internal(
+                        py,
+                        v,
+                        doc,
+                        visited,
+                        name_as_psliteral,
+                        resolve_refs,
+                        py_doc,
+                    )?,
+                )?;
             }
             Ok(py_dict.into_any().unbind())
         }
@@ -88,22 +123,63 @@ fn pdf_object_to_py(
             // Return attrs part only for annotations
             let py_dict = PyDict::new(py);
             for (k, v) in stream.attrs.iter() {
-                py_dict.set_item(k, pdf_object_to_py(py, v, doc, visited)?)?;
+                py_dict.set_item(
+                    k,
+                    pdf_object_to_py_internal(
+                        py,
+                        v,
+                        doc,
+                        visited,
+                        name_as_psliteral,
+                        resolve_refs,
+                        py_doc,
+                    )?,
+                )?;
             }
             Ok(py_dict.into_any().unbind())
         }
         PDFObject::Ref(objref) => {
+            if !resolve_refs {
+                let pdftypes = py.import("pdfminer.pdftypes")?;
+                let cls = pdftypes.getattr("PDFObjRef")?;
+                let doc_obj = if let Some(doc_obj) = py_doc {
+                    doc_obj.clone_ref(py).into_any()
+                } else {
+                    py.None()
+                };
+                let obj = cls.call1((doc_obj, objref.objid))?;
+                return Ok(obj.into_any().unbind());
+            }
             let id = (objref.objid, objref.genno);
             // Cycle detection
             if !visited.insert(id) {
                 return Ok(py.None()); // Break cycle
             }
             match doc.getobj(objref.objid) {
-                Ok(resolved) => pdf_object_to_py(py, &resolved, doc, visited),
+                Ok(resolved) => pdf_object_to_py_internal(
+                    py,
+                    &resolved,
+                    doc,
+                    visited,
+                    name_as_psliteral,
+                    resolve_refs,
+                    py_doc,
+                ),
                 Err(_) => Ok(py.None()),
             }
         }
     }
+}
+
+/// Convert a PDFObject to a Python object, resolving references.
+/// Uses visited set to prevent infinite loops on circular references.
+fn pdf_object_to_py(
+    py: Python<'_>,
+    obj: &PDFObject,
+    doc: &PDFDocument,
+    visited: &mut HashSet<(u32, u32)>,
+) -> PyResult<Py<PyAny>> {
+    pdf_object_to_py_internal(py, obj, doc, visited, false, true, None)
 }
 
 fn parse_text_dir(value: &str) -> Result<TextDir, PyErr> {
@@ -444,6 +520,30 @@ impl PyPDFDocument {
             })
             .collect()
     }
+
+    /// Get document catalog dictionary.
+    #[getter]
+    fn catalog(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let py_dict = PyDict::new(py);
+        let catalog = slf.inner.catalog().clone();
+        let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
+        for (k, v) in catalog.iter() {
+            let mut visited = HashSet::new();
+            let py_val =
+                pdf_object_to_py_internal(py, v, &slf.inner, &mut visited, true, false, Some(&py_doc))?;
+            py_dict.set_item(k, py_val)?;
+        }
+        Ok(py_dict.into_any().unbind())
+    }
+
+    /// Resolve an indirect object by ID.
+    fn getobj(slf: PyRef<'_, Self>, py: Python<'_>, objid: u32) -> PyResult<Py<PyAny>> {
+        let obj = slf.inner.getobj(objid)
+            .map_err(|e| PyValueError::new_err(format!("Failed to resolve object: {}", e)))?;
+        let mut visited = HashSet::new();
+        let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
+        pdf_object_to_py_internal(py, &obj, &slf.inner, &mut visited, true, false, Some(&py_doc))
+    }
 }
 
 /// PDF Page - represents a single page in a PDF document.
@@ -479,6 +579,10 @@ pub struct PyPDFPage {
     resources: std::collections::HashMap<String, bolivar_core::pdftypes::PDFObject>,
     /// Page annotations (resolved to Python objects)
     annots_list: Py<PyAny>,
+    /// Full page attributes dict (resolved)
+    attrs_dict: Py<PyAny>,
+    /// Page resources dict (resolved)
+    resources_dict: Py<PyAny>,
 }
 
 impl PyPDFPage {
@@ -515,6 +619,20 @@ impl PyPDFPage {
             PyList::empty(py).into_any().unbind()
         };
 
+        let attrs_dict = PyDict::new(py);
+        for (k, v) in page.attrs.iter() {
+            let mut visited = HashSet::new();
+            let py_val = pdf_object_to_py_internal(py, v, doc, &mut visited, true, true, None)?;
+            attrs_dict.set_item(k, py_val)?;
+        }
+
+        let resources_dict = PyDict::new(py);
+        for (k, v) in page.resources.iter() {
+            let mut visited = HashSet::new();
+            let py_val = pdf_object_to_py_internal(py, v, doc, &mut visited, true, true, None)?;
+            resources_dict.set_item(k, py_val)?;
+        }
+
         Ok(Self {
             pageid: page.pageid,
             mediabox: page.mediabox.map(|b| (b[0], b[1], b[2], b[3])),
@@ -527,6 +645,8 @@ impl PyPDFPage {
             contents: page.contents.clone(),
             resources: page.resources.clone(),
             annots_list,
+            attrs_dict: attrs_dict.into_any().unbind(),
+            resources_dict: resources_dict.into_any().unbind(),
         })
     }
 }
@@ -544,6 +664,18 @@ impl PyPDFPage {
     #[getter]
     fn annots(&self, py: Python<'_>) -> Py<PyAny> {
         self.annots_list.clone_ref(py)
+    }
+
+    /// Get page attributes dict (resolved)
+    #[getter]
+    fn attrs(&self, py: Python<'_>) -> Py<PyAny> {
+        self.attrs_dict.clone_ref(py)
+    }
+
+    /// Get page resources dict (resolved)
+    #[getter]
+    fn resources(&self, py: Python<'_>) -> Py<PyAny> {
+        self.resources_dict.clone_ref(py)
     }
 }
 

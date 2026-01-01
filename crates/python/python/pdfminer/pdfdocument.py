@@ -46,9 +46,13 @@ class PDFDocument:
         # Compatibility attributes
         self.xrefs = []
         self.info = self._rust_doc.info  # List of info dicts from Rust
-        self.catalog = {}
+        self.catalog = self._rust_doc.catalog
         self.encryption = None
         self.decipher = None
+
+    def getobj(self, objid):
+        """Resolve an indirect object by object id."""
+        return self._rust_doc.getobj(objid)
 
 
 class PDFNoOutlines(Exception):
