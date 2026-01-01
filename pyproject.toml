@@ -17,6 +17,9 @@ classifiers = [
 ]
 dynamic = ["version"]
 
+[project.optional-dependencies]
+test = ["pytest-cov"]
+
 [tool.maturin]
 manifest-path = "crates/python/Cargo.toml"
 python-source = "crates/python/python"
