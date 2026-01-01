@@ -512,6 +512,8 @@ pub struct PDFPageInterpreter<'a, D: PDFDevice> {
     xobjmap: HashMap<String, PDFStream>,
     /// Inline image counter
     inline_image_id: usize,
+    /// Document reference for resolving XObject resources
+    doc: Option<&'a crate::pdfdocument::PDFDocument>,
 }
 
 #[allow(non_snake_case)]
@@ -531,6 +533,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             resources: HashMap::new(),
             xobjmap: HashMap::new(),
             inline_image_id: 0,
+            doc: None,
         }
     }
 
@@ -580,7 +583,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     pub fn init_resources(
         &mut self,
         resources: &HashMap<String, PDFObject>,
-        doc: Option<&crate::pdfdocument::PDFDocument>,
+        doc: Option<&'a crate::pdfdocument::PDFDocument>,
     ) {
         self.fontmap.clear();
         self.xobjmap.clear();
@@ -1418,6 +1421,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
     /// Do - Invoke named XObject (images or form XObjects).
     pub fn do_Do(&mut self, xobjid: String) {
+        if std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1") {
+            eprintln!("Do XObject: {}", xobjid);
+        }
         let xobj = match self.xobjmap.get(&xobjid) {
             Some(xobj) => xobj,
             None => return,
@@ -1428,11 +1434,139 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             .and_then(|obj| obj.as_name().ok())
             .unwrap_or("");
 
-        if subtype == "Image" && xobj.get("Width").is_some() && xobj.get("Height").is_some() {
+        if subtype == "Form" && xobj.get("BBox").is_some() {
+            if std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1") {
+                eprintln!("Do Form XObject: {}", xobjid);
+            }
+            let bbox = match Self::parse_bbox(xobj.get("BBox")) {
+                Some(b) => b,
+                None => return,
+            };
+            let matrix = Self::parse_matrix(xobj.get("Matrix"));
+
+            let resources = xobj
+                .get("Resources")
+                .and_then(|r| self.resolve_resources(r))
+                .unwrap_or_else(|| self.resources.clone());
+
+            let data = if let Some(doc) = self.doc {
+                doc.decode_stream(xobj).ok()
+            } else {
+                Some(xobj.get_data().to_vec())
+            };
+            if data.is_none()
+                && std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1")
+            {
+                eprintln!("Do Form XObject: {} decode failed", xobjid);
+            }
+            let Some(data) = data else {
+                return;
+            };
+            if std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1") {
+                eprintln!("Do Form XObject: {} data len {}", xobjid, data.len());
+            }
+
+            let saved = self.snapshot_state();
+            self.device.begin_figure(&xobjid, bbox, matrix);
+
+            let form_ctm = mult_matrix(matrix, self.ctm);
+            self.render_contents(resources, vec![data], form_ctm);
+
+            self.device.end_figure(&xobjid);
+            self.restore_state(saved);
+        } else if subtype == "Image"
+            && xobj.get("Width").is_some()
+            && xobj.get("Height").is_some()
+        {
             self.device
                 .begin_figure(&xobjid, (0.0, 0.0, 1.0, 1.0), MATRIX_IDENTITY);
             self.device.render_image(&xobjid, xobj);
             self.device.end_figure(&xobjid);
+        }
+    }
+
+    /// Render content streams with specific resources and CTM.
+    fn render_contents(
+        &mut self,
+        resources: HashMap<String, PDFObject>,
+        streams: Vec<Vec<u8>>,
+        ctm: Matrix,
+    ) {
+        self.init_resources(&resources, self.doc);
+        self.init_state(ctm);
+        self.execute(&streams);
+    }
+
+    fn snapshot_state(&mut self) -> InterpreterState {
+        InterpreterState {
+            gstack: std::mem::take(&mut self.gstack),
+            ctm: self.ctm,
+            textstate: self.textstate.clone(),
+            graphicstate: self.graphicstate.clone(),
+            curpath: std::mem::take(&mut self.curpath),
+            current_point: self.current_point,
+            fontmap: std::mem::take(&mut self.fontmap),
+            resources: std::mem::take(&mut self.resources),
+            xobjmap: std::mem::take(&mut self.xobjmap),
+        }
+    }
+
+    fn restore_state(&mut self, state: InterpreterState) {
+        self.gstack = state.gstack;
+        self.ctm = state.ctm;
+        self.device.set_ctm(self.ctm);
+        self.textstate = state.textstate;
+        self.graphicstate = state.graphicstate;
+        self.curpath = state.curpath;
+        self.current_point = state.current_point;
+        self.fontmap = state.fontmap;
+        self.resources = state.resources;
+        self.xobjmap = state.xobjmap;
+    }
+
+    fn resolve_resources(&self, obj: &PDFObject) -> Option<HashMap<String, PDFObject>> {
+        match obj {
+            PDFObject::Dict(d) => Some(d.clone()),
+            PDFObject::Ref(r) => {
+                if let Some(doc) = self.doc {
+                    match doc.resolve(&PDFObject::Ref(r.clone())) {
+                        Ok(PDFObject::Dict(d)) => Some(d),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_bbox(obj: Option<&PDFObject>) -> Option<(f64, f64, f64, f64)> {
+        let arr = obj?.as_array().ok()?;
+        if arr.len() < 4 {
+            return None;
+        }
+        let x0 = arr[0].as_num().ok()?;
+        let y0 = arr[1].as_num().ok()?;
+        let x1 = arr[2].as_num().ok()?;
+        let y1 = arr[3].as_num().ok()?;
+        Some((x0, y0, x1, y1))
+    }
+
+    fn parse_matrix(obj: Option<&PDFObject>) -> Matrix {
+        let arr = match obj.and_then(|o| o.as_array().ok()) {
+            Some(arr) if arr.len() >= 6 => arr,
+            _ => return MATRIX_IDENTITY,
+        };
+        let a = arr[0].as_num().ok();
+        let b = arr[1].as_num().ok();
+        let c = arr[2].as_num().ok();
+        let d = arr[3].as_num().ok();
+        let e = arr[4].as_num().ok();
+        let f = arr[5].as_num().ok();
+        match (a, b, c, d, e, f) {
+            (Some(a), Some(b), Some(c), Some(d), Some(e), Some(f)) => (a, b, c, d, e, f),
+            _ => MATRIX_IDENTITY,
         }
     }
 
@@ -1468,8 +1602,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     pub fn process_page(
         &mut self,
         page: &crate::pdfpage::PDFPage,
-        doc: Option<&crate::pdfdocument::PDFDocument>,
+        doc: Option<&'a crate::pdfdocument::PDFDocument>,
     ) {
+        self.doc = doc;
         let mediabox = page.mediabox.unwrap_or([0.0, 0.0, 612.0, 792.0]);
         let (x0, y0, x1, y1) = (mediabox[0], mediabox[1], mediabox[2], mediabox[3]);
 
@@ -1971,6 +2106,18 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             _ => None,
         })
     }
+}
+
+struct InterpreterState {
+    gstack: Vec<SavedState>,
+    ctm: Matrix,
+    textstate: PDFTextState,
+    graphicstate: PDFGraphicState,
+    curpath: Vec<PathSegment>,
+    current_point: Option<(f64, f64)>,
+    fontmap: HashMap<String, std::sync::Arc<crate::pdffont::PDFCIDFont>>,
+    resources: HashMap<String, PDFObject>,
+    xobjmap: HashMap<String, PDFStream>,
 }
 
 #[cfg(test)]
