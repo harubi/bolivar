@@ -1827,6 +1827,52 @@ pub fn extract_tables_from_ltpage(
         .collect()
 }
 
+pub fn extract_table_from_ltpage(
+    page: &LTPage,
+    geom: &PageGeometry,
+    settings: &TableSettings,
+) -> Option<Vec<Vec<Option<String>>>> {
+    let finder = TableFinder::new(page, geom, settings.clone());
+    let tables = finder.find_tables();
+    if tables.is_empty() {
+        return None;
+    }
+
+    let mut best_idx = 0usize;
+    for (idx, table) in tables.iter().enumerate().skip(1) {
+        let best = &tables[best_idx];
+        let table_cells = table.cells.len();
+        let best_cells = best.cells.len();
+        if table_cells > best_cells {
+            best_idx = idx;
+            continue;
+        }
+        if table_cells == best_cells {
+            let table_bbox = table.bbox();
+            let best_bbox = best.bbox();
+            let top_cmp = table_bbox
+                .top
+                .partial_cmp(&best_bbox.top)
+                .unwrap_or(std::cmp::Ordering::Equal);
+            if top_cmp == std::cmp::Ordering::Less {
+                best_idx = idx;
+                continue;
+            }
+            if top_cmp == std::cmp::Ordering::Equal {
+                let x_cmp = table_bbox
+                    .x0
+                    .partial_cmp(&best_bbox.x0)
+                    .unwrap_or(std::cmp::Ordering::Equal);
+                if x_cmp == std::cmp::Ordering::Less {
+                    best_idx = idx;
+                }
+            }
+        }
+    }
+
+    Some(tables[best_idx].extract(&finder.chars, &settings.text_settings))
+}
+
 pub fn extract_words_from_ltpage(
     page: &LTPage,
     geom: &PageGeometry,
