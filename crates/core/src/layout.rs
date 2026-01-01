@@ -265,6 +265,7 @@ pub struct DynamicSpatialTree {
     pub nodes: Vec<SpatialNode>,
     parents: Vec<Option<usize>>,
     pub root: usize,
+    elem_leaf: Vec<usize>,
 }
 
 impl DynamicSpatialTree {
@@ -278,11 +279,14 @@ impl DynamicSpatialTree {
             &mut parents,
             None,
         );
-        Self {
+        let mut tree = Self {
             nodes,
             parents,
             root,
-        }
+            elem_leaf: vec![0; elements.len()],
+        };
+        tree.rebuild_elem_leaf();
+        tree
     }
 
     fn build_range(
@@ -363,6 +367,11 @@ impl DynamicSpatialTree {
             });
             self.parents.push(None);
             self.root = 0;
+            if elem_idx >= self.elem_leaf.len() {
+                self.elem_leaf.push(0);
+            } else {
+                self.elem_leaf[elem_idx] = 0;
+            }
             return 0;
         }
 
@@ -375,6 +384,12 @@ impl DynamicSpatialTree {
         let mut leaf_idx = leaf;
         if self.nodes[leaf].element_indices.len() > LEAF_THRESHOLD {
             leaf_idx = self.split_leaf(leaf, elem_idx, elements);
+        }
+
+        if elem_idx >= self.elem_leaf.len() {
+            self.elem_leaf.push(leaf_idx);
+        } else {
+            self.elem_leaf[elem_idx] = leaf_idx;
         }
 
         let parent = self.parents[leaf_idx];
@@ -472,6 +487,21 @@ impl DynamicSpatialTree {
             .merge(&self.nodes[right_idx].stats);
         self.nodes[node_idx].stats = merged;
 
+        for &idx in &self.nodes[left_idx].element_indices {
+            if idx >= self.elem_leaf.len() {
+                self.elem_leaf.push(left_idx);
+            } else {
+                self.elem_leaf[idx] = left_idx;
+            }
+        }
+        for &idx in &self.nodes[right_idx].element_indices {
+            if idx >= self.elem_leaf.len() {
+                self.elem_leaf.push(right_idx);
+            } else {
+                self.elem_leaf[idx] = right_idx;
+            }
+        }
+
         if self.nodes[left_idx].element_indices.contains(&elem_idx) {
             left_idx
         } else {
@@ -486,6 +516,34 @@ impl DynamicSpatialTree {
             let merged = self.nodes[left].stats.merge(&self.nodes[right].stats);
             self.nodes[idx].stats = merged;
             node_idx = self.parents[idx];
+        }
+    }
+
+    fn rebuild_elem_leaf(&mut self) {
+        for (node_idx, node) in self.nodes.iter().enumerate() {
+            if node.is_leaf() {
+                for &elem in &node.element_indices {
+                    if elem < self.elem_leaf.len() {
+                        self.elem_leaf[elem] = node_idx;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn contains_elem(&self, node_idx: usize, elem_idx: usize) -> bool {
+        if elem_idx >= self.elem_leaf.len() {
+            return false;
+        }
+        let mut cur = self.elem_leaf[elem_idx];
+        loop {
+            if cur == node_idx {
+                return true;
+            }
+            match self.parents[cur] {
+                Some(parent) => cur = parent,
+                None => return false,
+            }
         }
     }
 }
@@ -3077,7 +3135,7 @@ impl LTLayoutContainer {
                 Self::expand_frontier(
                     entry,
                     &initial_nodes,
-                    &dynamic_tree.nodes,
+                    &dynamic_tree,
                     &elements,
                     &py_ids,
                     &done,
@@ -3184,7 +3242,7 @@ impl LTLayoutContainer {
     fn expand_frontier(
         entry: FrontierEntry,
         initial_nodes: &[SpatialNode],
-        dynamic_nodes: &[SpatialNode],
+        dynamic_tree: &DynamicSpatialTree,
         elements: &[TextGroupElement],
         py_ids: &[PyId],
         done: &[bool],
@@ -3194,7 +3252,7 @@ impl LTLayoutContainer {
     ) {
         let nodes = match entry.tree {
             TreeKind::Initial => initial_nodes,
-            TreeKind::Dynamic => dynamic_nodes,
+            TreeKind::Dynamic => &dynamic_tree.nodes,
         };
         let node_a = &nodes[entry.node_a];
         let node_b = &nodes[entry.node_b];
@@ -3256,7 +3314,7 @@ impl LTLayoutContainer {
                 } => {
                     // GroupOther: emit (group_id, other_id) in that order — NO min/max
                     // node_a is the "group" side, node_b is "other" side
-                    if !node_a.element_indices.contains(&group_idx) {
+                    if !dynamic_tree.contains_elem(entry.node_a, group_idx) {
                         return;
                     }
                     if done[group_idx] {
@@ -3356,7 +3414,7 @@ impl LTLayoutContainer {
                         // GroupOther split: maintain mode
                         if split_is_a {
                             // Only keep the child that contains group_idx
-                            let group_child = if nodes[left].element_indices.contains(&group_idx) {
+                            let group_child = if dynamic_tree.contains_elem(left, group_idx) {
                                 left
                             } else {
                                 right
