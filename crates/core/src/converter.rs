@@ -924,7 +924,6 @@ impl PDFDevice for PDFPageAggregator {
                                 format!("(cid:{})", cid)
                             }
                         };
-
                         // Get char_disp and compute advancement
                         // Python: textdisp = font.char_disp(cid), adv = textwidth * fontsize * scaling
                         let char_disp = if let Some(ref font) = font {
@@ -1003,9 +1002,22 @@ impl PDFDevice for PDFPageAggregator {
                         let tag = self.analyzer.current_tag().map(|s| s.to_string());
                         let ncolor = Some(graphicstate.ncolor.to_vec());
                         let scolor = Some(graphicstate.scolor.to_vec());
+                        let fontname = font
+                            .as_ref()
+                            .and_then(|f| f.fontname())
+                            .or_else(|| textstate.fontname.as_deref())
+                            .unwrap_or("unknown");
                         let ltchar = LTChar::with_colors(
-                            bbox, &text, "unknown", // Font name - would come from font
-                            size, upright, char_width, mcid, tag, ncolor, scolor,
+                            bbox,
+                            &text,
+                            fontname,
+                            size,
+                            upright,
+                            char_width,
+                            mcid,
+                            tag,
+                            ncolor,
+                            scolor,
                         );
 
                         if let Some(ref mut container) = self.analyzer.cur_item {
@@ -1036,6 +1048,7 @@ impl PDFDevice for PDFPageAggregator {
 
         // Update text state line matrix
         textstate.linematrix = (x, y);
+
     }
 
     fn begin_tag(
