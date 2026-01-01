@@ -10,10 +10,25 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::hash::Hash;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use geo_index::rtree::sort::HilbertSort;
-use geo_index::rtree::{RTree, RTreeBuilder, RTreeIndex};
-use rustc_hash::FxHashSet;
+use geo_index::rtree::{RTree as GeoRTree, RTreeBuilder, RTreeIndex, SimpleDistanceMetric};
+use rstar::{AABB, PointDistance, RTree, RTreeObject};
+
+#[cfg(test)]
+static PLANE_ITER_WITH_INDICES_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn reset_plane_iter_with_indices_calls() {
+    PLANE_ITER_WITH_INDICES_CALLS.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn plane_iter_with_indices_calls() -> usize {
+    PLANE_ITER_WITH_INDICES_CALLS.load(Ordering::Relaxed)
+}
 
 /// Maximum integer value for PDF compatibility (32-bit signed max).
 pub const INF: i32 = i32::MAX;
@@ -131,79 +146,175 @@ pub trait HasBBox {
 
 /// A set-like data structure for objects placed on a plane.
 ///
-/// Uses geo-index R-tree for efficient spatial queries on initial items.
-/// Dynamically added items are stored separately and included in iterations.
-/// Uses tombstone pattern for removals (items marked inactive rather than deleted).
-pub struct Plane<T> {
-    /// All items: initial bulk-loaded items followed by dynamically added items
-    seq: Vec<T>,
-    /// Number of items in the R-tree (first `initial_count` items in seq)
-    initial_count: usize,
-    /// R-tree spatial index for initial items (immutable after construction)
-    tree: Option<RTree<f64>>,
-    /// Active item indices (for tombstone pattern)
-    objs: FxHashSet<usize>,
+/// Uses a static geo-index R-tree for initial bulk-loaded items and a dynamic
+/// rstar R-tree for incremental inserts. Items are stored in insertion order,
+/// and ids are stable (id == seq index).
+#[derive(Clone)]
+struct PlaneNode {
+    id: usize,
+    bbox: Rect,
 }
 
-impl<T: HasBBox + Eq + Hash> Plane<T> {
+impl PartialEq for PlaneNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl RTreeObject for PlaneNode {
+    type Envelope = AABB<[f64; 2]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        AABB::from_corners([self.bbox.0, self.bbox.1], [self.bbox.2, self.bbox.3])
+    }
+}
+
+impl PointDistance for PlaneNode {
+    fn distance_2(&self, point: &[f64; 2]) -> f64 {
+        let cx = (self.bbox.0 + self.bbox.2) / 2.0;
+        let cy = (self.bbox.1 + self.bbox.3) / 2.0;
+        (point[0] - cx).powi(2) + (point[1] - cy).powi(2)
+    }
+}
+
+struct CenterDistance;
+
+impl SimpleDistanceMetric<f64> for CenterDistance {
+    fn distance(&self, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+        let dx = x1 - x2;
+        let dy = y1 - y2;
+        dx * dx + dy * dy
+    }
+
+    fn distance_to_bbox(
+        &self,
+        x: f64,
+        y: f64,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+    ) -> f64 {
+        let cx = (min_x + max_x) / 2.0;
+        let cy = (min_y + max_y) / 2.0;
+        let dx = x - cx;
+        let dy = y - cy;
+        dx * dx + dy * dy
+    }
+}
+
+pub struct Plane<T> {
+    /// Items in insertion order (id == index)
+    seq: Vec<T>,
+    /// Cached bbox per item (used for removal)
+    bboxes: Vec<Rect>,
+    /// Active ids
+    alive: Vec<bool>,
+    alive_count: usize,
+    /// Static spatial index for bulk-loaded items
+    static_tree: Option<GeoRTree<f64>>,
+    /// Count of items in the static tree (ids 0..static_count)
+    static_count: usize,
+    /// Dynamic spatial index (id + bbox only)
+    dynamic_tree: RTree<PlaneNode>,
+}
+
+impl<T: HasBBox> Plane<T> {
     /// Creates a new Plane with the given bounding box and grid size.
     /// Note: bbox and gridsize parameters are kept for API compatibility but unused.
     pub fn new(_bbox: Rect, _gridsize: i32) -> Self {
         Self {
             seq: Vec::new(),
-            initial_count: 0,
-            tree: None,
-            objs: FxHashSet::default(),
+            bboxes: Vec::new(),
+            alive: Vec::new(),
+            alive_count: 0,
+            static_tree: None,
+            static_count: 0,
+            dynamic_tree: RTree::new(),
         }
     }
 
     /// Adds multiple objects to the plane and builds the R-tree index.
-    /// This should be called once with all initial items for optimal performance.
     pub fn extend(&mut self, objs: impl IntoIterator<Item = T>) {
         let items: Vec<T> = objs.into_iter().collect();
         if items.is_empty() {
             return;
         }
 
-        let count = items.len();
         let start_idx = self.seq.len();
+        self.seq.reserve(items.len());
+        self.bboxes.reserve(items.len());
+        self.alive.reserve(items.len());
 
-        // Pre-allocate
-        self.seq.reserve(count);
-        self.objs.reserve(count);
-
-        // Single pass: build R-tree and store items
-        let mut builder = RTreeBuilder::<f64>::new(count as u32);
+        let mut nodes = Vec::with_capacity(items.len());
         for (i, item) in items.into_iter().enumerate() {
+            let id = start_idx + i;
             let bbox = item.bbox();
-            builder.add(bbox.0, bbox.1, bbox.2, bbox.3);
-            self.objs.insert(start_idx + i);
             self.seq.push(item);
+            self.bboxes.push(bbox);
+            self.alive.push(true);
+            self.alive_count += 1;
+            nodes.push((id, bbox));
         }
-        let tree = builder.finish::<HilbertSort>();
 
-        self.initial_count = self.seq.len();
-        self.tree = Some(tree);
+        // Build static tree only if this is the initial bulk load.
+        if start_idx == 0 && self.static_tree.is_none() && self.dynamic_tree.size() == 0 {
+            let mut builder: RTreeBuilder<f64> = RTreeBuilder::new(nodes.len() as u32);
+            for (_id, bbox) in &nodes {
+                builder.add(bbox.0, bbox.1, bbox.2, bbox.3);
+            }
+            self.static_tree = Some(builder.finish::<HilbertSort>());
+            self.static_count = nodes.len();
+        } else {
+            for (id, bbox) in nodes {
+                self.dynamic_tree.insert(PlaneNode { id, bbox });
+            }
+        }
     }
 
-    /// Adds an object to the plane (dynamic addition, not in R-tree).
+    /// Adds an object to the plane (indexed immediately).
     pub fn add(&mut self, obj: T) {
-        let idx = self.seq.len();
+        let id = self.seq.len();
+        let bbox = obj.bbox();
         self.seq.push(obj);
-        self.objs.insert(idx);
+        self.bboxes.push(bbox);
+        self.alive.push(true);
+        self.alive_count += 1;
+        self.dynamic_tree.insert(PlaneNode { id, bbox });
     }
 
-    /// Removes an object from the plane by marking it inactive (tombstone pattern).
-    /// The item remains in memory but is excluded from queries and iterations.
+    /// Removes an object by id (O(log n) tree removal).
+    pub fn remove_by_id(&mut self, id: usize) -> bool {
+        if id >= self.seq.len() {
+            return false;
+        }
+        if !self.alive[id] {
+            return false;
+        }
+        self.alive[id] = false;
+        self.alive_count = self.alive_count.saturating_sub(1);
+
+        if id < self.static_count {
+            return true;
+        }
+
+        let bbox = self.bboxes[id];
+        let removed = self.dynamic_tree.remove(&PlaneNode { id, bbox });
+        removed.is_some()
+    }
+
+    /// Removes an object from the plane (O(n) search).
     pub fn remove(&mut self, obj: &T) -> bool
     where
         T: PartialEq,
     {
-        // Find the item and mark it inactive
-        if let Some(idx) = self.seq.iter().position(|o| o == obj) {
-            if self.objs.remove(&idx) {
-                return true;
-            }
+        if let Some((idx, _)) = self
+            .seq
+            .iter()
+            .enumerate()
+            .find(|(i, o)| self.alive.get(*i).copied().unwrap_or(false) && *o == obj)
+        {
+            return self.remove_by_id(idx);
         }
         false
     }
@@ -217,52 +328,36 @@ impl<T: HasBBox + Eq + Hash> Plane<T> {
     }
 
     /// Finds objects that intersect the given bounding box, returning (index, object) pairs.
-    /// Searches R-tree for initial items and does linear scan for dynamically added items.
     pub fn find_with_indices(&self, bbox: Rect) -> Vec<(usize, &T)> {
         let (x0, y0, x1, y1) = bbox;
         let mut result = Vec::with_capacity(16);
+        let env = AABB::from_corners([x0, y0], [x1, y1]);
 
-        // Helper to check bbox intersection
-        let intersects = |obj: &T| {
-            let obj_bbox = obj.bbox();
+        // Strict intersection test to match previous behavior
+        let intersects = |obj_bbox: Rect| {
             !(obj_bbox.2 <= x0 || x1 <= obj_bbox.0 || obj_bbox.3 <= y0 || y1 <= obj_bbox.1)
         };
 
-        if let Some(tree) = &self.tree {
-            // Query R-tree for initial items
-            let indices = tree.search(x0, y0, x1, y1);
-            for idx in indices {
-                let idx = idx as usize;
-                if !self.objs.contains(&idx) {
+        if let Some(tree) = &self.static_tree {
+            for id in tree.search(x0, y0, x1, y1) {
+                let id = id as usize;
+                if id >= self.static_count || !self.alive[id] {
                     continue;
                 }
-                let obj = &self.seq[idx];
-                if intersects(obj) {
-                    result.push((idx, obj));
-                }
-            }
-        } else {
-            // No R-tree: linear scan of all items (items added via add() only)
-            for (idx, obj) in self.seq.iter().enumerate() {
-                if !self.objs.contains(&idx) {
-                    continue;
-                }
-                if intersects(obj) {
-                    result.push((idx, obj));
+                let obj_bbox = self.bboxes[id];
+                if intersects(obj_bbox) {
+                    result.push((id, &self.seq[id]));
                 }
             }
         }
 
-        // Also search dynamically added items (indices >= initial_count)
-        if self.tree.is_some() {
-            for idx in self.initial_count..self.seq.len() {
-                if !self.objs.contains(&idx) {
-                    continue;
-                }
-                let obj = &self.seq[idx];
-                if intersects(obj) {
-                    result.push((idx, obj));
-                }
+        for node in self.dynamic_tree.locate_in_envelope_intersecting(&env) {
+            if !self.alive.get(node.id).copied().unwrap_or(false) {
+                continue;
+            }
+            let obj_bbox = self.bboxes[node.id];
+            if intersects(obj_bbox) {
+                result.push((node.id, &self.seq[node.id]));
             }
         }
 
@@ -274,52 +369,55 @@ impl<T: HasBBox + Eq + Hash> Plane<T> {
     pub fn neighbors(&self, bbox: Rect, k: usize) -> Vec<(usize, &T)> {
         let cx = (bbox.0 + bbox.2) / 2.0;
         let cy = (bbox.1 + bbox.3) / 2.0;
+        let mut results: Vec<(usize, f64)> = Vec::with_capacity(k);
 
-        if let Some(tree) = &self.tree {
-            // Use RTree's k-nearest neighbor query
-            tree.neighbors(cx, cy, Some(k), None)
-                .into_iter()
-                .filter_map(|idx| {
-                    let idx = idx as usize;
-                    if self.objs.contains(&idx) {
-                        Some((idx, &self.seq[idx]))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            // Fallback: linear scan for k nearest (when no RTree built)
-            let mut distances: Vec<(usize, f64, &T)> = self
-                .seq
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| self.objs.contains(i))
-                .map(|(i, obj)| {
-                    let obj_cx = (obj.x0() + obj.x1()) / 2.0;
-                    let obj_cy = (obj.y0() + obj.y1()) / 2.0;
-                    let dist = ((cx - obj_cx).powi(2) + (cy - obj_cy).powi(2)).sqrt();
-                    (i, dist, obj)
-                })
-                .collect();
-
-            distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            distances
-                .into_iter()
-                .take(k)
-                .map(|(i, _, obj)| (i, obj))
-                .collect()
+        if let Some(tree) = &self.static_tree {
+            let metric = CenterDistance;
+            let ids = tree.neighbors_with_simple_distance(cx, cy, Some(k), None, &metric);
+            for id in ids {
+                let id = id as usize;
+                if id >= self.static_count || !self.alive[id] {
+                    continue;
+                }
+                let bbox = self.bboxes[id];
+                let dist = metric.distance_to_bbox(cx, cy, bbox.0, bbox.1, bbox.2, bbox.3);
+                results.push((id, dist));
+            }
         }
+
+        for node in self.dynamic_tree.nearest_neighbor_iter(&[cx, cy]) {
+            if !self.alive.get(node.id).copied().unwrap_or(false) {
+                continue;
+            }
+            let dist = node.distance_2(&[cx, cy]);
+            results.push((node.id, dist));
+            if results.len() >= k {
+                break;
+            }
+        }
+
+        // Stable tie-break by id for determinism
+        results.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
+
+        results
+            .into_iter()
+            .take(k)
+            .map(|(id, _)| (id, &self.seq[id]))
+            .collect()
     }
 
     /// Returns the number of active objects in the plane.
     pub fn len(&self) -> usize {
-        self.objs.len()
+        self.alive_count
     }
 
     /// Returns true if the plane is empty.
     pub fn is_empty(&self) -> bool {
-        self.objs.is_empty()
+        self.alive_count == 0
     }
 
     /// Returns true if the object is in the plane.
@@ -330,7 +428,7 @@ impl<T: HasBBox + Eq + Hash> Plane<T> {
         self.seq
             .iter()
             .enumerate()
-            .any(|(i, o)| o == obj && self.objs.contains(&i))
+            .any(|(i, o)| self.alive.get(i).copied().unwrap_or(false) && o == obj)
     }
 
     /// Returns an iterator over all active objects in the plane.
@@ -338,16 +436,20 @@ impl<T: HasBBox + Eq + Hash> Plane<T> {
         self.seq
             .iter()
             .enumerate()
-            .filter(|(i, _)| self.objs.contains(i))
+            .filter(|(i, _)| self.alive.get(*i).copied().unwrap_or(false))
             .map(|(_, obj)| obj)
     }
 
     /// Returns an iterator over all active objects with their indices in the plane.
     pub fn iter_with_indices(&self) -> impl Iterator<Item = (usize, &T)> {
+        #[cfg(test)]
+        {
+            PLANE_ITER_WITH_INDICES_CALLS.fetch_add(1, Ordering::Relaxed);
+        }
         self.seq
             .iter()
             .enumerate()
-            .filter(|(i, _)| self.objs.contains(i))
+            .filter(|(i, _)| self.alive.get(*i).copied().unwrap_or(false))
     }
 }
 

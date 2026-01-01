@@ -96,6 +96,37 @@ fn test_plane_find_object_if_much_larger_than_gridsize() {
     assert_eq!(*result[0], obj);
 }
 
+#[test]
+fn test_plane_remove_by_id_preserves_insertion_order() {
+    let bbox = (0.0, 0.0, 100.0, 100.0);
+    let mut plane = Plane::new(bbox, 10);
+
+    let a = LTComponent::new((0, 0, 10, 10));
+    let b = LTComponent::new((20, 0, 30, 10));
+    let c = LTComponent::new((40, 0, 50, 10));
+
+    plane.add(a);
+    plane.add(b);
+    plane.add(c);
+
+    assert!(plane.remove_by_id(1));
+
+    let ids: Vec<usize> = plane.iter_with_indices().map(|(i, _)| i).collect();
+    assert_eq!(ids, vec![0, 2]);
+}
+
+#[test]
+fn test_plane_find_excludes_touching_edges() {
+    let bbox = (0.0, 0.0, 100.0, 100.0);
+    let mut plane = Plane::new(bbox, 10);
+    let obj = LTComponent::new((0, 0, 10, 10));
+    plane.add(obj.clone());
+
+    // Query that touches the object's right edge at x=10 should NOT intersect.
+    let result = plane.find((10.0, 0.0, 20.0, 10.0));
+    assert!(result.is_empty());
+}
+
 // ============================================================================
 // TestFunctions - shorten_str - 3 tests
 // ============================================================================

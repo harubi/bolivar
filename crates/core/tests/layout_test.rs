@@ -760,7 +760,7 @@ fn test_group_heap_entry_ordering() {
 
 #[test]
 fn test_frontier_entry_ordering() {
-    use bolivar_core::layout::{FrontierEntry, PairMode};
+    use bolivar_core::layout::{FrontierEntry, PairMode, TreeKind};
     use ordered_float::OrderedFloat;
     use std::collections::BinaryHeap;
 
@@ -771,6 +771,7 @@ fn test_frontier_entry_ordering() {
         node_a: 0,
         node_b: 1,
         mode: PairMode::InitialIJ,
+        tree: TreeKind::Initial,
     };
     let f2 = FrontierEntry {
         lb_dist: OrderedFloat(10.0),
@@ -779,6 +780,7 @@ fn test_frontier_entry_ordering() {
         node_a: 0,
         node_b: 2,
         mode: PairMode::InitialIJ,
+        tree: TreeKind::Initial,
     };
     // f2 should pop first (same dist, smaller lb_id1)
     let mut heap = BinaryHeap::new();
@@ -790,7 +792,7 @@ fn test_frontier_entry_ordering() {
 
 #[test]
 fn test_frontier_could_beat() {
-    use bolivar_core::layout::{FrontierEntry, GroupHeapEntry, PairMode};
+    use bolivar_core::layout::{FrontierEntry, GroupHeapEntry, PairMode, TreeKind};
     use ordered_float::OrderedFloat;
 
     let frontier = FrontierEntry {
@@ -800,6 +802,7 @@ fn test_frontier_could_beat() {
         node_a: 0,
         node_b: 1,
         mode: PairMode::InitialIJ,
+        tree: TreeKind::Initial,
     };
     let main_higher_id = GroupHeapEntry {
         skip_isany: false,
@@ -956,11 +959,9 @@ fn test_group_textboxes_exact_two_boxes() {
     );
 }
 
-/// Test that analyze() uses exact grouping when the feature is enabled.
-/// This test only runs with: cargo test --features exact-grouping
-#[cfg(feature = "exact-grouping")]
+/// Test that analyze() uses exact grouping (now default).
 #[test]
-fn test_analyze_uses_exact_grouping_with_feature() {
+fn test_analyze_uses_exact_grouping() {
     use bolivar_core::layout::{LAParams, LTChar, LTItem, LTLayoutContainer};
 
     // Create container with some characters that will be grouped

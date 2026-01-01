@@ -35,7 +35,13 @@ pub enum PairMode {
     /// Initial elements: pairs are (i, j) where i < j by py_id
     InitialIJ,
     /// Merged group: pairs are (group_id, other_id) in that order
-    GroupOther { group_id: PyId },
+    GroupOther { group_id: PyId, group_idx: usize },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeKind {
+    Initial,
+    Dynamic,
 }
 
 /// Heap entry for group_textboxes_exact algorithm.
@@ -91,6 +97,7 @@ pub struct FrontierEntry {
     pub node_a: usize,
     pub node_b: usize,
     pub mode: PairMode,
+    pub tree: TreeKind,
 }
 
 impl PartialEq for FrontierEntry {
@@ -254,6 +261,250 @@ impl SpatialNode {
     }
 }
 
+pub struct DynamicSpatialTree {
+    pub nodes: Vec<SpatialNode>,
+    parents: Vec<Option<usize>>,
+    pub root: usize,
+}
+
+impl DynamicSpatialTree {
+    pub fn build(elements: &[(Rect, PyId)]) -> Self {
+        let mut nodes = Vec::new();
+        let mut parents = Vec::new();
+        let root = Self::build_range(
+            elements,
+            (0..elements.len()).collect(),
+            &mut nodes,
+            &mut parents,
+            None,
+        );
+        Self {
+            nodes,
+            parents,
+            root,
+        }
+    }
+
+    fn build_range(
+        elements: &[(Rect, PyId)],
+        indices: Vec<usize>,
+        nodes: &mut Vec<SpatialNode>,
+        parents: &mut Vec<Option<usize>>,
+        parent: Option<usize>,
+    ) -> usize {
+        let stats = indices
+            .iter()
+            .map(|&i| NodeStats::from_bbox_and_id(elements[i].0, elements[i].1))
+            .reduce(|a, b| a.merge(&b))
+            .unwrap();
+
+        let node_idx = nodes.len();
+        nodes.push(SpatialNode {
+            stats,
+            element_indices: indices.clone(),
+            left_child: None,
+            right_child: None,
+        });
+        parents.push(parent);
+
+        if indices.len() > LEAF_THRESHOLD {
+            let (x0, y0, x1, y1) = nodes[node_idx].stats.bbox;
+            let width = x1 - x0;
+            let height = y1 - y0;
+
+            let mut sorted = indices;
+            if width >= height {
+                sorted.sort_by(|&a, &b| {
+                    let ca = (elements[a].0.0 + elements[a].0.2) / 2.0;
+                    let cb = (elements[b].0.0 + elements[b].0.2) / 2.0;
+                    ca.partial_cmp(&cb).unwrap()
+                });
+            } else {
+                sorted.sort_by(|&a, &b| {
+                    let ca = (elements[a].0.1 + elements[a].0.3) / 2.0;
+                    let cb = (elements[b].0.1 + elements[b].0.3) / 2.0;
+                    ca.partial_cmp(&cb).unwrap()
+                });
+            }
+
+            let mid = sorted.len() / 2;
+            let left_indices = sorted[..mid].to_vec();
+            let right_indices = sorted[mid..].to_vec();
+
+            let left_idx =
+                Self::build_range(elements, left_indices, nodes, parents, Some(node_idx));
+            let right_idx =
+                Self::build_range(elements, right_indices, nodes, parents, Some(node_idx));
+
+            nodes[node_idx].left_child = Some(left_idx);
+            nodes[node_idx].right_child = Some(right_idx);
+            nodes[node_idx].element_indices.clear();
+            let merged = nodes[left_idx].stats.merge(&nodes[right_idx].stats);
+            nodes[node_idx].stats = merged;
+        }
+
+        node_idx
+    }
+
+    pub fn insert(
+        &mut self,
+        elem_idx: usize,
+        bbox: Rect,
+        py_id: PyId,
+        elements: &[(Rect, PyId)],
+    ) -> usize {
+        if self.nodes.is_empty() {
+            let stats = NodeStats::from_bbox_and_id(bbox, py_id);
+            self.nodes.push(SpatialNode {
+                stats,
+                element_indices: vec![elem_idx],
+                left_child: None,
+                right_child: None,
+            });
+            self.parents.push(None);
+            self.root = 0;
+            return 0;
+        }
+
+        let leaf = self.choose_leaf(self.root, bbox);
+        self.nodes[leaf].element_indices.push(elem_idx);
+        self.nodes[leaf].stats = self.nodes[leaf]
+            .stats
+            .merge(&NodeStats::from_bbox_and_id(bbox, py_id));
+
+        let mut leaf_idx = leaf;
+        if self.nodes[leaf].element_indices.len() > LEAF_THRESHOLD {
+            leaf_idx = self.split_leaf(leaf, elem_idx, elements);
+        }
+
+        let parent = self.parents[leaf_idx];
+        self.update_ancestors(parent);
+        leaf_idx
+    }
+
+    fn choose_leaf(&self, node_idx: usize, bbox: Rect) -> usize {
+        let node = &self.nodes[node_idx];
+        if node.is_leaf() {
+            return node_idx;
+        }
+        let left = node.left_child.unwrap();
+        let right = node.right_child.unwrap();
+        let left_bbox = self.nodes[left].stats.bbox;
+        let right_bbox = self.nodes[right].stats.bbox;
+
+        let left_expand = bbox_expand_area(left_bbox, bbox);
+        let right_expand = bbox_expand_area(right_bbox, bbox);
+
+        if left_expand < right_expand {
+            self.choose_leaf(left, bbox)
+        } else if right_expand < left_expand {
+            self.choose_leaf(right, bbox)
+        } else {
+            let left_area = bbox_area(left_bbox);
+            let right_area = bbox_area(right_bbox);
+            if left_area <= right_area {
+                self.choose_leaf(left, bbox)
+            } else {
+                self.choose_leaf(right, bbox)
+            }
+        }
+    }
+
+    fn split_leaf(&mut self, node_idx: usize, elem_idx: usize, elements: &[(Rect, PyId)]) -> usize {
+        let indices = self.nodes[node_idx].element_indices.clone();
+        let (x0, y0, x1, y1) = self.nodes[node_idx].stats.bbox;
+        let width = x1 - x0;
+        let height = y1 - y0;
+
+        let mut sorted = indices;
+        if width >= height {
+            sorted.sort_by(|&a, &b| {
+                let ca = (elements[a].0.0 + elements[a].0.2) / 2.0;
+                let cb = (elements[b].0.0 + elements[b].0.2) / 2.0;
+                ca.partial_cmp(&cb).unwrap()
+            });
+        } else {
+            sorted.sort_by(|&a, &b| {
+                let ca = (elements[a].0.1 + elements[a].0.3) / 2.0;
+                let cb = (elements[b].0.1 + elements[b].0.3) / 2.0;
+                ca.partial_cmp(&cb).unwrap()
+            });
+        }
+
+        let mid = sorted.len() / 2;
+        let left_indices = sorted[..mid].to_vec();
+        let right_indices = sorted[mid..].to_vec();
+
+        let left_stats = left_indices
+            .iter()
+            .map(|&i| NodeStats::from_bbox_and_id(elements[i].0, elements[i].1))
+            .reduce(|a, b| a.merge(&b))
+            .unwrap();
+        let right_stats = right_indices
+            .iter()
+            .map(|&i| NodeStats::from_bbox_and_id(elements[i].0, elements[i].1))
+            .reduce(|a, b| a.merge(&b))
+            .unwrap();
+
+        let left_idx = self.nodes.len();
+        self.nodes.push(SpatialNode {
+            stats: left_stats,
+            element_indices: left_indices,
+            left_child: None,
+            right_child: None,
+        });
+        self.parents.push(Some(node_idx));
+
+        let right_idx = self.nodes.len();
+        self.nodes.push(SpatialNode {
+            stats: right_stats,
+            element_indices: right_indices,
+            left_child: None,
+            right_child: None,
+        });
+        self.parents.push(Some(node_idx));
+
+        self.nodes[node_idx].left_child = Some(left_idx);
+        self.nodes[node_idx].right_child = Some(right_idx);
+        self.nodes[node_idx].element_indices.clear();
+        let merged = self.nodes[left_idx]
+            .stats
+            .merge(&self.nodes[right_idx].stats);
+        self.nodes[node_idx].stats = merged;
+
+        if self.nodes[left_idx].element_indices.contains(&elem_idx) {
+            left_idx
+        } else {
+            right_idx
+        }
+    }
+
+    fn update_ancestors(&mut self, mut node_idx: Option<usize>) {
+        while let Some(idx) = node_idx {
+            let left = self.nodes[idx].left_child.unwrap();
+            let right = self.nodes[idx].right_child.unwrap();
+            let merged = self.nodes[left].stats.merge(&self.nodes[right].stats);
+            self.nodes[idx].stats = merged;
+            node_idx = self.parents[idx];
+        }
+    }
+}
+
+fn bbox_area(bbox: Rect) -> f64 {
+    let w = bbox.2 - bbox.0;
+    let h = bbox.3 - bbox.1;
+    w * h
+}
+
+fn bbox_union(a: Rect, b: Rect) -> Rect {
+    (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3))
+}
+
+fn bbox_expand_area(current: Rect, add: Rect) -> f64 {
+    let union = bbox_union(current, add);
+    bbox_area(union) - bbox_area(current)
+}
+
 /// Calculate lower bound on dist() for any pair between two nodes.
 /// Uses TIGHTER geometric bound: max(min_w) not min(min_w).
 pub fn calc_dist_lower_bound(a: &NodeStats, b: &NodeStats) -> OrderedFloat<f64> {
@@ -296,6 +547,7 @@ impl FrontierEntry {
                 node_a,
                 node_b,
                 mode: PairMode::InitialIJ,
+                tree: TreeKind::Initial,
             })
         } else {
             // Cross-pair: orient by smallest min
@@ -311,6 +563,7 @@ impl FrontierEntry {
                 node_a,
                 node_b,
                 mode: PairMode::InitialIJ,
+                tree: TreeKind::Initial,
             })
         }
     }
@@ -319,6 +572,7 @@ impl FrontierEntry {
     pub fn new_group_other(
         lb_dist: OrderedFloat<f64>,
         group_id: PyId,
+        group_idx: usize,
         other_stats: &NodeStats,
         node_a: usize,
         node_b: usize,
@@ -329,7 +583,11 @@ impl FrontierEntry {
             lb_id2: other_stats.min_py_id,
             node_a,
             node_b,
-            mode: PairMode::GroupOther { group_id },
+            mode: PairMode::GroupOther {
+                group_id,
+                group_idx,
+            },
+            tree: TreeKind::Dynamic,
         }
     }
 
@@ -2779,20 +3037,21 @@ impl LTLayoutContainer {
         plane.extend(elements.iter().cloned());
 
         // 3. Build lightweight spatial tree for frontier
-        let bbox_ids: Vec<(Rect, PyId)> = elements
+        let mut bbox_ids: Vec<(Rect, PyId)> = elements
             .iter()
             .enumerate()
             .map(|(i, e)| (e.bbox(), i as PyId))
             .collect();
-        let mut nodes_arena: Vec<SpatialNode> = Vec::new();
-        let root_idx = SpatialNode::build(&bbox_ids, &mut nodes_arena);
+        let mut initial_nodes: Vec<SpatialNode> = Vec::new();
+        let root_idx = SpatialNode::build(&bbox_ids, &mut initial_nodes);
+        let mut dynamic_tree = DynamicSpatialTree::build(&bbox_ids);
 
         // 4. Initialize heaps
         let mut main_heap: BinaryHeap<GroupHeapEntry> = BinaryHeap::new();
         let mut frontier: BinaryHeap<FrontierEntry> = BinaryHeap::new();
 
         // Seed frontier with root vs root (may be None if single element)
-        let root = &nodes_arena[root_idx];
+        let root = &initial_nodes[root_idx];
         let lb = calc_dist_lower_bound(&root.stats, &root.stats);
         if let Some(entry) =
             FrontierEntry::new_initial(lb, &root.stats, &root.stats, root_idx, root_idx)
@@ -2801,7 +3060,7 @@ impl LTLayoutContainer {
         }
 
         // 5. Track active elements (tombstone pattern via done set)
-        let mut done: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut done: Vec<bool> = vec![false; elements.len()];
 
         // 6. Main loop
         loop {
@@ -2819,7 +3078,8 @@ impl LTLayoutContainer {
                 let entry = frontier.pop().unwrap();
                 Self::expand_frontier(
                     entry,
-                    &nodes_arena,
+                    &initial_nodes,
+                    &dynamic_tree.nodes,
                     &elements,
                     &py_ids,
                     &done,
@@ -2833,7 +3093,7 @@ impl LTLayoutContainer {
             let Some(best) = main_heap.pop() else { break };
 
             // Skip if either element is already merged
-            if done.contains(&best.elem1_idx) || done.contains(&best.elem2_idx) {
+            if done[best.elem1_idx] || done[best.elem2_idx] {
                 continue;
             }
 
@@ -2856,7 +3116,7 @@ impl LTLayoutContainer {
                     .find_with_indices((x0, y0, x1, y1))
                     .into_iter()
                     .filter(|(idx, _)| {
-                        !done.contains(idx) && *idx != best.elem1_idx && *idx != best.elem2_idx
+                        !done[*idx] && *idx != best.elem1_idx && *idx != best.elem2_idx
                     })
                     .collect();
 
@@ -2869,8 +3129,8 @@ impl LTLayoutContainer {
             }
 
             // Merge!
-            done.insert(best.elem1_idx);
-            done.insert(best.elem2_idx);
+            done[best.elem1_idx] = true;
+            done[best.elem2_idx] = true;
 
             let is_vertical =
                 elements[best.elem1_idx].is_vertical() || elements[best.elem2_idx].is_vertical();
@@ -2883,37 +3143,36 @@ impl LTLayoutContainer {
             );
             let group_elem = TextGroupElement::Group(Box::new(group));
 
-            // Add new group with distances to remaining elements
-            // CRITICAL: Use (new_group_id, other_id) — NO min/max
             let new_idx = elements.len();
             let new_py_id = next_py_id;
             next_py_id += 1;
 
-            for (other_idx, _) in plane
-                .iter_with_indices()
-                .filter(|(id, _)| !done.contains(id))
-            {
-                let d = dist(&group_elem, &elements[other_idx]);
-                // pdfminer orientation: (new_group_id, other_id)
-                main_heap.push(GroupHeapEntry {
-                    skip_isany: false,
-                    dist: d,
-                    id1: new_py_id,
-                    id2: py_ids[other_idx],
-                    elem1_idx: new_idx,
-                    elem2_idx: other_idx,
-                });
-            }
-
             plane.add(group_elem.clone());
             elements.push(group_elem);
             py_ids.push(new_py_id);
+            done.push(false);
+            bbox_ids.push((elements[new_idx].bbox(), new_py_id));
+
+            let group_leaf =
+                dynamic_tree.insert(new_idx, elements[new_idx].bbox(), new_py_id, &bbox_ids);
+            let group_stats = &dynamic_tree.nodes[group_leaf].stats;
+            let root_stats = &dynamic_tree.nodes[dynamic_tree.root].stats;
+            let lb = calc_dist_lower_bound(group_stats, root_stats);
+            let entry = FrontierEntry::new_group_other(
+                lb,
+                new_py_id,
+                new_idx,
+                root_stats,
+                group_leaf,
+                dynamic_tree.root,
+            );
+            frontier.push(entry);
         }
 
         // Collect remaining elements as groups
         plane
             .iter_with_indices()
-            .filter(|(id, _)| !done.contains(id))
+            .filter(|(id, _)| !done[*id])
             .map(|(_, elem)| match elem {
                 TextGroupElement::Group(g) => g.as_ref().clone(),
                 TextGroupElement::Box(b) => {
@@ -2926,14 +3185,19 @@ impl LTLayoutContainer {
     /// Expand a frontier entry - either emit concrete pairs or split and re-enqueue
     fn expand_frontier(
         entry: FrontierEntry,
-        nodes: &[SpatialNode],
+        initial_nodes: &[SpatialNode],
+        dynamic_nodes: &[SpatialNode],
         elements: &[TextGroupElement],
         py_ids: &[PyId],
-        done: &std::collections::HashSet<usize>,
+        done: &[bool],
         main_heap: &mut BinaryHeap<GroupHeapEntry>,
         frontier: &mut BinaryHeap<FrontierEntry>,
         dist: fn(&TextGroupElement, &TextGroupElement) -> OrderedFloat<f64>,
     ) {
+        let nodes = match entry.tree {
+            TreeKind::Initial => initial_nodes,
+            TreeKind::Dynamic => dynamic_nodes,
+        };
         let node_a = &nodes[entry.node_a];
         let node_b = &nodes[entry.node_b];
 
@@ -2947,7 +3211,7 @@ impl LTLayoutContainer {
                             for j in (i + 1)..node_a.element_indices.len() {
                                 let ei = node_a.element_indices[i];
                                 let ej = node_a.element_indices[j];
-                                if done.contains(&ei) || done.contains(&ej) {
+                                if done[ei] || done[ej] {
                                     continue;
                                 }
                                 let d = dist(&elements[ei], &elements[ej]);
@@ -2966,7 +3230,7 @@ impl LTLayoutContainer {
                         // Cross-pair: emit with i<j orientation
                         for &ei in &node_a.element_indices {
                             for &ej in &node_b.element_indices {
-                                if done.contains(&ei) || done.contains(&ej) {
+                                if done[ei] || done[ej] {
                                     continue;
                                 }
                                 let d = dist(&elements[ei], &elements[ej]);
@@ -2988,24 +3252,31 @@ impl LTLayoutContainer {
                         }
                     }
                 }
-                PairMode::GroupOther { group_id } => {
+                PairMode::GroupOther {
+                    group_id,
+                    group_idx,
+                } => {
                     // GroupOther: emit (group_id, other_id) in that order — NO min/max
                     // node_a is the "group" side, node_b is "other" side
-                    for &ei in &node_a.element_indices {
-                        for &ej in &node_b.element_indices {
-                            if done.contains(&ei) || done.contains(&ej) {
-                                continue;
-                            }
-                            let d = dist(&elements[ei], &elements[ej]);
-                            main_heap.push(GroupHeapEntry {
-                                skip_isany: false,
-                                dist: d,
-                                id1: group_id,
-                                id2: py_ids[ej],
-                                elem1_idx: ei,
-                                elem2_idx: ej,
-                            });
+                    if !node_a.element_indices.contains(&group_idx) {
+                        return;
+                    }
+                    if done[group_idx] {
+                        return;
+                    }
+                    for &ej in &node_b.element_indices {
+                        if ej == group_idx || done[ej] {
+                            continue;
                         }
+                        let d = dist(&elements[group_idx], &elements[ej]);
+                        main_heap.push(GroupHeapEntry {
+                            skip_isany: false,
+                            dist: d,
+                            id1: group_id,
+                            id2: py_ids[ej],
+                            elem1_idx: group_idx,
+                            elem2_idx: ej,
+                        });
                     }
                 }
             }
@@ -3080,25 +3351,46 @@ impl LTLayoutContainer {
                             }
                         }
                     }
-                    PairMode::GroupOther { group_id } => {
+                    PairMode::GroupOther {
+                        group_id,
+                        group_idx,
+                    } => {
                         // GroupOther split: maintain mode
-                        for &child_idx in &[left, right] {
-                            let child_node = &nodes[child_idx];
-                            let (new_a, new_b, other_stats) = if split_is_a {
-                                (child_idx, other_node_idx, &other_node.stats)
+                        if split_is_a {
+                            // Only keep the child that contains group_idx
+                            let group_child = if nodes[left].element_indices.contains(&group_idx) {
+                                left
                             } else {
-                                (entry.node_a, child_idx, &child_node.stats)
+                                right
                             };
                             let lb =
-                                calc_dist_lower_bound(&nodes[new_a].stats, &nodes[new_b].stats);
+                                calc_dist_lower_bound(&nodes[group_child].stats, &other_node.stats);
                             let e = FrontierEntry::new_group_other(
                                 lb,
                                 group_id,
-                                other_stats,
-                                new_a,
-                                new_b,
+                                group_idx,
+                                &other_node.stats,
+                                group_child,
+                                other_node_idx,
                             );
                             frontier.push(e);
+                        } else {
+                            for &child_idx in &[left, right] {
+                                let child_node = &nodes[child_idx];
+                                let lb = calc_dist_lower_bound(
+                                    &nodes[entry.node_a].stats,
+                                    &child_node.stats,
+                                );
+                                let e = FrontierEntry::new_group_other(
+                                    lb,
+                                    group_id,
+                                    group_idx,
+                                    &child_node.stats,
+                                    entry.node_a,
+                                    child_idx,
+                                );
+                                frontier.push(e);
+                            }
                         }
                     }
                 }
@@ -3173,27 +3465,8 @@ impl LTLayoutContainer {
                 key_a.cmp(&key_b)
             });
         } else {
-            // Hierarchical grouping
-            #[cfg(feature = "exact-grouping")]
+            // Hierarchical grouping (exact pdfminer-compatible)
             let mut groups = self.group_textboxes_exact(laparams, &textboxes);
-            #[cfg(not(feature = "exact-grouping"))]
-            let mut groups = self.group_textboxes(laparams, &textboxes);
-
-            // Root-level sort hack for non-exact grouping only.
-            // Exact grouping should preserve pdfminer.six root order from group_textboxes().
-            #[cfg(not(feature = "exact-grouping"))]
-            {
-                let boxes_flow = laparams.boxes_flow.unwrap_or(0.5);
-                groups.sort_by(|a, b| {
-                    let key_a =
-                        (1.0 - boxes_flow) * a.x0() - (1.0 + boxes_flow) * (a.y0() + a.y1());
-                    let key_b =
-                        (1.0 - boxes_flow) * b.x0() - (1.0 + boxes_flow) * (b.y0() + b.y1());
-                    key_a
-                        .partial_cmp(&key_b)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-            }
 
             // Analyze and assign indices (analyze recursively sorts elements within groups)
             let mut assigner = IndexAssigner::new();
@@ -3247,6 +3520,47 @@ impl HasBBox for LTLayoutContainer {
     }
     fn y1(&self) -> f64 {
         self.component.y1
+    }
+}
+
+#[cfg(test)]
+mod exact_grouping_tests {
+    use super::{
+        LAParams, LTLayoutContainer, LTTextBoxHorizontal, LTTextLineHorizontal, TextBoxType,
+    };
+    use crate::utils::{plane_iter_with_indices_calls, reset_plane_iter_with_indices_calls};
+
+    #[test]
+    fn test_group_textboxes_exact_does_not_iter_plane_per_merge() {
+        reset_plane_iter_with_indices_calls();
+
+        let container = LTLayoutContainer::new((0.0, 0.0, 200.0, 100.0));
+
+        let mut box1 = LTTextBoxHorizontal::new();
+        let mut line1 = LTTextLineHorizontal::new(0.1);
+        line1.set_bbox((0.0, 0.0, 50.0, 20.0));
+        box1.add(line1);
+
+        let mut box2 = LTTextBoxHorizontal::new();
+        let mut line2 = LTTextLineHorizontal::new(0.1);
+        line2.set_bbox((60.0, 0.0, 110.0, 20.0));
+        box2.add(line2);
+
+        let mut box3 = LTTextBoxHorizontal::new();
+        let mut line3 = LTTextLineHorizontal::new(0.1);
+        line3.set_bbox((120.0, 0.0, 170.0, 20.0));
+        box3.add(line3);
+
+        let boxes = vec![
+            TextBoxType::Horizontal(box1),
+            TextBoxType::Horizontal(box2),
+            TextBoxType::Horizontal(box3),
+        ];
+
+        let _ = container.group_textboxes_exact(&LAParams::default(), &boxes);
+
+        // Only the final collection should iterate the plane.
+        assert_eq!(plane_iter_with_indices_calls(), 1);
     }
 }
 

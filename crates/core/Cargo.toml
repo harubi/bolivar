@@ -24,17 +24,14 @@ rustc-hash.workspace = true
 thiserror.workspace = true
 unicode-normalization.workspace = true
 weezl.workspace = true
-geo-index.workspace = true
+rstar.workspace = true
 ordered-float.workspace = true
+geo-index.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
 hex.workspace = true
 insta.workspace = true
-
-[features]
-# Use exact pdfminer-compatible grouping algorithm (slower but 100% parity)
-exact-grouping = []
 
 [[bench]]
 name = "plane_bench"

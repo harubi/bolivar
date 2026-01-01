@@ -142,5 +142,40 @@ fn bench_remove(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_construct, bench_find, bench_remove);
+fn bench_mixed_add_query(c: &mut Criterion) {
+    let mut group = c.benchmark_group("plane_mixed_add_query");
+
+    for size in [100, 1_000, 5_000, 10_000] {
+        let items = generate_items(size);
+        let page_bbox = (0.0, 0.0, 612.0, 792.0);
+        let query_bbox = (100.0, 100.0, 400.0, 500.0);
+
+        group.bench_with_input(BenchmarkId::from_parameter(size), &items, |b, items| {
+            b.iter(|| {
+                let mut plane = bolivar_core::utils::Plane::new(page_bbox, 50);
+                plane.extend(black_box(items.clone()));
+
+                // Simulate merges: add new groups and query isany bbox.
+                for i in 0..(size / 2) {
+                    let row = i / 10;
+                    let col = i % 10;
+                    let x0 = (col as f64) * 60.0 + 5.0;
+                    let y0 = (row as f64) * 12.0 + 5.0;
+                    let item = BBoxItem::new(x0, y0, x0 + 40.0, y0 + 10.0, size + i);
+                    plane.add(item);
+                    let _ = plane.find_with_indices(black_box(query_bbox));
+                }
+            })
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_construct,
+    bench_find,
+    bench_remove,
+    bench_mixed_add_query
+);
 criterion_main!(benches);
