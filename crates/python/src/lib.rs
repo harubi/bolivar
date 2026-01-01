@@ -12,8 +12,8 @@ use bolivar_core::high_level::{
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdftypes::PDFObject;
 use bolivar_core::table::{
-    PageGeometry, TableSettings, TextDir, TextSettings, WordObj, extract_tables_from_ltpage,
-    extract_text_from_ltpage, extract_words_from_ltpage,
+    PageGeometry, TableSettings, TextDir, TextSettings, WordObj, extract_table_from_ltpage,
+    extract_tables_from_ltpage, extract_text_from_ltpage, extract_words_from_ltpage,
 };
 use bolivar_core::utils::HasBBox;
 use memmap2::Mmap;
@@ -1081,6 +1081,44 @@ fn extract_tables_from_page(
     Ok(extract_tables_from_ltpage(ltpage, &geom, &settings))
 }
 
+/// Extract a single table from a page using Rust table extraction.
+#[pyfunction]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, threads = None))]
+fn extract_table_from_page(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    page_index: usize,
+    page_bbox: (f64, f64, f64, f64),
+    mediabox: (f64, f64, f64, f64),
+    initial_doctop: f64,
+    table_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    threads: Option<usize>,
+) -> PyResult<Option<Vec<Vec<Option<String>>>>> {
+    let settings = parse_table_settings(py, table_settings)?;
+    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching: true,
+        laparams: la,
+        threads,
+    };
+    let pages = py
+        .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
+        .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
+    let ltpage = pages
+        .get(page_index)
+        .ok_or_else(|| PyValueError::new_err("page_index out of range"))?;
+    let geom = PageGeometry {
+        page_bbox,
+        mediabox,
+        initial_doctop,
+    };
+    Ok(extract_table_from_ltpage(ltpage, &geom, &settings))
+}
+
 /// Extract words from a page using Rust text extraction.
 #[pyfunction]
 #[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, threads = None))]
@@ -1440,6 +1478,7 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_table_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_words_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_text_from_page, m)?)?;
     Ok(())
