@@ -13,12 +13,40 @@ def _should_patch() -> bool:
 
 
 def _apply_patch(module) -> bool:
-    if getattr(module.page.Page.extract_tables, "_bolivar_patched", False):
+    page_mod = getattr(module, "page", None)
+    if page_mod is None and getattr(module, "__name__", "") == "pdfplumber.page":
+        page_mod = module
+        pkg = sys.modules.get("pdfplumber")
+        if pkg is not None and not hasattr(pkg, "page"):
+            pkg.page = module
+            module = pkg
+
+    if page_mod is None:
+        return False
+
+    if getattr(page_mod.Page.extract_tables, "_bolivar_patched", False):
         return True
 
-    from bolivar import extract_tables_from_page
+    from bolivar import extract_table_from_page, extract_tables_from_page
+
+    orig_extract_tables = page_mod.Page.extract_tables
+    orig_extract_table = page_mod.Page.extract_table
+
+    def _needs_python_fallback(page, table_settings):
+        # FilteredPage/dedupe uses filter_fn; respect Python semantics
+        if hasattr(page, "filter_fn"):
+            return True
+        if isinstance(table_settings, dict):
+            if table_settings.get("text_layout"):
+                return True
+            ts = table_settings.get("text_settings")
+            if isinstance(ts, dict) and ts.get("layout"):
+                return True
+        return False
 
     def _extract_tables(self, table_settings=None):
+        if _needs_python_fallback(self, table_settings):
+            return orig_extract_tables(self, table_settings)
         page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
         return extract_tables_from_page(
             self.page_obj.doc._rust_doc,
@@ -29,8 +57,23 @@ def _apply_patch(module) -> bool:
             table_settings,
         )
 
+    def _extract_table(self, table_settings=None):
+        if _needs_python_fallback(self, table_settings):
+            return orig_extract_table(self, table_settings)
+        page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
+        return extract_table_from_page(
+            self.page_obj.doc._rust_doc,
+            page_index,
+            self.bbox,
+            self.mediabox,
+            self.initial_doctop,
+            table_settings,
+        )
+
     _extract_tables._bolivar_patched = True
-    module.page.Page.extract_tables = _extract_tables
+    page_mod.Page.extract_tables = _extract_tables
+    _extract_table._bolivar_patched = True
+    page_mod.Page.extract_table = _extract_table
     return True
 
 
@@ -55,8 +98,11 @@ class _PdfplumberPatchLoader(importlib.abc.Loader):
 
 
 class _PdfplumberPatchFinder(importlib.abc.MetaPathFinder):
+    def __init__(self, names):
+        self.names = set(names)
+
     def find_spec(self, fullname, path, target=None):
-        if fullname != "pdfplumber":
+        if fullname not in self.names:
             return None
         spec = importlib.machinery.PathFinder.find_spec(fullname, path)
         if spec is None or spec.loader is None:
@@ -65,11 +111,13 @@ class _PdfplumberPatchFinder(importlib.abc.MetaPathFinder):
         return spec
 
 
-def _install_hook():
+def _install_hook(names=None):
     global _HOOK_INSTALLED
     if _HOOK_INSTALLED:
         return
-    sys.meta_path.insert(0, _PdfplumberPatchFinder())
+    if names is None:
+        names = {"pdfplumber", "pdfplumber.page"}
+    sys.meta_path.insert(0, _PdfplumberPatchFinder(names))
     _HOOK_INSTALLED = True
 
 
@@ -87,6 +135,10 @@ def patch_pdfplumber() -> bool:
     module = sys.modules.get("pdfplumber")
     if module is not None and hasattr(module, "page"):
         return _apply_patch(module)
+
+    if module is not None:
+        _install_hook({"pdfplumber.page"})
+        return False
 
     _install_hook()
     return False
