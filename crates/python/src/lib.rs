@@ -3,13 +3,22 @@
 //! This crate provides PyO3 bindings to expose bolivar's PDF parsing
 //! functionality to Python, with a pdfminer.six-compatible API.
 
+use bolivar_core::high_level::{
+    ExtractOptions, extract_pages as core_extract_pages,
+    extract_pages_with_document as core_extract_pages_with_document,
+    extract_text as core_extract_text,
+    extract_text_with_document as core_extract_text_with_document,
+};
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdftypes::PDFObject;
 use bolivar_core::utils::HasBBox;
+use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList, PyType};
 use std::collections::HashSet;
+use std::fs::File;
+use std::sync::Arc;
 
 /// Convert a PDFObject to a string representation for Python.
 fn pdf_object_to_string(obj: &PDFObject) -> String {
@@ -215,6 +224,29 @@ impl PyPDFDocument {
     #[pyo3(signature = (data, password = ""))]
     fn new(data: &[u8], password: &str) -> PyResult<Self> {
         let doc = PDFDocument::new(data, password)
+            .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+        Ok(Self { inner: doc })
+    }
+
+    /// Create a new PDFDocument from a file path using memory-mapped I/O.
+    ///
+    /// Args:
+    ///     path: Path to PDF file
+    ///     password: Optional password for encrypted PDFs (default: empty)
+    ///
+    /// Returns:
+    ///     PDFDocument instance
+    ///
+    /// Raises:
+    ///     ValueError: If the PDF cannot be parsed
+    #[classmethod]
+    #[pyo3(signature = (path, password = ""))]
+    fn from_path(_cls: &Bound<'_, PyType>, path: &str, password: &str) -> PyResult<Self> {
+        let file = File::open(path)
+            .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
+        let mmap = unsafe { Mmap::map(&file) }
+            .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
+        let doc = PDFDocument::new_from_mmap(Arc::new(mmap), password)
             .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
         Ok(Self { inner: doc })
     }
@@ -816,6 +848,178 @@ fn process_page(
     })
 }
 
+/// Process all PDF pages and return their layouts.
+///
+/// Args:
+///     doc: PDFDocument instance
+///     laparams: Layout analysis parameters
+///     threads: Optional thread count (defaults to no parallelism when None)
+///
+/// Returns:
+///     List of LTPage objects
+#[pyfunction]
+#[pyo3(signature = (doc, laparams=None, threads=None))]
+fn process_pages(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    laparams: Option<&PyLAParams>,
+    threads: Option<usize>,
+) -> PyResult<Vec<PyLTPage>> {
+    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching: true,
+        laparams: la,
+        threads,
+    };
+
+    let pages = py
+        .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
+        .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
+
+    Ok(pages.iter().map(ltpage_to_py).collect())
+}
+
+fn ltpage_to_py(ltpage: &bolivar_core::layout::LTPage) -> PyLTPage {
+    let mut items = Vec::new();
+    for item in ltpage.iter() {
+        collect_chars(item, &mut items);
+    }
+    PyLTPage {
+        pageid: ltpage.pageid,
+        rotate: ltpage.rotate,
+        bbox: (ltpage.x0(), ltpage.y0(), ltpage.x1(), ltpage.y1()),
+        items,
+    }
+}
+
+/// Extract text from PDF bytes.
+#[pyfunction]
+#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, threads = None))]
+fn extract_text(
+    py: Python<'_>,
+    data: &[u8],
+    password: &str,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+    laparams: Option<&PyLAParams>,
+    threads: Option<usize>,
+) -> PyResult<String> {
+    let options = ExtractOptions {
+        password: password.to_string(),
+        page_numbers,
+        maxpages,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+        threads,
+    };
+    let data = data.to_vec();
+    let result = py.allow_threads(|| core_extract_text(&data, Some(options)));
+    result.map_err(|e| PyValueError::new_err(format!("Failed to extract text: {}", e)))
+}
+
+/// Extract text from a PDF file path using memory-mapped I/O.
+#[pyfunction]
+#[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, threads = None))]
+fn extract_text_from_path(
+    py: Python<'_>,
+    path: &str,
+    password: &str,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+    laparams: Option<&PyLAParams>,
+    threads: Option<usize>,
+) -> PyResult<String> {
+    let file = File::open(path)
+        .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
+    let mmap = unsafe { Mmap::map(&file) }
+        .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
+    let doc = PDFDocument::new_from_mmap(Arc::new(mmap), password)
+        .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+
+    let options = ExtractOptions {
+        password: password.to_string(),
+        page_numbers,
+        maxpages,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+        threads,
+    };
+
+    let result = py.allow_threads(|| core_extract_text_with_document(&doc, options));
+    result.map_err(|e| PyValueError::new_err(format!("Failed to extract text: {}", e)))
+}
+
+/// Extract pages (layout) from PDF bytes.
+#[pyfunction]
+#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, threads = None))]
+fn extract_pages(
+    py: Python<'_>,
+    data: &[u8],
+    password: &str,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+    laparams: Option<&PyLAParams>,
+    threads: Option<usize>,
+) -> PyResult<Vec<PyLTPage>> {
+    let options = ExtractOptions {
+        password: password.to_string(),
+        page_numbers,
+        maxpages,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+        threads,
+    };
+    let data = data.to_vec();
+    let pages = py
+        .allow_threads(|| {
+            let iter = core_extract_pages(&data, Some(options))?;
+            iter.collect::<bolivar_core::error::Result<Vec<_>>>()
+        })
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+    Ok(pages.iter().map(ltpage_to_py).collect())
+}
+
+/// Extract pages (layout) from a PDF file path using memory-mapped I/O.
+#[pyfunction]
+#[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, threads = None))]
+fn extract_pages_from_path(
+    py: Python<'_>,
+    path: &str,
+    password: &str,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+    laparams: Option<&PyLAParams>,
+    threads: Option<usize>,
+) -> PyResult<Vec<PyLTPage>> {
+    let file = File::open(path)
+        .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
+    let mmap = unsafe { Mmap::map(&file) }
+        .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
+    let doc = PDFDocument::new_from_mmap(Arc::new(mmap), password)
+        .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+
+    let options = ExtractOptions {
+        password: password.to_string(),
+        page_numbers,
+        maxpages,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+        threads,
+    };
+
+    let pages = py
+        .allow_threads(|| core_extract_pages_with_document(&doc, options))
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+    Ok(pages.iter().map(ltpage_to_py).collect())
+}
+
 /// Recursively collect LTChar items from layout tree
 fn collect_chars(item: &bolivar_core::layout::LTItem, chars: &mut Vec<PyLTItem>) {
     use bolivar_core::layout::{LTItem, TextBoxType, TextLineElement, TextLineType};
@@ -926,6 +1130,147 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLTLine>()?;
     m.add_class::<PyLTCurve>()?;
     m.add_class::<PyLTAnno>()?;
+    m.add_function(wrap_pyfunction!(extract_text, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_text_from_path, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_pages, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_pages_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
+    m.add_function(wrap_pyfunction!(process_pages, m)?)?;
     Ok(())
+}
+
+#[cfg(all(test, feature = "python-tests"))]
+mod tests {
+    use super::*;
+
+    fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"%PDF-1.4\n");
+
+        let mut offsets: Vec<usize> = Vec::new();
+        let push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
+            offsets.push(buf.len());
+            buf.extend_from_slice(obj.as_bytes());
+        };
+
+        push_obj(
+            &mut out,
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+            &mut offsets,
+        );
+
+        let kids: String = (0..page_count)
+            .map(|i| format!("{} 0 R", 3 + i))
+            .collect::<Vec<_>>()
+            .join(" ");
+        push_obj(
+            &mut out,
+            format!(
+                "2 0 obj\n<< /Type /Pages /Kids [{}] /Count {} >>\nendobj\n",
+                kids, page_count
+            ),
+            &mut offsets,
+        );
+
+        for i in 0..page_count {
+            let page_id = 3 + i;
+            let contents_id = 3 + page_count + i;
+            push_obj(
+                &mut out,
+                format!(
+                    "{} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents {} 0 R >>\nendobj\n",
+                    page_id, contents_id
+                ),
+                &mut offsets,
+            );
+        }
+
+        for i in 0..page_count {
+            let contents_id = 3 + page_count + i;
+            push_obj(
+                &mut out,
+                format!(
+                    "{} 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n",
+                    contents_id
+                ),
+                &mut offsets,
+            );
+        }
+
+        let xref_pos = out.len();
+        let obj_count = offsets.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", obj_count + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{:010} 00000 n \n", offset).as_bytes());
+        }
+        out.extend_from_slice(b"trailer\n<< /Size ");
+        out.extend_from_slice((obj_count + 1).to_string().as_bytes());
+        out.extend_from_slice(b" /Root 1 0 R >>\nstartxref\n");
+        out.extend_from_slice(xref_pos.to_string().as_bytes());
+        out.extend_from_slice(b"\n%%EOF");
+
+        out
+    }
+
+    fn write_temp_pdf(data: &[u8]) -> std::path::PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let mut path = std::env::temp_dir();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let pid = std::process::id();
+        path.push(format!("bolivar_py_test_{pid}_{stamp}.pdf"));
+        std::fs::write(&path, data).expect("write temp pdf");
+        path
+    }
+
+    #[test]
+    fn test_extract_text_from_path_matches_bytes() {
+        let pdf_data = build_minimal_pdf_with_pages(1);
+        let path = write_temp_pdf(&pdf_data);
+
+        Python::with_gil(|py| {
+            let text_bytes = extract_text(py, &pdf_data, "", None, 0, true, None, None).unwrap();
+            let text_path = extract_text_from_path(
+                py,
+                path.to_string_lossy().as_ref(),
+                "",
+                None,
+                0,
+                true,
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(text_bytes, text_path);
+        });
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_extract_pages_from_path_len() {
+        let pdf_data = build_minimal_pdf_with_pages(2);
+        let path = write_temp_pdf(&pdf_data);
+
+        Python::with_gil(|py| {
+            let pages = extract_pages_from_path(
+                py,
+                path.to_string_lossy().as_ref(),
+                "",
+                None,
+                0,
+                true,
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(pages.len(), 2);
+        });
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

@@ -8,7 +8,12 @@ from bolivar._bolivar import (
     PDFPage,
     LTPage,
     LTChar,
+    extract_text,
+    extract_text_from_path,
+    extract_pages,
+    extract_pages_from_path,
     process_page,
+    process_pages,
     __version__,
 )
 
@@ -18,6 +23,11 @@ __all__ = [
     "PDFPage",
     "LTPage",
     "LTChar",
+    "extract_text",
+    "extract_text_from_path",
+    "extract_pages",
+    "extract_pages_from_path",
     "process_page",
+    "process_pages",
     "__version__",
 ]

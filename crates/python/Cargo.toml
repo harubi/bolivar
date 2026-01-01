@@ -13,3 +13,4 @@ crate-type = ["cdylib"]
 [dependencies]
 bolivar-core = { path = "../core" }
 pyo3 = { workspace = true, features = ["extension-module"] }
+memmap2.workspace = true

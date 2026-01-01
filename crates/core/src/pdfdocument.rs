@@ -12,6 +12,7 @@ use crate::error::{PdfError, Result};
 use crate::pdfparser::PDFParser;
 use crate::pdftypes::PDFObject;
 use crate::security::{PDFSecurityHandler, create_security_handler};
+use memmap2::Mmap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -54,10 +55,29 @@ impl XRef {
     }
 }
 
+#[derive(Clone)]
+pub enum PdfBytes {
+    Owned(Arc<[u8]>),
+    Mmap(Arc<Mmap>),
+}
+
+impl PdfBytes {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            PdfBytes::Owned(data) => data,
+            PdfBytes::Mmap(map) => map.as_ref(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.as_slice().len()
+    }
+}
+
 /// PDF Document - provides access to PDF objects and metadata.
 /// Owns its data via Arc for thread-safe sharing.
 pub struct PDFDocument {
-    data: Arc<[u8]>,
+    data: PdfBytes,
     xrefs: Vec<XRef>,
     catalog: HashMap<String, PDFObject>,
     info: Vec<HashMap<String, PDFObject>>,
@@ -69,7 +89,21 @@ impl PDFDocument {
     /// Create a new PDFDocument from raw PDF data.
     pub fn new<D: AsRef<[u8]>>(data: D, password: &str) -> Result<Self> {
         let mut doc = Self {
-            data: Arc::from(data.as_ref()),
+            data: PdfBytes::Owned(Arc::from(data.as_ref())),
+            xrefs: Vec::new(),
+            catalog: HashMap::new(),
+            info: Vec::new(),
+            cache: HashMap::new(),
+            security_handler: None,
+        };
+        doc.parse(password)?;
+        Ok(doc)
+    }
+
+    /// Create a new PDFDocument from a memory-mapped PDF.
+    pub fn new_from_mmap(mmap: Arc<Mmap>, password: &str) -> Result<Self> {
+        let mut doc = Self {
+            data: PdfBytes::Mmap(mmap),
             xrefs: Vec::new(),
             catalog: HashMap::new(),
             info: Vec::new(),
@@ -153,7 +187,7 @@ impl PDFDocument {
     fn find_startxref(&self) -> Result<usize> {
         // Search backwards for "startxref"
         let search = b"startxref";
-        let data = &*self.data;
+        let data = self.data.as_slice();
 
         // Start from near end of file
         let search_start = if data.len() > 1024 {
@@ -223,7 +257,7 @@ impl PDFDocument {
 
     /// Load xref table at given position.
     fn load_xref_at(&self, pos: usize) -> Result<XRef> {
-        let data = &self.data[pos..];
+        let data = &self.data.as_slice()[pos..];
 
         // Check if it starts with "xref" (traditional) or a number (xref stream)
         if data.starts_with(b"xref") {
@@ -237,7 +271,7 @@ impl PDFDocument {
     /// Load traditional xref table.
     fn load_traditional_xref(&self, pos: usize) -> Result<XRef> {
         let mut xref = XRef::new();
-        let data = &self.data[pos..];
+        let data = &self.data.as_slice()[pos..];
 
         // Skip "xref" and whitespace
         let mut cursor = 4;
@@ -351,7 +385,7 @@ impl PDFDocument {
 
         // Parse trailer dictionary
         // Skip whitespace
-        let data = &self.data[pos + cursor..];
+        let data = &self.data.as_slice()[pos + cursor..];
         let mut cursor = 0;
         while cursor < data.len()
             && (data[cursor] == b' ' || data[cursor] == b'\n' || data[cursor] == b'\r')
@@ -740,7 +774,7 @@ impl PDFDocument {
         xref.is_fallback = true;
         let re = Regex::new(r"(\d+)\s+(\d+)\s+obj\b").unwrap();
 
-        for cap in re.captures_iter(&self.data) {
+        for cap in re.captures_iter(self.data.as_slice()) {
             let objid: u32 = std::str::from_utf8(&cap[1]).unwrap().parse().unwrap();
             let genno: u32 = std::str::from_utf8(&cap[2]).unwrap().parse().unwrap();
             let pos = cap.get(0).unwrap().start();
@@ -758,7 +792,7 @@ impl PDFDocument {
 
         // Find trailer
         if let Some(trailer_pos) = self.find_trailer() {
-            let data = &self.data[trailer_pos..];
+            let data = &self.data.as_slice()[trailer_pos..];
             // Skip "trailer" and whitespace
             let mut skip = 7;
             while skip < data.len()
@@ -788,7 +822,7 @@ impl PDFDocument {
         let search = b"trailer";
         (0..self.data.len().saturating_sub(search.len()))
             .rev()
-            .find(|&i| &self.data[i..i + search.len()] == search)
+            .find(|&i| &self.data.as_slice()[i..i + search.len()] == search)
     }
 
     /// Read a decimal number from data, return (value, bytes_consumed).
@@ -975,7 +1009,7 @@ impl PDFDocument {
                 self.data.len()
             )));
         }
-        let data = &self.data[offset..];
+        let data = &self.data.as_slice()[offset..];
 
         // Parse "objid genno obj"
         let (_objid, consumed1) = self.read_number(data)?;

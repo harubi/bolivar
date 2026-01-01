@@ -9,15 +9,17 @@ class PDFPage:
     Provides pdfminer.six-compatible API for accessing page properties.
     """
 
-    def __init__(self, rust_page, doc):
+    def __init__(self, rust_page, doc, page_index=None):
         """Create a PDFPage from a Rust PDFPage.
 
         Args:
             rust_page: bolivar.PDFPage instance from Rust
             doc: Parent PDFDocument (for compatibility)
+            page_index: Optional 0-based index for fast lookup
         """
         self._rust_page = rust_page
         self.doc = doc
+        self._page_index = page_index
         self.pageid = rust_page.pageid
 
         # Convert mediabox tuple to list (pdfminer.six uses lists)
@@ -75,8 +77,8 @@ class PDFPage:
             PDFPage instances for each page in the document
         """
         # Get pages from the Rust document stored in PDFDocument
-        for rust_page in document._rust_pages:
-            yield cls(rust_page, document)
+        for idx, rust_page in enumerate(document._rust_pages):
+            yield cls(rust_page, document, page_index=idx)
 
     @classmethod
     def get_pages(cls, fp, page_numbers=None, maxpages=0, password=b"",

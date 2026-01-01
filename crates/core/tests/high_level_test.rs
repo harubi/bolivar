@@ -37,6 +37,7 @@ fn test_extract_text_with_options() {
         maxpages: 0,
         caching: true,
         laparams: Some(LAParams::default()),
+        threads: None,
     };
 
     let result = extract_text(b"", Some(options));
@@ -53,6 +54,7 @@ fn test_extract_text_page_numbers_filter() {
         maxpages: 0,
         caching: true,
         laparams: None,
+        threads: None,
     };
 
     // With empty input this errors, but proves the API accepts the option
@@ -69,6 +71,7 @@ fn test_extract_text_maxpages_limit() {
         maxpages: 1, // Only one page
         caching: true,
         laparams: None,
+        threads: None,
     };
 
     let result = extract_text(b"", Some(options));
@@ -93,6 +96,7 @@ fn test_extract_text_laparams_applied() {
         maxpages: 0,
         caching: true,
         laparams: Some(laparams),
+        threads: None,
     };
 
     let result = extract_text(b"", Some(options));
@@ -124,6 +128,7 @@ fn test_extract_text_to_fp_with_options() {
         maxpages: 0,
         caching: true,
         laparams: Some(LAParams::default()),
+        threads: None,
     };
 
     let result = extract_text_to_fp(b"", &mut output, Some(options));
@@ -168,6 +173,7 @@ fn test_extract_pages_with_options() {
         maxpages: 0,
         caching: true,
         laparams: Some(LAParams::default()),
+        threads: None,
     };
 
     let result = extract_pages(b"", Some(options));
@@ -205,6 +211,7 @@ fn test_extract_pages_page_numbers_filter() {
         maxpages: 0,
         caching: true,
         laparams: None,
+        threads: None,
     };
 
     let result = extract_pages(b"", Some(options));
@@ -219,6 +226,7 @@ fn test_extract_pages_maxpages_limit() {
         maxpages: 2, // At most 2 pages
         caching: true,
         laparams: None,
+        threads: None,
     };
 
     let result = extract_pages(b"", Some(options));
@@ -238,6 +246,7 @@ fn test_extract_options_default() {
     assert_eq!(options.maxpages, 0);
     assert!(options.caching);
     assert!(options.laparams.is_none());
+    assert!(options.threads.is_none());
 }
 
 #[test]
@@ -287,6 +296,75 @@ startxref
 110
 %%EOF";
 
+fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(b"%PDF-1.4\n");
+
+    let mut offsets: Vec<usize> = Vec::new();
+    let mut push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
+        offsets.push(buf.len());
+        buf.extend_from_slice(obj.as_bytes());
+    };
+
+    push_obj(
+        &mut out,
+        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+        &mut offsets,
+    );
+
+    let kids: String = (0..page_count)
+        .map(|i| format!("{} 0 R", 3 + i))
+        .collect::<Vec<_>>()
+        .join(" ");
+    push_obj(
+        &mut out,
+        format!(
+            "2 0 obj\n<< /Type /Pages /Kids [{}] /Count {} >>\nendobj\n",
+            kids, page_count
+        ),
+        &mut offsets,
+    );
+
+    for i in 0..page_count {
+        let page_id = 3 + i;
+        let contents_id = 3 + page_count + i;
+        push_obj(
+            &mut out,
+            format!(
+                "{} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents {} 0 R >>\nendobj\n",
+                page_id, contents_id
+            ),
+            &mut offsets,
+        );
+    }
+
+    for i in 0..page_count {
+        let contents_id = 3 + page_count + i;
+        push_obj(
+            &mut out,
+            format!(
+                "{} 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n",
+                contents_id
+            ),
+            &mut offsets,
+        );
+    }
+
+    let xref_pos = out.len();
+    let obj_count = offsets.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", obj_count + 1).as_bytes());
+    for offset in offsets {
+        out.extend_from_slice(format!("{:010} 00000 n \n", offset).as_bytes());
+    }
+    out.extend_from_slice(b"trailer\n<< /Size ");
+    out.extend_from_slice((obj_count + 1).to_string().as_bytes());
+    out.extend_from_slice(b" /Root 1 0 R >>\nstartxref\n");
+    out.extend_from_slice(xref_pos.to_string().as_bytes());
+    out.extend_from_slice(b"\n%%EOF");
+
+    out
+}
+
 #[test]
 fn test_extract_text_minimal_pdf() {
     let result = extract_text(MINIMAL_PDF, None);
@@ -295,6 +373,52 @@ fn test_extract_text_minimal_pdf() {
     match result {
         Ok(text) => assert!(text.is_empty()),
         Err(_) => {} // Parser limitations may cause this to fail
+    }
+}
+
+#[test]
+fn test_extract_text_parallel_matches_sequential() {
+    let seq = extract_text(MINIMAL_PDF, None).unwrap();
+
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching: true,
+        laparams: None,
+        threads: Some(2),
+    };
+
+    let par = extract_text(MINIMAL_PDF, Some(options)).unwrap();
+    assert_eq!(seq, par);
+}
+
+#[test]
+fn test_extract_pages_parallel_order_is_stable() {
+    let pdf_data = build_minimal_pdf_with_pages(2);
+
+    let seq_pages: Vec<_> = extract_pages(&pdf_data, None)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching: true,
+        laparams: None,
+        threads: Some(2),
+    };
+
+    let par_pages: Vec<_> = extract_pages(&pdf_data, Some(options))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(seq_pages.len(), par_pages.len());
+    for (a, b) in seq_pages.iter().zip(par_pages.iter()) {
+        assert_eq!(a.bbox(), b.bbox());
     }
 }
 

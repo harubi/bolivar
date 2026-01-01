@@ -27,6 +27,8 @@ weezl.workspace = true
 rstar.workspace = true
 ordered-float.workspace = true
 geo-index.workspace = true
+rayon.workspace = true
+memmap2.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

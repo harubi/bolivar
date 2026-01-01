@@ -25,9 +25,20 @@ class PDFDocument:
         if isinstance(password, bytes):
             password = password.decode('utf-8', errors='replace')
 
-        # Get PDF data from parser and create Rust document
-        data = parser.get_data()
-        self._rust_doc = _RustPDFDocument(data, password=password)
+        # Prefer mmap-backed parsing when a real path is available
+        path = None
+        if hasattr(parser, "get_path"):
+            try:
+                path = parser.get_path()
+            except Exception:
+                path = None
+
+        if path:
+            self._rust_doc = _RustPDFDocument.from_path(path, password=password)
+        else:
+            # Fallback to in-memory bytes
+            data = parser.get_data()
+            self._rust_doc = _RustPDFDocument(data, password=password)
 
         # Cache pages from Rust
         self._rust_pages = self._rust_doc.get_pages()

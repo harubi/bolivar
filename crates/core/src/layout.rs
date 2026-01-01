@@ -2709,7 +2709,7 @@ impl LTLayoutContainer {
         // CRITICAL: Python iterates through original 'lines' in order and yields boxes
         // as their first line is encountered. We must do the same - NOT iterate the HashMap!
         let mut result: Vec<TextBoxType> = Vec::new();
-        let mut done: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut done: Vec<bool> = vec![false; next_box_id];
 
         // Iterate through lines in ORIGINAL ORDER (like Python's "for line in lines:")
         for (i, _line) in line_types.iter().enumerate() {
@@ -2720,10 +2720,10 @@ impl LTLayoutContainer {
             };
 
             // Skip if we've already processed this box
-            if done.contains(&box_id) {
+            if done[box_id] {
                 continue;
             }
-            done.insert(box_id);
+            done[box_id] = true;
 
             // Get all members of this box
             let member_indices = match box_contents.get(&box_id) {
@@ -2896,13 +2896,13 @@ impl LTLayoutContainer {
             }
         }
 
-        let mut done: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut done: Vec<bool> = vec![false; elements.len()];
         let mut result_elements: Vec<TextGroupElement> = Vec::new();
 
         while let Some(entry) = heap.pop() {
             // Skip if either object is already merged
             // With proper id1/id2 from iter_with_indices, this check is sufficient
-            if done.contains(&entry.id1) || done.contains(&entry.id2) {
+            if done[entry.id1] || (entry.id2 != usize::MAX && done[entry.id2]) {
                 continue;
             }
 
@@ -2916,7 +2916,7 @@ impl LTLayoutContainer {
                 let between: Vec<_> = plane
                     .find_with_indices((x0, y0, x1, y1))
                     .into_iter()
-                    .filter(|(idx, _)| !done.contains(idx))
+                    .filter(|(idx, _)| !done[*idx])
                     .collect();
 
                 // Check if there's any element between that isn't id1 or id2
@@ -2934,10 +2934,10 @@ impl LTLayoutContainer {
             }
 
             // Merge the two elements into a group
-            done.insert(entry.id1);
+            done[entry.id1] = true;
             // Only insert id2 if it's a real ID, not the usize::MAX placeholder
             if entry.id2 != usize::MAX {
-                done.insert(entry.id2);
+                done[entry.id2] = true;
             }
 
             // Tombstone pattern: elements are tracked in `done` set instead of
@@ -2951,10 +2951,7 @@ impl LTLayoutContainer {
             // Add distances to all remaining elements using iter_with_indices
             // The seq_index from Plane is the element ID for proper tie-breaking
             // Filter against done (tombstone pattern)
-            for (other_id, other) in plane
-                .iter_with_indices()
-                .filter(|(id, _)| !done.contains(id))
-            {
+            for (other_id, other) in plane.iter_with_indices().filter(|(id, _)| !done[*id]) {
                 let d = dist(&group_elem, other);
                 heap.push(HeapEntry {
                     dist: d,
@@ -2970,11 +2967,12 @@ impl LTLayoutContainer {
             plane.add(group_elem.clone());
             elements.push(group_elem);
             next_id += 1;
+            done.push(false);
         }
 
         // Collect remaining elements as groups (filter against done - tombstone pattern)
         for (id, elem) in plane.iter_with_indices() {
-            if !done.contains(&id) {
+            if !done[id] {
                 result_elements.push(elem.clone());
             }
         }

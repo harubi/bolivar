@@ -11,6 +11,7 @@ __version__ = "0.1.0"
 from . import (
     converter,
     data_structures,
+    high_level,
     layout,
     pdfdocument,
     pdfinterp,
@@ -24,6 +25,7 @@ from . import (
 __all__ = [
     "converter",
     "data_structures",
+    "high_level",
     "layout",
     "pdfdocument",
     "pdfinterp",

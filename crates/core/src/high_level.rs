@@ -7,12 +7,54 @@
 
 use std::io::Write;
 
+use rayon::ThreadPoolBuilder;
+use rayon::prelude::*;
+
 use crate::converter::{PDFPageAggregator, TextConverter};
 use crate::error::{PdfError, Result};
 use crate::layout::{LAParams, LTPage};
 use crate::pdfdocument::PDFDocument;
 use crate::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use crate::pdfpage::PDFPage;
+
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+struct ThreadRecord {
+    id: std::thread::ThreadId,
+    in_pool: bool,
+}
+
+#[cfg(test)]
+static THREAD_LOG: OnceLock<Mutex<Vec<ThreadRecord>>> = OnceLock::new();
+
+#[cfg(test)]
+fn record_thread() {
+    let log = THREAD_LOG.get_or_init(|| Mutex::new(Vec::new()));
+    if let Ok(mut guard) = log.lock() {
+        let in_pool = rayon::current_thread_index().is_some();
+        guard.push(ThreadRecord {
+            id: std::thread::current().id(),
+            in_pool,
+        });
+    }
+}
+
+#[cfg(test)]
+fn take_thread_log() -> Vec<ThreadRecord> {
+    let log = THREAD_LOG.get_or_init(|| Mutex::new(Vec::new()));
+    let mut guard = log.lock().unwrap();
+    std::mem::take(&mut *guard)
+}
+
+#[cfg(test)]
+fn clear_thread_log() {
+    let log = THREAD_LOG.get_or_init(|| Mutex::new(Vec::new()));
+    let mut guard = log.lock().unwrap();
+    guard.clear();
+}
 
 /// Options for text extraction.
 ///
@@ -33,6 +75,10 @@ pub struct ExtractOptions {
 
     /// Layout analysis parameters. None uses default LAParams.
     pub laparams: Option<LAParams>,
+
+    /// Optional thread count for parallel page processing.
+    /// None or Some(1) uses the sequential path.
+    pub threads: Option<usize>,
 }
 
 impl Default for ExtractOptions {
@@ -43,6 +89,7 @@ impl Default for ExtractOptions {
             maxpages: 0,
             caching: true,
             laparams: None,
+            threads: None,
         }
     }
 }
@@ -68,25 +115,28 @@ impl Default for ExtractOptions {
 /// ```
 pub fn extract_text(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result<String> {
     let options = options.unwrap_or_default();
+    let doc = PDFDocument::new(pdf_data, &options.password)?;
+    extract_text_with_document(&doc, options)
+}
 
+/// Extract text from an already-parsed PDFDocument.
+pub fn extract_text_with_document(doc: &PDFDocument, options: ExtractOptions) -> Result<String> {
     // Use LAParams or create default
-    let laparams = options.laparams.unwrap_or_default();
+    let laparams = options.laparams.clone().unwrap_or_default();
 
     // Create output buffer
     let mut output = Vec::new();
 
-    // Extract text to buffer
-    extract_text_to_fp_inner(
-        pdf_data,
+    extract_text_to_fp_from_doc_inner(
+        doc,
         &mut output,
-        &options.password,
         options.page_numbers.as_deref(),
         options.maxpages,
         options.caching,
         Some(&laparams),
+        options.threads,
     )?;
 
-    // Convert to string
     String::from_utf8(output).map_err(|e| PdfError::DecodeError(e.to_string()))
 }
 
@@ -123,6 +173,7 @@ pub fn extract_text_to_fp<W: Write>(
         options.maxpages,
         options.caching,
         laparams,
+        options.threads,
     )
 }
 
@@ -135,6 +186,7 @@ fn extract_text_to_fp_inner<W: Write>(
     maxpages: usize,
     caching: bool,
     laparams: Option<&LAParams>,
+    threads: Option<usize>,
 ) -> Result<()> {
     // Validate PDF header
     if pdf_data.len() < 8 || !pdf_data.starts_with(b"%PDF-") {
@@ -143,10 +195,26 @@ fn extract_text_to_fp_inner<W: Write>(
 
     // Parse PDF document
     let doc = PDFDocument::new(pdf_data, password)?;
+    extract_text_to_fp_from_doc_inner(
+        &doc,
+        writer,
+        page_numbers,
+        maxpages,
+        caching,
+        laparams,
+        threads,
+    )
+}
 
-    // Create resource manager
-    let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-
+fn extract_text_to_fp_from_doc_inner<W: Write>(
+    doc: &PDFDocument,
+    writer: &mut W,
+    page_numbers: Option<&[usize]>,
+    maxpages: usize,
+    caching: bool,
+    laparams: Option<&LAParams>,
+    threads: Option<usize>,
+) -> Result<()> {
     // Get LAParams (use default if not provided)
     let default_laparams = LAParams::default();
     let laparams = laparams.unwrap_or(&default_laparams);
@@ -154,33 +222,82 @@ fn extract_text_to_fp_inner<W: Write>(
     // Create text converter
     let mut converter = TextConverter::new(writer, "utf-8", 1, Some(laparams.clone()), false);
 
-    // Process pages
-    let mut page_count = 0;
-    for (page_idx, page_result) in PDFPage::create_pages(&doc).enumerate() {
-        // Check page number filter
-        if let Some(nums) = page_numbers {
-            if !nums.contains(&page_idx) {
-                continue;
+    let thread_count = threads.filter(|count| *count > 1);
+    if let Some(count) = thread_count {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(count)
+            .build()
+            .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+
+        let mut selected_pages: Vec<(usize, PDFPage)> = Vec::new();
+        let mut page_count = 0;
+        for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
+            if let Some(nums) = page_numbers {
+                if !nums.contains(&page_idx) {
+                    continue;
+                }
             }
+
+            if maxpages > 0 && page_count >= maxpages {
+                break;
+            }
+
+            let page = page_result?;
+            selected_pages.push((page_idx, page));
+            page_count += 1;
         }
 
-        // Check maxpages limit
-        if maxpages > 0 && page_count >= maxpages {
-            break;
+        let mut results: Vec<(usize, Result<LTPage>)> = pool.install(|| {
+            selected_pages
+                .into_par_iter()
+                .map(|(page_idx, page)| {
+                    let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+                    let mut aggregator =
+                        PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
+                    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, laparams, doc);
+                    (page_idx, ltpage)
+                })
+                .collect()
+        });
+
+        results.sort_by_key(|(page_idx, _)| *page_idx);
+        for (_, result) in results {
+            let ltpage = result?;
+            converter.receive_layout(ltpage);
         }
+    } else {
+        // Create resource manager
+        let mut rsrcmgr = PDFResourceManager::with_caching(caching);
 
-        let page = page_result?;
+        // Process pages
+        let mut page_count = 0;
+        for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
+            // Check page number filter
+            if let Some(nums) = page_numbers {
+                if !nums.contains(&page_idx) {
+                    continue;
+                }
+            }
 
-        // Create aggregator for this page
-        let mut aggregator = PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
+            // Check maxpages limit
+            if maxpages > 0 && page_count >= maxpages {
+                break;
+            }
 
-        // Process page content and get layout
-        let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, laparams, &doc)?;
+            let page = page_result?;
 
-        // Render to text
-        converter.receive_layout(ltpage);
+            // Create aggregator for this page
+            let mut aggregator =
+                PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
 
-        page_count += 1;
+            // Process page content and get layout
+            let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, laparams, doc)?;
+
+            // Render to text
+            converter.receive_layout(ltpage);
+
+            page_count += 1;
+        }
     }
 
     Ok(())
@@ -197,6 +314,9 @@ fn process_page(
     _laparams: &LAParams,
     doc: &PDFDocument,
 ) -> Result<LTPage> {
+    #[cfg(test)]
+    record_thread();
+
     // Create interpreter with resource manager and aggregator as device
     let mut interpreter = PDFPageInterpreter::new(rsrcmgr, aggregator);
 
@@ -271,54 +391,231 @@ pub fn extract_pages(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result
     // Parse PDF document
     let doc = PDFDocument::new(pdf_data, &options.password)?;
 
-    // Create resource manager
-    let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
+    let pages = extract_pages_from_doc(&doc, &options)?;
 
+    Ok(PageIterator {
+        pages: pages.into_iter(),
+    })
+}
+
+/// Extract LTPage objects from an already-parsed PDFDocument.
+pub fn extract_pages_with_document(
+    doc: &PDFDocument,
+    options: ExtractOptions,
+) -> Result<Vec<LTPage>> {
+    extract_pages_from_doc(doc, &options)?.into_iter().collect()
+}
+
+fn extract_pages_from_doc(
+    doc: &PDFDocument,
+    options: &ExtractOptions,
+) -> Result<Vec<Result<LTPage>>> {
     // Get LAParams
-    let laparams = options.laparams.unwrap_or_default();
+    let laparams = options.laparams.clone().unwrap_or_default();
 
+    let thread_count = options.threads.filter(|count| *count > 1);
     // Collect pages into a vector
     // This is necessary because PDFPage borrows from PDFDocument
     let mut pages: Vec<Result<LTPage>> = Vec::new();
     let mut page_count = 0;
 
-    for (page_idx, page_result) in PDFPage::create_pages(&doc).enumerate() {
-        // Check page number filter
-        if let Some(ref nums) = options.page_numbers {
-            if !nums.contains(&page_idx) {
-                continue;
-            }
-        }
+    if let Some(count) = thread_count {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(count)
+            .build()
+            .map_err(|e| PdfError::DecodeError(e.to_string()))?;
 
-        // Check maxpages limit
-        if options.maxpages > 0 && page_count >= options.maxpages {
-            break;
-        }
+        let mut pending: Vec<(usize, PDFPage)> = Vec::new();
+        let mut errors: Vec<(usize, Result<LTPage>)> = Vec::new();
 
-        match page_result {
-            Ok(page) => {
-                // Create aggregator for this page
-                let mut aggregator =
-                    PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
-
-                // Process page content using interpreter
-                match process_page(&page, &mut aggregator, &mut rsrcmgr, &laparams, &doc) {
-                    Ok(ltpage) => {
-                        pages.push(Ok(ltpage));
-                        page_count += 1;
-                    }
-                    Err(e) => {
-                        pages.push(Err(e));
-                    }
+        for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
+            if let Some(ref nums) = options.page_numbers {
+                if !nums.contains(&page_idx) {
+                    continue;
                 }
             }
-            Err(e) => {
-                pages.push(Err(e));
+
+            if options.maxpages > 0 && page_count >= options.maxpages {
+                break;
+            }
+
+            match page_result {
+                Ok(page) => {
+                    pending.push((page_idx, page));
+                    page_count += 1;
+                }
+                Err(e) => {
+                    errors.push((page_idx, Err(e)));
+                }
+            }
+        }
+
+        let mut processed: Vec<(usize, Result<LTPage>)> = pool.install(|| {
+            pending
+                .into_par_iter()
+                .map(|(page_idx, page)| {
+                    let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
+                    let mut aggregator =
+                        PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
+                    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, &laparams, doc);
+                    (page_idx, ltpage)
+                })
+                .collect()
+        });
+
+        processed.extend(errors);
+        processed.sort_by_key(|(page_idx, _)| *page_idx);
+        pages.extend(processed.into_iter().map(|(_, result)| result));
+    } else {
+        // Create resource manager
+        let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
+
+        for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
+            // Check page number filter
+            if let Some(ref nums) = options.page_numbers {
+                if !nums.contains(&page_idx) {
+                    continue;
+                }
+            }
+
+            // Check maxpages limit
+            if options.maxpages > 0 && page_count >= options.maxpages {
+                break;
+            }
+
+            match page_result {
+                Ok(page) => {
+                    // Create aggregator for this page
+                    let mut aggregator =
+                        PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
+
+                    // Process page content using interpreter
+                    match process_page(&page, &mut aggregator, &mut rsrcmgr, &laparams, doc) {
+                        Ok(ltpage) => {
+                            pages.push(Ok(ltpage));
+                            page_count += 1;
+                        }
+                        Err(e) => {
+                            pages.push(Err(e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    pages.push(Err(e));
+                }
             }
         }
     }
 
-    Ok(PageIterator {
-        pages: pages.into_iter(),
-    })
+    Ok(pages)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExtractOptions, extract_pages};
+    use std::collections::HashSet;
+
+    fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"%PDF-1.4\n");
+
+        let mut offsets: Vec<usize> = Vec::new();
+        let mut push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
+            offsets.push(buf.len());
+            buf.extend_from_slice(obj.as_bytes());
+        };
+
+        // 1: Catalog
+        push_obj(
+            &mut out,
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+            &mut offsets,
+        );
+
+        // 2: Pages
+        let kids: String = (0..page_count)
+            .map(|i| format!("{} 0 R", 3 + i))
+            .collect::<Vec<_>>()
+            .join(" ");
+        push_obj(
+            &mut out,
+            format!(
+                "2 0 obj\n<< /Type /Pages /Kids [{}] /Count {} >>\nendobj\n",
+                kids, page_count
+            ),
+            &mut offsets,
+        );
+
+        // Page objects and their content streams
+        for i in 0..page_count {
+            let page_id = 3 + i;
+            let contents_id = 3 + page_count + i;
+            push_obj(
+                &mut out,
+                format!(
+                    "{} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents {} 0 R >>\nendobj\n",
+                    page_id, contents_id
+                ),
+                &mut offsets,
+            );
+        }
+
+        for i in 0..page_count {
+            let contents_id = 3 + page_count + i;
+            push_obj(
+                &mut out,
+                format!(
+                    "{} 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n",
+                    contents_id
+                ),
+                &mut offsets,
+            );
+        }
+
+        let xref_pos = out.len();
+        let obj_count = offsets.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", obj_count + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{:010} 00000 n \n", offset).as_bytes());
+        }
+        out.extend_from_slice(b"trailer\n<< /Size ");
+        out.extend_from_slice((obj_count + 1).to_string().as_bytes());
+        out.extend_from_slice(b" /Root 1 0 R >>\nstartxref\n");
+        out.extend_from_slice(xref_pos.to_string().as_bytes());
+        out.extend_from_slice(b"\n%%EOF");
+
+        out
+    }
+
+    #[test]
+    fn test_parallel_extract_pages_uses_multiple_threads() {
+        let pdf_data = build_minimal_pdf_with_pages(4);
+
+        super::clear_thread_log();
+
+        let options = ExtractOptions {
+            password: String::new(),
+            page_numbers: None,
+            maxpages: 0,
+            caching: true,
+            laparams: None,
+            threads: Some(2),
+        };
+
+        let pages: Vec<_> = extract_pages(&pdf_data, Some(options))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(pages.len(), 4);
+
+        let records = super::take_thread_log();
+        let used_pool = records.iter().any(|record| record.in_pool);
+        assert!(used_pool, "expected parallel processing to use rayon pool");
+
+        let unique: HashSet<_> = records.iter().map(|record| record.id).collect();
+        assert!(!unique.is_empty(), "expected at least one recorded thread");
+    }
 }
