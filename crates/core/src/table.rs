@@ -293,6 +293,26 @@ fn bbox_overlap(a: BBox, b: BBox) -> Option<BBox> {
     }
 }
 
+fn clip_edge_to_bbox(edge: EdgeObj, crop: BBox) -> Option<EdgeObj> {
+    let bbox = BBox {
+        x0: edge.x0,
+        top: edge.top,
+        x1: edge.x1,
+        bottom: edge.bottom,
+    };
+    let overlap = bbox_overlap(bbox, crop)?;
+    Some(EdgeObj {
+        x0: overlap.x0,
+        x1: overlap.x1,
+        top: overlap.top,
+        bottom: overlap.bottom,
+        width: overlap.width(),
+        height: overlap.height(),
+        orientation: edge.orientation,
+        object_type: edge.object_type,
+    })
+}
+
 fn cluster_list(mut xs: Vec<f64>, tolerance: f64) -> Vec<Vec<f64>> {
     xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     if tolerance == 0.0 || xs.len() < 2 {
@@ -1443,6 +1463,14 @@ fn extract_text(chars: &[CharObj], settings: &TextSettings) -> String {
     textmap_to_string(line_texts, line_dir_render, char_dir_render)
 }
 
+fn rects_equal(a: Rect, b: Rect) -> bool {
+    const EPS: f64 = 1e-6;
+    (a.0 - b.0).abs() < EPS
+        && (a.1 - b.1).abs() < EPS
+        && (a.2 - b.2).abs() < EPS
+        && (a.3 - b.3).abs() < EPS
+}
+
 fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Vec<EdgeObj>) {
     let mut chars: Vec<CharObj> = Vec::new();
     let mut edges: Vec<EdgeObj> = Vec::new();
@@ -1450,12 +1478,21 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
     fn visit_item(
         item: &LTItem,
         geom: &PageGeometry,
+        crop_bbox: Option<BBox>,
         chars: &mut Vec<CharObj>,
         edges: &mut Vec<EdgeObj>,
     ) {
         match item {
             LTItem::Char(c) => {
                 let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
+                let bbox = if let Some(crop) = crop_bbox {
+                    let Some(bbox) = bbox_overlap(bbox, crop) else {
+                        return;
+                    };
+                    bbox
+                } else {
+                    bbox
+                };
                 let text = c.get_text().to_string();
                 let size = c.size();
                 let upright = c.upright();
@@ -1491,11 +1528,25 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
                     },
                     object_type: "line",
                 };
-                edges.push(edge);
+                if let Some(crop) = crop_bbox {
+                    if let Some(edge) = clip_edge_to_bbox(edge, crop) {
+                        edges.push(edge);
+                    }
+                } else {
+                    edges.push(edge);
+                }
             }
             LTItem::Rect(r) => {
                 let bbox = to_top_left_bbox(r.x0(), r.y0(), r.x1(), r.y1(), geom);
-                edges.extend(rect_to_edges(bbox));
+                for edge in rect_to_edges(bbox) {
+                    if let Some(crop) = crop_bbox {
+                        if let Some(edge) = clip_edge_to_bbox(edge, crop) {
+                            edges.push(edge);
+                        }
+                    } else {
+                        edges.push(edge);
+                    }
+                }
             }
             LTItem::Curve(c) => {
                 let mut pts = Vec::new();
@@ -1503,13 +1554,29 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
                     let tl = to_top_left_bbox(p.0, p.1, p.0, p.1, geom);
                     pts.push((tl.x0, tl.top));
                 }
-                edges.extend(curve_to_edges(&pts, "curve_edge"));
+                for edge in curve_to_edges(&pts, "curve_edge") {
+                    if let Some(crop) = crop_bbox {
+                        if let Some(edge) = clip_edge_to_bbox(edge, crop) {
+                            edges.push(edge);
+                        }
+                    } else {
+                        edges.push(edge);
+                    }
+                }
             }
             LTItem::TextLine(line) => match line {
                 TextLineType::Horizontal(l) => {
                     for el in l.iter() {
                         if let TextLineElement::Char(c) = el {
                             let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
+                            let bbox = if let Some(crop) = crop_bbox {
+                                let Some(bbox) = bbox_overlap(bbox, crop) else {
+                                    continue;
+                                };
+                                bbox
+                            } else {
+                                bbox
+                            };
                             let text = c.get_text().to_string();
                             let size = c.size();
                             let upright = c.upright();
@@ -1535,6 +1602,14 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
                     for el in l.iter() {
                         if let TextLineElement::Char(c) = el {
                             let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
+                            let bbox = if let Some(crop) = crop_bbox {
+                                let Some(bbox) = bbox_overlap(bbox, crop) else {
+                                    continue;
+                                };
+                                bbox
+                            } else {
+                                bbox
+                            };
                             let text = c.get_text().to_string();
                             let size = c.size();
                             let upright = c.upright();
@@ -1563,6 +1638,14 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
                         for el in line.iter() {
                             if let TextLineElement::Char(c) = el {
                                 let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
+                                let bbox = if let Some(crop) = crop_bbox {
+                                    let Some(bbox) = bbox_overlap(bbox, crop) else {
+                                        continue;
+                                    };
+                                    bbox
+                                } else {
+                                    bbox
+                                };
                                 let text = c.get_text().to_string();
                                 let size = c.size();
                                 let upright = c.upright();
@@ -1590,6 +1673,14 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
                         for el in line.iter() {
                             if let TextLineElement::Char(c) = el {
                                 let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
+                                let bbox = if let Some(crop) = crop_bbox {
+                                    let Some(bbox) = bbox_overlap(bbox, crop) else {
+                                        continue;
+                                    };
+                                    bbox
+                                } else {
+                                    bbox
+                                };
                                 let text = c.get_text().to_string();
                                 let size = c.size();
                                 let upright = c.upright();
@@ -1615,20 +1706,31 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
             },
             LTItem::Figure(fig) => {
                 for child in fig.iter() {
-                    visit_item(child, geom, chars, edges);
+                    visit_item(child, geom, crop_bbox, chars, edges);
                 }
             }
             LTItem::Page(p) => {
                 for child in p.iter() {
-                    visit_item(child, geom, chars, edges);
+                    visit_item(child, geom, crop_bbox, chars, edges);
                 }
             }
             _ => {}
         }
     }
 
+    let crop_bbox = if rects_equal(geom.page_bbox, geom.mediabox) {
+        None
+    } else {
+        Some(BBox {
+            x0: geom.page_bbox.0,
+            top: geom.page_bbox.1,
+            x1: geom.page_bbox.2,
+            bottom: geom.page_bbox.3,
+        })
+    };
+
     for item in page.iter() {
-        visit_item(item, geom, &mut chars, &mut edges);
+        visit_item(item, geom, crop_bbox, &mut chars, &mut edges);
     }
 
     (chars, edges)
