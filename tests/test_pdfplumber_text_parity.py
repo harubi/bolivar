@@ -154,9 +154,9 @@ class TestTextUtilsParity(unittest.TestCase):
             ("ttb", "rtl"): "enil tsrif\nenil dnoces\nenil driht",
             ("btt", "ltr"): "third line\nsecond line\nfirst line",
             ("btt", "rtl"): "enil driht\nenil dnoces\nenil tsrif",
-            ("ltr", "ttb"): "fst\nieh\nrci\nsor\ntnd\n d \n l l\nili\nnin\nene\n e ",
+            ("ltr", "ttb"): "fst\nieh\nrci\nsor\ntnd\n d \nl l\nili\nnin\nene\n e ",
             ("ltr", "btt"): " s \nfet\nich\nroi\nsnr\ntdd\n   \nlll\niii\nnnn\neee",
-            ("rtl", "ttb"): "tsf\nhei\nicr\nros\ndnt\n d \n l l\nili\nnin\nene\n e ",
+            ("rtl", "ttb"): "tsf\nhei\nicr\nros\ndnt\n d \nl l\nili\nnin\nene\n e ",
             ("rtl", "btt"): " s \ntef\nhci\nior\nrns\nddt\n   \nlll\niii\nnnn\neee",
         }
         with pdfplumber.open(path) as pdf:
@@ -596,9 +596,17 @@ class TestNicsReportTextParity(unittest.TestCase):
     def test_nics_extract_text_filtered(self):
         path = os.path.join(HERE, "pdfs/nics-background-checks-2015-11.pdf")
         with pdfplumber.open(path) as pdf:
-            filtered = pdf.pages[0].filter(lambda obj: obj.get("text") == "Alabama")
+            page = pdf.pages[0]
+
+            def keep(obj):
+                if obj["object_type"] == "char":
+                    if obj["size"] < 15:
+                        return False
+                return True
+
+            filtered = page.filter(keep)
             text = filtered.extract_text()
-            assert "Alabama" in text
+            assert text == "NICS Firearm Background Checks\nNovember - 2015"
 
     def test_nics_find_tables(self):
         path = os.path.join(HERE, "pdfs/nics-background-checks-2015-11.pdf")
