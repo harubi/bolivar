@@ -79,6 +79,8 @@ impl Color {
 pub struct PDFTextState {
     /// Current font (None if not set)
     pub font: Option<Arc<PDFCIDFont>>,
+    /// Current font resource name (e.g., "F1") for fallback
+    pub fontname: Option<String>,
     /// Font size in user units
     pub fontsize: f64,
     /// Character spacing
@@ -104,6 +106,7 @@ impl PDFTextState {
     pub fn new() -> Self {
         let mut state = Self {
             font: None,
+            fontname: None,
             fontsize: 0.0,
             charspace: 0.0,
             wordspace: 0.0,
@@ -122,6 +125,7 @@ impl PDFTextState {
     pub fn copy(&self) -> Self {
         Self {
             font: self.font.clone(),
+            fontname: self.fontname.clone(),
             fontsize: self.fontsize,
             charspace: self.charspace,
             wordspace: self.wordspace,
