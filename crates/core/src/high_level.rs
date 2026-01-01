@@ -254,7 +254,7 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
                     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                     let mut aggregator =
                         PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
-                    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, laparams, doc);
+                    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc);
                     (page_idx, ltpage)
                 })
                 .collect()
@@ -291,7 +291,7 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
                 PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
 
             // Process page content and get layout
-            let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, laparams, doc)?;
+            let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
 
             // Render to text
             converter.receive_layout(ltpage);
@@ -311,7 +311,6 @@ fn process_page(
     page: &PDFPage,
     aggregator: &mut PDFPageAggregator,
     rsrcmgr: &mut PDFResourceManager,
-    _laparams: &LAParams,
     doc: &PDFDocument,
 ) -> Result<LTPage> {
     #[cfg(test)]
@@ -381,7 +380,11 @@ impl PageIterator {
 /// }
 /// ```
 pub fn extract_pages(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result<PageIterator> {
-    let options = options.unwrap_or_default();
+    let mut options = options.unwrap_or_default();
+    // Match pdfminer.high_level.extract_pages default behavior.
+    if options.laparams.is_none() {
+        options.laparams = Some(LAParams::default());
+    }
 
     // Validate PDF header
     if pdf_data.len() < 8 || !pdf_data.starts_with(b"%PDF-") {
@@ -410,8 +413,8 @@ fn extract_pages_from_doc(
     doc: &PDFDocument,
     options: &ExtractOptions,
 ) -> Result<Vec<Result<LTPage>>> {
-    // Get LAParams
-    let laparams = options.laparams.clone().unwrap_or_default();
+    // Use LAParams as provided (None disables layout analysis).
+    let laparams = options.laparams.clone();
 
     let thread_count = options.threads.filter(|count| *count > 1);
     // Collect pages into a vector
@@ -456,8 +459,8 @@ fn extract_pages_from_doc(
                 .map(|(page_idx, page)| {
                     let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
                     let mut aggregator =
-                        PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
-                    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, &laparams, doc);
+                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1);
+                    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc);
                     (page_idx, ltpage)
                 })
                 .collect()
@@ -487,10 +490,10 @@ fn extract_pages_from_doc(
                 Ok(page) => {
                     // Create aggregator for this page
                     let mut aggregator =
-                        PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
+                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1);
 
                     // Process page content using interpreter
-                    match process_page(&page, &mut aggregator, &mut rsrcmgr, &laparams, doc) {
+                    match process_page(&page, &mut aggregator, &mut rsrcmgr, doc) {
                         Ok(ltpage) => {
                             pages.push(Ok(ltpage));
                             page_count += 1;
