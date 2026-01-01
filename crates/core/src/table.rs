@@ -521,8 +521,8 @@ fn merge_edges(
         edges = snap_edges(&edges, snap_x_tolerance, snap_y_tolerance);
     }
 
-    // Group by orientation and position
-    let mut grouped: BTreeMap<(Orientation, i64), Vec<EdgeObj>> = BTreeMap::new();
+    // Group by orientation and position (match pdfplumber exact grouping)
+    let mut grouped: BTreeMap<(Orientation, OrderedFloat<f64>), Vec<EdgeObj>> = BTreeMap::new();
     for e in &edges {
         let orientation = match e.orientation {
             Some(o) => o,
@@ -532,7 +532,7 @@ fn merge_edges(
             Orientation::Horizontal => e.top,
             Orientation::Vertical => e.x0,
         };
-        let key = (orientation, (key_val * 1000.0).round() as i64);
+        let key = (orientation, OrderedFloat(key_val));
         grouped.entry(key).or_default().push(e.clone());
     }
 
