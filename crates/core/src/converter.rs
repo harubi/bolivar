@@ -89,6 +89,13 @@ struct MarkedContentState {
     mcid: Option<i32>,
 }
 
+#[derive(Debug, Clone)]
+struct FigureState {
+    name: String,
+    bbox: Rect,
+    matrix: Matrix,
+}
+
 pub struct PDFLayoutAnalyzer {
     /// Current page number (1-indexed)
     pageno: i32,
@@ -96,6 +103,8 @@ pub struct PDFLayoutAnalyzer {
     laparams: Option<LAParams>,
     /// Stack of layout containers (for nested figures)
     stack: Vec<LTContainer>,
+    /// Stack of figure metadata (for nested figures)
+    figure_stack: Vec<FigureState>,
     /// Current layout container
     cur_item: Option<LTContainer>,
     /// Current transformation matrix
@@ -126,6 +135,7 @@ impl PDFLayoutAnalyzer {
             pageno,
             laparams,
             stack: Vec::new(),
+            figure_stack: Vec::new(),
             cur_item: None,
             ctm: (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
             image_writer,
@@ -247,23 +257,37 @@ impl PDFLayoutAnalyzer {
     }
 
     /// Begin processing a figure (Form XObject).
-    pub fn begin_figure(&mut self, _name: &str, bbox: Rect, matrix: Matrix) {
+    pub fn begin_figure(&mut self, name: &str, bbox: Rect, matrix: Matrix) {
         if let Some(cur) = self.cur_item.take() {
             self.stack.push(cur);
         }
         let combined_matrix = mult_matrix(matrix, self.ctm);
-        let fig_container = LTContainer::new(apply_matrix_rect(combined_matrix, bbox));
+        let rect = (bbox.0, bbox.1, bbox.0 + bbox.2, bbox.1 + bbox.3);
+        let fig_bbox = apply_matrix_rect(combined_matrix, rect);
+        self.figure_stack.push(FigureState {
+            name: name.to_string(),
+            bbox,
+            matrix: combined_matrix,
+        });
+        let fig_container = LTContainer::new(fig_bbox);
         self.cur_item = Some(fig_container);
     }
 
     /// End processing a figure.
     pub fn end_figure(&mut self, _name: &str) {
-        if let Some(fig_container) = self.cur_item.take() {
-            let fig = Box::new(LTFigure::new("", fig_container.bbox, self.ctm));
-            if let Some(mut parent) = self.stack.pop() {
-                parent.add(LTItem::Figure(fig));
-                self.cur_item = Some(parent);
-            }
+        let Some(fig_container) = self.cur_item.take() else {
+            return;
+        };
+        let Some(fig_state) = self.figure_stack.pop() else {
+            return;
+        };
+        let mut fig = LTFigure::new(&fig_state.name, fig_state.bbox, fig_state.matrix);
+        for item in fig_container.items {
+            fig.add(item);
+        }
+        if let Some(mut parent) = self.stack.pop() {
+            parent.add(LTItem::Figure(Box::new(fig)));
+            self.cur_item = Some(parent);
         }
     }
 
