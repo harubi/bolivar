@@ -212,7 +212,7 @@ pub struct PageGeometry {
 }
 
 fn page_height(geom: &PageGeometry) -> f64 {
-    geom.page_bbox.3 - geom.page_bbox.1
+    geom.mediabox.3 - geom.mediabox.1
 }
 
 fn mb_offsets(geom: &PageGeometry) -> (f64, f64) {
