@@ -711,9 +711,8 @@ impl PDFFont for PDFCIDFont {
             if let Some(s) = map.get_unichr(cid) {
                 return Some(s);
             }
-            // If ToUnicode exists but CID not found, return None (renders as "(cid:X)")
-            // Do NOT fall through to ASCII fallback - this matches Python's behavior
-            return None;
+            // If ToUnicode exists but CID not found, fall through to cid2unicode
+            // (matches pdfminer.six PDFSimpleFont behavior)
         }
 
         // Try cid2unicode (from Encoding entry for simple fonts)
