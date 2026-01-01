@@ -15,6 +15,8 @@ const SIMPLE1_PDF: &[u8] = include_bytes!("fixtures/simple1.pdf");
 const ENCRYPTED_NO_ID_PDF: &[u8] = include_bytes!("fixtures/encryption/encrypted_doc_no_id.pdf");
 const PAGELABELS_PDF: &[u8] = include_bytes!("fixtures/contrib/pagelabels.pdf");
 const ANNOTATIONS_PDF: &[u8] = include_bytes!("fixtures/contrib/issue-1082-annotations.pdf");
+const IMAGE_STRUCTURE_PDF: &[u8] =
+    include_bytes!("../../../references/pdfplumber/tests/pdfs/image_structure.pdf");
 
 /// Test that requesting object ID 0 raises PDFObjectNotFound.
 /// Port of: test_get_zero_objid_raises_pdfobjectnotfound
@@ -120,6 +122,20 @@ fn test_annotations() {
 
     // The document should have at least one page
     assert!(page_count > 0, "Expected at least one page");
+}
+
+/// Ensure objects stored in object streams can be resolved via xref streams.
+#[test]
+fn test_getobj_struct_tree_root_from_objstm() {
+    let doc = PDFDocument::new(IMAGE_STRUCTURE_PDF, "").expect("Failed to parse PDF");
+
+    let obj = doc
+        .getobj(11)
+        .expect("Expected StructTreeRoot object to be resolvable");
+    let dict = obj.as_dict().expect("StructTreeRoot should be a dict");
+    let typ = dict.get("Type").expect("Type missing in StructTreeRoot");
+    let name = typ.as_name().expect("Type should be a name");
+    assert_eq!(name, "StructTreeRoot");
 }
 
 // === Encryption Integration Tests ===

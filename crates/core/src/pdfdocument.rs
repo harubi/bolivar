@@ -902,7 +902,91 @@ impl PDFDocument {
             }
         }
 
+        // Fallback: scan object streams directly when xrefs are incomplete.
+        if let Ok(Some(obj)) = self.find_obj_in_objstms(objid) {
+            return Ok(obj);
+        }
+
         Err(PdfError::ObjectNotFound(objid))
+    }
+
+    /// Fallback scan for an object inside any ObjStm stream.
+    fn find_obj_in_objstms(&self, objid: u32) -> Result<Option<PDFObject>> {
+        use regex::bytes::Regex;
+
+        let re = Regex::new(r"(\d+)\s+(\d+)\s+obj\b").unwrap();
+        for cap in re.captures_iter(self.data.as_slice()) {
+            let stream_objid: u32 = match std::str::from_utf8(&cap[1])
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
+                Some(v) => v,
+                None => continue,
+            };
+            let genno: u16 = match std::str::from_utf8(&cap[2]).ok().and_then(|s| s.parse().ok())
+            {
+                Some(v) => v,
+                None => continue,
+            };
+            let pos = cap.get(0).map(|m| m.start()).unwrap_or(0);
+
+            let obj = match self.parse_object_at(pos, stream_objid, true) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let stream = match obj.as_stream() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            match stream.get("Type") {
+                Some(PDFObject::Name(name)) if name == "ObjStm" => {}
+                _ => continue,
+            }
+
+            let data = match self.decode_stream_with_objid(stream, stream_objid, genno) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+
+            let n = match stream.get("N").and_then(|v| v.as_int().ok()) {
+                Some(n) => n as usize,
+                None => continue,
+            };
+            let first = match stream.get("First").and_then(|v| v.as_int().ok()) {
+                Some(f) => f as usize,
+                None => continue,
+            };
+
+            if first > data.len() {
+                continue;
+            }
+
+            let mut header_parser = PDFParser::new(&data[..first]);
+            for _ in 0..n {
+                let obj_id = match header_parser.parse_object().and_then(|o| o.as_int()) {
+                    Ok(id) => id as u32,
+                    Err(_) => break,
+                };
+                let offset = match header_parser.parse_object().and_then(|o| o.as_int()) {
+                    Ok(off) => off as usize,
+                    Err(_) => break,
+                };
+
+                if obj_id == objid {
+                    let obj_offset = first + offset;
+                    if obj_offset >= data.len() {
+                        return Ok(None);
+                    }
+                    let mut obj_parser = PDFParser::new(&data[obj_offset..]);
+                    if let Ok(found) = obj_parser.parse_object() {
+                        return Ok(Some(found));
+                    }
+                    return Ok(None);
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Decrypt strings within a PDF object recursively.
