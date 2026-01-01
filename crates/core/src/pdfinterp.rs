@@ -1306,6 +1306,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         if let Some(font) = self.fontmap.get(fontid) {
             self.textstate.font = Some(font.clone());
         }
+        self.textstate.fontname = Some(fontid.to_string());
         self.textstate.fontsize = fontsize;
     }
 
