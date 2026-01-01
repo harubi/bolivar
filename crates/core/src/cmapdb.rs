@@ -564,7 +564,7 @@ pub fn parse_tounicode_cmap(data: &[u8]) -> UnicodeMap {
 fn parse_bfchar_blocks(content: &str, unicode_map: &mut UnicodeMap) {
     let mut in_bfchar = false;
 
-    for line in content.lines() {
+    for line in content.split(|c| c == '\n' || c == '\r') {
         let line = line.trim();
 
         // Check for "N beginbfchar" or just "beginbfchar"
@@ -600,7 +600,7 @@ fn parse_bfrange_blocks(content: &str, unicode_map: &mut UnicodeMap) {
     let mut in_bfrange = false;
     let mut pending_lines: Vec<String> = Vec::new();
 
-    for line in content.lines() {
+    for line in content.split(|c| c == '\n' || c == '\r') {
         let line = line.trim();
 
         // Check for "N beginbfrange" or just "beginbfrange"
@@ -682,7 +682,7 @@ fn parse_bfrange_line(line: &str, unicode_map: &mut UnicodeMap) {
 fn parse_cidchar_blocks(content: &str, unicode_map: &mut UnicodeMap) {
     let mut in_cidchar = false;
 
-    for line in content.lines() {
+    for line in content.split(|c| c == '\n' || c == '\r') {
         let line = line.trim();
 
         // Check for "N begincidchar" or just "begincidchar"
@@ -740,7 +740,7 @@ fn parse_cidrange_blocks(content: &str, unicode_map: &mut UnicodeMap) {
     let mut in_cidrange = false;
     let mut pending_lines: Vec<String> = Vec::new();
 
-    for line in content.lines() {
+    for line in content.split(|c| c == '\n' || c == '\r') {
         let line = line.trim();
 
         // Check for "N begincidrange" or just "begincidrange"
