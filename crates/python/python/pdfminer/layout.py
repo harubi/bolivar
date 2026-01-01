@@ -35,18 +35,9 @@ class LTItem:
 
     def __init__(self, bbox: Tuple[float, float, float, float] = (0, 0, 0, 0)):
         self.x0, self.y0, self.x1, self.y1 = bbox
-
-    @property
-    def bbox(self) -> Tuple[float, float, float, float]:
-        return (self.x0, self.y0, self.x1, self.y1)
-
-    @property
-    def width(self) -> float:
-        return self.x1 - self.x0
-
-    @property
-    def height(self) -> float:
-        return self.y1 - self.y0
+        self.width = self.x1 - self.x0
+        self.height = self.y1 - self.y0
+        self.bbox = bbox
 
     def __repr__(self):
         return f"<{self.__class__.__name__} {self.bbox}>"
@@ -57,6 +48,9 @@ class LTComponent(LTItem):
 
     def set_bbox(self, bbox: Tuple[float, float, float, float]):
         self.x0, self.y0, self.x1, self.y1 = bbox
+        self.width = self.x1 - self.x0
+        self.height = self.y1 - self.y0
+        self.bbox = bbox
 
 
 class LTContainer(LTComponent):
@@ -143,7 +137,7 @@ class LTChar(LTComponent):
             self.rise = 0
             self.textwidth = _rust_char.adv
             self.adv = _rust_char.adv  # Alias for pdfplumber
-            self.upright = True  # Default - TODO: get from Rust
+            self.upright = bool(getattr(_rust_char, "upright", True))
             self.textdisp = None
             # Create graphicstate with actual colors from Rust
             gs = PDFGraphicState()

@@ -21,6 +21,7 @@ from . import (
     psparser,
     utils,
 )
+from ._bolivar_patch import patch_pdfplumber
 
 __all__ = [
     "converter",
@@ -35,3 +36,6 @@ __all__ = [
     "psparser",
     "utils",
 ]
+
+# Default-on pdfplumber monkeypatch (env opt-out)
+patch_pdfplumber()

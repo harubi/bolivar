@@ -43,6 +43,11 @@ pub trait PDFFont {
     /// Get the widths map for this font.
     fn widths(&self) -> &FontWidthDict;
 
+    /// Get the font name (BaseFont) if available.
+    fn fontname(&self) -> Option<&str> {
+        None
+    }
+
     /// Horizontal scale factor (default 0.001).
     fn hscale(&self) -> f64 {
         0.001
@@ -116,6 +121,12 @@ impl PDFFont for MockPdfFont {
 
     fn widths(&self) -> &FontWidthDict {
         &self.widths
+    }
+
+    fn fontname(&self) -> Option<&str> {
+        self.descriptor
+            .get("FontName")
+            .and_then(|obj| obj.as_name().ok())
     }
 }
 
@@ -281,6 +292,8 @@ pub struct PDFCIDFont {
     pub descent: f64,
     /// Base font name (for Standard 14 font metric lookup)
     pub basefont: Option<String>,
+    /// Font name from FontDescriptor (preferred for pdfminer compatibility)
+    pub fontname: Option<String>,
 }
 
 impl PDFCIDFont {
@@ -291,7 +304,7 @@ impl PDFCIDFont {
     /// * `spec` - Font specification dictionary
     /// * `tounicode_data` - Optional decoded ToUnicode stream data
     pub fn new(spec: &HashMap<String, PDFObject>, tounicode_data: Option<&[u8]>) -> Self {
-        Self::new_with_ttf(spec, tounicode_data, None, false)
+        Self::new_with_ttf(spec, tounicode_data, None, false, None)
     }
 
     /// Create a new PDFCIDFont from spec dictionary with optional TrueType font data.
@@ -307,6 +320,7 @@ impl PDFCIDFont {
         tounicode_data: Option<&[u8]>,
         ttf_data: Option<&[u8]>,
         is_type0: bool,
+        fallback_fontname: Option<String>,
     ) -> Self {
         let cmap = Self::get_cmap_from_spec(spec);
         let vertical = match &cmap {
@@ -393,11 +407,26 @@ impl PDFCIDFont {
         // Parse descent from FontDescriptor
         let descent = Self::get_descent_from_descriptor(spec);
 
+        let obj_to_name = |obj: &PDFObject| -> Option<String> {
+            if let Ok(name) = obj.as_name() {
+                Some(name.to_string())
+            } else if let Ok(bytes) = obj.as_string() {
+                String::from_utf8(bytes.to_vec()).ok()
+            } else {
+                None
+            }
+        };
+
         // Parse BaseFont name for Standard 14 font metric lookup
-        let basefont = spec
-            .get("BaseFont")
-            .and_then(|v| v.as_name().ok())
-            .map(|s| s.to_string());
+        let basefont = spec.get("BaseFont").and_then(obj_to_name);
+
+        let fontname = spec
+            .get("FontDescriptor")
+            .and_then(|v| v.as_dict().ok())
+            .and_then(|d| d.get("FontName"))
+            .and_then(obj_to_name)
+            .or_else(|| basefont.clone())
+            .or_else(|| fallback_fontname.clone());
 
         Self {
             cmap,
@@ -410,6 +439,7 @@ impl PDFCIDFont {
             default_disp,
             descent,
             basefont,
+            fontname,
         }
     }
 
@@ -727,6 +757,12 @@ impl PDFFont for PDFCIDFont {
 
     fn widths(&self) -> &FontWidthDict {
         &self.widths
+    }
+
+    fn fontname(&self) -> Option<&str> {
+        self.fontname
+            .as_deref()
+            .or_else(|| self.basefont.as_deref())
     }
 
     fn is_vertical(&self) -> bool {

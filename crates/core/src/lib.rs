@@ -30,6 +30,7 @@ pub mod psparser;
 pub mod runlength;
 pub mod saslprep;
 pub mod security;
+pub mod table;
 pub mod truetype;
 pub mod utils;
 

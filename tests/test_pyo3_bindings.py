@@ -3,6 +3,7 @@ import pytest
 from pathlib import Path
 
 # Get fixtures path
+ROOT = Path(__file__).parent.parent
 FIXTURES_DIR = Path(__file__).parent.parent / "crates/core/tests/fixtures"
 
 
@@ -116,6 +117,48 @@ class TestLTPage:
 
         bbox = ltpage.bbox
         assert len(bbox) == 4
+
+
+def test_extract_tables_binding_exists():
+    import bolivar
+
+    assert hasattr(bolivar, "extract_tables_from_page")
+    assert hasattr(bolivar, "extract_words_from_page")
+    assert hasattr(bolivar, "extract_text_from_page")
+
+
+def test_extract_tables_settings_affects_output():
+    import pdfplumber
+    from bolivar import extract_tables_from_page
+
+    pdf_path = ROOT / "references/pdfplumber/tests/pdfs/senate-expenditures.pdf"
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
+        base_settings = {
+            "horizontal_strategy": "text",
+            "vertical_strategy": "text",
+            "min_words_vertical": 20,
+        }
+
+        t = extract_tables_from_page(
+            page.page_obj.doc._rust_doc,
+            page_index,
+            page.bbox,
+            page.mediabox,
+            page.initial_doctop,
+            base_settings,
+        )
+        t_tol = extract_tables_from_page(
+            page.page_obj.doc._rust_doc,
+            page_index,
+            page.bbox,
+            page.mediabox,
+            page.initial_doctop,
+            {**base_settings, "text_x_tolerance": 1},
+        )
+
+    assert t[-1] != t_tol[-1]
 
     def test_ltpage_iter_returns_layout_items(self):
         """LTPage can be iterated to get layout items"""

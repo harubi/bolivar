@@ -547,8 +547,8 @@ impl PDFLayoutAnalyzer {
             bbox.3 - bbox.1 // height
         };
 
-        let fontname = format!("Font-{}", cid / 1000); // Placeholder - real fonts have names
-        let item = LTChar::new(bbox, &text, &fontname, size, upright, adv);
+        let fontname = font.fontname().unwrap_or("unknown");
+        let item = LTChar::new(bbox, &text, fontname, size, upright, adv);
 
         // Add to current container
         if let Some(ref mut container) = self.cur_item {

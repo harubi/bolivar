@@ -14,6 +14,9 @@ from bolivar._bolivar import (
     extract_pages_from_path,
     process_page,
     process_pages,
+    extract_tables_from_page,
+    extract_words_from_page,
+    extract_text_from_page,
     __version__,
 )
 
@@ -29,5 +32,8 @@ __all__ = [
     "extract_pages_from_path",
     "process_page",
     "process_pages",
+    "extract_tables_from_page",
+    "extract_words_from_page",
+    "extract_text_from_page",
     "__version__",
 ]

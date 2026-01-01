@@ -698,6 +698,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     tounicode_data.as_deref(),
                     ttf_data.as_deref(),
                     subtype == "Type0",
+                    Some(fontid.clone()),
                 );
                 self.fontmap
                     .insert(fontid.clone(), std::sync::Arc::new(font));

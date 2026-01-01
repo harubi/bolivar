@@ -11,6 +11,10 @@ use bolivar_core::high_level::{
 };
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdftypes::PDFObject;
+use bolivar_core::table::{
+    PageGeometry, TableSettings, TextDir, TextSettings, WordObj, extract_tables_from_ltpage,
+    extract_text_from_ltpage, extract_words_from_ltpage,
+};
 use bolivar_core::utils::HasBBox;
 use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
@@ -100,6 +104,163 @@ fn pdf_object_to_py(
             }
         }
     }
+}
+
+fn parse_text_dir(value: &str) -> Result<TextDir, PyErr> {
+    match value {
+        "ttb" => Ok(TextDir::Ttb),
+        "btt" => Ok(TextDir::Btt),
+        "ltr" => Ok(TextDir::Ltr),
+        "rtl" => Ok(TextDir::Rtl),
+        _ => Err(PyValueError::new_err(format!(
+            "Invalid text direction: {}",
+            value
+        ))),
+    }
+}
+
+fn apply_text_settings_from_dict(
+    settings: &mut TextSettings,
+    dict: &Bound<'_, PyDict>,
+) -> PyResult<()> {
+    let mut tolerance: Option<f64> = None;
+    let mut x_set = false;
+    let mut y_set = false;
+
+    for (k, v) in dict.iter() {
+        let key: String = k.extract()?;
+        match key.as_str() {
+            "x_tolerance" => {
+                settings.x_tolerance = v.extract()?;
+                x_set = true;
+            }
+            "y_tolerance" => {
+                settings.y_tolerance = v.extract()?;
+                y_set = true;
+            }
+            "tolerance" => {
+                tolerance = Some(v.extract()?);
+            }
+            "x_tolerance_ratio" => settings.x_tolerance_ratio = Some(v.extract()?),
+            "y_tolerance_ratio" => settings.y_tolerance_ratio = Some(v.extract()?),
+            "keep_blank_chars" => settings.keep_blank_chars = v.extract()?,
+            "use_text_flow" => settings.use_text_flow = v.extract()?,
+            "vertical_ttb" => settings.vertical_ttb = v.extract()?,
+            "horizontal_ltr" => settings.horizontal_ltr = v.extract()?,
+            "line_dir" => settings.line_dir = parse_text_dir(&v.extract::<String>()?)?,
+            "char_dir" => settings.char_dir = parse_text_dir(&v.extract::<String>()?)?,
+            "line_dir_rotated" => {
+                let val: String = v.extract()?;
+                settings.line_dir_rotated = Some(parse_text_dir(&val)?);
+            }
+            "char_dir_rotated" => {
+                let val: String = v.extract()?;
+                settings.char_dir_rotated = Some(parse_text_dir(&val)?);
+            }
+            "split_at_punctuation" => settings.split_at_punctuation = v.extract()?,
+            "expand_ligatures" => settings.expand_ligatures = v.extract()?,
+            "layout" => settings.layout = v.extract()?,
+            _ => {}
+        }
+    }
+
+    if let Some(tol) = tolerance {
+        if !x_set {
+            settings.x_tolerance = tol;
+        }
+        if !y_set {
+            settings.y_tolerance = tol;
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_text_settings(py: Python<'_>, text_settings: Option<Py<PyAny>>) -> PyResult<TextSettings> {
+    let mut settings = TextSettings::default();
+    let Some(obj) = text_settings else {
+        return Ok(settings);
+    };
+    let obj = obj.bind(py);
+    if obj.is_none() {
+        return Ok(settings);
+    }
+    let dict = obj
+        .downcast::<PyDict>()
+        .map_err(|_| PyValueError::new_err("text_settings must be a dict when provided"))?;
+    apply_text_settings_from_dict(&mut settings, dict)?;
+    Ok(settings)
+}
+
+fn parse_table_settings(
+    py: Python<'_>,
+    table_settings: Option<Py<PyAny>>,
+) -> PyResult<TableSettings> {
+    let mut settings = TableSettings::default();
+    let Some(obj) = table_settings else {
+        return Ok(settings);
+    };
+    let obj = obj.bind(py);
+    if obj.is_none() {
+        return Ok(settings);
+    }
+    let dict = obj
+        .downcast::<PyDict>()
+        .map_err(|_| PyValueError::new_err("table_settings must be a dict when provided"))?;
+
+    let mut text_settings = settings.text_settings.clone();
+
+    for (k, v) in dict.iter() {
+        let key: String = k.extract()?;
+        if let Some(stripped) = key.strip_prefix("text_") {
+            let tmp = PyDict::new(py);
+            tmp.set_item(stripped, v)?;
+            apply_text_settings_from_dict(&mut text_settings, &tmp)?;
+            continue;
+        }
+
+        match key.as_str() {
+            "vertical_strategy" => settings.vertical_strategy = v.extract()?,
+            "horizontal_strategy" => settings.horizontal_strategy = v.extract()?,
+            "snap_tolerance" => {
+                let val: f64 = v.extract()?;
+                settings.snap_x_tolerance = val;
+                settings.snap_y_tolerance = val;
+            }
+            "snap_x_tolerance" => settings.snap_x_tolerance = v.extract()?,
+            "snap_y_tolerance" => settings.snap_y_tolerance = v.extract()?,
+            "join_tolerance" => {
+                let val: f64 = v.extract()?;
+                settings.join_x_tolerance = val;
+                settings.join_y_tolerance = val;
+            }
+            "join_x_tolerance" => settings.join_x_tolerance = v.extract()?,
+            "join_y_tolerance" => settings.join_y_tolerance = v.extract()?,
+            "edge_min_length" => settings.edge_min_length = v.extract()?,
+            "edge_min_length_prefilter" => settings.edge_min_length_prefilter = v.extract()?,
+            "min_words_vertical" => settings.min_words_vertical = v.extract()?,
+            "min_words_horizontal" => settings.min_words_horizontal = v.extract()?,
+            "intersection_tolerance" => {
+                let val: f64 = v.extract()?;
+                settings.intersection_x_tolerance = val;
+                settings.intersection_y_tolerance = val;
+            }
+            "intersection_x_tolerance" => settings.intersection_x_tolerance = v.extract()?,
+            "intersection_y_tolerance" => settings.intersection_y_tolerance = v.extract()?,
+            "text_settings" => {
+                if !v.is_none() {
+                    let ts_dict = v.downcast::<PyDict>().map_err(|_| {
+                        PyValueError::new_err("text_settings must be a dict when provided")
+                    })?;
+                    apply_text_settings_from_dict(&mut text_settings, ts_dict)?;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    settings.text_settings = text_settings;
+    Ok(settings)
 }
 
 /// Layout analysis parameters.
@@ -882,6 +1043,125 @@ fn process_pages(
     Ok(pages.iter().map(ltpage_to_py).collect())
 }
 
+/// Extract tables from a page using Rust table extraction.
+#[pyfunction]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, threads = None))]
+fn extract_tables_from_page(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    page_index: usize,
+    page_bbox: (f64, f64, f64, f64),
+    mediabox: (f64, f64, f64, f64),
+    initial_doctop: f64,
+    table_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    threads: Option<usize>,
+) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
+    let settings = parse_table_settings(py, table_settings)?;
+    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching: true,
+        laparams: la,
+        threads,
+    };
+    let pages = py
+        .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
+        .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
+    let ltpage = pages
+        .get(page_index)
+        .ok_or_else(|| PyValueError::new_err("page_index out of range"))?;
+    let geom = PageGeometry {
+        page_bbox,
+        mediabox,
+        initial_doctop,
+    };
+    Ok(extract_tables_from_ltpage(ltpage, &geom, &settings))
+}
+
+/// Extract words from a page using Rust text extraction.
+#[pyfunction]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, threads = None))]
+fn extract_words_from_page(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    page_index: usize,
+    page_bbox: (f64, f64, f64, f64),
+    mediabox: (f64, f64, f64, f64),
+    initial_doctop: f64,
+    text_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    threads: Option<usize>,
+) -> PyResult<Vec<Py<PyAny>>> {
+    let settings = parse_text_settings(py, text_settings)?;
+    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching: true,
+        laparams: la,
+        threads,
+    };
+    let pages = py
+        .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
+        .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
+    let ltpage = pages
+        .get(page_index)
+        .ok_or_else(|| PyValueError::new_err("page_index out of range"))?;
+    let geom = PageGeometry {
+        page_bbox,
+        mediabox,
+        initial_doctop,
+    };
+    let words = extract_words_from_ltpage(ltpage, &geom, settings);
+    let mut out = Vec::with_capacity(words.len());
+    for w in &words {
+        out.push(word_obj_to_py(py, w)?);
+    }
+    Ok(out)
+}
+
+/// Extract text from a page using Rust text extraction.
+#[pyfunction]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, threads = None))]
+fn extract_text_from_page(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    page_index: usize,
+    page_bbox: (f64, f64, f64, f64),
+    mediabox: (f64, f64, f64, f64),
+    initial_doctop: f64,
+    text_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    threads: Option<usize>,
+) -> PyResult<String> {
+    let settings = parse_text_settings(py, text_settings)?;
+    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching: true,
+        laparams: la,
+        threads,
+    };
+    let pages = py
+        .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
+        .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
+    let ltpage = pages
+        .get(page_index)
+        .ok_or_else(|| PyValueError::new_err("page_index out of range"))?;
+    let geom = PageGeometry {
+        page_bbox,
+        mediabox,
+        initial_doctop,
+    };
+    Ok(extract_text_from_ltpage(ltpage, &geom, settings))
+}
+
 fn ltpage_to_py(ltpage: &bolivar_core::layout::LTPage) -> PyLTPage {
     let mut items = Vec::new();
     for item in ltpage.iter() {
@@ -893,6 +1173,29 @@ fn ltpage_to_py(ltpage: &bolivar_core::layout::LTPage) -> PyLTPage {
         bbox: (ltpage.x0(), ltpage.y0(), ltpage.x1(), ltpage.y1()),
         items,
     }
+}
+
+fn word_obj_to_py(py: Python<'_>, w: &WordObj) -> PyResult<Py<PyAny>> {
+    let d = PyDict::new(py);
+    d.set_item("text", &w.text)?;
+    d.set_item("x0", w.x0)?;
+    d.set_item("x1", w.x1)?;
+    d.set_item("top", w.top)?;
+    d.set_item("bottom", w.bottom)?;
+    d.set_item("doctop", w.doctop)?;
+    d.set_item("width", w.width)?;
+    d.set_item("height", w.height)?;
+    d.set_item("upright", if w.upright { 1 } else { 0 })?;
+    d.set_item(
+        "direction",
+        match w.direction {
+            bolivar_core::table::TextDir::Ttb => "ttb",
+            bolivar_core::table::TextDir::Btt => "btt",
+            bolivar_core::table::TextDir::Ltr => "ltr",
+            bolivar_core::table::TextDir::Rtl => "rtl",
+        },
+    )?;
+    Ok(d.into_any().unbind())
 }
 
 /// Extract text from PDF bytes.
@@ -1136,6 +1439,9 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_pages_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tables_from_page, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_words_from_page, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_text_from_page, m)?)?;
     Ok(())
 }
 
