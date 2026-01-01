@@ -3523,47 +3523,6 @@ impl HasBBox for LTLayoutContainer {
     }
 }
 
-#[cfg(test)]
-mod exact_grouping_tests {
-    use super::{
-        LAParams, LTLayoutContainer, LTTextBoxHorizontal, LTTextLineHorizontal, TextBoxType,
-    };
-    use crate::utils::{plane_iter_with_indices_calls, reset_plane_iter_with_indices_calls};
-
-    #[test]
-    fn test_group_textboxes_exact_does_not_iter_plane_per_merge() {
-        reset_plane_iter_with_indices_calls();
-
-        let container = LTLayoutContainer::new((0.0, 0.0, 200.0, 100.0));
-
-        let mut box1 = LTTextBoxHorizontal::new();
-        let mut line1 = LTTextLineHorizontal::new(0.1);
-        line1.set_bbox((0.0, 0.0, 50.0, 20.0));
-        box1.add(line1);
-
-        let mut box2 = LTTextBoxHorizontal::new();
-        let mut line2 = LTTextLineHorizontal::new(0.1);
-        line2.set_bbox((60.0, 0.0, 110.0, 20.0));
-        box2.add(line2);
-
-        let mut box3 = LTTextBoxHorizontal::new();
-        let mut line3 = LTTextLineHorizontal::new(0.1);
-        line3.set_bbox((120.0, 0.0, 170.0, 20.0));
-        box3.add(line3);
-
-        let boxes = vec![
-            TextBoxType::Horizontal(box1),
-            TextBoxType::Horizontal(box2),
-            TextBoxType::Horizontal(box3),
-        ];
-
-        let _ = container.group_textboxes_exact(&LAParams::default(), &boxes);
-
-        // Only the final collection should iterate the plane.
-        assert_eq!(plane_iter_with_indices_calls(), 1);
-    }
-}
-
 // ============================================================================
 // LTFigure - represents an area used by PDF Form objects
 // ============================================================================

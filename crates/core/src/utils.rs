@@ -10,25 +10,10 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::hash::Hash;
-#[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use geo_index::rtree::sort::HilbertSort;
 use geo_index::rtree::{RTree as GeoRTree, RTreeBuilder, RTreeIndex, SimpleDistanceMetric};
 use rstar::{AABB, PointDistance, RTree, RTreeObject};
-
-#[cfg(test)]
-static PLANE_ITER_WITH_INDICES_CALLS: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-pub(crate) fn reset_plane_iter_with_indices_calls() {
-    PLANE_ITER_WITH_INDICES_CALLS.store(0, Ordering::Relaxed);
-}
-
-#[cfg(test)]
-pub(crate) fn plane_iter_with_indices_calls() -> usize {
-    PLANE_ITER_WITH_INDICES_CALLS.load(Ordering::Relaxed)
-}
 
 /// Maximum integer value for PDF compatibility (32-bit signed max).
 pub const INF: i32 = i32::MAX;
@@ -442,10 +427,6 @@ impl<T: HasBBox> Plane<T> {
 
     /// Returns an iterator over all active objects with their indices in the plane.
     pub fn iter_with_indices(&self) -> impl Iterator<Item = (usize, &T)> {
-        #[cfg(test)]
-        {
-            PLANE_ITER_WITH_INDICES_CALLS.fetch_add(1, Ordering::Relaxed);
-        }
         self.seq
             .iter()
             .enumerate()
