@@ -1346,7 +1346,7 @@ fn extract_pages_from_path(
     let doc = PDFDocument::new_from_mmap(Arc::new(mmap), password)
         .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
 
-    let options = ExtractOptions {
+    let mut options = ExtractOptions {
         password: password.to_string(),
         page_numbers,
         maxpages,
@@ -1354,6 +1354,10 @@ fn extract_pages_from_path(
         laparams: laparams.map(|p| p.clone().into()),
         threads,
     };
+    // Match pdfminer.high_level.extract_pages default behavior.
+    if options.laparams.is_none() {
+        options.laparams = Some(bolivar_core::layout::LAParams::default());
+    }
 
     let pages = py
         .allow_threads(|| core_extract_pages_with_document(&doc, options))
