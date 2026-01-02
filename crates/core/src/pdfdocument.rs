@@ -14,7 +14,8 @@ use crate::pdftypes::PDFObject;
 use crate::security::{PDFSecurityHandler, create_security_handler};
 use memmap2::Mmap;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::collections::HashSet;
 
 /// XRef entry - location of an object in the PDF file.
 #[derive(Debug, Clone)]
@@ -81,7 +82,9 @@ pub struct PDFDocument {
     xrefs: Vec<XRef>,
     catalog: HashMap<String, PDFObject>,
     info: Vec<HashMap<String, PDFObject>>,
-    cache: HashMap<u32, PDFObject>,
+    cache: RwLock<HashMap<u32, PDFObject>>,
+    resolving: RwLock<HashSet<u32>>,
+    objstm_index: RwLock<Option<HashMap<u32, (u32, usize)>>>,
     security_handler: Option<Box<dyn PDFSecurityHandler + Send + Sync>>,
 }
 
@@ -93,7 +96,9 @@ impl PDFDocument {
             xrefs: Vec::new(),
             catalog: HashMap::new(),
             info: Vec::new(),
-            cache: HashMap::new(),
+            cache: RwLock::new(HashMap::new()),
+            resolving: RwLock::new(HashSet::new()),
+            objstm_index: RwLock::new(None),
             security_handler: None,
         };
         doc.parse(password)?;
@@ -107,7 +112,9 @@ impl PDFDocument {
             xrefs: Vec::new(),
             catalog: HashMap::new(),
             info: Vec::new(),
-            cache: HashMap::new(),
+            cache: RwLock::new(HashMap::new()),
+            resolving: RwLock::new(HashSet::new()),
+            objstm_index: RwLock::new(None),
             security_handler: None,
         };
         doc.parse(password)?;
@@ -236,6 +243,13 @@ impl PDFDocument {
 
             let xref = self.load_xref_at(pos)?;
 
+            // Check for XRefStm (hybrid-reference xref stream)
+            let xref_stm = xref
+                .trailer
+                .get("XRefStm")
+                .and_then(|p| p.as_int().ok())
+                .map(|n| n as usize);
+
             // Check for Prev pointer to previous xref
             let prev = xref
                 .trailer
@@ -244,6 +258,15 @@ impl PDFDocument {
                 .map(|n| n as usize);
 
             self.xrefs.push(xref);
+
+            if let Some(xref_stm_pos) = xref_stm {
+                if !visited.contains(&xref_stm_pos) {
+                    if let Ok(xref_stm) = self.load_xref_stream(xref_stm_pos) {
+                        self.xrefs.push(xref_stm);
+                        visited.insert(xref_stm_pos);
+                    }
+                }
+            }
 
             if let Some(prev_pos) = prev {
                 pos = prev_pos;
@@ -875,9 +898,38 @@ impl PDFDocument {
             return Err(PdfError::ObjectNotFound(0));
         }
 
+        struct ResolvingGuard<'a> {
+            set: &'a RwLock<HashSet<u32>>,
+            objid: u32,
+        }
+
+        impl<'a> Drop for ResolvingGuard<'a> {
+            fn drop(&mut self) {
+                if let Ok(mut set) = self.set.write() {
+                    set.remove(&self.objid);
+                }
+            }
+        }
+
+        if let Ok(mut set) = self.resolving.write() {
+            if set.contains(&objid) {
+                return Err(PdfError::SyntaxError(format!(
+                    "circular reference detected for obj {}",
+                    objid
+                )));
+            }
+            set.insert(objid);
+        }
+        let _guard = ResolvingGuard {
+            set: &self.resolving,
+            objid,
+        };
+
         // Check cache first
-        if let Some(obj) = self.cache.get(&objid) {
-            return Ok(obj.clone());
+        if let Ok(cache) = self.cache.read() {
+            if let Some(obj) = cache.get(&objid) {
+                return Ok(obj.clone());
+            }
         }
 
         // Find in xrefs
@@ -910,13 +962,21 @@ impl PDFDocument {
                     obj
                 };
 
+                if let Ok(mut cache) = self.cache.write() {
+                    cache.insert(objid, obj.clone());
+                }
                 return Ok(obj);
             }
         }
 
         // Fallback: scan object streams directly when xrefs are incomplete.
-        if let Ok(Some(obj)) = self.find_obj_in_objstms(objid) {
-            return Ok(obj);
+        if !self.all_xrefs_are_fallback() {
+            if let Ok(Some(obj)) = self.find_obj_in_objstms(objid) {
+                if let Ok(mut cache) = self.cache.write() {
+                    cache.insert(objid, obj.clone());
+                }
+                return Ok(obj);
+            }
         }
 
         Err(PdfError::ObjectNotFound(objid))
@@ -926,7 +986,17 @@ impl PDFDocument {
     fn find_obj_in_objstms(&self, objid: u32) -> Result<Option<PDFObject>> {
         use regex::bytes::Regex;
 
+        if let Ok(index_guard) = self.objstm_index.read() {
+            if let Some(index) = index_guard.as_ref() {
+                if let Some((stream_objid, idx)) = index.get(&objid).copied() {
+                    return Ok(Some(self.parse_object_from_stream(stream_objid, idx)?));
+                }
+                return Ok(None);
+            }
+        }
+
         let re = Regex::new(r"(\d+)\s+(\d+)\s+obj\b").unwrap();
+        let mut index: HashMap<u32, (u32, usize)> = HashMap::new();
         for cap in re.captures_iter(self.data.as_slice()) {
             let stream_objid: u32 = match std::str::from_utf8(&cap[1])
                 .ok()
@@ -976,28 +1046,25 @@ impl PDFDocument {
             }
 
             let mut header_parser = PDFParser::new(&data[..first]);
-            for _ in 0..n {
+            for i in 0..n {
                 let obj_id = match header_parser.parse_object().and_then(|o| o.as_int()) {
                     Ok(id) => id as u32,
                     Err(_) => break,
                 };
-                let offset = match header_parser.parse_object().and_then(|o| o.as_int()) {
+                let _offset = match header_parser.parse_object().and_then(|o| o.as_int()) {
                     Ok(off) => off as usize,
                     Err(_) => break,
                 };
-
-                if obj_id == objid {
-                    let obj_offset = first + offset;
-                    if obj_offset >= data.len() {
-                        return Ok(None);
-                    }
-                    let mut obj_parser = PDFParser::new(&data[obj_offset..]);
-                    if let Ok(found) = obj_parser.parse_object() {
-                        return Ok(Some(found));
-                    }
-                    return Ok(None);
-                }
+                index.entry(obj_id).or_insert((stream_objid, i));
             }
+        }
+
+        if let Ok(mut index_guard) = self.objstm_index.write() {
+            *index_guard = Some(index.clone());
+        }
+
+        if let Some((stream_objid, idx)) = index.get(&objid).copied() {
+            return Ok(Some(self.parse_object_from_stream(stream_objid, idx)?));
         }
 
         Ok(None)
@@ -1178,8 +1245,14 @@ impl PDFDocument {
                     pos += 1;
                 }
 
-                // Get length from dict (resolve indirect refs) unless fallback mode
-                let length: usize = if fallback {
+                // For critical streams (XRef/ObjStm), prefer endstream scan for robustness.
+                let force_scan = matches!(
+                    dict.get("Type"),
+                    Some(PDFObject::Name(name)) if name == "XRef" || name == "ObjStm"
+                );
+
+                // Get length from dict (resolve indirect refs) unless fallback/force_scan
+                let length: usize = if fallback || force_scan {
                     0
                 } else {
                     dict.get("Length")
@@ -1192,33 +1265,27 @@ impl PDFDocument {
 
                 // Extract stream data
                 let stream_start = pos;
+                let remaining_len = remaining.len();
 
-                // Prefer declared /Length, but fall back to endstream if length looks corrupted.
-                let end_pos = Self::find_endstream(&remaining[stream_start..]);
-                // Allow up to 64 bytes of padding/whitespace between stream data and endstream.
-                // This threshold handles malformed PDFs with extra line endings or garbage.
-                let use_endstream = fallback
-                    || length == 0
-                    || end_pos
-                        .map(|pos| pos > length.saturating_add(64))
-                        .unwrap_or(false);
-
-                let stream_data = if use_endstream {
-                    if let Some(end_pos) = end_pos {
-                        let end = (stream_start + end_pos).min(remaining.len());
+                let stream_data = if fallback || force_scan || length == 0 {
+                    // Fallback mode or missing length: scan for endstream
+                    if let Some(end_pos) = Self::find_endstream(&remaining[stream_start..]) {
+                        let end = (stream_start + end_pos).min(remaining_len);
                         remaining[stream_start..end].to_vec()
-                    } else if length > 0 && stream_start + length <= remaining.len() {
-                        remaining[stream_start..stream_start + length].to_vec()
                     } else {
                         remaining[stream_start..].to_vec()
                     }
-                } else if length > 0 && stream_start + length <= remaining.len() {
+                } else if stream_start + length <= remaining_len {
+                    // Trust declared /Length when it fits in the remaining buffer
                     remaining[stream_start..stream_start + length].to_vec()
-                } else if let Some(end_pos) = end_pos {
-                    let end = (stream_start + end_pos).min(remaining.len());
-                    remaining[stream_start..end].to_vec()
                 } else {
-                    remaining[stream_start..].to_vec()
+                    // Length looks corrupted; fall back to endstream scan
+                    if let Some(end_pos) = Self::find_endstream(&remaining[stream_start..]) {
+                        let end = (stream_start + end_pos).min(remaining_len);
+                        remaining[stream_start..end].to_vec()
+                    } else {
+                        remaining[stream_start..].to_vec()
+                    }
                 };
 
                 return Ok(PDFObject::Stream(Box::new(
@@ -1269,13 +1336,21 @@ impl PDFDocument {
 
     /// Internal resolve that doesn't require mutable access.
     fn resolve_internal(&self, obj: &PDFObject) -> Result<PDFObject> {
-        match obj {
-            PDFObject::Ref(r) => {
-                let resolved = self.getobj(r.objid)?;
-                // Recursively resolve in case it's a ref to a ref
-                self.resolve_internal(&resolved)
+        let mut current = obj.clone();
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            match current {
+                PDFObject::Ref(ref r) => {
+                    if !seen.insert(r.objid) {
+                        return Err(PdfError::SyntaxError(format!(
+                            "circular reference detected for obj {}",
+                            r.objid
+                        )));
+                    }
+                    current = self.getobj(r.objid)?;
+                }
+                _ => return Ok(current),
             }
-            _ => Ok(obj.clone()),
         }
     }
 
