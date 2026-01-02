@@ -119,7 +119,11 @@ impl PDFContentParser {
             };
 
             let abs_pos = rel_pos;
+            let prev_pos = self.pos;
             self.pos = self.base_parser.tell();
+            if self.pos <= prev_pos && prev_pos < self.data.len() {
+                self.pos = prev_pos + 1;
+            }
             self.base_parser.set_pos(self.pos);
 
             match &token {
