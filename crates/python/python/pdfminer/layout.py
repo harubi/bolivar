@@ -523,6 +523,15 @@ class LTPage(LTContainer):
             self.pageid = pageid
             self.rotate = rotate
 
+    def __iter__(self) -> Iterator[LTItem]:
+        return self._iter_layout(self._objs)
+
+    def _iter_layout(self, objs: List[LTItem]) -> Iterator[LTItem]:
+        for obj in objs:
+            yield obj
+            if isinstance(obj, LTContainer):
+                yield from self._iter_layout(obj._objs)
+
 
 __all__ = [
     "LAParams",
