@@ -751,6 +751,13 @@ pub enum PyLTItem {
     Line(PyLTLine),
     Curve(PyLTCurve),
     Anno(PyLTAnno),
+    TextLineH(PyLTTextLineHorizontal),
+    TextLineV(PyLTTextLineVertical),
+    TextBoxH(PyLTTextBoxHorizontal),
+    TextBoxV(PyLTTextBoxVertical),
+    Image(PyLTImage),
+    Figure(PyLTFigure),
+    Page(PyLTPage),
 }
 
 impl<'py> IntoPyObject<'py> for PyLTItem {
@@ -765,6 +772,13 @@ impl<'py> IntoPyObject<'py> for PyLTItem {
             PyLTItem::Line(l) => Ok(Bound::new(py, l)?.into_any()),
             PyLTItem::Curve(c) => Ok(Bound::new(py, c)?.into_any()),
             PyLTItem::Anno(a) => Ok(Bound::new(py, a)?.into_any()),
+            PyLTItem::TextLineH(l) => Ok(Bound::new(py, l)?.into_any()),
+            PyLTItem::TextLineV(l) => Ok(Bound::new(py, l)?.into_any()),
+            PyLTItem::TextBoxH(b) => Ok(Bound::new(py, b)?.into_any()),
+            PyLTItem::TextBoxV(b) => Ok(Bound::new(py, b)?.into_any()),
+            PyLTItem::Image(i) => Ok(Bound::new(py, i)?.into_any()),
+            PyLTItem::Figure(f) => Ok(Bound::new(py, f)?.into_any()),
+            PyLTItem::Page(p) => Ok(Bound::new(py, p)?.into_any()),
         }
     }
 }
@@ -835,6 +849,264 @@ impl PyLTChar {
 
     fn __repr__(&self) -> String {
         format!("LTChar({:?}, fontname={:?})", self.text, self.fontname)
+    }
+}
+
+/// Layout text line - horizontal.
+#[pyclass(name = "LTTextLineHorizontal")]
+#[derive(Clone)]
+pub struct PyLTTextLineHorizontal {
+    bbox: (f64, f64, f64, f64),
+    items: Vec<PyLTItem>,
+}
+
+impl PyLTTextLineHorizontal {
+    fn from_core(line: &bolivar_core::layout::LTTextLineHorizontal) -> Self {
+        let mut items = Vec::new();
+        for elem in line.iter() {
+            match elem {
+                bolivar_core::layout::TextLineElement::Char(c) => {
+                    items.push(PyLTItem::Char(PyLTChar::from_core(c)));
+                }
+                bolivar_core::layout::TextLineElement::Anno(a) => {
+                    items.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
+                }
+            }
+        }
+        Self {
+            bbox: (line.x0(), line.y0(), line.x1(), line.y1()),
+            items,
+        }
+    }
+}
+
+#[pymethods]
+impl PyLTTextLineHorizontal {
+    #[getter]
+    fn bbox(&self) -> (f64, f64, f64, f64) {
+        self.bbox
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
+        PyLTPageIter {
+            items: slf.items.clone(),
+            index: 0,
+        }
+    }
+
+    fn __len__(&self) -> usize {
+        self.items.len()
+    }
+}
+
+/// Layout text line - vertical.
+#[pyclass(name = "LTTextLineVertical")]
+#[derive(Clone)]
+pub struct PyLTTextLineVertical {
+    bbox: (f64, f64, f64, f64),
+    items: Vec<PyLTItem>,
+}
+
+impl PyLTTextLineVertical {
+    fn from_core(line: &bolivar_core::layout::LTTextLineVertical) -> Self {
+        let mut items = Vec::new();
+        for elem in line.iter() {
+            match elem {
+                bolivar_core::layout::TextLineElement::Char(c) => {
+                    items.push(PyLTItem::Char(PyLTChar::from_core(c)));
+                }
+                bolivar_core::layout::TextLineElement::Anno(a) => {
+                    items.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
+                }
+            }
+        }
+        Self {
+            bbox: (line.x0(), line.y0(), line.x1(), line.y1()),
+            items,
+        }
+    }
+}
+
+#[pymethods]
+impl PyLTTextLineVertical {
+    #[getter]
+    fn bbox(&self) -> (f64, f64, f64, f64) {
+        self.bbox
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
+        PyLTPageIter {
+            items: slf.items.clone(),
+            index: 0,
+        }
+    }
+
+    fn __len__(&self) -> usize {
+        self.items.len()
+    }
+}
+
+/// Layout text box - horizontal.
+#[pyclass(name = "LTTextBoxHorizontal")]
+#[derive(Clone)]
+pub struct PyLTTextBoxHorizontal {
+    bbox: (f64, f64, f64, f64),
+    items: Vec<PyLTItem>,
+}
+
+impl PyLTTextBoxHorizontal {
+    fn from_core(boxh: &bolivar_core::layout::LTTextBoxHorizontal) -> Self {
+        let mut items = Vec::new();
+        for line in boxh.iter() {
+            items.push(PyLTItem::TextLineH(PyLTTextLineHorizontal::from_core(line)));
+        }
+        Self {
+            bbox: (boxh.x0(), boxh.y0(), boxh.x1(), boxh.y1()),
+            items,
+        }
+    }
+}
+
+#[pymethods]
+impl PyLTTextBoxHorizontal {
+    #[getter]
+    fn bbox(&self) -> (f64, f64, f64, f64) {
+        self.bbox
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
+        PyLTPageIter {
+            items: slf.items.clone(),
+            index: 0,
+        }
+    }
+
+    fn __len__(&self) -> usize {
+        self.items.len()
+    }
+}
+
+/// Layout text box - vertical.
+#[pyclass(name = "LTTextBoxVertical")]
+#[derive(Clone)]
+pub struct PyLTTextBoxVertical {
+    bbox: (f64, f64, f64, f64),
+    items: Vec<PyLTItem>,
+}
+
+impl PyLTTextBoxVertical {
+    fn from_core(boxv: &bolivar_core::layout::LTTextBoxVertical) -> Self {
+        let mut items = Vec::new();
+        for line in boxv.iter() {
+            items.push(PyLTItem::TextLineV(PyLTTextLineVertical::from_core(line)));
+        }
+        Self {
+            bbox: (boxv.x0(), boxv.y0(), boxv.x1(), boxv.y1()),
+            items,
+        }
+    }
+}
+
+#[pymethods]
+impl PyLTTextBoxVertical {
+    #[getter]
+    fn bbox(&self) -> (f64, f64, f64, f64) {
+        self.bbox
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
+        PyLTPageIter {
+            items: slf.items.clone(),
+            index: 0,
+        }
+    }
+
+    fn __len__(&self) -> usize {
+        self.items.len()
+    }
+}
+
+/// Layout image.
+#[pyclass(name = "LTImage")]
+#[derive(Clone)]
+pub struct PyLTImage {
+    bbox: (f64, f64, f64, f64),
+    #[pyo3(get)]
+    pub name: String,
+    #[pyo3(get)]
+    pub srcsize: (Option<i32>, Option<i32>),
+    #[pyo3(get)]
+    pub imagemask: bool,
+    #[pyo3(get)]
+    pub bits: i32,
+    #[pyo3(get)]
+    pub colorspace: Vec<String>,
+}
+
+impl PyLTImage {
+    fn from_core(img: &bolivar_core::layout::LTImage) -> Self {
+        Self {
+            bbox: (img.x0(), img.y0(), img.x1(), img.y1()),
+            name: img.name.clone(),
+            srcsize: img.srcsize,
+            imagemask: img.imagemask,
+            bits: img.bits,
+            colorspace: img.colorspace.clone(),
+        }
+    }
+}
+
+#[pymethods]
+impl PyLTImage {
+    #[getter]
+    fn bbox(&self) -> (f64, f64, f64, f64) {
+        self.bbox
+    }
+}
+
+/// Layout figure (Form XObject).
+#[pyclass(name = "LTFigure")]
+#[derive(Clone)]
+pub struct PyLTFigure {
+    bbox: (f64, f64, f64, f64),
+    #[pyo3(get)]
+    pub name: String,
+    #[pyo3(get)]
+    pub matrix: (f64, f64, f64, f64, f64, f64),
+    items: Vec<PyLTItem>,
+}
+
+impl PyLTFigure {
+    fn from_core(fig: &bolivar_core::layout::LTFigure) -> Self {
+        let mut items = Vec::new();
+        for child in fig.iter() {
+            items.push(ltitem_to_py(child));
+        }
+        Self {
+            bbox: (fig.x0(), fig.y0(), fig.x1(), fig.y1()),
+            name: fig.name.clone(),
+            matrix: fig.matrix,
+            items,
+        }
+    }
+}
+
+#[pymethods]
+impl PyLTFigure {
+    #[getter]
+    fn bbox(&self) -> (f64, f64, f64, f64) {
+        self.bbox
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
+        PyLTPageIter {
+            items: slf.items.clone(),
+            index: 0,
+        }
+    }
+
+    fn __len__(&self) -> usize {
+        self.items.len()
     }
 }
 
@@ -1127,11 +1399,8 @@ fn process_page(
     // Get the result
     let ltpage = aggregator.get_result();
 
-    // Convert to Python types
-    let mut items = Vec::new();
-    for item in ltpage.iter() {
-        collect_chars(item, &mut items);
-    }
+    // Convert to Python types (preserve layout tree)
+    let items: Vec<PyLTItem> = ltpage.iter().map(ltitem_to_py).collect();
 
     Ok(PyLTPage {
         pageid: ltpage.pageid,
@@ -1333,10 +1602,7 @@ fn extract_text_from_page(
 }
 
 fn ltpage_to_py(ltpage: &bolivar_core::layout::LTPage) -> PyLTPage {
-    let mut items = Vec::new();
-    for item in ltpage.iter() {
-        collect_chars(item, &mut items);
-    }
+    let items: Vec<PyLTItem> = ltpage.iter().map(ltitem_to_py).collect();
     PyLTPage {
         pageid: ltpage.pageid,
         rotate: ltpage.rotate,
@@ -1497,100 +1763,28 @@ fn extract_pages_from_path(
     Ok(pages.iter().map(ltpage_to_py).collect())
 }
 
-/// Recursively collect LTChar items from layout tree
-fn collect_chars(item: &bolivar_core::layout::LTItem, chars: &mut Vec<PyLTItem>) {
-    use bolivar_core::layout::{LTItem, TextBoxType, TextLineElement, TextLineType};
+fn ltitem_to_py(item: &bolivar_core::layout::LTItem) -> PyLTItem {
+    use bolivar_core::layout::{LTItem, TextBoxType, TextLineType};
 
     match item {
-        LTItem::Char(c) => {
-            chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
-        }
-        LTItem::TextLine(line) => {
-            // Match on the TextLineType variant to get the inner line with iter()
-            match line {
-                TextLineType::Horizontal(l) => {
-                    for elem in l.iter() {
-                        match elem {
-                            TextLineElement::Char(c) => {
-                                chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
-                            }
-                            TextLineElement::Anno(a) => {
-                                chars.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
-                            }
-                        }
-                    }
-                }
-                TextLineType::Vertical(l) => {
-                    for elem in l.iter() {
-                        match elem {
-                            TextLineElement::Char(c) => {
-                                chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
-                            }
-                            TextLineElement::Anno(a) => {
-                                chars.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
-                            }
-                        }
-                    }
-                }
+        LTItem::Char(c) => PyLTItem::Char(PyLTChar::from_core(c)),
+        LTItem::Anno(a) => PyLTItem::Anno(PyLTAnno::from_core(a)),
+        LTItem::Rect(r) => PyLTItem::Rect(PyLTRect::from_core(r)),
+        LTItem::Line(l) => PyLTItem::Line(PyLTLine::from_core(l)),
+        LTItem::Curve(c) => PyLTItem::Curve(PyLTCurve::from_core(c)),
+        LTItem::Image(i) => PyLTItem::Image(PyLTImage::from_core(i)),
+        LTItem::TextLine(line) => match line {
+            TextLineType::Horizontal(l) => {
+                PyLTItem::TextLineH(PyLTTextLineHorizontal::from_core(l))
             }
-        }
-        LTItem::TextBox(tbox) => {
-            // Match on the TextBoxType variant to get lines
-            match tbox {
-                TextBoxType::Horizontal(b) => {
-                    for line in b.iter() {
-                        for elem in line.iter() {
-                            match elem {
-                                TextLineElement::Char(c) => {
-                                    chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
-                                }
-                                TextLineElement::Anno(a) => {
-                                    chars.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
-                                }
-                            }
-                        }
-                    }
-                }
-                TextBoxType::Vertical(b) => {
-                    for line in b.iter() {
-                        for elem in line.iter() {
-                            match elem {
-                                TextLineElement::Char(c) => {
-                                    chars.push(PyLTItem::Char(PyLTChar::from_core(c)));
-                                }
-                                TextLineElement::Anno(a) => {
-                                    chars.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        LTItem::Figure(fig) => {
-            for child in fig.iter() {
-                collect_chars(child, chars);
-            }
-        }
-        LTItem::Page(page) => {
-            for child in page.iter() {
-                collect_chars(child, chars);
-            }
-        }
-        LTItem::Rect(r) => {
-            chars.push(PyLTItem::Rect(PyLTRect::from_core(r)));
-        }
-        LTItem::Line(l) => {
-            chars.push(PyLTItem::Line(PyLTLine::from_core(l)));
-        }
-        LTItem::Curve(c) => {
-            chars.push(PyLTItem::Curve(PyLTCurve::from_core(c)));
-        }
-        LTItem::Anno(a) => {
-            chars.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
-        }
-        // Skip other non-text items (Image)
-        _ => {}
+            TextLineType::Vertical(l) => PyLTItem::TextLineV(PyLTTextLineVertical::from_core(l)),
+        },
+        LTItem::TextBox(tbox) => match tbox {
+            TextBoxType::Horizontal(b) => PyLTItem::TextBoxH(PyLTTextBoxHorizontal::from_core(b)),
+            TextBoxType::Vertical(b) => PyLTItem::TextBoxV(PyLTTextBoxVertical::from_core(b)),
+        },
+        LTItem::Figure(fig) => PyLTItem::Figure(PyLTFigure::from_core(fig)),
+        LTItem::Page(page) => PyLTItem::Page(ltpage_to_py(page)),
     }
 }
 
@@ -1603,6 +1797,12 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPDFPage>()?;
     m.add_class::<PyLTPage>()?;
     m.add_class::<PyLTChar>()?;
+    m.add_class::<PyLTTextLineHorizontal>()?;
+    m.add_class::<PyLTTextLineVertical>()?;
+    m.add_class::<PyLTTextBoxHorizontal>()?;
+    m.add_class::<PyLTTextBoxVertical>()?;
+    m.add_class::<PyLTImage>()?;
+    m.add_class::<PyLTFigure>()?;
     m.add_class::<PyLTRect>()?;
     m.add_class::<PyLTLine>()?;
     m.add_class::<PyLTCurve>()?;
