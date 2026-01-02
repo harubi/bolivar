@@ -16,6 +16,9 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dynamic = ["version"]
+dependencies = [
+    "ipykernel>=6.31.0",
+]
 
 [project.optional-dependencies]
 test = ["pytest-cov"]

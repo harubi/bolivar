@@ -4,87 +4,182 @@
 
 [config]
 default_to_workspace = false
+skip_core_tasks = true
 
 # ============================================================================
-# Python Extension Tasks
+# Python
 # ============================================================================
 
 [tasks.build-py]
-description = "Build Python extension (default, without exact-grouping)"
-command = "maturin"
-args = ["develop"]
+category = "Python"
+description = "Build Python extension (development)"
+command = "uv"
+args = ["run", "maturin", "develop"]
 
-[tasks.build-py-exact]
-description = "Build Python extension with exact-grouping feature"
-command = "maturin"
-args = ["develop", "--features", "exact-grouping"]
+[tasks.build-py-release]
+category = "Python"
+description = "Build Python wheels (release)"
+command = "uv"
+args = ["run", "maturin", "build", "--release"]
 
 [tasks.test-py]
+category = "Python"
 description = "Run Python tests"
-command = ".venv/bin/python3"
-args = ["-m", "pytest", "tests/", "-v"]
+command = "uv"
+args = ["run", "pytest", "tests/", "-v"]
 dependencies = ["build-py"]
 
-[tasks.test-parity]
-description = "Run pdfplumber parity test (requires exact-grouping)"
-command = ".venv/bin/python3"
-args = ["-m", "pytest", "tests/test_pdfminer_shim.py::TestPdfplumberParity", "-v"]
-dependencies = ["build-py-exact"]
-
-[tasks.check-char-3358]
-description = "Check what character is at index 3358 in NICS PDF"
-script = '''
-.venv/bin/python3 -c "
-import pdfplumber
-with pdfplumber.open('crates/core/tests/fixtures/pdfplumber/nics-background-checks-2015-11.pdf') as pdf:
-    chars = pdf.pages[0].chars
-    print(f'Total chars: {len(chars)}')
-    print(f'chars[3358] = {chars[3358][\"text\"]!r}')
-    # Show context
-    for i in range(3355, 3365):
-        if i < len(chars):
-            print(f'  [{i}]: {chars[i][\"text\"]!r}')
-"
-'''
-dependencies = ["build-py-exact"]
+[tasks.test-cov]
+category = "Python"
+description = "Run Python tests with coverage"
+command = "uv"
+args = ["run", "pytest", "tests/", "-v", "--cov=bolivar", "--cov-report=term-missing"]
+dependencies = ["build-py"]
 
 # ============================================================================
-# Rust Tasks
+# Rust
 # ============================================================================
+
+[tasks.build]
+category = "Rust"
+description = "Build all crates (debug)"
+command = "cargo"
+args = ["build"]
+
+[tasks.build-release]
+category = "Rust"
+description = "Build all crates (release)"
+command = "cargo"
+args = ["build", "--release"]
 
 [tasks.test]
+category = "Rust"
 description = "Run all Rust tests"
 command = "cargo"
 args = ["test"]
 
 [tasks.test-layout]
+category = "Rust"
 description = "Run layout tests only"
 command = "cargo"
 args = ["test", "-p", "bolivar-core", "--test", "layout_test"]
 
-[tasks.test-exact]
-description = "Run tests with exact-grouping feature"
-command = "cargo"
-args = ["test", "--features", "exact-grouping"]
-
-[tasks.clippy]
-description = "Run clippy lints"
-command = "cargo"
-args = ["clippy", "--all-targets"]
-
 [tasks.bench]
-description = "Run benchmarks"
+category = "Rust"
+description = "Run all benchmarks"
 command = "cargo"
 args = ["bench", "-p", "bolivar-core"]
 
+[tasks.bench-save]
+category = "Rust"
+description = "Run benchmarks and save baseline"
+command = "cargo"
+args = ["bench", "-p", "bolivar-core", "--", "--save-baseline", "main"]
+
+[tasks.clippy]
+category = "Rust"
+description = "Run clippy lints"
+command = "cargo"
+args = ["clippy", "--all-targets", "--", "-D", "warnings"]
+
+[tasks.fmt]
+category = "Rust"
+description = "Format code"
+command = "cargo"
+args = ["fmt"]
+
+[tasks.fmt-check]
+category = "Rust"
+description = "Check code formatting"
+command = "cargo"
+args = ["fmt", "--check"]
+
+[tasks.docs]
+category = "Rust"
+description = "Build documentation"
+command = "cargo"
+args = ["doc", "--no-deps"]
+
+[tasks.docs-open]
+category = "Rust"
+description = "Build and open documentation"
+command = "cargo"
+args = ["doc", "--no-deps", "--open"]
+
 # ============================================================================
-# Development Workflow
+# Workflow
 # ============================================================================
+
+[tasks.test-all]
+category = "Workflow"
+description = "Run all tests (Rust + Python)"
+dependencies = ["test", "test-py"]
+
+[tasks.lint]
+category = "Workflow"
+description = "Run all lints (format check + clippy)"
+dependencies = ["fmt-check", "clippy"]
 
 [tasks.dev]
-description = "Build and test everything"
-dependencies = ["test", "test-py", "clippy"]
+category = "Workflow"
+description = "Quick development check (build + test + clippy)"
+dependencies = ["build", "test", "clippy"]
 
 [tasks.ci]
-description = "CI pipeline: test + clippy"
-dependencies = ["test", "clippy"]
+category = "Workflow"
+description = "Full CI pipeline (format + lint + all tests)"
+dependencies = ["fmt-check", "clippy", "test", "test-py"]
+
+# ============================================================================
+# Cleanup
+# ============================================================================
+
+[tasks.clean]
+category = "Cleanup"
+description = "Clean all build artifacts (Rust + Python)"
+script = '''
+cargo clean
+rm -rf target/wheels
+rm -rf .pytest_cache
+rm -rf .coverage
+find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
+echo "Cleaned all build artifacts"
+'''
+
+# ============================================================================
+# Publishing
+# ============================================================================
+
+[tasks.publish-crates]
+category = "Publishing"
+description = "Publish Rust crates to crates.io"
+script = '''
+cargo publish -p bolivar-core
+cargo publish -p bolivar-cli
+'''
+
+[tasks.publish-python]
+category = "Publishing"
+description = "Publish Python package to PyPI"
+command = "uv"
+args = ["run", "maturin", "publish"]
+
+[tasks.publish-all]
+category = "Publishing"
+description = "Publish everything (crates + Python)"
+dependencies = ["publish-crates", "publish-python"]
+
+# ============================================================================
+# CLI
+# ============================================================================
+
+[tasks.pdf2txt]
+category = "CLI"
+description = "Run pdf2txt CLI (pass args after --)"
+script = "cargo run --bin pdf2txt -- ${@}"
+
+[tasks.dumppdf]
+category = "CLI"
+description = "Run dumppdf CLI (pass args after --)"
+script = "cargo run --bin dumppdf -- ${@}"
