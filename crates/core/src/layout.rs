@@ -19,6 +19,7 @@ use std::hash::Hash;
 
 use crate::utils::{
     HasBBox, INF_F64, Matrix, Plane, Point, Rect, apply_matrix_rect, fsplit, get_bound, uniq,
+    MATRIX_IDENTITY,
 };
 use ordered_float::OrderedFloat;
 
@@ -908,6 +909,8 @@ pub struct LTChar {
     size: f64,
     upright: bool,
     adv: f64,
+    /// Text rendering matrix (Tm * CTM, with per-char translation)
+    matrix: Matrix,
     /// Marked Content ID for tagged PDF accessibility
     mcid: Option<i32>,
     /// Marked Content tag (e.g., "P", "Span", "H1") for tagged PDF
@@ -920,6 +923,18 @@ pub struct LTChar {
 
 impl LTChar {
     pub fn new(bbox: Rect, text: &str, fontname: &str, size: f64, upright: bool, adv: f64) -> Self {
+        Self::new_with_matrix(bbox, text, fontname, size, upright, adv, MATRIX_IDENTITY)
+    }
+
+    pub fn new_with_matrix(
+        bbox: Rect,
+        text: &str,
+        fontname: &str,
+        size: f64,
+        upright: bool,
+        adv: f64,
+        matrix: Matrix,
+    ) -> Self {
         Self {
             component: LTComponent::new(bbox),
             text: text.to_string(),
@@ -927,6 +942,7 @@ impl LTChar {
             size,
             upright,
             adv,
+            matrix,
             mcid: None,
             tag: None,
             non_stroking_color: None,
@@ -943,6 +959,28 @@ impl LTChar {
         adv: f64,
         mcid: Option<i32>,
     ) -> Self {
+        Self::with_mcid_matrix(
+            bbox,
+            text,
+            fontname,
+            size,
+            upright,
+            adv,
+            MATRIX_IDENTITY,
+            mcid,
+        )
+    }
+
+    pub fn with_mcid_matrix(
+        bbox: Rect,
+        text: &str,
+        fontname: &str,
+        size: f64,
+        upright: bool,
+        adv: f64,
+        matrix: Matrix,
+        mcid: Option<i32>,
+    ) -> Self {
         Self {
             component: LTComponent::new(bbox),
             text: text.to_string(),
@@ -950,6 +988,7 @@ impl LTChar {
             size,
             upright,
             adv,
+            matrix,
             mcid,
             tag: None,
             non_stroking_color: None,
@@ -967,6 +1006,30 @@ impl LTChar {
         mcid: Option<i32>,
         tag: Option<String>,
     ) -> Self {
+        Self::with_marked_content_matrix(
+            bbox,
+            text,
+            fontname,
+            size,
+            upright,
+            adv,
+            MATRIX_IDENTITY,
+            mcid,
+            tag,
+        )
+    }
+
+    pub fn with_marked_content_matrix(
+        bbox: Rect,
+        text: &str,
+        fontname: &str,
+        size: f64,
+        upright: bool,
+        adv: f64,
+        matrix: Matrix,
+        mcid: Option<i32>,
+        tag: Option<String>,
+    ) -> Self {
         Self {
             component: LTComponent::new(bbox),
             text: text.to_string(),
@@ -974,6 +1037,7 @@ impl LTChar {
             size,
             upright,
             adv,
+            matrix,
             mcid,
             tag,
             non_stroking_color: None,
@@ -995,6 +1059,35 @@ impl LTChar {
         non_stroking_color: Color,
         stroking_color: Color,
     ) -> Self {
+        Self::with_colors_matrix(
+            bbox,
+            text,
+            fontname,
+            size,
+            upright,
+            adv,
+            MATRIX_IDENTITY,
+            mcid,
+            tag,
+            non_stroking_color,
+            stroking_color,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_colors_matrix(
+        bbox: Rect,
+        text: &str,
+        fontname: &str,
+        size: f64,
+        upright: bool,
+        adv: f64,
+        matrix: Matrix,
+        mcid: Option<i32>,
+        tag: Option<String>,
+        non_stroking_color: Color,
+        stroking_color: Color,
+    ) -> Self {
         Self {
             component: LTComponent::new(bbox),
             text: text.to_string(),
@@ -1002,6 +1095,7 @@ impl LTChar {
             size,
             upright,
             adv,
+            matrix,
             mcid,
             tag,
             non_stroking_color,
@@ -1027,6 +1121,10 @@ impl LTChar {
 
     pub fn adv(&self) -> f64 {
         self.adv
+    }
+
+    pub fn matrix(&self) -> Matrix {
+        self.matrix
     }
 
     pub fn mcid(&self) -> Option<i32> {

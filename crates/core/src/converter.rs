@@ -572,7 +572,7 @@ impl PDFLayoutAnalyzer {
         };
 
         let fontname = font.fontname().unwrap_or("unknown");
-        let item = LTChar::new(bbox, &text, fontname, size, upright, adv);
+        let item = LTChar::new_with_matrix(bbox, &text, fontname, size, upright, adv, matrix);
 
         // Add to current container
         if let Some(ref mut container) = self.cur_item {
@@ -1007,13 +1007,14 @@ impl PDFDevice for PDFPageAggregator {
                             .and_then(|f| f.fontname())
                             .or_else(|| textstate.fontname.as_deref())
                             .unwrap_or("unknown");
-                        let ltchar = LTChar::with_colors(
+                        let ltchar = LTChar::with_colors_matrix(
                             bbox,
                             &text,
                             fontname,
                             size,
                             upright,
                             char_width,
+                            char_matrix,
                             mcid,
                             tag,
                             ncolor,

@@ -471,7 +471,9 @@ impl Default for PDFResourceManager {
 // PDFPageInterpreter
 // ============================================================================
 
-use crate::pdfdevice::{PDFDevice, PDFStackT, PDFTextSeq, PDFTextSeqItem, PathSegment};
+use crate::pdfdevice::{
+    PDFDevice, PDFStackT, PDFStackValue, PDFTextSeq, PDFTextSeqItem, PathSegment,
+};
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
 use crate::utils::{MATRIX_IDENTITY, Matrix, mult_matrix};
 
@@ -1725,6 +1727,111 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         }
     }
 
+    fn pstoken_to_stackvalue(token: &PSToken) -> Option<PDFStackValue> {
+        match token {
+            PSToken::Int(n) => Some(PDFStackValue::Int(*n)),
+            PSToken::Real(n) => Some(PDFStackValue::Real(*n)),
+            PSToken::Bool(b) => Some(PDFStackValue::Bool(*b)),
+            PSToken::Literal(name) => Some(PDFStackValue::Name(name.clone())),
+            PSToken::String(s) => Some(PDFStackValue::String(s.clone())),
+            PSToken::Array(arr) => {
+                let values = arr
+                    .iter()
+                    .filter_map(Self::pstoken_to_stackvalue)
+                    .collect();
+                Some(PDFStackValue::Array(values))
+            }
+            PSToken::Dict(map) => {
+                let mut values = HashMap::new();
+                for (key, val) in map.iter() {
+                    if let Some(v) = Self::pstoken_to_stackvalue(val) {
+                        values.insert(key.clone(), v);
+                    }
+                }
+                Some(PDFStackValue::Dict(values))
+            }
+            PSToken::Keyword(_) => None,
+        }
+    }
+
+    fn pdfobject_to_stackvalue(&self, obj: &PDFObject) -> Option<PDFStackValue> {
+        match obj {
+            PDFObject::Int(n) => Some(PDFStackValue::Int(*n)),
+            PDFObject::Real(n) => Some(PDFStackValue::Real(*n)),
+            PDFObject::Bool(b) => Some(PDFStackValue::Bool(*b)),
+            PDFObject::Name(name) => Some(PDFStackValue::Name(name.clone())),
+            PDFObject::String(s) => Some(PDFStackValue::String(s.clone())),
+            PDFObject::Array(arr) => {
+                let values = arr
+                    .iter()
+                    .filter_map(|item| self.pdfobject_to_stackvalue(item))
+                    .collect();
+                Some(PDFStackValue::Array(values))
+            }
+            PDFObject::Dict(map) => {
+                let mut values = HashMap::new();
+                for (key, val) in map.iter() {
+                    if let Some(v) = self.pdfobject_to_stackvalue(val) {
+                        values.insert(key.clone(), v);
+                    }
+                }
+                Some(PDFStackValue::Dict(values))
+            }
+            PDFObject::Ref(r) => {
+                if let Some(doc) = self.doc {
+                    if let Ok(resolved) = doc.resolve(&PDFObject::Ref(r.clone())) {
+                        return self.pdfobject_to_stackvalue(&resolved);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn properties_dict(&self) -> Option<HashMap<String, PDFObject>> {
+        match self.resources.get("Properties") {
+            Some(PDFObject::Dict(d)) => Some(d.clone()),
+            Some(PDFObject::Ref(r)) => {
+                if let Some(doc) = self.doc {
+                    match doc.resolve(&PDFObject::Ref(r.clone())) {
+                        Ok(PDFObject::Dict(d)) => Some(d),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn props_from_token(&self, token: Option<PSToken>) -> PDFStackT {
+        let mut props = HashMap::new();
+        match token {
+            Some(PSToken::Dict(map)) => {
+                for (key, val) in map {
+                    if let Some(v) = Self::pstoken_to_stackvalue(&val) {
+                        props.insert(key, v);
+                    }
+                }
+            }
+            Some(PSToken::Literal(name)) => {
+                if let Some(dict) = self.properties_dict() {
+                    if let Some(obj) = dict.get(&name) {
+                        if let Some(PDFStackValue::Dict(map)) =
+                            self.pdfobject_to_stackvalue(obj)
+                        {
+                            props = map;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        props
+    }
+
     /// Dispatch an operator to the appropriate do_* method.
     fn dispatch_operator(&mut self, op: &Keyword, args: &mut Vec<PSToken>) {
         match op {
@@ -1794,11 +1901,10 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             }
             Keyword::BDC => {
                 // BDC takes tag and properties dict
-                // For now, just extract the tag; dict handling TBD
-                let _props = args.pop(); // Pop properties (dict or name reference)
+                let props_token = args.pop();
                 if let Some(name) = Self::pop_name(args) {
                     let tag = PSLiteral::new(&name);
-                    let props_map = std::collections::HashMap::new();
+                    let props_map = self.props_from_token(props_token);
                     self.do_BDC(&tag, &props_map);
                 }
             }

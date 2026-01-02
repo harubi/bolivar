@@ -803,6 +803,9 @@ pub struct PyLTChar {
     /// Character advance width
     #[pyo3(get)]
     pub adv: f64,
+    /// Text rendering matrix (a, b, c, d, e, f)
+    #[pyo3(get)]
+    pub matrix: (f64, f64, f64, f64, f64, f64),
     /// Marked Content ID (for tagged PDF accessibility)
     #[pyo3(get)]
     pub mcid: Option<i32>,
@@ -826,6 +829,7 @@ impl PyLTChar {
             size: c.size(),
             upright: c.upright(),
             adv: c.adv(),
+            matrix: c.matrix(),
             mcid: c.mcid(),
             tag: c.tag(),
             non_stroking_color: c.non_stroking_color().clone(),

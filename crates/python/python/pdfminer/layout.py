@@ -131,7 +131,7 @@ class LTChar(LTComponent):
             self.size = _rust_char.size  # Alias for pdfplumber
             self.mcid = _rust_char.mcid
             self.tag = _rust_char.tag
-            self.matrix = None
+            self.matrix = _rust_char.matrix
             self.font = None
             self.scaling = 1.0
             self.rise = 0
