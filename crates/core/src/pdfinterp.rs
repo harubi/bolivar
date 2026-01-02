@@ -514,6 +514,8 @@ pub struct PDFPageInterpreter<'a, D: PDFDevice> {
     xobjmap: HashMap<String, PDFStream>,
     /// Inline image counter
     inline_image_id: usize,
+    /// Stack of active form XObjects to prevent recursion
+    xobj_stack: Vec<String>,
     /// Document reference for resolving XObject resources
     doc: Option<&'a crate::pdfdocument::PDFDocument>,
 }
@@ -535,6 +537,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             resources: HashMap::new(),
             xobjmap: HashMap::new(),
             inline_image_id: 0,
+            xobj_stack: Vec::new(),
             doc: None,
         }
     }
@@ -1437,6 +1440,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             .unwrap_or("");
 
         if subtype == "Form" && xobj.get("BBox").is_some() {
+            if self.xobj_stack.contains(&xobjid) {
+                if std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1") {
+                    eprintln!("Skip recursive Form XObject: {}", xobjid);
+                }
+                return;
+            }
             if std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1") {
                 eprintln!("Do Form XObject: {}", xobjid);
             }
@@ -1467,12 +1476,14 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             }
 
             let saved = self.snapshot_state();
+            self.xobj_stack.push(xobjid.clone());
             self.device.begin_figure(&xobjid, bbox, matrix);
 
             let form_ctm = mult_matrix(matrix, self.ctm);
             self.render_contents(resources, vec![data], form_ctm);
 
             self.device.end_figure(&xobjid);
+            let _ = self.xobj_stack.pop();
             self.restore_state(saved);
         } else if subtype == "Image" && xobj.get("Width").is_some() && xobj.get("Height").is_some()
         {
