@@ -1,7 +1,7 @@
 use bolivar_core::cmapdb::parse_tounicode_cmap;
 use bolivar_core::pdfdocument::PDFDocument;
-use bolivar_core::pdftypes::PDFObject;
 use bolivar_core::pdfpage::PDFPage;
+use bolivar_core::pdftypes::PDFObject;
 use std::path::PathBuf;
 
 fn fixtures_dir() -> PathBuf {
@@ -14,8 +14,13 @@ fn fixtures_dir() -> PathBuf {
         .join("pdfs")
 }
 
-fn resolve_dict(doc: &PDFDocument, obj: &PDFObject) -> Option<std::collections::HashMap<String, PDFObject>> {
-    doc.resolve(obj).ok().and_then(|o| o.as_dict().ok().cloned())
+fn resolve_dict(
+    doc: &PDFDocument,
+    obj: &PDFObject,
+) -> Option<std::collections::HashMap<String, PDFObject>> {
+    doc.resolve(obj)
+        .ok()
+        .and_then(|o| o.as_dict().ok().cloned())
 }
 
 #[test]
@@ -29,10 +34,7 @@ fn test_tounicode_maps_simple_font_cid_67() {
         .expect("no pages")
         .expect("page parse error");
 
-    let fonts_obj = page
-        .resources
-        .get("Font")
-        .expect("no Font resources");
+    let fonts_obj = page.resources.get("Font").expect("no Font resources");
     let fonts = resolve_dict(&doc, fonts_obj).expect("failed to resolve Font dict");
 
     // Find HelveticaNeueLTPro-Lt font
@@ -60,7 +62,11 @@ fn test_tounicode_maps_simple_font_cid_67() {
     let data = tounicode_data.expect("HelveticaNeueLTPro-Lt font not found");
     if std::env::var("BOLIVAR_DEBUG_TOUNICODE").is_ok() {
         let nul_count = data.iter().filter(|&&b| b == 0).count();
-        println!("ToUnicode bytes len={}, nul_count={}", data.len(), nul_count);
+        println!(
+            "ToUnicode bytes len={}, nul_count={}",
+            data.len(),
+            nul_count
+        );
         let preview: Vec<u8> = data.iter().cloned().take(80).collect();
         println!("ToUnicode preview: {:?}", preview);
     }

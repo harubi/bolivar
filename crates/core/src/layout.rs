@@ -18,8 +18,8 @@ use std::collections::BinaryHeap;
 use std::hash::Hash;
 
 use crate::utils::{
-    HasBBox, INF_F64, Matrix, Plane, Point, Rect, apply_matrix_rect, fsplit, get_bound, uniq,
-    MATRIX_IDENTITY,
+    HasBBox, INF_F64, MATRIX_IDENTITY, Matrix, Plane, Point, Rect, apply_matrix_rect, fsplit,
+    get_bound, uniq,
 };
 use ordered_float::OrderedFloat;
 

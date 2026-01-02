@@ -1049,7 +1049,6 @@ impl PDFDevice for PDFPageAggregator {
 
         // Update text state line matrix
         textstate.linematrix = (x, y);
-
     }
 
     fn begin_tag(

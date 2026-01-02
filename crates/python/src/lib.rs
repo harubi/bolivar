@@ -529,8 +529,15 @@ impl PyPDFDocument {
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
         for (k, v) in catalog.iter() {
             let mut visited = HashSet::new();
-            let py_val =
-                pdf_object_to_py_internal(py, v, &slf.inner, &mut visited, true, false, Some(&py_doc))?;
+            let py_val = pdf_object_to_py_internal(
+                py,
+                v,
+                &slf.inner,
+                &mut visited,
+                true,
+                false,
+                Some(&py_doc),
+            )?;
             py_dict.set_item(k, py_val)?;
         }
         Ok(py_dict.into_any().unbind())
@@ -538,11 +545,21 @@ impl PyPDFDocument {
 
     /// Resolve an indirect object by ID.
     fn getobj(slf: PyRef<'_, Self>, py: Python<'_>, objid: u32) -> PyResult<Py<PyAny>> {
-        let obj = slf.inner.getobj(objid)
+        let obj = slf
+            .inner
+            .getobj(objid)
             .map_err(|e| PyValueError::new_err(format!("Failed to resolve object: {}", e)))?;
         let mut visited = HashSet::new();
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
-        pdf_object_to_py_internal(py, &obj, &slf.inner, &mut visited, true, false, Some(&py_doc))
+        pdf_object_to_py_internal(
+            py,
+            &obj,
+            &slf.inner,
+            &mut visited,
+            true,
+            false,
+            Some(&py_doc),
+        )
     }
 }
 

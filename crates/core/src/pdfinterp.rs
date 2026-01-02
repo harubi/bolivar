@@ -1456,9 +1456,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             } else {
                 Some(xobj.get_data().to_vec())
             };
-            if data.is_none()
-                && std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1")
-            {
+            if data.is_none() && std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1") {
                 eprintln!("Do Form XObject: {} decode failed", xobjid);
             }
             let Some(data) = data else {
@@ -1476,9 +1474,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
             self.device.end_figure(&xobjid);
             self.restore_state(saved);
-        } else if subtype == "Image"
-            && xobj.get("Width").is_some()
-            && xobj.get("Height").is_some()
+        } else if subtype == "Image" && xobj.get("Width").is_some() && xobj.get("Height").is_some()
         {
             self.device
                 .begin_figure(&xobjid, (0.0, 0.0, 1.0, 1.0), MATRIX_IDENTITY);
@@ -1735,10 +1731,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             PSToken::Literal(name) => Some(PDFStackValue::Name(name.clone())),
             PSToken::String(s) => Some(PDFStackValue::String(s.clone())),
             PSToken::Array(arr) => {
-                let values = arr
-                    .iter()
-                    .filter_map(Self::pstoken_to_stackvalue)
-                    .collect();
+                let values = arr.iter().filter_map(Self::pstoken_to_stackvalue).collect();
                 Some(PDFStackValue::Array(values))
             }
             PSToken::Dict(map) => {
@@ -1819,9 +1812,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             Some(PSToken::Literal(name)) => {
                 if let Some(dict) = self.properties_dict() {
                     if let Some(obj) = dict.get(&name) {
-                        if let Some(PDFStackValue::Dict(map)) =
-                            self.pdfobject_to_stackvalue(obj)
-                        {
+                        if let Some(PDFStackValue::Dict(map)) = self.pdfobject_to_stackvalue(obj) {
                             props = map;
                         }
                     }

@@ -923,7 +923,9 @@ impl PDFDocument {
                 Some(v) => v,
                 None => continue,
             };
-            let genno: u16 = match std::str::from_utf8(&cap[2]).ok().and_then(|s| s.parse().ok())
+            let genno: u16 = match std::str::from_utf8(&cap[2])
+                .ok()
+                .and_then(|s| s.parse().ok())
             {
                 Some(v) => v,
                 None => continue,
