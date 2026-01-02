@@ -361,6 +361,15 @@ class LTFigure(LTContainer):
         self.name = name
         self.matrix = matrix
 
+    @classmethod
+    def from_rust(cls, rust_figure) -> "LTFigure":
+        figure = cls(rust_figure.name, rust_figure.bbox, rust_figure.matrix)
+        for child in rust_figure:
+            wrapped = _wrap_rust_item(child)
+            if wrapped is not None:
+                figure.add(wrapped)
+        return figure
+
 
 class LTTextLine(LTTextContainer):
     """A line of text."""
@@ -369,12 +378,28 @@ class LTTextLine(LTTextContainer):
 
 class LTTextLineHorizontal(LTTextLine):
     """A horizontal line of text."""
-    pass
+
+    @classmethod
+    def from_rust(cls, rust_line) -> "LTTextLineHorizontal":
+        line = cls(rust_line.bbox)
+        for child in rust_line:
+            wrapped = _wrap_rust_item(child)
+            if wrapped is not None:
+                line.add(wrapped)
+        return line
 
 
 class LTTextLineVertical(LTTextLine):
     """A vertical line of text."""
-    pass
+
+    @classmethod
+    def from_rust(cls, rust_line) -> "LTTextLineVertical":
+        line = cls(rust_line.bbox)
+        for child in rust_line:
+            wrapped = _wrap_rust_item(child)
+            if wrapped is not None:
+                line.add(wrapped)
+        return line
 
 
 class LTTextBox(LTTextContainer):
@@ -389,12 +414,28 @@ class LTTextBox(LTTextContainer):
 
 class LTTextBoxHorizontal(LTTextBox):
     """A horizontal text box."""
-    pass
+
+    @classmethod
+    def from_rust(cls, rust_box) -> "LTTextBoxHorizontal":
+        box = cls(rust_box.bbox)
+        for child in rust_box:
+            wrapped = _wrap_rust_item(child)
+            if wrapped is not None:
+                box.add(wrapped)
+        return box
 
 
 class LTTextBoxVertical(LTTextBox):
     """A vertical text box."""
-    pass
+
+    @classmethod
+    def from_rust(cls, rust_box) -> "LTTextBoxVertical":
+        box = cls(rust_box.bbox)
+        for child in rust_box:
+            wrapped = _wrap_rust_item(child)
+            if wrapped is not None:
+                box.add(wrapped)
+        return box
 
 
 class LTImage(LTComponent):
@@ -408,6 +449,44 @@ class LTImage(LTComponent):
         self.imagemask = False
         self.bits = 8
         self.colorspace = None
+
+    @classmethod
+    def from_rust(cls, rust_image) -> "LTImage":
+        image = cls(rust_image.name, None, rust_image.bbox)
+        image.srcsize = rust_image.srcsize
+        image.imagemask = rust_image.imagemask
+        image.bits = rust_image.bits
+        image.colorspace = rust_image.colorspace
+        return image
+
+
+def _wrap_rust_item(rust_item):
+    type_name = type(rust_item).__name__
+    if type_name == "LTChar":
+        return LTChar.from_rust(rust_item)
+    if type_name == "LTAnno":
+        return LTAnno(rust_item.get_text())
+    if type_name == "LTRect":
+        return LTRect.from_rust(rust_item)
+    if type_name == "LTLine":
+        return LTLine.from_rust(rust_item)
+    if type_name == "LTCurve":
+        return LTCurve.from_rust(rust_item)
+    if type_name == "LTTextLineHorizontal":
+        return LTTextLineHorizontal.from_rust(rust_item)
+    if type_name == "LTTextLineVertical":
+        return LTTextLineVertical.from_rust(rust_item)
+    if type_name == "LTTextBoxHorizontal":
+        return LTTextBoxHorizontal.from_rust(rust_item)
+    if type_name == "LTTextBoxVertical":
+        return LTTextBoxVertical.from_rust(rust_item)
+    if type_name == "LTImage":
+        return LTImage.from_rust(rust_item)
+    if type_name == "LTFigure":
+        return LTFigure.from_rust(rust_item)
+    if type_name == "LTPage":
+        return LTPage(rust_item)
+    return None
 
 
 class LTPage(LTContainer):
@@ -433,20 +512,9 @@ class LTPage(LTContainer):
 
             # Wrap Rust items in Python shims
             for rust_item in rust_page:
-                # Check type and wrap appropriately
-                type_name = type(rust_item).__name__
-                if type_name == 'LTRect':
-                    self._objs.append(LTRect.from_rust(rust_item))
-                elif type_name == 'LTLine':
-                    self._objs.append(LTLine.from_rust(rust_item))
-                elif type_name == 'LTCurve':
-                    self._objs.append(LTCurve.from_rust(rust_item))
-                elif type_name == 'LTAnno':
-                    # Wrap Anno directly - it already has get_text()
-                    self._objs.append(LTAnno(rust_item.get_text()))
-                else:
-                    # Default to LTChar
-                    self._objs.append(LTChar.from_rust(rust_item))
+                wrapped = _wrap_rust_item(rust_item)
+                if wrapped is not None:
+                    self._objs.append(wrapped)
         else:
             # Traditional pdfminer.six constructor
             self._rust_page = None
