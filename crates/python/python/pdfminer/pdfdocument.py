@@ -50,6 +50,8 @@ class PDFDocument:
 
         # Cache pages from Rust
         self._rust_pages = self._rust_doc.get_pages()
+        if not self._rust_pages:
+            raise ValueError("No pages found")
 
         # Compatibility attributes
         self.xrefs = [XRef(t) for t in self._rust_doc.xrefs]
