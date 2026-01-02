@@ -9,6 +9,8 @@ from io import BytesIO
 
 # Get fixtures path
 FIXTURES_DIR = Path(__file__).parent.parent / "crates/core/tests/fixtures"
+PDFPLUMBER_PDFS = FIXTURES_DIR / "pdfplumber"
+NONFREE_PDFS = FIXTURES_DIR / "nonfree"
 
 
 class TestPDFParser:
@@ -555,3 +557,79 @@ class TestPdfplumberParity:
             if isinstance(color, tuple) and len(color) == 3:
                 r, g, b = color
                 assert r > 0.9 and g < 0.1 and b < 0.1, f"Expected red color, got RGB{color}"
+
+
+class TestPdfplumberLayoutParity:
+    def test_layout_tree_has_textboxes_and_lines(self):
+        try:
+            import pdfplumber
+        except ImportError:
+            pytest.skip("pdfplumber not installed")
+
+        pdf_path = PDFPLUMBER_PDFS / "issue-192-example.pdf"
+        if not pdf_path.exists():
+            pytest.skip(f"Test fixture not found: {pdf_path}")
+
+        with pdfplumber.open(pdf_path, laparams={"detect_vertical": True}) as pdf:
+            page = pdf.pages[0]
+            assert len(page.textlinehorizontals) > 0
+            assert len(page.textboxhorizontals) > 0
+
+    def test_layout_tree_has_images(self):
+        try:
+            import pdfplumber
+        except ImportError:
+            pytest.skip("pdfplumber not installed")
+
+        pdf_path = NONFREE_PDFS / "dmca.pdf"
+        if not pdf_path.exists():
+            pytest.skip(f"Test fixture not found: {pdf_path}")
+
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[0]
+            assert len(page.images) > 0
+
+    def test_char_matrix_present(self):
+        try:
+            import pdfplumber
+        except ImportError:
+            pytest.skip("pdfplumber not installed")
+
+        pdf_path = PDFPLUMBER_PDFS / "pdffill-demo.pdf"
+        if not pdf_path.exists():
+            pytest.skip(f"Test fixture not found: {pdf_path}")
+
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[3]
+            assert page.chars[0]["matrix"] is not None
+
+    def test_mcid_present(self):
+        try:
+            import pdfplumber
+        except ImportError:
+            pytest.skip("pdfplumber not installed")
+
+        pdf_path = PDFPLUMBER_PDFS / "mcid_example.pdf"
+        if not pdf_path.exists():
+            pytest.skip(f"Test fixture not found: {pdf_path}")
+
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[0]
+            mcids = [c.get("mcid") for c in page.chars if "mcid" in c]
+            assert any(m is not None for m in mcids)
+
+    def test_doc_xrefs_info_ref(self):
+        try:
+            import pdfplumber
+        except ImportError:
+            pytest.skip("pdfplumber not installed")
+
+        from pdfminer.pdfparser import PDFObjRef
+
+        pdf_path = PDFPLUMBER_PDFS / "pdffill-demo.pdf"
+        if not pdf_path.exists():
+            pytest.skip(f"Test fixture not found: {pdf_path}")
+
+        with pdfplumber.open(pdf_path) as pdf:
+            info = pdf.doc.xrefs[0].trailer["Info"]
+            assert isinstance(info, PDFObjRef)
