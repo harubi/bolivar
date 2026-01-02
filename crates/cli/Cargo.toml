@@ -9,6 +9,7 @@ description = "PDF text extraction CLI tools"
 [dependencies]
 bolivar-core = { path = "../core" }
 clap.workspace = true
+serde_json.workspace = true
 
 [[bin]]
 name = "pdf2txt"

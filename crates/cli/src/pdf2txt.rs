@@ -11,10 +11,11 @@ use bolivar_core::converter::{
 use bolivar_core::error::{PdfError, Result};
 use bolivar_core::high_level::{ExtractOptions, extract_pages};
 use bolivar_core::image::ImageWriter;
-use bolivar_core::layout::LAParams;
+use bolivar_core::layout::{LAParams, LTPage};
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use bolivar_core::pdfpage::PDFPage;
+use bolivar_core::table::{extract_tables_from_ltpage, PageGeometry, TableSettings};
 use clap::{ArgAction, Parser, ValueEnum};
 use std::cell::RefCell;
 use std::fs::File;
@@ -48,6 +49,16 @@ enum LayoutMode {
     Exact,
     /// Loose mode - normal with extra newlines
     Loose,
+}
+
+/// Output format for table extraction.
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+enum TableFormat {
+    /// CSV format (default)
+    #[default]
+    Csv,
+    /// JSON format
+    Json,
 }
 
 /// A command line tool for extracting text and images from PDF and
@@ -155,6 +166,15 @@ struct Args {
     /// Remove control characters from XML output
     #[arg(short = 'S', long = "strip-control", action = ArgAction::SetTrue)]
     strip_control: bool,
+
+    // === Table extraction options ===
+    /// Extract tables instead of text
+    #[arg(long = "extract-tables", action = ArgAction::SetTrue)]
+    extract_tables: bool,
+
+    /// Output format for table extraction (csv or json)
+    #[arg(long = "table-format", value_enum, default_value = "csv")]
+    table_format: TableFormat,
 }
 
 /// Parse boxes_flow value - either a float or "disabled".
@@ -247,6 +267,26 @@ fn parse_page_numbers(args: &Args) -> Option<Vec<usize>> {
     None
 }
 
+/// Build PageGeometry from an LTPage for table extraction.
+fn page_geometry_from_ltpage(page: &LTPage) -> PageGeometry {
+    let bbox = page.bbox();
+    PageGeometry {
+        page_bbox: bbox,
+        mediabox: bbox,
+        initial_doctop: 0.0,
+        force_crop: false,
+    }
+}
+
+/// Escape a string for RFC 4180 compliant CSV output.
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 fn for_each_page_with_images<F>(
     pdf_data: &[u8],
     options: &ExtractOptions,
@@ -312,6 +352,71 @@ fn process_file<W: Write>(
         laparams: build_laparams(args)?,
         threads: std::thread::available_parallelism().ok().map(|n| n.get()),
     };
+
+    // Handle table extraction mode
+    if args.extract_tables {
+        let settings = TableSettings::default();
+        let mut page_num = 0;
+        let mut all_pages_data: Vec<serde_json::Value> = Vec::new();
+
+        for page_result in extract_pages(&pdf_data, Some(options.clone()))? {
+            let page = page_result?;
+            page_num += 1;
+            let geom = page_geometry_from_ltpage(&page);
+            let tables = extract_tables_from_ltpage(&page, &geom, &settings);
+
+            match args.table_format {
+                TableFormat::Csv => {
+                    for (table_idx, table) in tables.iter().enumerate() {
+                        writeln!(writer, "--- Page {} Table {} ---", page_num, table_idx + 1)?;
+                        for row in table {
+                            let cells: Vec<String> = row
+                                .iter()
+                                .map(|cell| csv_escape(cell.as_deref().unwrap_or("")))
+                                .collect();
+                            writeln!(writer, "{}", cells.join(","))?;
+                        }
+                        writeln!(writer)?;
+                    }
+                }
+                TableFormat::Json => {
+                    let page_tables: Vec<serde_json::Value> = tables
+                        .iter()
+                        .map(|table| {
+                            let rows: Vec<serde_json::Value> = table
+                                .iter()
+                                .map(|row| {
+                                    serde_json::Value::Array(
+                                        row.iter()
+                                            .map(|cell| match cell {
+                                                Some(s) => serde_json::Value::String(s.clone()),
+                                                None => serde_json::Value::Null,
+                                            })
+                                            .collect(),
+                                    )
+                                })
+                                .collect();
+                            serde_json::json!({ "rows": rows })
+                        })
+                        .collect();
+                    all_pages_data.push(serde_json::json!({
+                        "page": page_num,
+                        "tables": page_tables
+                    }));
+                }
+            }
+        }
+
+        // For JSON, write the complete output at the end
+        if matches!(args.table_format, TableFormat::Json) {
+            let output = serde_json::json!({ "pages": all_pages_data });
+            let json_str = serde_json::to_string_pretty(&output)
+                .expect("Failed to serialize tables to JSON");
+            writeln!(writer, "{}", json_str)?;
+        }
+
+        return Ok(());
+    }
 
     if let Some(ref output_dir) = args.output_dir {
         let image_writer = Rc::new(RefCell::new(ImageWriter::new(output_dir)?));
