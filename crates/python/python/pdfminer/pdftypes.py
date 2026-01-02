@@ -47,8 +47,8 @@ def resolve1(x, default=None):
 
     If x is a PDFObjRef, resolve it. Otherwise return x.
     """
-    if isinstance(x, PDFObjRef):
-        return x.resolve(default)
+    while isinstance(x, PDFObjRef):
+        x = x.resolve(default)
     return x
 
 
