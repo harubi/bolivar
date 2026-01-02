@@ -457,3 +457,4 @@ Cargo.lock
 
 .criterion
 *.svg
+.worktrees/
