@@ -55,8 +55,9 @@ impl PDFPage {
         label: Option<String>,
         doc: &PDFDocument,
     ) -> Result<Self> {
-        let mediabox = Self::parse_box(&attrs, "MediaBox", doc);
-        let cropbox = Self::parse_box(&attrs, "CropBox", doc).or(mediabox);
+        let mediabox = Self::parse_box(&attrs, "MediaBox", doc)
+            .ok_or_else(|| crate::error::PdfError::SyntaxError("MediaBox missing".into()))?;
+        let cropbox = Self::parse_box(&attrs, "CropBox", doc).or(Some(mediabox));
         let bleedbox = Self::parse_box(&attrs, "BleedBox", doc);
         let trimbox = Self::parse_box(&attrs, "TrimBox", doc);
         let artbox = Self::parse_box(&attrs, "ArtBox", doc);
@@ -81,7 +82,7 @@ impl PDFPage {
             pageid,
             attrs,
             label,
-            mediabox,
+            mediabox: Some(mediabox),
             cropbox,
             bleedbox,
             trimbox,
