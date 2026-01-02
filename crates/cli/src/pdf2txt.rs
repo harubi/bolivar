@@ -310,7 +310,7 @@ fn process_file<W: Write>(
         maxpages: args.maxpages,
         caching: !args.disable_caching,
         laparams: build_laparams(args)?,
-        threads: None,
+        threads: std::thread::available_parallelism().ok().map(|n| n.get()),
     };
 
     if let Some(ref output_dir) = args.output_dir {
