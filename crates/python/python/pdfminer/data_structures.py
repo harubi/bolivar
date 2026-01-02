@@ -2,7 +2,7 @@
 
 from typing import Iterator, List, Optional, Tuple, Any
 
-from .pdftypes import resolve1
+from .pdftypes import PDFObjRef, resolve1
 
 
 class NumberTree:
@@ -15,25 +15,33 @@ class NumberTree:
         self.obj = obj
         self._cache = None
 
-    def _parse(self, obj) -> Iterator[Tuple[int, Any]]:
+    def _parse(self, obj, visited: Optional[set] = None) -> Iterator[Tuple[int, Any]]:
         """Parse the number tree recursively."""
+        if visited is None:
+            visited = set()
+        if isinstance(obj, PDFObjRef):
+            objid = getattr(obj, "objid", None)
+            if objid is not None:
+                if objid in visited:
+                    return
+                visited.add(objid)
         obj = resolve1(obj)
         if obj is None:
             return
 
         # Check for Nums array (leaf node)
-        nums = resolve1(obj.get("Nums")) if isinstance(obj, dict) else None
+        nums = obj.get("Nums") if isinstance(obj, dict) else None
         if nums:
             for i in range(0, len(nums), 2):
                 key = resolve1(nums[i])
-                value = resolve1(nums[i + 1])
+                value = nums[i + 1]
                 yield (key, value)
 
         # Check for Kids array (intermediate node)
         kids = resolve1(obj.get("Kids")) if isinstance(obj, dict) else None
         if kids:
             for kid in kids:
-                yield from self._parse(kid)
+                yield from self._parse(kid, visited)
 
     def __iter__(self) -> Iterator[Tuple[int, Any]]:
         """Iterate over (number, value) pairs."""
