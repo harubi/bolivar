@@ -3,6 +3,14 @@
 from bolivar import PDFDocument as _RustPDFDocument
 
 
+class XRef:
+    """XRef wrapper with trailer dict."""
+
+    def __init__(self, trailer, fallback=False):
+        self.trailer = trailer
+        self.is_fallback = fallback
+
+
 class PDFDocument:
     """PDF document container - wraps bolivar's Rust PDFDocument.
 
@@ -44,7 +52,7 @@ class PDFDocument:
         self._rust_pages = self._rust_doc.get_pages()
 
         # Compatibility attributes
-        self.xrefs = []
+        self.xrefs = [XRef(t) for t in self._rust_doc.xrefs]
         self.info = self._rust_doc.info  # List of info dicts from Rust
         self.catalog = self._rust_doc.catalog
         self.encryption = None

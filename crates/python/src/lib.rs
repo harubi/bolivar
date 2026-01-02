@@ -509,16 +509,52 @@ impl PyPDFDocument {
     /// Returns:
     ///     List of dictionaries containing document metadata (Producer, Creator, etc.)
     #[getter]
-    fn info(&self) -> Vec<std::collections::HashMap<String, String>> {
-        self.inner
-            .info()
-            .iter()
-            .map(|dict| {
-                dict.iter()
-                    .map(|(k, v)| (k.clone(), pdf_object_to_string(v)))
-                    .collect()
-            })
-            .collect()
+    fn info(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let mut out = Vec::new();
+        let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
+        for dict in slf.inner.info().iter() {
+            let py_dict = PyDict::new(py);
+            for (k, v) in dict.iter() {
+                let mut visited = HashSet::new();
+                let py_val = pdf_object_to_py_internal(
+                    py,
+                    v,
+                    &slf.inner,
+                    &mut visited,
+                    true,
+                    true,
+                    Some(&py_doc),
+                )?;
+                py_dict.set_item(k, py_val)?;
+            }
+            out.push(py_dict.into_any().unbind());
+        }
+        Ok(out)
+    }
+
+    /// Get xref trailers as raw PDF objects (references preserved).
+    #[getter]
+    fn xrefs(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        let mut out = Vec::new();
+        let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
+        for (_fallback, trailer) in slf.inner.get_trailers() {
+            let py_dict = PyDict::new(py);
+            for (k, v) in trailer.iter() {
+                let mut visited = HashSet::new();
+                let py_val = pdf_object_to_py_internal(
+                    py,
+                    v,
+                    &slf.inner,
+                    &mut visited,
+                    true,
+                    false,
+                    Some(&py_doc),
+                )?;
+                py_dict.set_item(k, py_val)?;
+            }
+            out.push(py_dict.into_any().unbind());
+        }
+        Ok(out)
     }
 
     /// Get document catalog dictionary.
