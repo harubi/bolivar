@@ -91,6 +91,30 @@ class TestPDFDocument:
                 all_keys.update(info_dict.keys())
             assert len(all_keys) > 0, "Expected some metadata keys"
 
+    def test_document_pages_are_lazy(self):
+        """PDFDocument should not precompute pages on init."""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+
+        pdf_path = FIXTURES_DIR / "simple1.pdf"
+        with open(pdf_path, "rb") as f:
+            parser = PDFParser(f)
+            doc = PDFDocument(parser)
+            assert getattr(doc, "_rust_pages", None) is None
+
+    def test_getobj_preserves_refs(self):
+        """PDFDocument.getobj should return PDFObjRef values."""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdftypes import PDFObjRef
+
+        pdf_path = FIXTURES_DIR / "contrib/issue-886-xref-stream-widths.pdf"
+        with open(pdf_path, "rb") as f:
+            parser = PDFParser(f)
+            doc = PDFDocument(parser)
+            obj = doc.getobj(11)
+            assert isinstance(obj["DescendantFonts"][0], PDFObjRef)
+
 
 class TestPDFPage:
     """Test pdfminer.pdfpage.PDFPage shim"""
@@ -128,6 +152,25 @@ class TestPDFPage:
             doc = PDFDocument(parser)
             pages = list(PDFPage.create_pages(doc))
             assert len(pages) >= 1
+
+    def test_page_attrs_preserve_refs(self):
+        """PDFPage attrs should keep PDFObjRef values."""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+        from pdfminer.pdftypes import PDFObjRef
+
+        pdf_path = FIXTURES_DIR / "simple1.pdf"
+        with open(pdf_path, "rb") as f:
+            parser = PDFParser(f)
+            doc = PDFDocument(parser)
+            page = next(PDFPage.create_pages(doc))
+            contents = page.attrs.get("Contents")
+            if isinstance(contents, list):
+                assert contents, "Expected non-empty Contents list"
+                assert isinstance(contents[0], PDFObjRef)
+            else:
+                assert isinstance(contents, PDFObjRef)
 
     def test_page_has_pageid(self):
         """PDFPage has pageid attribute"""

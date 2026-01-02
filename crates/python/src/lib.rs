@@ -21,9 +21,9 @@ use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PyType};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Convert a PDFObject to a string representation for Python.
 fn pdf_object_to_string(obj: &PDFObject) -> String {
@@ -529,6 +529,8 @@ impl From<bolivar_core::layout::LAParams> for PyLAParams {
 pub struct PyPDFDocument {
     /// The underlying Rust PDFDocument (owns the data via Arc)
     inner: PDFDocument,
+    /// Cache resolved objects for faster PDFObjRef resolution
+    resolved_cache: Mutex<HashMap<u32, Py<PyAny>>>,
 }
 
 #[pymethods]
@@ -549,7 +551,10 @@ impl PyPDFDocument {
     fn new(data: &[u8], password: &str) -> PyResult<Self> {
         let doc = PDFDocument::new(data, password)
             .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-        Ok(Self { inner: doc })
+        Ok(Self {
+            inner: doc,
+            resolved_cache: Mutex::new(HashMap::new()),
+        })
     }
 
     /// Create a new PDFDocument from a file path using memory-mapped I/O.
@@ -572,21 +577,25 @@ impl PyPDFDocument {
             .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
         let doc = PDFDocument::new_from_mmap(Arc::new(mmap), password)
             .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-        Ok(Self { inner: doc })
+        Ok(Self {
+            inner: doc,
+            resolved_cache: Mutex::new(HashMap::new()),
+        })
     }
 
     /// Get an iterator over pages in the document.
     ///
     /// Returns:
     ///     List of PDFPage objects
-    fn get_pages(&self, py: Python<'_>) -> PyResult<Vec<PyPDFPage>> {
+    fn get_pages(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Vec<PyPDFPage>> {
         let mut pages = Vec::new();
+        let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
         for (idx, page_result) in
-            bolivar_core::pdfpage::PDFPage::create_pages(&self.inner).enumerate()
+            bolivar_core::pdfpage::PDFPage::create_pages(&slf.inner).enumerate()
         {
             let page = page_result
                 .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", idx, e)))?;
-            pages.push(PyPDFPage::from_core(py, page, &self.inner)?);
+            pages.push(PyPDFPage::from_core(py, page, &slf.inner, Some(&py_doc))?);
         }
         Ok(pages)
     }
@@ -668,13 +677,18 @@ impl PyPDFDocument {
 
     /// Resolve an indirect object by ID.
     fn getobj(slf: PyRef<'_, Self>, py: Python<'_>, objid: u32) -> PyResult<Py<PyAny>> {
+        if let Ok(cache) = slf.resolved_cache.lock() {
+            if let Some(obj) = cache.get(&objid) {
+                return Ok(obj.clone_ref(py));
+            }
+        }
         let obj = slf
             .inner
             .getobj(objid)
             .map_err(|e| PyValueError::new_err(format!("Failed to resolve object: {}", e)))?;
         let mut visited = HashSet::new();
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
-        pdf_object_to_py_internal(
+        let py_obj = pdf_object_to_py_internal(
             py,
             &obj,
             &slf.inner,
@@ -682,7 +696,11 @@ impl PyPDFDocument {
             true,
             false,
             Some(&py_doc),
-        )
+        )?;
+        if let Ok(mut cache) = slf.resolved_cache.lock() {
+            cache.insert(objid, py_obj.clone_ref(py));
+        }
+        Ok(py_obj)
     }
 }
 
@@ -731,6 +749,7 @@ impl PyPDFPage {
         py: Python<'_>,
         page: bolivar_core::pdfpage::PDFPage,
         doc: &PDFDocument,
+        py_doc: Option<&Py<PyAny>>,
     ) -> PyResult<Self> {
         // Extract and resolve annotations
         let annots_list: Py<PyAny> = if let Some(ref annots_obj) = page.annots {
@@ -765,14 +784,16 @@ impl PyPDFPage {
         let attrs_dict = PyDict::new(py);
         for (k, v) in page.attrs.iter() {
             let mut visited = HashSet::new();
-            let py_val = pdf_object_to_py_internal(py, v, doc, &mut visited, true, true, None)?;
+            let py_val =
+                pdf_object_to_py_internal(py, v, doc, &mut visited, true, false, py_doc)?;
             attrs_dict.set_item(k, py_val)?;
         }
 
         let resources_dict = PyDict::new(py);
         for (k, v) in page.resources.iter() {
             let mut visited = HashSet::new();
-            let py_val = pdf_object_to_py_internal(py, v, doc, &mut visited, true, true, None)?;
+            let py_val =
+                pdf_object_to_py_internal(py, v, doc, &mut visited, true, false, py_doc)?;
             resources_dict.set_item(k, py_val)?;
         }
 

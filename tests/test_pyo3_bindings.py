@@ -39,6 +39,18 @@ class TestPDFDocument:
         pages = list(doc.get_pages())
         assert len(pages) >= 1
 
+    def test_getobj_caches_by_id(self):
+        """PDFDocument.getobj returns cached objects for the same ID"""
+        from bolivar import PDFDocument
+
+        pdf_path = FIXTURES_DIR / "contrib/issue-886-xref-stream-widths.pdf"
+        pdf_bytes = pdf_path.read_bytes()
+        doc = PDFDocument(pdf_bytes)
+
+        obj1 = doc.getobj(11)
+        obj2 = doc.getobj(11)
+        assert obj1 is obj2
+
 
 class TestPDFPage:
     """Test PDFPage wrapper"""
