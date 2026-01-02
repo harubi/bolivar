@@ -39,3 +39,13 @@ fn test_page_labels() {
         );
     }
 }
+
+#[test]
+fn test_page_contents_lazy() {
+    let doc = PDFDocument::new(PAGELABELS_PDF, "").expect("Failed to parse PDF");
+    let page = PDFPage::create_pages(&doc)
+        .next()
+        .expect("Missing page")
+        .expect("Failed to get page");
+    assert!(page.contents.is_empty());
+}

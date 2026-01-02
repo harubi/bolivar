@@ -40,3 +40,21 @@ fn test_inline_image_is_emitted() {
 
     assert_eq!(device.images, 1);
 }
+
+#[test]
+fn test_process_page_decodes_empty_contents() {
+    // Same minimal PDF with inline image in content stream (BI/ID/EI)
+    let pdf_bytes = b"%PDF-1.4\n1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Resources << >> /Contents 4 0 R >>endobj\n4 0 obj<< /Length 53 >>stream\nq\nBI /W 1 /H 1 /BPC 8 /CS /DeviceGray ID\n\x00EI\nQ\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000010 00000 n \n0000000060 00000 n \n0000000111 00000 n \n0000000215 00000 n \ntrailer<< /Size 5 /Root 1 0 R >>\nstartxref\n320\n%%EOF";
+
+    let doc = PDFDocument::new(pdf_bytes, "").unwrap();
+    let mut page = PDFPage::create_pages(&doc).next().unwrap().unwrap();
+    page.contents.clear();
+
+    let mut rsrc = PDFResourceManager::with_caching(true);
+    let mut device = InlineCaptureDevice::default();
+    let mut interp = PDFPageInterpreter::new(&mut rsrc, &mut device);
+
+    interp.process_page(&page, Some(&doc));
+
+    assert_eq!(device.images, 1);
+}
