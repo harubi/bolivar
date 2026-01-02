@@ -579,9 +579,20 @@ fn parse_bfchar_blocks(content: &str, unicode_map: &mut UnicodeMap) {
         }
 
         if in_bfchar {
-            // Parse line: <cid_hex> <unicode_hex>
-            if let Some((cid, unicode_bytes)) = parse_hex_pair(line) {
-                unicode_map.add_cid2unichr_bytes(cid, &unicode_bytes);
+            let hex_values = extract_hex_sequences(line);
+            if hex_values.len() >= 2 {
+                for pair in hex_values.chunks(2) {
+                    if pair.len() != 2 {
+                        continue;
+                    }
+                    let cid = match parse_hex_value(pair[0]) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    if let Some(unicode_bytes) = parse_hex_bytes(pair[1]) {
+                        unicode_map.add_cid2unichr_bytes(cid, &unicode_bytes);
+                    }
+                }
             }
         }
     }
