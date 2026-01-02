@@ -76,7 +76,7 @@ impl PDFPage {
             .and_then(|r| doc.resolve(r).ok())
             .and_then(|r| r.as_dict().ok().cloned())
             .unwrap_or_default();
-        let contents = Self::parse_contents(&attrs, doc);
+        let contents = Vec::new();
 
         Ok(Self {
             pageid,
@@ -99,7 +99,10 @@ impl PDFPage {
     ///
     /// Contents can be a single stream or an array of streams.
     /// Returns decoded data from all content streams.
-    fn parse_contents(attrs: &HashMap<String, PDFObject>, doc: &PDFDocument) -> Vec<Vec<u8>> {
+    pub(crate) fn parse_contents(
+        attrs: &HashMap<String, PDFObject>,
+        doc: &PDFDocument,
+    ) -> Vec<Vec<u8>> {
         let contents_obj = match attrs.get("Contents") {
             Some(obj) => obj,
             None => return Vec::new(),
@@ -166,6 +169,8 @@ pub struct PageIterator<'a> {
     fallback_objids: Vec<u32>,
     /// Fallback: current index
     fallback_idx: usize,
+    /// Whether we've yielded any pages from the /Pages tree
+    pages_yielded: bool,
 }
 
 impl<'a> PageIterator<'a> {
@@ -187,8 +192,9 @@ impl<'a> PageIterator<'a> {
                     visited: HashSet::new(),
                     labels,
                     fallback_mode: false,
-                    fallback_objids: Vec::new(),
+                    fallback_objids: doc.get_objids(),
                     fallback_idx: 0,
+                    pages_yielded: false,
                 };
             }
         }
@@ -202,6 +208,7 @@ impl<'a> PageIterator<'a> {
             fallback_mode: true,
             fallback_objids: doc.get_objids(),
             fallback_idx: 0,
+            pages_yielded: false,
         }
     }
 
@@ -248,7 +255,7 @@ impl<'a> Iterator for PageIterator<'a> {
 
             let obj = match self.doc.getobj(objid) {
                 Ok(o) => o,
-                Err(e) => return Some(Err(e)),
+                Err(_) => continue,
             };
 
             let dict = match obj.as_dict() {
@@ -290,12 +297,18 @@ impl<'a> Iterator for PageIterator<'a> {
                 Some(PDFObject::Name(name)) if name == "Page" => {
                     // Leaf node - this is a page
                     let label = self.get_next_label();
+                    self.pages_yielded = true;
                     return Some(PDFPage::from_attrs(objid, attrs, label, self.doc));
                 }
                 _ => {
                     // Unknown type, skip
                 }
             }
+        }
+
+        if !self.pages_yielded && !self.fallback_mode {
+            self.fallback_mode = true;
+            return self.next();
         }
 
         None

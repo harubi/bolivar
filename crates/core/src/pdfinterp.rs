@@ -1674,7 +1674,13 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
         // Initialize state and execute content streams
         self.init_state(ctm);
-        self.execute(&page.contents);
+        let streams = if page.contents.is_empty() {
+            doc.map(|doc| crate::pdfpage::PDFPage::parse_contents(&page.attrs, doc))
+                .unwrap_or_default()
+        } else {
+            page.contents.clone()
+        };
+        self.execute(&streams);
 
         // End page on device
         self.device.end_page(page.pageid);
