@@ -84,6 +84,10 @@ impl<'a> PDFParser<'a> {
                 Keyword::False => Ok(PDFObject::Bool(false)),
                 Keyword::ArrayStart => self.parse_array(),
                 Keyword::DictStart => self.parse_dict(),
+                Keyword::Unknown(bytes) => {
+                    let name = String::from_utf8_lossy(&bytes).to_string();
+                    Ok(PDFObject::Name(name))
+                }
                 _ => Err(PdfError::TokenError {
                     pos: self.base.tell(),
                     msg: format!("unexpected keyword: {:?}", kw),
