@@ -3,6 +3,7 @@
 # Layout analysis types. Currently stubs - will be replaced with PyO3 bindings.
 
 from bolivar._bolivar import LAParams
+from pdfminer.psparser import PSLiteral
 from typing import Iterator, List, Optional, Tuple, Any
 
 
@@ -142,11 +143,18 @@ class LTChar(LTComponent):
             # Create graphicstate with actual colors from Rust
             gs = PDFGraphicState()
             # pdfplumber expects colors as tuples - (r, g, b) or (gray,)
+            def _normalize_gray(vals):
+                if len(vals) == 1 and isinstance(vals[0], float) and vals[0].is_integer():
+                    return (int(vals[0]),)
+                return tuple(vals)
+
             if hasattr(_rust_char, 'non_stroking_color') and _rust_char.non_stroking_color:
-                gs.ncolor = tuple(_rust_char.non_stroking_color)
+                gs.ncolor = _normalize_gray(_rust_char.non_stroking_color)
             if hasattr(_rust_char, 'stroking_color') and _rust_char.stroking_color:
-                gs.scolor = tuple(_rust_char.stroking_color)
+                gs.scolor = _normalize_gray(_rust_char.stroking_color)
             self.graphicstate = gs
+            if hasattr(_rust_char, 'ncs') and _rust_char.ncs:
+                self.ncs = PSLiteral(_rust_char.ncs)
             # Don't set ncs - pdfplumber uses hasattr() check for colorspace
             # Setting to None would make hasattr return True but .name access fails
         else:
@@ -248,6 +256,10 @@ class LTCurve(LTComponent):
             non_stroking_color=non_stroking,
             stroking_color=stroking,
         )
+        if hasattr(rust_curve, "mcid"):
+            curve.mcid = rust_curve.mcid
+        if hasattr(rust_curve, "tag"):
+            curve.tag = rust_curve.tag
         # Copy original_path from Rust (pdfplumber expects this)
         if rust_curve.original_path:
             curve.original_path = [
@@ -288,6 +300,10 @@ class LTLine(LTCurve):
             non_stroking_color=non_stroking,
             stroking_color=stroking,
         )
+        if hasattr(rust_line, "mcid"):
+            line.mcid = rust_line.mcid
+        if hasattr(rust_line, "tag"):
+            line.tag = rust_line.tag
         # Copy original_path from Rust (pdfplumber expects this)
         if rust_line.original_path:
             line.original_path = [
@@ -330,6 +346,10 @@ class LTRect(LTCurve):
             non_stroking_color=non_stroking,
             stroking_color=stroking,
         )
+        if hasattr(rust_rect, "mcid"):
+            rect.mcid = rust_rect.mcid
+        if hasattr(rust_rect, "tag"):
+            rect.tag = rust_rect.tag
         # Copy original_path from Rust (pdfplumber expects this)
         # Format: [(cmd, pt1, pt2, ...), ...] not [(cmd, [pt1, ...]), ...]
         if rust_rect.original_path:

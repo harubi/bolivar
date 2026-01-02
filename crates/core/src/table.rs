@@ -209,6 +209,7 @@ pub struct PageGeometry {
     pub page_bbox: Rect,
     pub mediabox: Rect,
     pub initial_doctop: f64,
+    pub force_crop: bool,
 }
 
 fn page_height(geom: &PageGeometry) -> f64 {
@@ -290,6 +291,13 @@ fn bbox_overlap(a: BBox, b: BBox) -> Option<BBox> {
         })
     } else {
         None
+    }
+}
+
+fn bbox_overlap_strict(a: BBox, b: BBox) -> bool {
+    match bbox_overlap(a, b) {
+        Some(overlap) => overlap.width() > 0.0 && overlap.height() > 0.0,
+        None => false,
     }
 }
 
@@ -1746,13 +1754,14 @@ struct TableFinder {
 impl TableFinder {
     fn new(page: &LTPage, geom: &PageGeometry, settings: TableSettings) -> Self {
         let (chars, edges) = collect_page_objects(page, geom);
+        let page_bbox = BBox {
+            x0: geom.page_bbox.0,
+            top: geom.page_bbox.1,
+            x1: geom.page_bbox.2,
+            bottom: geom.page_bbox.3,
+        };
         Self {
-            page_bbox: BBox {
-                x0: geom.page_bbox.0,
-                top: geom.page_bbox.1,
-                x1: geom.page_bbox.2,
-                bottom: geom.page_bbox.3,
-            },
+            page_bbox,
             chars,
             edges,
             settings,
@@ -1922,7 +1931,16 @@ pub fn extract_tables_from_ltpage(
     settings: &TableSettings,
 ) -> Vec<Vec<Vec<Option<String>>>> {
     let finder = TableFinder::new(page, geom, settings.clone());
-    let tables = finder.find_tables();
+    let mut tables = finder.find_tables();
+    if geom.force_crop {
+        let crop = BBox {
+            x0: geom.page_bbox.0,
+            top: geom.page_bbox.1,
+            x1: geom.page_bbox.2,
+            bottom: geom.page_bbox.3,
+        };
+        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
+    }
     tables
         .iter()
         .map(|t| t.extract(&finder.chars, &settings.text_settings))
@@ -1935,7 +1953,16 @@ pub fn extract_table_from_ltpage(
     settings: &TableSettings,
 ) -> Option<Vec<Vec<Option<String>>>> {
     let finder = TableFinder::new(page, geom, settings.clone());
-    let tables = finder.find_tables();
+    let mut tables = finder.find_tables();
+    if geom.force_crop {
+        let crop = BBox {
+            x0: geom.page_bbox.0,
+            top: geom.page_bbox.1,
+            x1: geom.page_bbox.2,
+            bottom: geom.page_bbox.3,
+        };
+        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
+    }
     if tables.is_empty() {
         return None;
     }

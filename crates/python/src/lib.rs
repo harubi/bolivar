@@ -12,14 +12,15 @@ use bolivar_core::high_level::{
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdftypes::PDFObject;
 use bolivar_core::table::{
-    PageGeometry, TableSettings, TextDir, TextSettings, WordObj, extract_table_from_ltpage,
-    extract_tables_from_ltpage, extract_text_from_ltpage, extract_words_from_ltpage,
+    BBox, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TextDir, TextSettings,
+    WordObj, extract_table_from_ltpage, extract_tables_from_ltpage, extract_text_from_ltpage,
+    extract_words_from_ltpage,
 };
 use bolivar_core::utils::HasBBox;
 use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyType};
+use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PyType};
 use std::collections::HashSet;
 use std::fs::File;
 use std::sync::Arc;
@@ -286,6 +287,86 @@ fn parse_table_settings(
 
     let mut text_settings = settings.text_settings.clone();
 
+    fn parse_explicit_lines(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Vec<ExplicitLine>> {
+        if obj.is_none() {
+            return Ok(Vec::new());
+        }
+        let seq = obj
+            .downcast::<PySequence>()
+            .map_err(|_| PyValueError::new_err("explicit lines must be a list/tuple"))?;
+        let mut out = Vec::new();
+        let len = seq.len().unwrap_or(0);
+        for i in 0..len {
+            let item = seq.get_item(i)?;
+            if let Ok(val) = item.extract::<f64>() {
+                out.push(ExplicitLine::Coord(val));
+                continue;
+            }
+            if let Ok(dict) = item.downcast::<PyDict>() {
+                if let Some(pts_obj) = dict.get_item("pts")? {
+                    let pts: Vec<(f64, f64)> = pts_obj.extract()?;
+                    out.push(ExplicitLine::Curve(pts));
+                    continue;
+                }
+                let obj_type: Option<String> = dict
+                    .get_item("object_type")?
+                    .and_then(|v| v.extract().ok());
+                let x0: Option<f64> = dict.get_item("x0")?.and_then(|v| v.extract().ok());
+                let x1: Option<f64> = dict.get_item("x1")?.and_then(|v| v.extract().ok());
+                let top: Option<f64> = dict.get_item("top")?.and_then(|v| v.extract().ok());
+                let bottom: Option<f64> = dict.get_item("bottom")?.and_then(|v| v.extract().ok());
+                if let (Some(x0), Some(x1), Some(top), Some(bottom)) = (x0, x1, top, bottom) {
+                    if obj_type.as_deref() == Some("rect") {
+                        out.push(ExplicitLine::Rect(BBox {
+                            x0,
+                            x1,
+                            top,
+                            bottom,
+                        }));
+                        continue;
+                    }
+                    let width = dict
+                        .get_item("width")?
+                        .and_then(|v| v.extract().ok())
+                        .unwrap_or(x1 - x0);
+                    let height = dict
+                        .get_item("height")?
+                        .and_then(|v| v.extract().ok())
+                        .unwrap_or(bottom - top);
+                    let orientation = dict
+                        .get_item("orientation")?
+                        .and_then(|v| v.extract::<String>().ok())
+                        .and_then(|o| match o.as_str() {
+                            "v" => Some(Orientation::Vertical),
+                            "h" => Some(Orientation::Horizontal),
+                            _ => None,
+                        })
+                        .or_else(|| {
+                            if (x0 - x1).abs() < 1e-9 {
+                                Some(Orientation::Vertical)
+                            } else if (top - bottom).abs() < 1e-9 {
+                                Some(Orientation::Horizontal)
+                            } else {
+                                None
+                            }
+                        });
+                    out.push(ExplicitLine::Edge(EdgeObj {
+                        x0,
+                        x1,
+                        top,
+                        bottom,
+                        width,
+                        height,
+                        orientation,
+                        object_type: "explicit_edge",
+                    }));
+                    continue;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     for (k, v) in dict.iter() {
         let key: String = k.extract()?;
         if let Some(stripped) = key.strip_prefix("text_") {
@@ -330,6 +411,12 @@ fn parse_table_settings(
                     })?;
                     apply_text_settings_from_dict(&mut text_settings, ts_dict)?;
                 }
+            }
+            "explicit_vertical_lines" => {
+                settings.explicit_vertical_lines = parse_explicit_lines(py, &v)?;
+            }
+            "explicit_horizontal_lines" => {
+                settings.explicit_horizontal_lines = parse_explicit_lines(py, &v)?;
             }
             _ => {}
         }
@@ -662,6 +749,9 @@ impl PyPDFPage {
                     // Fresh visited set per annotation to prevent cross-contamination
                     let mut visited = HashSet::new();
                     let py_item = pdf_object_to_py(py, &item, doc, &mut visited)?;
+                    if py_item.bind(py).is_none() {
+                        continue;
+                    }
                     list.append(py_item)?;
                 }
                 list.into_any().unbind()
@@ -865,6 +955,9 @@ pub struct PyLTChar {
     /// Marked Content tag (e.g., "P", "Span", "H1")
     #[pyo3(get)]
     pub tag: Option<String>,
+    /// Non-stroking colorspace name (e.g., "DeviceRGB")
+    #[pyo3(get)]
+    pub ncs: Option<String>,
     /// Non-stroking (fill) color as tuple of floats
     #[pyo3(get)]
     pub non_stroking_color: Option<Vec<f64>>,
@@ -885,6 +978,7 @@ impl PyLTChar {
             matrix: c.matrix(),
             mcid: c.mcid(),
             tag: c.tag(),
+            ncs: c.ncs(),
             non_stroking_color: c.non_stroking_color().clone(),
             stroking_color: c.stroking_color().clone(),
         }
@@ -1194,6 +1288,12 @@ pub struct PyLTRect {
     /// Dashing style: (pattern, phase)
     #[pyo3(get)]
     pub dashing_style: Option<(Vec<f64>, f64)>,
+    /// Marked Content ID
+    #[pyo3(get)]
+    pub mcid: Option<i32>,
+    /// Marked Content tag
+    #[pyo3(get)]
+    pub tag: Option<String>,
 }
 
 impl PyLTRect {
@@ -1212,6 +1312,8 @@ impl PyLTRect {
             stroking_color: r.stroking_color.clone(),
             original_path,
             dashing_style: r.dashing_style.clone(),
+            mcid: r.mcid(),
+            tag: r.tag(),
         }
     }
 }
@@ -1262,6 +1364,12 @@ pub struct PyLTLine {
     /// Dashing style: (pattern, phase)
     #[pyo3(get)]
     pub dashing_style: Option<(Vec<f64>, f64)>,
+    /// Marked Content ID
+    #[pyo3(get)]
+    pub mcid: Option<i32>,
+    /// Marked Content tag
+    #[pyo3(get)]
+    pub tag: Option<String>,
 }
 
 impl PyLTLine {
@@ -1281,6 +1389,8 @@ impl PyLTLine {
             stroking_color: l.stroking_color.clone(),
             original_path,
             dashing_style: l.dashing_style.clone(),
+            mcid: l.mcid(),
+            tag: l.tag(),
         }
     }
 }
@@ -1337,6 +1447,12 @@ pub struct PyLTCurve {
     /// Dashing style: (pattern, phase)
     #[pyo3(get)]
     pub dashing_style: Option<(Vec<f64>, f64)>,
+    /// Marked Content ID
+    #[pyo3(get)]
+    pub mcid: Option<i32>,
+    /// Marked Content tag
+    #[pyo3(get)]
+    pub tag: Option<String>,
 }
 
 impl PyLTCurve {
@@ -1356,6 +1472,8 @@ impl PyLTCurve {
             stroking_color: c.stroking_color.clone(),
             original_path,
             dashing_style: c.dashing_style.clone(),
+            mcid: c.mcid(),
+            tag: c.tag(),
         }
     }
 }
@@ -1404,6 +1522,10 @@ impl PyLTAnno {
     fn __repr__(&self) -> String {
         format!("LTAnno({:?})", self.text)
     }
+}
+
+fn resolve_threads(threads: Option<usize>) -> Option<usize> {
+    threads.or_else(|| std::thread::available_parallelism().ok().map(|n| n.get()))
 }
 
 /// Process a PDF page and return its layout.
@@ -1491,7 +1613,7 @@ fn process_pages(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads,
+        threads: resolve_threads(threads),
     };
 
     let pages = py
@@ -1503,7 +1625,7 @@ fn process_pages(
 
 /// Extract tables from a page using Rust table extraction.
 #[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, threads = None))]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, threads = None, force_crop = false))]
 fn extract_tables_from_page(
     py: Python<'_>,
     doc: &PyPDFDocument,
@@ -1514,6 +1636,7 @@ fn extract_tables_from_page(
     table_settings: Option<Py<PyAny>>,
     laparams: Option<&PyLAParams>,
     threads: Option<usize>,
+    force_crop: bool,
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
@@ -1523,7 +1646,7 @@ fn extract_tables_from_page(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads,
+        threads: resolve_threads(threads),
     };
     let pages = py
         .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
@@ -1535,13 +1658,14 @@ fn extract_tables_from_page(
         page_bbox,
         mediabox,
         initial_doctop,
+        force_crop,
     };
     Ok(extract_tables_from_ltpage(ltpage, &geom, &settings))
 }
 
 /// Extract a single table from a page using Rust table extraction.
 #[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, threads = None))]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, threads = None, force_crop = false))]
 fn extract_table_from_page(
     py: Python<'_>,
     doc: &PyPDFDocument,
@@ -1552,6 +1676,7 @@ fn extract_table_from_page(
     table_settings: Option<Py<PyAny>>,
     laparams: Option<&PyLAParams>,
     threads: Option<usize>,
+    force_crop: bool,
 ) -> PyResult<Option<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
@@ -1561,7 +1686,7 @@ fn extract_table_from_page(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads,
+        threads: resolve_threads(threads),
     };
     let pages = py
         .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
@@ -1573,13 +1698,14 @@ fn extract_table_from_page(
         page_bbox,
         mediabox,
         initial_doctop,
+        force_crop,
     };
     Ok(extract_table_from_ltpage(ltpage, &geom, &settings))
 }
 
 /// Extract words from a page using Rust text extraction.
 #[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, threads = None))]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, threads = None, force_crop = false))]
 fn extract_words_from_page(
     py: Python<'_>,
     doc: &PyPDFDocument,
@@ -1590,6 +1716,7 @@ fn extract_words_from_page(
     text_settings: Option<Py<PyAny>>,
     laparams: Option<&PyLAParams>,
     threads: Option<usize>,
+    force_crop: bool,
 ) -> PyResult<Vec<Py<PyAny>>> {
     let settings = parse_text_settings(py, text_settings)?;
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
@@ -1599,7 +1726,7 @@ fn extract_words_from_page(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads,
+        threads: resolve_threads(threads),
     };
     let pages = py
         .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
@@ -1611,6 +1738,7 @@ fn extract_words_from_page(
         page_bbox,
         mediabox,
         initial_doctop,
+        force_crop,
     };
     let words = extract_words_from_ltpage(ltpage, &geom, settings);
     let mut out = Vec::with_capacity(words.len());
@@ -1622,7 +1750,7 @@ fn extract_words_from_page(
 
 /// Extract text from a page using Rust text extraction.
 #[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, threads = None))]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, threads = None, force_crop = false))]
 fn extract_text_from_page(
     py: Python<'_>,
     doc: &PyPDFDocument,
@@ -1633,6 +1761,7 @@ fn extract_text_from_page(
     text_settings: Option<Py<PyAny>>,
     laparams: Option<&PyLAParams>,
     threads: Option<usize>,
+    force_crop: bool,
 ) -> PyResult<String> {
     let settings = parse_text_settings(py, text_settings)?;
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
@@ -1642,7 +1771,7 @@ fn extract_text_from_page(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads,
+        threads: resolve_threads(threads),
     };
     let pages = py
         .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
@@ -1654,6 +1783,7 @@ fn extract_text_from_page(
         page_bbox,
         mediabox,
         initial_doctop,
+        force_crop,
     };
     Ok(extract_text_from_ltpage(ltpage, &geom, settings))
 }
@@ -1710,7 +1840,7 @@ fn extract_text(
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
-        threads,
+        threads: resolve_threads(threads),
     };
     let data = data.to_vec();
     let result = py.allow_threads(|| core_extract_text(&data, Some(options)));
@@ -1743,7 +1873,7 @@ fn extract_text_from_path(
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
-        threads,
+        threads: resolve_threads(threads),
     };
 
     let result = py.allow_threads(|| core_extract_text_with_document(&doc, options));
@@ -1769,7 +1899,7 @@ fn extract_pages(
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
-        threads,
+        threads: resolve_threads(threads),
     };
     let data = data.to_vec();
     let pages = py
@@ -1807,7 +1937,7 @@ fn extract_pages_from_path(
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
-        threads,
+        threads: resolve_threads(threads),
     };
     // Match pdfminer.high_level.extract_pages default behavior.
     if options.laparams.is_none() {

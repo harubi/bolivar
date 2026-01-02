@@ -48,6 +48,7 @@ def _apply_patch(module) -> bool:
         if _needs_python_fallback(self, table_settings):
             return orig_extract_tables(self, table_settings)
         page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
+        force_crop = not getattr(self, "is_original", True)
         return extract_tables_from_page(
             self.page_obj.doc._rust_doc,
             page_index,
@@ -55,12 +56,14 @@ def _apply_patch(module) -> bool:
             self.mediabox,
             self.initial_doctop,
             table_settings,
+            force_crop=force_crop,
         )
 
     def _extract_table(self, table_settings=None):
         if _needs_python_fallback(self, table_settings):
             return orig_extract_table(self, table_settings)
         page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
+        force_crop = not getattr(self, "is_original", True)
         return extract_table_from_page(
             self.page_obj.doc._rust_doc,
             page_index,
@@ -68,6 +71,7 @@ def _apply_patch(module) -> bool:
             self.mediabox,
             self.initial_doctop,
             table_settings,
+            force_crop=force_crop,
         )
 
     _extract_tables._bolivar_patched = True

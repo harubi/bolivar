@@ -915,6 +915,8 @@ pub struct LTChar {
     mcid: Option<i32>,
     /// Marked Content tag (e.g., "P", "Span", "H1") for tagged PDF
     tag: Option<String>,
+    /// Non-stroking colorspace name (e.g., "DeviceRGB")
+    ncs: Option<String>,
     /// Non-stroking (fill) color
     non_stroking_color: Color,
     /// Stroking color
@@ -945,6 +947,7 @@ impl LTChar {
             matrix,
             mcid: None,
             tag: None,
+            ncs: None,
             non_stroking_color: None,
             stroking_color: None,
         }
@@ -991,6 +994,7 @@ impl LTChar {
             matrix,
             mcid,
             tag: None,
+            ncs: None,
             non_stroking_color: None,
             stroking_color: None,
         }
@@ -1040,6 +1044,7 @@ impl LTChar {
             matrix,
             mcid,
             tag,
+            ncs: None,
             non_stroking_color: None,
             stroking_color: None,
         }
@@ -1098,6 +1103,7 @@ impl LTChar {
             matrix,
             mcid,
             tag,
+            ncs: None,
             non_stroking_color,
             stroking_color,
         }
@@ -1133,6 +1139,14 @@ impl LTChar {
 
     pub fn tag(&self) -> Option<String> {
         self.tag.clone()
+    }
+
+    pub fn ncs(&self) -> Option<String> {
+        self.ncs.clone()
+    }
+
+    pub fn set_ncs(&mut self, ncs: Option<String>) {
+        self.ncs = ncs;
     }
 
     pub fn non_stroking_color(&self) -> &Color {
@@ -1200,6 +1214,10 @@ pub struct LTCurve {
     pub original_path: Option<Vec<(char, Vec<Point>)>>,
     /// Dashing style: (pattern, phase)
     pub dashing_style: Option<(Vec<f64>, f64)>,
+    /// Marked Content ID for tagged PDF accessibility
+    mcid: Option<i32>,
+    /// Marked Content tag (e.g., "P", "Span", "H1") for tagged PDF
+    tag: Option<String>,
 }
 
 impl LTCurve {
@@ -1224,6 +1242,8 @@ impl LTCurve {
             non_stroking_color,
             original_path: None,
             dashing_style: None,
+            mcid: None,
+            tag: None,
         }
     }
 
@@ -1252,6 +1272,8 @@ impl LTCurve {
             non_stroking_color,
             original_path,
             dashing_style,
+            mcid: None,
+            tag: None,
         }
     }
 
@@ -1262,6 +1284,19 @@ impl LTCurve {
             .map(|(x, y)| format!("{:.3},{:.3}", x, y))
             .collect::<Vec<_>>()
             .join(",")
+    }
+
+    pub fn mcid(&self) -> Option<i32> {
+        self.mcid
+    }
+
+    pub fn tag(&self) -> Option<String> {
+        self.tag.clone()
+    }
+
+    pub fn set_marked_content(&mut self, mcid: Option<i32>, tag: Option<String>) {
+        self.mcid = mcid;
+        self.tag = tag;
     }
 }
 
@@ -1356,6 +1391,10 @@ impl LTLine {
     pub fn p1(&self) -> Point {
         self.curve.pts[1]
     }
+
+    pub fn set_marked_content(&mut self, mcid: Option<i32>, tag: Option<String>) {
+        self.curve.set_marked_content(mcid, tag);
+    }
 }
 
 impl std::ops::Deref for LTLine {
@@ -1441,6 +1480,10 @@ impl LTRect {
                 dashing_style,
             ),
         }
+    }
+
+    pub fn set_marked_content(&mut self, mcid: Option<i32>, tag: Option<String>) {
+        self.curve.set_marked_content(mcid, tag);
     }
 }
 

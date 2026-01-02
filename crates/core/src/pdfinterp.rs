@@ -973,31 +973,61 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
     /// G - Set stroking color space to DeviceGray and set gray level.
     pub fn do_G(&mut self, gray: f64) {
+        let cs = PREDEFINED_COLORSPACE
+            .get("DeviceGray")
+            .expect("DeviceGray must exist")
+            .clone();
+        self.graphicstate.scs = cs;
         self.graphicstate.scolor = crate::pdfstate::Color::Gray(gray);
     }
 
     /// g - Set non-stroking color space to DeviceGray and set gray level.
     pub fn do_g(&mut self, gray: f64) {
+        let cs = PREDEFINED_COLORSPACE
+            .get("DeviceGray")
+            .expect("DeviceGray must exist")
+            .clone();
+        self.graphicstate.ncs = cs;
         self.graphicstate.ncolor = crate::pdfstate::Color::Gray(gray);
     }
 
     /// RG - Set stroking color space to DeviceRGB and set color.
     pub fn do_RG(&mut self, r: f64, g: f64, b: f64) {
+        let cs = PREDEFINED_COLORSPACE
+            .get("DeviceRGB")
+            .expect("DeviceRGB must exist")
+            .clone();
+        self.graphicstate.scs = cs;
         self.graphicstate.scolor = crate::pdfstate::Color::Rgb(r, g, b);
     }
 
     /// rg - Set non-stroking color space to DeviceRGB and set color.
     pub fn do_rg(&mut self, r: f64, g: f64, b: f64) {
+        let cs = PREDEFINED_COLORSPACE
+            .get("DeviceRGB")
+            .expect("DeviceRGB must exist")
+            .clone();
+        self.graphicstate.ncs = cs;
         self.graphicstate.ncolor = crate::pdfstate::Color::Rgb(r, g, b);
     }
 
     /// K - Set stroking color space to DeviceCMYK and set color.
     pub fn do_K(&mut self, c: f64, m: f64, y: f64, k: f64) {
+        let cs = PREDEFINED_COLORSPACE
+            .get("DeviceCMYK")
+            .expect("DeviceCMYK must exist")
+            .clone();
+        self.graphicstate.scs = cs;
         self.graphicstate.scolor = crate::pdfstate::Color::Cmyk(c, m, y, k);
     }
 
     /// k - Set non-stroking color space to DeviceCMYK and set color.
     pub fn do_k(&mut self, c: f64, m: f64, y: f64, k: f64) {
+        let cs = PREDEFINED_COLORSPACE
+            .get("DeviceCMYK")
+            .expect("DeviceCMYK must exist")
+            .clone();
+        self.graphicstate.ncs = cs;
         self.graphicstate.ncolor = crate::pdfstate::Color::Cmyk(c, m, y, k);
     }
 

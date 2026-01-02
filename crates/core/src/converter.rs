@@ -384,7 +384,7 @@ impl PDFLayoutAnalyzer {
         let ncolor = Some(gstate.ncolor.to_vec());
 
         // Create appropriate layout object
-        let item = match shape.as_str() {
+        let mut item = match shape.as_str() {
             "mlh" | "ml" => {
                 // Single line segment
                 LTItem::Line(LTLine::new_with_dashing(
@@ -472,6 +472,15 @@ impl PDFLayoutAnalyzer {
                 ))
             }
         };
+
+        let mcid = self.current_mcid();
+        let tag = self.current_tag().map(|s| s.to_string());
+        match &mut item {
+            LTItem::Line(l) => l.set_marked_content(mcid, tag.clone()),
+            LTItem::Rect(r) => r.set_marked_content(mcid, tag.clone()),
+            LTItem::Curve(c) => c.set_marked_content(mcid, tag.clone()),
+            _ => {}
+        }
 
         if let Some(ref mut container) = self.cur_item {
             container.add(item);
@@ -1007,7 +1016,7 @@ impl PDFDevice for PDFPageAggregator {
                             .and_then(|f| f.fontname())
                             .or_else(|| textstate.fontname.as_deref())
                             .unwrap_or("unknown");
-                        let ltchar = LTChar::with_colors_matrix(
+                        let mut ltchar = LTChar::with_colors_matrix(
                             bbox,
                             &text,
                             fontname,
@@ -1020,6 +1029,7 @@ impl PDFDevice for PDFPageAggregator {
                             ncolor,
                             scolor,
                         );
+                        ltchar.set_ncs(Some(graphicstate.ncs.name.clone()));
 
                         if let Some(ref mut container) = self.analyzer.cur_item {
                             container.add(LTItem::Char(ltchar));

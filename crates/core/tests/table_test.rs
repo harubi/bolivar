@@ -95,6 +95,7 @@ fn test_extract_tables_simple_grid() {
         page_bbox: (0.0, 0.0, 200.0, 100.0),
         mediabox: (0.0, 0.0, 200.0, 100.0),
         initial_doctop: 0.0,
+        force_crop: false,
     };
 
     let tables = extract_tables_from_ltpage(&page, &geom, &TableSettings::default());
