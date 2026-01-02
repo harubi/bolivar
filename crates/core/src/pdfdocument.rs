@@ -775,8 +775,20 @@ impl PDFDocument {
         let re = Regex::new(r"(\d+)\s+(\d+)\s+obj\b").unwrap();
 
         for cap in re.captures_iter(self.data.as_slice()) {
-            let objid: u32 = std::str::from_utf8(&cap[1]).unwrap().parse().unwrap();
-            let genno: u32 = std::str::from_utf8(&cap[2]).unwrap().parse().unwrap();
+            let objid = match std::str::from_utf8(&cap[1])
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                Some(value) if value <= u32::MAX as u64 => value as u32,
+                _ => continue,
+            };
+            let genno = match std::str::from_utf8(&cap[2])
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                Some(value) if value <= u32::MAX as u64 => value as u32,
+                _ => continue,
+            };
             let pos = cap.get(0).unwrap().start();
 
             xref.offsets.insert(
