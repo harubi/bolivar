@@ -237,7 +237,7 @@ fn to_top_left_bbox(x0: f64, y0: f64, x1: f64, y1: f64, geom: &PageGeometry) -> 
     }
 }
 
-fn bbox_from_chars(chars: &[CharObj]) -> BBox {
+fn bbox_from_chars(chars: &[&CharObj]) -> BBox {
     let mut x0 = f64::INFINITY;
     let mut top = f64::INFINITY;
     let mut x1 = f64::NEG_INFINITY;
@@ -782,17 +782,41 @@ fn words_to_edges_v(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj> {
     edges
 }
 
-#[derive(Clone, Debug)]
-struct Intersection {
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+struct VEdgeId(usize);
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+struct HEdgeId(usize);
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+struct CharId(usize);
+
+struct EdgeStore {
     v: Vec<EdgeObj>,
     h: Vec<EdgeObj>,
+}
+
+impl EdgeStore {
+    fn v(&self, id: VEdgeId) -> &EdgeObj {
+        &self.v[id.0]
+    }
+
+    fn h(&self, id: HEdgeId) -> &EdgeObj {
+        &self.h[id.0]
+    }
+}
+
+#[derive(Clone, Debug)]
+struct IntersectionIdx {
+    v: Vec<VEdgeId>,
+    h: Vec<HEdgeId>,
 }
 
 fn edges_to_intersections(
     edges: &[EdgeObj],
     x_tol: f64,
     y_tol: f64,
-) -> HashMap<KeyPoint, Intersection> {
+) -> (EdgeStore, HashMap<KeyPoint, IntersectionIdx>) {
     enum EventKind {
         AddV,
         QueryH,
@@ -895,7 +919,7 @@ fn edges_to_intersections(
     });
 
     let mut active: BTreeMap<KeyF64, Vec<usize>> = BTreeMap::new();
-    let mut pairs: HashMap<KeyPoint, Vec<(usize, usize)>> = HashMap::new();
+    let mut pairs: HashMap<KeyPoint, Vec<(VEdgeId, HEdgeId)>> = HashMap::new();
 
     for event in events {
         match event.kind {
@@ -928,7 +952,10 @@ fn edges_to_intersections(
                             && v.x0 <= h.x1 + x_tol
                         {
                             let vertex = key_point(v.x0, h.top);
-                            pairs.entry(vertex).or_default().push((v_idx, event.idx));
+                            pairs
+                                .entry(vertex)
+                                .or_default()
+                                .push((VEdgeId(v_idx), HEdgeId(event.idx)));
                         }
                     }
                 }
@@ -936,18 +963,24 @@ fn edges_to_intersections(
         }
     }
 
-    let mut intersections: HashMap<KeyPoint, Intersection> = HashMap::with_capacity(pairs.len());
+    let mut intersections: HashMap<KeyPoint, IntersectionIdx> = HashMap::with_capacity(pairs.len());
     for (vertex, mut pair_list) in pairs {
-        pair_list.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        pair_list.sort_by(|a, b| a.0.0.cmp(&b.0.0).then(a.1.0.cmp(&b.1.0)));
         let mut v = Vec::with_capacity(pair_list.len());
         let mut h = Vec::with_capacity(pair_list.len());
         for (v_idx, h_idx) in pair_list {
-            v.push(v_sorted[v_idx].clone());
-            h.push(h_sorted[h_idx].clone());
+            v.push(v_idx);
+            h.push(h_idx);
         }
-        intersections.insert(vertex, Intersection { v, h });
+        intersections.insert(vertex, IntersectionIdx { v, h });
     }
-    intersections
+    (
+        EdgeStore {
+            v: v_sorted,
+            h: h_sorted,
+        },
+        intersections,
+    )
 }
 
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
@@ -962,7 +995,10 @@ fn bbox_key(b: &BBox) -> BBoxKey {
     )
 }
 
-fn intersections_to_cells(intersections: &HashMap<KeyPoint, Intersection>) -> Vec<BBox> {
+fn intersections_to_cells(
+    store: &EdgeStore,
+    intersections: &HashMap<KeyPoint, IntersectionIdx>,
+) -> Vec<BBox> {
     fn edge_id_key(edge_id: &BBoxKey) -> (u64, u64, u64, u64) {
         let BBoxKey(a, b, c, d) = *edge_id;
         (a, b, c, d)
@@ -1006,7 +1042,8 @@ fn intersections_to_cells(intersections: &HashMap<KeyPoint, Intersection>) -> Ve
         let mut v_ids: Vec<BBoxKey> = inter
             .v
             .iter()
-            .map(|e| {
+            .map(|id| {
+                let e = store.v(*id);
                 bbox_key(&BBox {
                     x0: e.x0,
                     top: e.top,
@@ -1018,7 +1055,8 @@ fn intersections_to_cells(intersections: &HashMap<KeyPoint, Intersection>) -> Ve
         let mut h_ids: Vec<BBoxKey> = inter
             .h
             .iter()
-            .map(|e| {
+            .map(|id| {
+                let e = store.h(*id);
                 bbox_key(&BBox {
                     x0: e.x0,
                     top: e.top,
@@ -1301,7 +1339,7 @@ impl Table {
             cell_id_grid.push(row_ids);
         }
 
-        let mut cell_char_indices: Vec<Vec<usize>> = vec![Vec::new(); cell_infos.len()];
+        let mut cell_char_indices: Vec<Vec<CharId>> = vec![Vec::new(); cell_infos.len()];
 
         enum CellEventKind {
             Add,
@@ -1386,7 +1424,7 @@ impl Table {
             for &cell_id in &active {
                 let bbox = &cell_infos[cell_id].bbox;
                 if char_in_bbox(ch, bbox) {
-                    cell_char_indices[cell_id].push(char_idx);
+                    cell_char_indices[cell_id].push(CharId(char_idx));
                     matches += 1;
                 }
             }
@@ -1406,9 +1444,7 @@ impl Table {
                     if indices.is_empty() {
                         row_out.push(Some(String::new()));
                     } else {
-                        let cell_chars: Vec<CharObj> =
-                            indices.iter().map(|&idx| chars[idx].clone()).collect();
-                        let text = extract_text(&cell_chars, text_settings);
+                        let text = extract_text_from_char_ids(chars, indices, text_settings);
                         row_out.push(Some(text));
                     }
                 } else {
@@ -1486,7 +1522,7 @@ fn get_char_dir(upright: bool, settings: &TextSettings) -> TextDir {
     }
 }
 
-fn merge_chars(ordered: &[CharObj], settings: &TextSettings) -> WordObj {
+fn merge_chars(ordered: &[&CharObj], settings: &TextSettings) -> WordObj {
     let bbox = bbox_from_chars(ordered);
     let doctop_adj = ordered[0].doctop - ordered[0].top;
     let upright = ordered[0].upright;
@@ -1576,20 +1612,20 @@ fn char_begins_new_word(
     (cx < ax) || (cx > bx + x) || ((cy - ay).abs() > y)
 }
 
-fn iter_chars_to_words(
-    ordered: &[CharObj],
+fn iter_chars_to_words<'a>(
+    ordered: &'a [&'a CharObj],
     direction: TextDir,
     settings: &TextSettings,
-) -> Vec<Vec<CharObj>> {
-    let mut words: Vec<Vec<CharObj>> = Vec::new();
-    let mut current: Vec<CharObj> = Vec::new();
+) -> Vec<Vec<&'a CharObj>> {
+    let mut words: Vec<Vec<&CharObj>> = Vec::new();
+    let mut current: Vec<&CharObj> = Vec::new();
 
     let xt = settings.x_tolerance;
     let yt = settings.y_tolerance;
     let xtr = settings.x_tolerance_ratio;
     let ytr = settings.y_tolerance_ratio;
 
-    for char in ordered {
+    for &char in ordered {
         let text = &char.text;
         if !settings.keep_blank_chars && text.chars().all(|c| c.is_whitespace()) {
             if !current.is_empty() {
@@ -1600,7 +1636,7 @@ fn iter_chars_to_words(
             if !current.is_empty() {
                 words.push(current);
             }
-            words.push(vec![char.clone()]);
+            words.push(vec![char]);
             current = Vec::new();
         } else if !current.is_empty() {
             let prev = current.last().unwrap();
@@ -1608,12 +1644,12 @@ fn iter_chars_to_words(
             let ytol = ytr.map(|r| r * prev.size).unwrap_or(yt);
             if char_begins_new_word(prev, char, direction, xtol, ytol) {
                 words.push(current);
-                current = vec![char.clone()];
+                current = vec![char];
             } else {
-                current.push(char.clone());
+                current.push(char);
             }
         } else {
-            current.push(char.clone());
+            current.push(char);
         }
     }
     if !current.is_empty() {
@@ -1622,7 +1658,10 @@ fn iter_chars_to_words(
     words
 }
 
-fn iter_chars_to_lines(chars: &[CharObj], settings: &TextSettings) -> Vec<(Vec<CharObj>, TextDir)> {
+fn iter_chars_to_lines<'a>(
+    chars: &'a [&'a CharObj],
+    settings: &TextSettings,
+) -> Vec<(Vec<&'a CharObj>, TextDir)> {
     let upright = chars.first().map(|c| c.upright).unwrap_or(true);
     let line_dir = if upright {
         settings.line_dir
@@ -1631,14 +1670,14 @@ fn iter_chars_to_lines(chars: &[CharObj], settings: &TextSettings) -> Vec<(Vec<C
     };
     let char_dir = get_char_dir(upright, settings);
 
-    let line_cluster_key = |c: &CharObj| match line_dir {
+    let line_cluster_key = |c: &&CharObj| match line_dir {
         TextDir::Ttb => c.top,
         TextDir::Btt => -c.bottom,
         TextDir::Ltr => c.x0,
         TextDir::Rtl => -c.x1,
     };
 
-    let char_sort_key = |c: &CharObj| get_char_sort_key(char_dir, c);
+    let char_sort_key = |c: &&CharObj| get_char_sort_key(char_dir, c);
 
     let tolerance = if matches!(line_dir, TextDir::Ttb | TextDir::Btt) {
         settings.y_tolerance
@@ -1664,10 +1703,18 @@ fn extract_words(chars: &[CharObj], settings: &TextSettings) -> Vec<WordObj> {
     if chars.is_empty() {
         return Vec::new();
     }
-    let mut grouped: HashMap<(bool, String), Vec<CharObj>> = HashMap::new();
-    for c in chars {
+    let refs: Vec<&CharObj> = chars.iter().collect();
+    extract_words_refs(&refs, settings)
+}
+
+fn extract_words_refs<'a>(chars: &'a [&'a CharObj], settings: &TextSettings) -> Vec<WordObj> {
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let mut grouped: HashMap<(bool, String), Vec<&CharObj>> = HashMap::new();
+    for &c in chars {
         let key = (c.upright, String::new());
-        grouped.entry(key).or_default().push(c.clone());
+        grouped.entry(key).or_default().push(c);
     }
 
     let mut words = Vec::new();
@@ -1725,7 +1772,15 @@ fn extract_text(chars: &[CharObj], settings: &TextSettings) -> String {
     if chars.is_empty() {
         return String::new();
     }
-    let words = extract_words(chars, settings);
+    let refs: Vec<&CharObj> = chars.iter().collect();
+    extract_text_refs(&refs, settings)
+}
+
+fn extract_text_refs(chars: &[&CharObj], settings: &TextSettings) -> String {
+    if chars.is_empty() {
+        return String::new();
+    }
+    let words = extract_words_refs(chars, settings);
 
     let line_dir_render = settings.line_dir;
     let char_dir_render = settings.char_dir;
@@ -1768,6 +1823,21 @@ fn extract_text(chars: &[CharObj], settings: &TextSettings) -> String {
     }
 
     textmap_to_string(line_texts, line_dir_render, char_dir_render)
+}
+
+fn extract_text_from_char_ids(
+    chars: &[CharObj],
+    ids: &[CharId],
+    settings: &TextSettings,
+) -> String {
+    if ids.is_empty() {
+        return String::new();
+    }
+    let mut refs: Vec<&CharObj> = Vec::with_capacity(ids.len());
+    for id in ids {
+        refs.push(&chars[id.0]);
+    }
+    extract_text_refs(&refs, settings)
 }
 
 fn rects_equal(a: Rect, b: Rect) -> bool {
@@ -2210,12 +2280,12 @@ impl TableFinder {
 
     fn find_tables(&self) -> Vec<Table> {
         let edges = self.get_edges();
-        let intersections = edges_to_intersections(
+        let (store, intersections) = edges_to_intersections(
             &edges,
             self.settings.intersection_x_tolerance,
             self.settings.intersection_y_tolerance,
         );
-        let cells = intersections_to_cells(&intersections);
+        let cells = intersections_to_cells(&store, &intersections);
         let tables = cells_to_tables(cells);
         tables
             .into_iter()
@@ -2368,7 +2438,7 @@ mod table_extraction_tests {
             make_h_edge(10.0, 0.0, 10.0),
         ];
 
-        let intersections = edges_to_intersections(&edges, 0.0, 0.0);
+        let (store, intersections) = edges_to_intersections(&edges, 0.0, 0.0);
         assert_eq!(intersections.len(), 5);
         for key in [
             key_point(0.0, 0.0),
@@ -2380,7 +2450,7 @@ mod table_extraction_tests {
             assert!(intersections.contains_key(&key));
         }
 
-        let cells = intersections_to_cells(&intersections);
+        let cells = intersections_to_cells(&store, &intersections);
         assert_eq!(
             cells,
             vec![BBox {
@@ -2401,18 +2471,50 @@ mod table_extraction_tests {
             make_h_edge(2.0, -1.0, 9.0),
         ];
 
-        let intersections = edges_to_intersections(&edges, 0.0, 0.0);
+        let (store, intersections) = edges_to_intersections(&edges, 0.0, 0.0);
         let key = key_point(0.0, 2.0);
         let intersection = intersections.get(&key).unwrap();
-        let v_keys: Vec<BBoxKey> = intersection.v.iter().map(edge_key).collect();
-        let h_keys: Vec<BBoxKey> = intersection.h.iter().map(edge_key).collect();
+        let v_keys: Vec<BBoxKey> = intersection
+            .v
+            .iter()
+            .map(|id| edge_key(store.v(*id)))
+            .collect();
+        let h_keys: Vec<BBoxKey> = intersection
+            .h
+            .iter()
+            .map(|id| edge_key(store.h(*id)))
+            .collect();
 
-        let v0 = edge_key(&edges[0]);
-        let v1 = edge_key(&edges[1]);
-        let h0 = edge_key(&edges[2]);
-        let h1 = edge_key(&edges[3]);
+        let v0 = edge_key(store.v(VEdgeId(0)));
+        let v1 = edge_key(store.v(VEdgeId(1)));
+        let h0 = edge_key(store.h(HEdgeId(1)));
+        let h1 = edge_key(store.h(HEdgeId(0)));
         assert_eq!(v_keys, vec![v0, v0, v1, v1]);
         assert_eq!(h_keys, vec![h1, h0, h1, h0]);
+    }
+
+    #[test]
+    fn table_extraction_intersection_id_ordering() {
+        let edges = vec![
+            make_v_edge(0.0, 0.0, 10.0),
+            make_v_edge(0.0, 1.0, 9.0),
+            make_h_edge(2.0, 0.0, 10.0),
+            make_h_edge(2.0, -1.0, 9.0),
+        ];
+
+        let (store, intersections) = edges_to_intersections(&edges, 0.0, 0.0);
+        let key = key_point(0.0, 2.0);
+        let intersection = intersections.get(&key).unwrap();
+        assert_eq!(
+            intersection.v,
+            vec![VEdgeId(0), VEdgeId(0), VEdgeId(1), VEdgeId(1)]
+        );
+        assert_eq!(
+            intersection.h,
+            vec![HEdgeId(0), HEdgeId(1), HEdgeId(0), HEdgeId(1)]
+        );
+        assert_eq!(store.v.len(), 2);
+        assert_eq!(store.h.len(), 2);
     }
 
     #[test]
@@ -2425,8 +2527,8 @@ mod table_extraction_tests {
             make_h_edge(8.0, 0.0, 10.0),
         ];
 
-        let intersections = edges_to_intersections(&edges, 0.0, 0.0);
-        let cells = intersections_to_cells(&intersections);
+        let (store, intersections) = edges_to_intersections(&edges, 0.0, 0.0);
+        let cells = intersections_to_cells(&store, &intersections);
         assert!(cells.is_empty());
     }
 
@@ -2491,6 +2593,42 @@ mod table_extraction_tests {
                 vec![None, Some("B".to_string())],
             ]
         );
+    }
+
+    #[test]
+    fn table_extraction_text_refs_match() {
+        let chars = vec![
+            CharObj {
+                text: "A".to_string(),
+                x0: 0.0,
+                x1: 1.0,
+                top: 0.0,
+                bottom: 1.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 1.0,
+                size: 1.0,
+                upright: true,
+            },
+            CharObj {
+                text: "B".to_string(),
+                x0: 1.1,
+                x1: 2.1,
+                top: 0.0,
+                bottom: 1.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 1.0,
+                size: 1.0,
+                upright: true,
+            },
+        ];
+
+        let settings = TextSettings::default();
+        let direct = extract_text(&chars, &settings);
+        let ids = vec![CharId(0), CharId(1)];
+        let refs = extract_text_from_char_ids(&chars, &ids, &settings);
+        assert_eq!(direct, refs);
     }
 
     #[test]
