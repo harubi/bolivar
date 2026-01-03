@@ -458,3 +458,4 @@ Cargo.lock
 .criterion
 *.svg
 .worktrees/
+/check.py
