@@ -8,10 +8,10 @@
 //! - Trailer parsing (catalog, info)
 //! - Page labels
 
+use super::security::{PDFSecurityHandler, create_security_handler};
 use crate::error::{PdfError, Result};
-use crate::pdfparser::PDFParser;
-use crate::pdftypes::PDFObject;
-use crate::security::{PDFSecurityHandler, create_security_handler};
+use crate::model::objects::PDFObject;
+use crate::parser::parser::PDFParser;
 use memmap2::Mmap;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -558,7 +558,7 @@ impl PDFDocument {
     /// Decryption happens BEFORE decompression, as per PDF specification.
     pub fn decode_stream_with_objid(
         &self,
-        stream: &crate::pdftypes::PDFStream,
+        stream: &crate::model::objects::PDFStream,
         objid: u32,
         genno: u16,
     ) -> Result<Vec<u8>> {
@@ -578,14 +578,18 @@ impl PDFDocument {
     /// Decode a PDF stream without explicit objid/genno.
     ///
     /// Uses the stream's embedded objid/genno if available.
-    pub fn decode_stream(&self, stream: &crate::pdftypes::PDFStream) -> Result<Vec<u8>> {
+    pub fn decode_stream(&self, stream: &crate::model::objects::PDFStream) -> Result<Vec<u8>> {
         let objid = stream.objid.unwrap_or(0);
         let genno = stream.genno.unwrap_or(0) as u16;
         self.decode_stream_with_objid(stream, objid, genno)
     }
 
     /// Apply decompression filters to stream data.
-    fn apply_filters(&self, data: &[u8], stream: &crate::pdftypes::PDFStream) -> Result<Vec<u8>> {
+    fn apply_filters(
+        &self,
+        data: &[u8],
+        stream: &crate::model::objects::PDFStream,
+    ) -> Result<Vec<u8>> {
         let mut output = data.to_vec();
 
         // Check for Filter
@@ -1299,7 +1303,7 @@ impl PDFDocument {
                 };
 
                 return Ok(PDFObject::Stream(Box::new(
-                    crate::pdftypes::PDFStream::new(dict.clone(), stream_data),
+                    crate::model::objects::PDFStream::new(dict.clone(), stream_data),
                 )));
             }
         }

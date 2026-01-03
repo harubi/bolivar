@@ -2,10 +2,10 @@
 //!
 //! Port of pdfminer.six image.py
 
-use crate::ascii85::{ascii85decode, asciihexdecode};
-use crate::lzw::lzwdecode_with_earlychange;
+use crate::codec::ascii85::{ascii85decode, asciihexdecode};
+use crate::codec::lzw::lzwdecode_with_earlychange;
+use crate::codec::runlength::rldecode;
 use crate::pdftypes::{PDFObject, PDFStream};
-use crate::runlength::rldecode;
 use crate::{PdfError, Result};
 use flate2::read::ZlibDecoder;
 use std::collections::HashMap;

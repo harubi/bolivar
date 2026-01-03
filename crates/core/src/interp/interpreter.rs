@@ -475,9 +475,7 @@ impl Default for PDFResourceManager {
 // PDFPageInterpreter
 // ============================================================================
 
-use crate::pdfdevice::{
-    PDFDevice, PDFStackT, PDFStackValue, PDFTextSeq, PDFTextSeqItem, PathSegment,
-};
+use super::device::{PDFDevice, PDFStackT, PDFStackValue, PDFTextSeq, PDFTextSeqItem, PathSegment};
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
 use crate::utils::{MATRIX_IDENTITY, Matrix, mult_matrix};
 

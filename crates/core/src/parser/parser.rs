@@ -2,9 +2,9 @@
 //!
 //! Port of pdfminer.six pdfparser.py
 
+use super::lexer::{ContentLexer, Keyword, PSBaseParser, PSToken};
 use crate::error::{PdfError, Result};
 use crate::pdftypes::{PDFObjRef, PDFObject};
-use crate::psparser::{ContentLexer, Keyword, PSBaseParser, PSToken};
 use std::collections::HashMap;
 
 /// PDF Parser - parses PDF object syntax

@@ -136,7 +136,7 @@ impl EncodingDB {
     ///
     /// Invalid differences are silently ignored per PDF spec.
     pub fn get_encoding(name: &str, differences: Option<&[DiffEntry]>) -> HashMap<u8, String> {
-        use crate::latin_enc::ENCODING;
+        use super::latin_enc::ENCODING;
 
         let mut encoding = HashMap::with_capacity(256);
 

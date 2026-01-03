@@ -2,9 +2,9 @@
 //!
 //! Port of pdfminer.six pdfpage.py
 
+use super::catalog::PDFDocument;
 use crate::error::Result;
-use crate::pdfdocument::PDFDocument;
-use crate::pdftypes::PDFObject;
+use crate::model::objects::PDFObject;
 use std::collections::{HashMap, HashSet};
 
 /// A PDF page object.

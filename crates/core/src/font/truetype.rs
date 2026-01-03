@@ -5,7 +5,7 @@
 //!
 //! Port of pdfminer.six TrueTypeFont class.
 
-use crate::cmapdb::UnicodeMap;
+use super::cmap::UnicodeMap;
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 

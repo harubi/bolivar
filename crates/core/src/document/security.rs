@@ -2,10 +2,10 @@
 //!
 //! Port of pdfminer.six PDFStandardSecurityHandler classes.
 
-use crate::aes::{aes_cbc_decrypt, aes_cbc_encrypt, unpad_aes};
-use crate::arcfour::Arcfour;
-use crate::pdftypes::PDFObject;
-use crate::saslprep::saslprep;
+use super::saslprep::saslprep;
+use crate::codec::aes::{aes_cbc_decrypt, aes_cbc_encrypt, unpad_aes};
+use crate::codec::arcfour::Arcfour;
+use crate::model::objects::PDFObject;
 use crate::{PdfError, Result};
 use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::collections::HashMap;

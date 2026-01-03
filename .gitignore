@@ -459,3 +459,4 @@ Cargo.lock
 *.svg
 .worktrees/
 /check.py
+/AGENTS.md

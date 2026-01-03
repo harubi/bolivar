@@ -2,12 +2,12 @@
 //!
 //! Port of pdfminer.six pdffont.py
 
-use crate::cmapdb::{
+use super::cmap::{
     CMap, CMapBase, CMapDB, IdentityCMap, IdentityCMapByte, IdentityUnicodeMap, UnicodeMap,
     parse_tounicode_cmap,
 };
+use super::truetype::create_unicode_map_from_ttf;
 use crate::pdftypes::{PDFObjRef, PDFObject};
-use crate::truetype::create_unicode_map_from_ttf;
 use std::collections::HashMap;
 
 /// Type alias for font width dictionaries.
@@ -376,7 +376,7 @@ impl PDFCIDFont {
             if let Some(ref coding) = cidcoding {
                 if coding == "Adobe-Japan1" {
                     return Some(DynUnicodeMap::UnicodeMap(Box::new(
-                        crate::cmapdb::create_jis_unicode_map(),
+                        super::cmap::create_jis_unicode_map(),
                     )));
                 }
             }
@@ -487,7 +487,7 @@ impl PDFCIDFont {
 
     /// Build cid2unicode map from font's Encoding entry.
     fn build_cid2unicode(spec: &HashMap<String, PDFObject>) -> Option<HashMap<u8, String>> {
-        use crate::encodingdb::EncodingDB;
+        use super::encoding::EncodingDB;
 
         let encoding_obj = spec.get("Encoding");
 
@@ -517,10 +517,8 @@ impl PDFCIDFont {
     }
 
     /// Parse Differences array from encoding dictionary.
-    fn parse_differences(
-        diff_obj: Option<&PDFObject>,
-    ) -> Option<Vec<crate::encodingdb::DiffEntry>> {
-        use crate::encodingdb::DiffEntry;
+    fn parse_differences(diff_obj: Option<&PDFObject>) -> Option<Vec<super::encoding::DiffEntry>> {
+        use super::encoding::DiffEntry;
 
         let arr = match diff_obj {
             Some(PDFObject::Array(a)) => a,
@@ -737,7 +735,7 @@ impl PDFFont for PDFCIDFont {
 
         // Try Standard 14 font metrics as fallback
         if let Some(ref basefont) = self.basefont {
-            if let Some(metrics) = crate::fontmetrics::get_font_metrics(basefont) {
+            if let Some(metrics) = super::metrics::get_font_metrics(basefont) {
                 // CID for simple fonts is the byte value, which maps to a char
                 if let Some(ch) = char::from_u32(cid) {
                     if let Some(&width) = metrics.widths.get(&ch) {

@@ -2,7 +2,7 @@
 //!
 //! Port of state-related types from pdfminer.six pdfinterp.py
 
-use crate::pdfcolor::{PDFColorSpace, PREDEFINED_COLORSPACE};
+use super::color::{PDFColorSpace, PREDEFINED_COLORSPACE};
 use crate::pdffont::PDFCIDFont;
 use crate::utils::{MATRIX_IDENTITY, Matrix, Point};
 use std::sync::Arc;
@@ -102,7 +102,7 @@ pub struct PDFTextState {
 }
 
 impl PDFTextState {
-    /// Create new text state with default values.
+    /// Create a new text state with default values.
     pub fn new() -> Self {
         let mut state = Self {
             font: None,
