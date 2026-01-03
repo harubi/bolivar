@@ -4,10 +4,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use ordered_float::OrderedFloat;
 
-use crate::layout::{
-    LTChar, LTCurve, LTItem, LTLine, LTPage, LTRect, LTTextLineHorizontal, LTTextLineVertical,
-    TextBoxType, TextLineElement, TextLineType,
-};
+use crate::layout::{LTItem, LTPage, TextBoxType, TextLineElement, TextLineType};
 use crate::utils::{Point, Rect};
 
 const DEFAULT_SNAP_TOLERANCE: f64 = 3.0;
