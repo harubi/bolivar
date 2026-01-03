@@ -134,6 +134,15 @@ impl PDFPage {
         }
     }
 
+    /// Get decoded content streams, parsing lazily if not already present.
+    pub fn get_contents(&self, doc: &PDFDocument) -> Vec<Vec<u8>> {
+        if self.contents.is_empty() {
+            Self::parse_contents(&self.attrs, doc)
+        } else {
+            self.contents.clone()
+        }
+    }
+
     fn parse_box(
         attrs: &HashMap<String, PDFObject>,
         key: &str,

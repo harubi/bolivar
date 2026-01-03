@@ -1,6 +1,6 @@
 //! Table extraction (ported from pdfplumber.table)
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use ordered_float::OrderedFloat;
 
@@ -793,19 +793,29 @@ fn edges_to_intersections(
     x_tol: f64,
     y_tol: f64,
 ) -> HashMap<KeyPoint, Intersection> {
-    let v_edges: Vec<EdgeObj> = edges
+    enum EventKind {
+        AddV,
+        QueryH,
+        RemoveV,
+    }
+
+    struct Event {
+        y: f64,
+        kind: EventKind,
+        idx: usize,
+    }
+
+    let mut v_sorted: Vec<EdgeObj> = edges
         .iter()
         .filter(|e| e.orientation == Some(Orientation::Vertical))
         .cloned()
         .collect();
-    let h_edges: Vec<EdgeObj> = edges
+    let mut h_sorted: Vec<EdgeObj> = edges
         .iter()
         .filter(|e| e.orientation == Some(Orientation::Horizontal))
         .cloned()
         .collect();
 
-    let mut intersections: HashMap<KeyPoint, Intersection> = HashMap::new();
-    let mut v_sorted = v_edges;
     v_sorted.sort_by(|a, b| {
         a.x0.partial_cmp(&b.x0)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -815,7 +825,6 @@ fn edges_to_intersections(
                     .unwrap_or(std::cmp::Ordering::Equal),
             )
     });
-    let mut h_sorted = h_edges;
     h_sorted.sort_by(|a, b| {
         a.top
             .partial_cmp(&b.top)
@@ -823,22 +832,120 @@ fn edges_to_intersections(
             .then(a.x0.partial_cmp(&b.x0).unwrap_or(std::cmp::Ordering::Equal))
     });
 
-    for v in &v_sorted {
-        for h in &h_sorted {
-            if v.top <= h.top + y_tol
-                && v.bottom >= h.top - y_tol
-                && v.x0 >= h.x0 - x_tol
-                && v.x0 <= h.x1 + x_tol
-            {
-                let vertex = key_point(v.x0, h.top);
-                let entry = intersections.entry(vertex).or_insert(Intersection {
-                    v: Vec::new(),
-                    h: Vec::new(),
-                });
-                entry.v.push(v.clone());
-                entry.h.push(h.clone());
+    let mut events = Vec::with_capacity(v_sorted.len() * 2 + h_sorted.len());
+    for (idx, v) in v_sorted.iter().enumerate() {
+        events.push(Event {
+            y: v.top - y_tol,
+            kind: EventKind::AddV,
+            idx,
+        });
+        events.push(Event {
+            y: v.bottom + y_tol,
+            kind: EventKind::RemoveV,
+            idx,
+        });
+    }
+    for (idx, h) in h_sorted.iter().enumerate() {
+        events.push(Event {
+            y: h.top,
+            kind: EventKind::QueryH,
+            idx,
+        });
+    }
+
+    let kind_order = |kind: &EventKind| match kind {
+        EventKind::AddV => 0,
+        EventKind::QueryH => 1,
+        EventKind::RemoveV => 2,
+    };
+
+    events.sort_by(|a, b| {
+        let y_cmp = a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal);
+        if y_cmp != std::cmp::Ordering::Equal {
+            return y_cmp;
+        }
+        let kind_cmp = kind_order(&a.kind).cmp(&kind_order(&b.kind));
+        if kind_cmp != std::cmp::Ordering::Equal {
+            return kind_cmp;
+        }
+        let (ax0, atop) = match a.kind {
+            EventKind::AddV | EventKind::RemoveV => {
+                let v = &v_sorted[a.idx];
+                (v.x0, v.top)
+            }
+            EventKind::QueryH => {
+                let h = &h_sorted[a.idx];
+                (h.x0, h.top)
+            }
+        };
+        let (bx0, btop) = match b.kind {
+            EventKind::AddV | EventKind::RemoveV => {
+                let v = &v_sorted[b.idx];
+                (v.x0, v.top)
+            }
+            EventKind::QueryH => {
+                let h = &h_sorted[b.idx];
+                (h.x0, h.top)
+            }
+        };
+        ax0.partial_cmp(&bx0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(atop.partial_cmp(&btop).unwrap_or(std::cmp::Ordering::Equal))
+            .then(a.idx.cmp(&b.idx))
+    });
+
+    let mut active: BTreeMap<KeyF64, Vec<usize>> = BTreeMap::new();
+    let mut pairs: HashMap<KeyPoint, Vec<(usize, usize)>> = HashMap::new();
+
+    for event in events {
+        match event.kind {
+            EventKind::AddV => {
+                let v = &v_sorted[event.idx];
+                active.entry(key_f64(v.x0)).or_default().push(event.idx);
+            }
+            EventKind::RemoveV => {
+                let v = &v_sorted[event.idx];
+                let key = key_f64(v.x0);
+                if let Some(bucket) = active.get_mut(&key) {
+                    if let Some(pos) = bucket.iter().position(|&idx| idx == event.idx) {
+                        bucket.remove(pos);
+                    }
+                    if bucket.is_empty() {
+                        active.remove(&key);
+                    }
+                }
+            }
+            EventKind::QueryH => {
+                let h = &h_sorted[event.idx];
+                let x_min = key_f64(h.x0 - x_tol);
+                let x_max = key_f64(h.x1 + x_tol);
+                for (_x0, v_indices) in active.range(x_min..=x_max) {
+                    for &v_idx in v_indices {
+                        let v = &v_sorted[v_idx];
+                        if v.top <= h.top + y_tol
+                            && v.bottom >= h.top - y_tol
+                            && v.x0 >= h.x0 - x_tol
+                            && v.x0 <= h.x1 + x_tol
+                        {
+                            let vertex = key_point(v.x0, h.top);
+                            pairs.entry(vertex).or_default().push((v_idx, event.idx));
+                        }
+                    }
+                }
             }
         }
+    }
+
+    let mut intersections: HashMap<KeyPoint, Intersection> = HashMap::with_capacity(pairs.len());
+    for (vertex, mut pair_list) in pairs {
+        pair_list.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        let mut v = Vec::with_capacity(pair_list.len());
+        let mut h = Vec::with_capacity(pair_list.len());
+        for (v_idx, h_idx) in pair_list {
+            v.push(v_sorted[v_idx].clone());
+            h.push(h_sorted[h_idx].clone());
+        }
+        intersections.insert(vertex, Intersection { v, h });
     }
     intersections
 }
@@ -856,40 +963,29 @@ fn bbox_key(b: &BBox) -> BBoxKey {
 }
 
 fn intersections_to_cells(intersections: &HashMap<KeyPoint, Intersection>) -> Vec<BBox> {
-    fn edge_connects(
-        intersections: &HashMap<KeyPoint, Intersection>,
-        p1: KeyPoint,
-        p2: KeyPoint,
-    ) -> bool {
-        let edges_to_set = |edges: &[EdgeObj]| -> HashSet<BBoxKey> {
-            edges
-                .iter()
-                .map(|e| {
-                    bbox_key(&BBox {
-                        x0: e.x0,
-                        top: e.top,
-                        x1: e.x1,
-                        bottom: e.bottom,
-                    })
-                })
-                .collect()
-        };
-        if p1.0 == p2.0 {
-            let i1 = intersections.get(&p1).unwrap();
-            let i2 = intersections.get(&p2).unwrap();
-            let s1 = edges_to_set(&i1.v);
-            let s2 = edges_to_set(&i2.v);
-            if !s1.is_disjoint(&s2) {
+    fn edge_id_key(edge_id: &BBoxKey) -> (u64, u64, u64, u64) {
+        let BBoxKey(a, b, c, d) = *edge_id;
+        (a, b, c, d)
+    }
+
+    fn sort_dedup_edge_ids(ids: &mut Vec<BBoxKey>) {
+        ids.sort_by(|a, b| edge_id_key(a).cmp(&edge_id_key(b)));
+        ids.dedup();
+    }
+
+    fn edge_lists_intersect(a: &[BBoxKey], b: &[BBoxKey]) -> bool {
+        let mut i = 0usize;
+        let mut j = 0usize;
+        while i < a.len() && j < b.len() {
+            let a_key = edge_id_key(&a[i]);
+            let b_key = edge_id_key(&b[j]);
+            if a_key == b_key {
                 return true;
             }
-        }
-        if p1.1 == p2.1 {
-            let i1 = intersections.get(&p1).unwrap();
-            let i2 = intersections.get(&p2).unwrap();
-            let s1 = edges_to_set(&i1.h);
-            let s2 = edges_to_set(&i2.h);
-            if !s1.is_disjoint(&s2) {
-                return true;
+            if a_key < b_key {
+                i += 1;
+            } else {
+                j += 1;
             }
         }
         false
@@ -897,37 +993,121 @@ fn intersections_to_cells(intersections: &HashMap<KeyPoint, Intersection>) -> Ve
 
     let mut points: Vec<KeyPoint> = intersections.keys().cloned().collect();
     points.sort();
-    let n_points = points.len();
+
+    let mut point_index: HashMap<KeyPoint, usize> = HashMap::with_capacity(points.len());
+    for (idx, point) in points.iter().enumerate() {
+        point_index.insert(*point, idx);
+    }
+
+    let mut point_v_edges: Vec<Vec<BBoxKey>> = Vec::with_capacity(points.len());
+    let mut point_h_edges: Vec<Vec<BBoxKey>> = Vec::with_capacity(points.len());
+    for point in &points {
+        let inter = intersections.get(point).unwrap();
+        let mut v_ids: Vec<BBoxKey> = inter
+            .v
+            .iter()
+            .map(|e| {
+                bbox_key(&BBox {
+                    x0: e.x0,
+                    top: e.top,
+                    x1: e.x1,
+                    bottom: e.bottom,
+                })
+            })
+            .collect();
+        let mut h_ids: Vec<BBoxKey> = inter
+            .h
+            .iter()
+            .map(|e| {
+                bbox_key(&BBox {
+                    x0: e.x0,
+                    top: e.top,
+                    x1: e.x1,
+                    bottom: e.bottom,
+                })
+            })
+            .collect();
+        sort_dedup_edge_ids(&mut v_ids);
+        sort_dedup_edge_ids(&mut h_ids);
+        point_v_edges.push(v_ids);
+        point_h_edges.push(h_ids);
+    }
+
+    let mut edge_points_v: HashMap<BBoxKey, Vec<usize>> = HashMap::new();
+    let mut edge_points_h: HashMap<BBoxKey, Vec<usize>> = HashMap::new();
+    for (pid, edges) in point_v_edges.iter().enumerate() {
+        for edge_id in edges {
+            edge_points_v.entry(*edge_id).or_default().push(pid);
+        }
+    }
+    for (pid, edges) in point_h_edges.iter().enumerate() {
+        for edge_id in edges {
+            edge_points_h.entry(*edge_id).or_default().push(pid);
+        }
+    }
+
+    for point_ids in edge_points_v.values_mut() {
+        point_ids.sort_by(|a, b| points[*a].1.cmp(&points[*b].1));
+        point_ids.dedup();
+    }
+    for point_ids in edge_points_h.values_mut() {
+        point_ids.sort_by(|a, b| points[*a].0.cmp(&points[*b].0));
+        point_ids.dedup();
+    }
+
+    let edge_connects = |p1: usize, p2: usize| -> bool {
+        if points[p1].0 == points[p2].0 {
+            return edge_lists_intersect(&point_v_edges[p1], &point_v_edges[p2]);
+        }
+        if points[p1].1 == points[p2].1 {
+            return edge_lists_intersect(&point_h_edges[p1], &point_h_edges[p2]);
+        }
+        false
+    };
 
     let mut cells = Vec::new();
-    for i in 0..n_points {
-        if i == n_points - 1 {
-            continue;
+    for (idx, point) in points.iter().enumerate() {
+        let mut below_candidates: Vec<usize> = Vec::new();
+        for edge_id in &point_v_edges[idx] {
+            if let Some(point_ids) = edge_points_v.get(edge_id) {
+                if let Ok(pos) = point_ids.binary_search_by(|pid| points[*pid].1.cmp(&point.1)) {
+                    below_candidates.extend(point_ids[pos + 1..].iter().copied());
+                }
+            }
         }
-        let pt = points[i];
-        let rest = &points[i + 1..];
-        let below: Vec<KeyPoint> = rest.iter().cloned().filter(|x| x.0 == pt.0).collect();
-        let right: Vec<KeyPoint> = rest.iter().cloned().filter(|x| x.1 == pt.1).collect();
-        'below: for below_pt in below {
-            if !edge_connects(intersections, pt, below_pt) {
+        below_candidates.sort_by(|a, b| points[*a].1.cmp(&points[*b].1));
+        below_candidates.dedup();
+
+        let mut right_candidates: Vec<usize> = Vec::new();
+        for edge_id in &point_h_edges[idx] {
+            if let Some(point_ids) = edge_points_h.get(edge_id) {
+                if let Ok(pos) = point_ids.binary_search_by(|pid| points[*pid].0.cmp(&point.0)) {
+                    right_candidates.extend(point_ids[pos + 1..].iter().copied());
+                }
+            }
+        }
+        right_candidates.sort_by(|a, b| points[*a].0.cmp(&points[*b].0));
+        right_candidates.dedup();
+
+        'below: for below_id in below_candidates {
+            if !edge_connects(idx, below_id) {
                 continue;
             }
-            for right_pt in &right {
-                if !edge_connects(intersections, pt, *right_pt) {
+            for right_id in &right_candidates {
+                if !edge_connects(idx, *right_id) {
                     continue;
                 }
-                let bottom_right = (right_pt.0, below_pt.1);
-                if intersections.contains_key(&bottom_right)
-                    && edge_connects(intersections, bottom_right, *right_pt)
-                    && edge_connects(intersections, bottom_right, below_pt)
-                {
-                    cells.push(BBox {
-                        x0: pt.0.into_inner(),
-                        top: pt.1.into_inner(),
-                        x1: bottom_right.0.into_inner(),
-                        bottom: bottom_right.1.into_inner(),
-                    });
-                    break 'below;
+                let bottom_right = (points[*right_id].0, points[below_id].1);
+                if let Some(&br_id) = point_index.get(&bottom_right) {
+                    if edge_connects(br_id, *right_id) && edge_connects(br_id, below_id) {
+                        cells.push(BBox {
+                            x0: point.0.into_inner(),
+                            top: point.1.into_inner(),
+                            x1: points[*right_id].0.into_inner(),
+                            bottom: points[below_id].1.into_inner(),
+                        });
+                        break 'below;
+                    }
                 }
             }
         }
@@ -935,7 +1115,7 @@ fn intersections_to_cells(intersections: &HashMap<KeyPoint, Intersection>) -> Ve
     cells
 }
 
-fn cells_to_tables(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
+fn cells_to_tables_graph(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
     fn bbox_corners(b: &BBox) -> [KeyPoint; 4] {
         [
             key_point(b.x0, b.top),
@@ -945,43 +1125,47 @@ fn cells_to_tables(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
         ]
     }
 
-    let mut remaining = cells;
-    let mut tables: Vec<Vec<BBox>> = Vec::new();
-    let mut current_corners: HashSet<KeyPoint> = HashSet::new();
-    let mut current_cells: Vec<BBox> = Vec::new();
+    if cells.is_empty() {
+        return Vec::new();
+    }
 
-    while !remaining.is_empty() {
-        let initial_count = current_cells.len();
-        let mut i = 0;
-        while i < remaining.len() {
-            let cell = remaining[i].clone();
-            let corners = bbox_corners(&cell);
-            if current_cells.is_empty() {
-                current_corners.extend(corners.iter().cloned());
-                current_cells.push(cell);
-                remaining.remove(i);
-                continue;
-            }
-            let corner_count = corners
-                .iter()
-                .filter(|c| current_corners.contains(c))
-                .count();
-            if corner_count > 0 {
-                current_corners.extend(corners.iter().cloned());
-                current_cells.push(cell);
-                remaining.remove(i);
-                continue;
-            }
-            i += 1;
-        }
-        if current_cells.len() == initial_count {
-            tables.push(current_cells.clone());
-            current_corners.clear();
-            current_cells.clear();
+    let mut corner_map: HashMap<KeyPoint, Vec<usize>> = HashMap::new();
+    for (idx, cell) in cells.iter().enumerate() {
+        for corner in bbox_corners(cell) {
+            corner_map.entry(corner).or_default().push(idx);
         }
     }
-    if !current_cells.is_empty() {
-        tables.push(current_cells);
+
+    let mut visited = vec![false; cells.len()];
+    let mut tables: Vec<Vec<BBox>> = Vec::new();
+    let mut queue: VecDeque<usize> = VecDeque::new();
+
+    for start in 0..cells.len() {
+        if visited[start] {
+            continue;
+        }
+        visited[start] = true;
+        queue.clear();
+        queue.push_back(start);
+        let mut group_indices = Vec::new();
+        while let Some(idx) = queue.pop_front() {
+            group_indices.push(idx);
+            for corner in bbox_corners(&cells[idx]) {
+                if let Some(neighbors) = corner_map.get(&corner) {
+                    for &neighbor in neighbors {
+                        if !visited[neighbor] {
+                            visited[neighbor] = true;
+                            queue.push_back(neighbor);
+                        }
+                    }
+                }
+            }
+        }
+        let mut group = Vec::with_capacity(group_indices.len());
+        for idx in group_indices {
+            group.push(cells[idx].clone());
+        }
+        tables.push(group);
     }
 
     tables.sort_by(|a, b| {
@@ -1001,6 +1185,10 @@ fn cells_to_tables(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
     });
 
     tables.into_iter().filter(|t| t.len() > 1).collect()
+}
+
+fn cells_to_tables(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
+    cells_to_tables_graph(cells)
 }
 
 struct Table {
@@ -1091,34 +1279,145 @@ impl Table {
     }
 
     fn extract(&self, chars: &[CharObj], text_settings: &TextSettings) -> Vec<Vec<Option<String>>> {
-        let mut table_arr = Vec::new();
-        for row in self.rows() {
-            let row_bbox = row.bbox();
-            let row_chars: Vec<CharObj> = chars
-                .iter()
-                .filter(|c| char_in_bbox(c, &row_bbox))
-                .cloned()
-                .collect();
-            let mut arr = Vec::new();
+        let rows = self.rows();
+
+        struct CellInfo {
+            bbox: BBox,
+        }
+
+        let mut cell_infos: Vec<CellInfo> = Vec::new();
+        let mut cell_id_grid: Vec<Vec<Option<usize>>> = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let mut row_ids: Vec<Option<usize>> = Vec::with_capacity(row.cells.len());
             for cell in &row.cells {
                 if let Some(bbox) = cell {
-                    let cell_chars: Vec<CharObj> = row_chars
-                        .iter()
-                        .filter(|c| char_in_bbox(c, bbox))
-                        .cloned()
-                        .collect();
-                    if cell_chars.is_empty() {
-                        arr.push(Some(String::new()));
-                    } else {
-                        let text = extract_text(&cell_chars, text_settings);
-                        arr.push(Some(text));
-                    }
+                    let id = cell_infos.len();
+                    cell_infos.push(CellInfo { bbox: *bbox });
+                    row_ids.push(Some(id));
                 } else {
-                    arr.push(None);
+                    row_ids.push(None);
                 }
             }
-            table_arr.push(arr);
+            cell_id_grid.push(row_ids);
         }
+
+        let mut cell_char_indices: Vec<Vec<usize>> = vec![Vec::new(); cell_infos.len()];
+
+        enum CellEventKind {
+            Add,
+            Remove,
+        }
+
+        struct CellEvent {
+            y: f64,
+            kind: CellEventKind,
+            cell_id: usize,
+        }
+
+        let mut events: Vec<CellEvent> = Vec::with_capacity(cell_infos.len() * 2);
+        for (cell_id, info) in cell_infos.iter().enumerate() {
+            events.push(CellEvent {
+                y: info.bbox.top,
+                kind: CellEventKind::Add,
+                cell_id,
+            });
+            events.push(CellEvent {
+                y: info.bbox.bottom,
+                kind: CellEventKind::Remove,
+                cell_id,
+            });
+        }
+
+        let kind_order = |kind: &CellEventKind| match kind {
+            CellEventKind::Add => 0,
+            CellEventKind::Remove => 1,
+        };
+        events.sort_by(|a, b| {
+            let y_cmp = a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal);
+            if y_cmp != std::cmp::Ordering::Equal {
+                return y_cmp;
+            }
+            kind_order(&a.kind)
+                .cmp(&kind_order(&b.kind))
+                .then(a.cell_id.cmp(&b.cell_id))
+        });
+
+        let mut chars_with_idx: Vec<(usize, f64, f64)> = Vec::with_capacity(chars.len());
+        for (idx, ch) in chars.iter().enumerate() {
+            let v_mid = (ch.top + ch.bottom) / 2.0;
+            let h_mid = (ch.x0 + ch.x1) / 2.0;
+            chars_with_idx.push((idx, v_mid, h_mid));
+        }
+        chars_with_idx.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.0.cmp(&b.0))
+        });
+
+        let mut active: Vec<usize> = Vec::new();
+        let mut active_pos: Vec<Option<usize>> = vec![None; cell_infos.len()];
+        let mut event_idx = 0usize;
+        for (char_idx, v_mid, _h_mid) in chars_with_idx {
+            while event_idx < events.len() {
+                let event = &events[event_idx];
+                if event.y > v_mid {
+                    break;
+                }
+                match event.kind {
+                    CellEventKind::Add => {
+                        active_pos[event.cell_id] = Some(active.len());
+                        active.push(event.cell_id);
+                    }
+                    CellEventKind::Remove => {
+                        if let Some(pos) = active_pos[event.cell_id].take() {
+                            let last = active.pop().unwrap();
+                            if pos < active.len() {
+                                active[pos] = last;
+                                active_pos[last] = Some(pos);
+                            }
+                        }
+                    }
+                }
+                event_idx += 1;
+            }
+
+            let ch = &chars[char_idx];
+            let mut matches = 0usize;
+            for &cell_id in &active {
+                let bbox = &cell_infos[cell_id].bbox;
+                if char_in_bbox(ch, bbox) {
+                    cell_char_indices[cell_id].push(char_idx);
+                    matches += 1;
+                }
+            }
+            debug_assert!(matches <= 1, "char matched multiple cells");
+        }
+
+        for indices in cell_char_indices.iter_mut() {
+            indices.sort();
+        }
+
+        let mut table_arr = Vec::with_capacity(rows.len());
+        for row_ids in cell_id_grid {
+            let mut row_out: Vec<Option<String>> = Vec::with_capacity(row_ids.len());
+            for cell_id in row_ids {
+                if let Some(cell_id) = cell_id {
+                    let indices = &cell_char_indices[cell_id];
+                    if indices.is_empty() {
+                        row_out.push(Some(String::new()));
+                    } else {
+                        let cell_chars: Vec<CharObj> =
+                            indices.iter().map(|&idx| chars[idx].clone()).collect();
+                        let text = extract_text(&cell_chars, text_settings);
+                        row_out.push(Some(text));
+                    }
+                } else {
+                    row_out.push(None);
+                }
+            }
+            table_arr.push(row_out);
+        }
+
         table_arr
     }
 }
@@ -2018,4 +2317,237 @@ pub fn extract_text_from_ltpage(
 ) -> String {
     let (chars, _edges) = collect_page_objects(page, geom);
     extract_text(&chars, &settings)
+}
+
+#[cfg(test)]
+mod table_extraction_tests {
+    use super::*;
+
+    fn make_v_edge(x: f64, top: f64, bottom: f64) -> EdgeObj {
+        EdgeObj {
+            x0: x,
+            x1: x,
+            top,
+            bottom,
+            width: 0.0,
+            height: bottom - top,
+            orientation: Some(Orientation::Vertical),
+            object_type: "test",
+        }
+    }
+
+    fn make_h_edge(y: f64, x0: f64, x1: f64) -> EdgeObj {
+        EdgeObj {
+            x0,
+            x1,
+            top: y,
+            bottom: y,
+            width: x1 - x0,
+            height: 0.0,
+            orientation: Some(Orientation::Horizontal),
+            object_type: "test",
+        }
+    }
+
+    fn edge_key(edge: &EdgeObj) -> BBoxKey {
+        bbox_key(&BBox {
+            x0: edge.x0,
+            top: edge.top,
+            x1: edge.x1,
+            bottom: edge.bottom,
+        })
+    }
+
+    #[test]
+    fn table_extraction_non_consecutive() {
+        let edges = vec![
+            make_v_edge(0.0, 0.0, 10.0),
+            make_v_edge(10.0, 0.0, 10.0),
+            make_h_edge(0.0, 0.0, 10.0),
+            make_h_edge(5.0, 0.0, 4.0),
+            make_h_edge(10.0, 0.0, 10.0),
+        ];
+
+        let intersections = edges_to_intersections(&edges, 0.0, 0.0);
+        assert_eq!(intersections.len(), 5);
+        for key in [
+            key_point(0.0, 0.0),
+            key_point(10.0, 0.0),
+            key_point(0.0, 5.0),
+            key_point(0.0, 10.0),
+            key_point(10.0, 10.0),
+        ] {
+            assert!(intersections.contains_key(&key));
+        }
+
+        let cells = intersections_to_cells(&intersections);
+        assert_eq!(
+            cells,
+            vec![BBox {
+                x0: 0.0,
+                top: 0.0,
+                x1: 10.0,
+                bottom: 10.0,
+            }]
+        );
+    }
+
+    #[test]
+    fn table_extraction_ordering() {
+        let edges = vec![
+            make_v_edge(0.0, 0.0, 10.0),
+            make_v_edge(0.0, 1.0, 9.0),
+            make_h_edge(2.0, 0.0, 10.0),
+            make_h_edge(2.0, -1.0, 9.0),
+        ];
+
+        let intersections = edges_to_intersections(&edges, 0.0, 0.0);
+        let key = key_point(0.0, 2.0);
+        let intersection = intersections.get(&key).unwrap();
+        let v_keys: Vec<BBoxKey> = intersection.v.iter().map(edge_key).collect();
+        let h_keys: Vec<BBoxKey> = intersection.h.iter().map(edge_key).collect();
+
+        let v0 = edge_key(&edges[0]);
+        let v1 = edge_key(&edges[1]);
+        let h0 = edge_key(&edges[2]);
+        let h1 = edge_key(&edges[3]);
+        assert_eq!(v_keys, vec![v0, v0, v1, v1]);
+        assert_eq!(h_keys, vec![h1, h0, h1, h0]);
+    }
+
+    #[test]
+    fn table_extraction_edge_connects_gap() {
+        let edges = vec![
+            make_v_edge(0.0, 0.0, 4.0),
+            make_v_edge(0.0, 6.0, 10.0),
+            make_v_edge(10.0, 0.0, 10.0),
+            make_h_edge(2.0, 0.0, 10.0),
+            make_h_edge(8.0, 0.0, 10.0),
+        ];
+
+        let intersections = edges_to_intersections(&edges, 0.0, 0.0);
+        let cells = intersections_to_cells(&intersections);
+        assert!(cells.is_empty());
+    }
+
+    #[test]
+    fn table_extraction_rowspan_chars() {
+        let table = Table {
+            cells: vec![
+                BBox {
+                    x0: 0.0,
+                    top: 0.0,
+                    x1: 5.0,
+                    bottom: 15.0,
+                },
+                BBox {
+                    x0: 5.0,
+                    top: 0.0,
+                    x1: 10.0,
+                    bottom: 10.0,
+                },
+                BBox {
+                    x0: 5.0,
+                    top: 10.0,
+                    x1: 10.0,
+                    bottom: 20.0,
+                },
+            ],
+        };
+
+        let chars = vec![
+            CharObj {
+                text: "A".to_string(),
+                x0: 1.5,
+                x1: 2.5,
+                top: 11.5,
+                bottom: 12.5,
+                doctop: 11.5,
+                width: 1.0,
+                height: 1.0,
+                size: 1.0,
+                upright: true,
+            },
+            CharObj {
+                text: "B".to_string(),
+                x0: 6.5,
+                x1: 7.5,
+                top: 11.5,
+                bottom: 12.5,
+                doctop: 11.5,
+                width: 1.0,
+                height: 1.0,
+                size: 1.0,
+                upright: true,
+            },
+        ];
+
+        let settings = TextSettings::default();
+        let out = table.extract(&chars, &settings);
+        assert_eq!(
+            out,
+            vec![
+                vec![Some("A".to_string()), Some(String::new())],
+                vec![None, Some("B".to_string())],
+            ]
+        );
+    }
+
+    #[test]
+    fn table_extraction_cells_to_tables_groups_by_corners() {
+        let cells = vec![
+            BBox {
+                x0: 0.0,
+                top: 0.0,
+                x1: 5.0,
+                bottom: 5.0,
+            },
+            BBox {
+                x0: 5.0,
+                top: 0.0,
+                x1: 10.0,
+                bottom: 5.0,
+            },
+            BBox {
+                x0: 20.0,
+                top: 0.0,
+                x1: 25.0,
+                bottom: 5.0,
+            },
+        ];
+
+        let tables = cells_to_tables(cells);
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].len(), 2);
+    }
+
+    #[test]
+    fn table_extraction_cells_to_tables_graph_matches_default() {
+        let cells = vec![
+            BBox {
+                x0: 0.0,
+                top: 0.0,
+                x1: 5.0,
+                bottom: 5.0,
+            },
+            BBox {
+                x0: 5.0,
+                top: 0.0,
+                x1: 10.0,
+                bottom: 5.0,
+            },
+            BBox {
+                x0: 20.0,
+                top: 0.0,
+                x1: 25.0,
+                bottom: 5.0,
+            },
+        ];
+
+        let mut expected = cells_to_tables(cells.clone());
+        let mut actual = super::cells_to_tables_graph(cells);
+        expected.sort_by(|a, b| a.len().cmp(&b.len()));
+        actual.sort_by(|a, b| a.len().cmp(&b.len()));
+        assert_eq!(expected, actual);
+    }
 }

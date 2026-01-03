@@ -308,9 +308,8 @@ fn parse_table_settings(
                     out.push(ExplicitLine::Curve(pts));
                     continue;
                 }
-                let obj_type: Option<String> = dict
-                    .get_item("object_type")?
-                    .and_then(|v| v.extract().ok());
+                let obj_type: Option<String> =
+                    dict.get_item("object_type")?.and_then(|v| v.extract().ok());
                 let x0: Option<f64> = dict.get_item("x0")?.and_then(|v| v.extract().ok());
                 let x1: Option<f64> = dict.get_item("x1")?.and_then(|v| v.extract().ok());
                 let top: Option<f64> = dict.get_item("top")?.and_then(|v| v.extract().ok());
@@ -784,16 +783,14 @@ impl PyPDFPage {
         let attrs_dict = PyDict::new(py);
         for (k, v) in page.attrs.iter() {
             let mut visited = HashSet::new();
-            let py_val =
-                pdf_object_to_py_internal(py, v, doc, &mut visited, true, false, py_doc)?;
+            let py_val = pdf_object_to_py_internal(py, v, doc, &mut visited, true, false, py_doc)?;
             attrs_dict.set_item(k, py_val)?;
         }
 
         let resources_dict = PyDict::new(py);
         for (k, v) in page.resources.iter() {
             let mut visited = HashSet::new();
-            let py_val =
-                pdf_object_to_py_internal(py, v, doc, &mut visited, true, false, py_doc)?;
+            let py_val = pdf_object_to_py_internal(py, v, doc, &mut visited, true, false, py_doc)?;
             resources_dict.set_item(k, py_val)?;
         }
 

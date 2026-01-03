@@ -15,7 +15,7 @@ use bolivar_core::layout::{LAParams, LTPage};
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use bolivar_core::pdfpage::PDFPage;
-use bolivar_core::table::{extract_tables_from_ltpage, PageGeometry, TableSettings};
+use bolivar_core::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
 use clap::{ArgAction, Parser, ValueEnum};
 use memmap2::Mmap;
 use std::cell::RefCell;
@@ -415,8 +415,8 @@ fn process_file<W: Write>(
         // For JSON, write the complete output at the end
         if matches!(args.table_format, TableFormat::Json) {
             let output = serde_json::json!({ "pages": all_pages_data });
-            let json_str = serde_json::to_string_pretty(&output)
-                .expect("Failed to serialize tables to JSON");
+            let json_str =
+                serde_json::to_string_pretty(&output).expect("Failed to serialize tables to JSON");
             writeln!(writer, "{}", json_str)?;
         }
 

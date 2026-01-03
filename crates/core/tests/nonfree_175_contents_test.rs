@@ -11,12 +11,9 @@ fn nonfree_175_content_streams_are_small() {
     let page2 = pages.next().expect("page 2").expect("page 2 ok");
 
     for (idx, page) in [page1, page2].into_iter().enumerate() {
-        assert!(
-            !page.contents.is_empty(),
-            "page {} has no contents",
-            idx + 1
-        );
-        for (stream_idx, stream) in page.contents.iter().enumerate() {
+        let contents = page.get_contents(&doc);
+        assert!(!contents.is_empty(), "page {} has no contents", idx + 1);
+        for (stream_idx, stream) in contents.iter().enumerate() {
             assert!(
                 stream.len() < 1024,
                 "page {} contents[{}] too large: {} bytes",
