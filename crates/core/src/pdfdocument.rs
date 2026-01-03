@@ -13,9 +13,10 @@ use crate::pdfparser::PDFParser;
 use crate::pdftypes::PDFObject;
 use crate::security::{PDFSecurityHandler, create_security_handler};
 use memmap2::Mmap;
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use std::collections::HashSet;
+use std::sync::{Arc, RwLock};
 
 /// XRef entry - location of an object in the PDF file.
 #[derive(Debug, Clone)]
@@ -83,7 +84,6 @@ pub struct PDFDocument {
     catalog: HashMap<String, PDFObject>,
     info: Vec<HashMap<String, PDFObject>>,
     cache: RwLock<HashMap<u32, PDFObject>>,
-    resolving: RwLock<HashSet<u32>>,
     objstm_index: RwLock<Option<HashMap<u32, (u32, usize)>>>,
     security_handler: Option<Box<dyn PDFSecurityHandler + Send + Sync>>,
 }
@@ -97,7 +97,6 @@ impl PDFDocument {
             catalog: HashMap::new(),
             info: Vec::new(),
             cache: RwLock::new(HashMap::new()),
-            resolving: RwLock::new(HashSet::new()),
             objstm_index: RwLock::new(None),
             security_handler: None,
         };
@@ -113,7 +112,6 @@ impl PDFDocument {
             catalog: HashMap::new(),
             info: Vec::new(),
             cache: RwLock::new(HashMap::new()),
-            resolving: RwLock::new(HashSet::new()),
             objstm_index: RwLock::new(None),
             security_handler: None,
         };
@@ -898,32 +896,44 @@ impl PDFDocument {
             return Err(PdfError::ObjectNotFound(0));
         }
 
-        struct ResolvingGuard<'a> {
-            set: &'a RwLock<HashSet<u32>>,
+        // Thread-local cycle detection to prevent infinite recursion.
+        // Using thread-local instead of shared RwLock avoids race conditions
+        // when multiple threads resolve the same object concurrently.
+        thread_local! {
+            static RESOLVING: RefCell<HashSet<u32>> = RefCell::new(HashSet::new());
+        }
+
+        struct ThreadLocalGuard {
             objid: u32,
         }
 
-        impl<'a> Drop for ResolvingGuard<'a> {
+        impl Drop for ThreadLocalGuard {
             fn drop(&mut self) {
-                if let Ok(mut set) = self.set.write() {
-                    set.remove(&self.objid);
-                }
+                RESOLVING.with(|set| {
+                    set.borrow_mut().remove(&self.objid);
+                });
             }
         }
 
-        if let Ok(mut set) = self.resolving.write() {
-            if set.contains(&objid) {
-                return Err(PdfError::SyntaxError(format!(
-                    "circular reference detected for obj {}",
-                    objid
-                )));
+        // Check for circular reference within this thread's call stack
+        let is_circular = RESOLVING.with(|set| {
+            let mut borrowed = set.borrow_mut();
+            if borrowed.contains(&objid) {
+                true
+            } else {
+                borrowed.insert(objid);
+                false
             }
-            set.insert(objid);
+        });
+
+        if is_circular {
+            return Err(PdfError::SyntaxError(format!(
+                "circular reference detected for obj {}",
+                objid
+            )));
         }
-        let _guard = ResolvingGuard {
-            set: &self.resolving,
-            objid,
-        };
+
+        let _guard = ThreadLocalGuard { objid };
 
         // Check cache first
         if let Ok(cache) = self.cache.read() {
