@@ -5,6 +5,7 @@
 use crate::error::{PdfError, Result};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::simd::prelude::*;
 
 /// A PostScript literal name.
 ///
@@ -694,6 +695,12 @@ pub struct PSBaseParser<'a> {
     token_pos: usize,
 }
 
+/// Lexer specialized for PDF content streams.
+pub struct ContentLexer<'a> {
+    data: PSData<'a>,
+    pos: usize,
+}
+
 impl<'a> PSBaseParser<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         Self {
@@ -766,19 +773,22 @@ impl<'a> PSBaseParser<'a> {
 
     /// Skip whitespace and comments
     fn skip_whitespace(&mut self) {
-        while let Some(b) = self.peek() {
-            if Self::is_whitespace(b) {
-                self.advance();
-            } else if b == b'%' {
-                // Skip comment to end of line
-                while let Some(c) = self.advance() {
-                    if c == b'\r' || c == b'\n' {
-                        break;
-                    }
+        let data = self.data.as_slice();
+        while self.pos < data.len() {
+            let b = data[self.pos];
+            if b == b'%' {
+                self.pos += 1; // consume '%'
+                if let Some(offset) = find_line_end(&data[self.pos..]) {
+                    self.pos += offset + 1; // consume line ending
+                } else {
+                    self.pos = data.len();
                 }
-            } else {
-                break;
+                continue;
             }
+            if !Self::is_whitespace(b) {
+                return;
+            }
+            self.pos += 1;
         }
     }
 
@@ -945,20 +955,33 @@ impl<'a> PSBaseParser<'a> {
     /// Parse a hex string <...>
     fn parse_hex_string(&mut self) -> Result<PSToken> {
         self.advance(); // Skip '<'
-        let mut hex_chars = Vec::new();
+        let mut result = Vec::new();
+        let data = self.data.as_slice();
+        let mut pending: Option<u8> = None;
 
         loop {
-            match self.peek() {
+            match data.get(self.pos).copied() {
                 Some(b'>') => {
-                    self.advance();
+                    self.pos += 1;
                     break;
                 }
                 Some(c) if c.is_ascii_hexdigit() => {
-                    self.advance();
-                    hex_chars.push(c);
+                    self.pos += 1;
+                    let nibble = match c {
+                        b'0'..=b'9' => c - b'0',
+                        b'a'..=b'f' => c - b'a' + 10,
+                        b'A'..=b'F' => c - b'A' + 10,
+                        _ => 0,
+                    };
+                    if let Some(high) = pending {
+                        result.push((high << 4) | nibble);
+                        pending = None;
+                    } else {
+                        pending = Some(nibble);
+                    }
                 }
                 Some(c) if Self::is_whitespace(c) => {
-                    self.advance();
+                    self.pos += 1;
                 }
                 Some(_) => {
                     // Invalid character in hex string, stop here
@@ -968,24 +991,8 @@ impl<'a> PSBaseParser<'a> {
             }
         }
 
-        // Convert hex to bytes - pairs first, then single chars as single-digit hex
-        // (per pdfminer.six: regex `[0-9a-fA-F]{2}|.` converts pairs, then singles)
-        let mut result = Vec::new();
-        let mut i = 0;
-        while i < hex_chars.len() {
-            if i + 1 < hex_chars.len() {
-                // Two hex digits available - convert as pair
-                let hex = std::str::from_utf8(&hex_chars[i..i + 2]).unwrap();
-                let byte = u8::from_str_radix(hex, 16).unwrap();
-                result.push(byte);
-                i += 2;
-            } else {
-                // Single hex digit - convert as single-digit hex (0-15)
-                let hex = std::str::from_utf8(&hex_chars[i..i + 1]).unwrap();
-                let byte = u8::from_str_radix(hex, 16).unwrap();
-                result.push(byte);
-                i += 1;
-            }
+        if let Some(nibble) = pending {
+            result.push(nibble);
         }
 
         Ok(PSToken::String(result))
@@ -1088,6 +1095,582 @@ impl<'a> PSBaseParser<'a> {
 
         Some(result.map(|token| (self.token_pos, token)))
     }
+}
+
+impl<'a> ContentLexer<'a> {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    const SIMD_LANES: usize = 32;
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+    const SIMD_LANES: usize = 16;
+    const SIMD_FULL_MASK: u64 = (1u64 << Self::SIMD_LANES) - 1;
+
+    pub fn new(data: &'a [u8]) -> Self {
+        Self {
+            data: PSData::Borrowed(data),
+            pos: 0,
+        }
+    }
+
+    /// Create a lexer from a shared byte slice.
+    pub fn new_shared(data: Rc<[u8]>) -> ContentLexer<'static> {
+        ContentLexer {
+            data: PSData::Shared(data),
+            pos: 0,
+        }
+    }
+
+    /// Set current position in stream.
+    pub fn set_pos(&mut self, pos: usize) {
+        self.pos = pos;
+    }
+
+    /// Current position in stream.
+    pub fn tell(&self) -> usize {
+        self.pos
+    }
+
+    fn data(&self) -> &[u8] {
+        self.data.as_slice()
+    }
+
+    fn is_whitespace(b: u8) -> bool {
+        matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x00' | b'\x0c')
+    }
+
+    fn is_delimiter(b: u8) -> bool {
+        matches!(
+            b,
+            b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+        )
+    }
+
+    fn is_keyword_end(b: u8) -> bool {
+        Self::is_whitespace(b) || Self::is_delimiter(b)
+    }
+
+    fn skip_whitespace(&mut self) {
+        let new_pos = {
+            let data = self.data();
+            let len = data.len();
+            let mut pos = self.pos;
+            while pos < len {
+                let b = data[pos];
+                if b == b'%' {
+                    pos += 1;
+                    if let Some(offset) = find_line_end(&data[pos..]) {
+                        pos += offset + 1;
+                    } else {
+                        pos = len;
+                    }
+                    continue;
+                }
+                if !Self::is_whitespace(b) {
+                    break;
+                }
+                pos += Self::find_first_non_ws(&data[pos..]);
+            }
+            pos
+        };
+        self.pos = new_pos;
+    }
+
+    fn parse_literal(&mut self) -> Result<PSToken> {
+        let data = self.data();
+        let len = data.len();
+        let mut pos = self.pos + 1; // skip '/'
+        let mut name = Vec::with_capacity(16);
+
+        while pos < len {
+            let b = data[pos];
+            if Self::is_whitespace(b) || Self::is_delimiter(b) {
+                break;
+            }
+            if b == b'#' {
+                if pos + 2 < len {
+                    let c1 = data[pos + 1];
+                    let c2 = data[pos + 2];
+                    if let (Some(h1), Some(h2)) = (hex_value(c1), hex_value(c2)) {
+                        name.push((h1 << 4) | h2);
+                        pos += 3;
+                        continue;
+                    }
+                }
+                pos += 1;
+                continue;
+            }
+            name.push(b);
+            pos += 1;
+        }
+
+        self.pos = pos;
+        let name = match String::from_utf8(name) {
+            Ok(s) => s,
+            Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
+        };
+        Ok(PSToken::Literal(name))
+    }
+
+    fn parse_number(&mut self) -> Result<PSToken> {
+        let data = self.data();
+        let len = data.len();
+        let start = self.pos;
+        let mut pos = self.pos;
+        let mut negative = false;
+
+        if pos < len {
+            match data[pos] {
+                b'-' => {
+                    negative = true;
+                    pos += 1;
+                }
+                b'+' => {
+                    pos += 1;
+                }
+                _ => {}
+            }
+        }
+
+        let mut int_part: i64 = 0;
+        let mut has_int = false;
+        while pos < len {
+            let c = data[pos];
+            if c.is_ascii_digit() {
+                has_int = true;
+                int_part = int_part * 10 + (c - b'0') as i64;
+                pos += 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut has_dot = false;
+        let mut frac_part: i64 = 0;
+        let mut frac_digits: u32 = 0;
+        if pos < len && data[pos] == b'.' {
+            has_dot = true;
+            pos += 1;
+            while pos < len {
+                let c = data[pos];
+                if c.is_ascii_digit() {
+                    frac_part = frac_part * 10 + (c - b'0') as i64;
+                    frac_digits += 1;
+                    pos += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if !has_int && frac_digits == 0 {
+            self.pos = start;
+            return Err(PdfError::TokenError {
+                pos: start,
+                msg: "invalid number".into(),
+            });
+        }
+
+        self.pos = pos;
+        if has_dot {
+            let mut value = int_part as f64;
+            if frac_digits > 0 {
+                let mut divisor = 1.0;
+                for _ in 0..frac_digits {
+                    divisor *= 10.0;
+                }
+                value += (frac_part as f64) / divisor;
+            }
+            if negative {
+                value = -value;
+            }
+            Ok(PSToken::Real(value))
+        } else {
+            let value = if negative { -int_part } else { int_part };
+            Ok(PSToken::Int(value))
+        }
+    }
+
+    fn parse_string(&mut self) -> Result<PSToken> {
+        let data = self.data();
+        let len = data.len();
+        let mut pos = self.pos + 1; // skip '('
+        let mut depth = 1;
+        let mut result = Vec::with_capacity(32);
+
+        while pos < len && depth > 0 {
+            let c = data[pos];
+            pos += 1;
+            match c {
+                b'(' => {
+                    depth += 1;
+                    result.push(b'(');
+                }
+                b')' => {
+                    depth -= 1;
+                    if depth > 0 {
+                        result.push(b')');
+                    }
+                }
+                b'\\' => {
+                    if pos >= len {
+                        self.pos = pos;
+                        return Err(PdfError::UnexpectedEof);
+                    }
+                    let esc = data[pos];
+                    pos += 1;
+                    match esc {
+                        b'n' => result.push(b'\n'),
+                        b'r' => result.push(b'\r'),
+                        b't' => result.push(b'\t'),
+                        b'b' => result.push(0x08),
+                        b'f' => result.push(0x0c),
+                        b'(' => result.push(b'('),
+                        b')' => result.push(b')'),
+                        b'\\' => result.push(b'\\'),
+                        b'\r' => {
+                            if pos < len && data[pos] == b'\n' {
+                                pos += 1;
+                            }
+                        }
+                        b'\n' => {}
+                        c if c.is_ascii_digit() && c < b'8' => {
+                            let mut octal = (c - b'0') as u32;
+                            for _ in 0..2 {
+                                if pos < len {
+                                    let d = data[pos];
+                                    if d.is_ascii_digit() && d < b'8' {
+                                        octal = octal * 8 + (d - b'0') as u32;
+                                        pos += 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            result.push((octal & 0xFF) as u8);
+                        }
+                        c => result.push(c),
+                    }
+                }
+                c => result.push(c),
+            }
+        }
+
+        self.pos = pos;
+        if depth > 0 {
+            return Err(PdfError::UnexpectedEof);
+        }
+        Ok(PSToken::String(result))
+    }
+
+    fn parse_hex_string(&mut self) -> Result<PSToken> {
+        let data = self.data();
+        let len = data.len();
+        let mut pos = self.pos + 1; // skip '<'
+        let mut result = Vec::with_capacity(32);
+        let mut pending: Option<u8> = None;
+        let mut closed = false;
+
+        while pos < len {
+            let c = data[pos];
+            if c == b'>' {
+                pos += 1;
+                closed = true;
+                break;
+            }
+            if c.is_ascii_hexdigit() {
+                let nibble = match c {
+                    b'0'..=b'9' => c - b'0',
+                    b'a'..=b'f' => c - b'a' + 10,
+                    b'A'..=b'F' => c - b'A' + 10,
+                    _ => 0,
+                };
+                if let Some(high) = pending {
+                    result.push((high << 4) | nibble);
+                    pending = None;
+                } else {
+                    pending = Some(nibble);
+                }
+                pos += 1;
+                continue;
+            }
+            if Self::is_whitespace(c) {
+                pos += 1;
+                continue;
+            }
+            break;
+        }
+
+        if !closed && pos >= len {
+            self.pos = pos;
+            return Err(PdfError::UnexpectedEof);
+        }
+
+        if let Some(nibble) = pending {
+            result.push(nibble);
+        }
+
+        self.pos = pos;
+        Ok(PSToken::String(result))
+    }
+
+    fn parse_keyword(&mut self) -> Result<PSToken> {
+        let (pos, token) = {
+            let data = self.data();
+            let start = self.pos;
+            let offset = Self::find_keyword_end(&data[start..]);
+            let pos = start + offset;
+            let bytes = &data[start..pos];
+            let token = if bytes == b"true" {
+                PSToken::Bool(true)
+            } else if bytes == b"false" {
+                PSToken::Bool(false)
+            } else {
+                PSToken::Keyword(Keyword::from_bytes(bytes))
+            };
+            (pos, token)
+        };
+
+        self.pos = pos;
+        Ok(token)
+    }
+
+    /// Get next token
+    pub fn next_token(&mut self) -> Option<Result<(usize, PSToken)>> {
+        self.skip_whitespace();
+        let data = self.data();
+        if self.pos >= data.len() {
+            return None;
+        }
+
+        let token_pos = self.pos;
+        let b = data[self.pos];
+
+        let result = match b {
+            b'/' => self.parse_literal(),
+            b'(' => self.parse_string(),
+            b'<' => {
+                if self.pos + 1 < data.len() && data[self.pos + 1] == b'<' {
+                    self.pos += 2;
+                    Ok(PSToken::Keyword(Keyword::DictStart))
+                } else {
+                    self.parse_hex_string()
+                }
+            }
+            b'>' => {
+                if self.pos + 1 < data.len() && data[self.pos + 1] == b'>' {
+                    self.pos += 2;
+                    Ok(PSToken::Keyword(Keyword::DictEnd))
+                } else {
+                    self.pos += 1;
+                    Ok(PSToken::Keyword(Keyword::Unknown(b">".to_vec())))
+                }
+            }
+            b'[' => {
+                self.pos += 1;
+                Ok(PSToken::Keyword(Keyword::ArrayStart))
+            }
+            b']' => {
+                self.pos += 1;
+                Ok(PSToken::Keyword(Keyword::ArrayEnd))
+            }
+            b'{' => {
+                self.pos += 1;
+                Ok(PSToken::Keyword(Keyword::BraceOpen))
+            }
+            b'}' => {
+                self.pos += 1;
+                Ok(PSToken::Keyword(Keyword::BraceClose))
+            }
+            b'+' | b'-' => {
+                let next = data.get(self.pos + 1).copied();
+                if matches!(next, Some(c) if c.is_ascii_digit() || c == b'.') {
+                    self.parse_number()
+                } else {
+                    self.parse_keyword()
+                }
+            }
+            b'.' => {
+                let next = data.get(self.pos + 1).copied();
+                if matches!(next, Some(c) if c.is_ascii_digit()) {
+                    self.parse_number()
+                } else {
+                    self.parse_keyword()
+                }
+            }
+            c if c.is_ascii_digit() => self.parse_number(),
+            _ => self.parse_keyword(),
+        };
+
+        Some(result.map(|token| (token_pos, token)))
+    }
+
+    fn find_first_non_ws(data: &[u8]) -> usize {
+        if data.is_empty() {
+            return 0;
+        }
+        let mut i = 0;
+        let prefix_len = data.len().min(8);
+        while i < prefix_len {
+            if !Self::is_whitespace(data[i]) {
+                return i;
+            }
+            i += 1;
+        }
+
+        if data.len() - i < Self::SIMD_LANES {
+            while i < data.len() {
+                if !Self::is_whitespace(data[i]) {
+                    return i;
+                }
+                i += 1;
+            }
+            return data.len();
+        }
+
+        type V = Simd<u8, { ContentLexer::SIMD_LANES }>;
+        let (prefix, middle, suffix) = data[i..].as_simd::<{ ContentLexer::SIMD_LANES }>();
+
+        let mut offset = i;
+        for (idx, &b) in prefix.iter().enumerate() {
+            if !Self::is_whitespace(b) {
+                return offset + idx;
+            }
+        }
+        offset += prefix.len();
+
+        let ws_space = V::splat(b' ');
+        let ws_tab = V::splat(b'\t');
+        let ws_lf = V::splat(b'\n');
+        let ws_cr = V::splat(b'\r');
+        let ws_ff = V::splat(0x0c);
+        let ws_nul = V::splat(0x00);
+
+        for chunk in middle.iter() {
+            let is_ws = chunk.simd_eq(ws_space)
+                | chunk.simd_eq(ws_tab)
+                | chunk.simd_eq(ws_lf)
+                | chunk.simd_eq(ws_cr)
+                | chunk.simd_eq(ws_ff)
+                | chunk.simd_eq(ws_nul);
+            let mask = is_ws.to_bitmask();
+            if mask != Self::SIMD_FULL_MASK {
+                let non = (!mask) & Self::SIMD_FULL_MASK;
+                return offset + non.trailing_zeros() as usize;
+            }
+            offset += Self::SIMD_LANES;
+        }
+
+        for (idx, &b) in suffix.iter().enumerate() {
+            if !Self::is_whitespace(b) {
+                return offset + idx;
+            }
+        }
+
+        data.len()
+    }
+
+    fn find_keyword_end(data: &[u8]) -> usize {
+        if data.is_empty() {
+            return 0;
+        }
+        let mut i = 0;
+        let prefix_len = data.len().min(8);
+        while i < prefix_len {
+            if Self::is_keyword_end(data[i]) {
+                return i;
+            }
+            i += 1;
+        }
+
+        if data.len() - i < Self::SIMD_LANES {
+            while i < data.len() {
+                if Self::is_keyword_end(data[i]) {
+                    return i;
+                }
+                i += 1;
+            }
+            return data.len();
+        }
+
+        type V = Simd<u8, { ContentLexer::SIMD_LANES }>;
+        let (prefix, middle, suffix) = data[i..].as_simd::<{ ContentLexer::SIMD_LANES }>();
+
+        let mut offset = i;
+        for (idx, &b) in prefix.iter().enumerate() {
+            if Self::is_keyword_end(b) {
+                return offset + idx;
+            }
+        }
+        offset += prefix.len();
+
+        let ws_space = V::splat(b' ');
+        let ws_tab = V::splat(b'\t');
+        let ws_lf = V::splat(b'\n');
+        let ws_cr = V::splat(b'\r');
+        let ws_ff = V::splat(0x0c);
+        let ws_nul = V::splat(0x00);
+
+        let d_paren_l = V::splat(b'(');
+        let d_paren_r = V::splat(b')');
+        let d_lt = V::splat(b'<');
+        let d_gt = V::splat(b'>');
+        let d_brack_l = V::splat(b'[');
+        let d_brack_r = V::splat(b']');
+        let d_brace_l = V::splat(b'{');
+        let d_brace_r = V::splat(b'}');
+        let d_slash = V::splat(b'/');
+        let d_pct = V::splat(b'%');
+
+        for chunk in middle.iter() {
+            let is_ws = chunk.simd_eq(ws_space)
+                | chunk.simd_eq(ws_tab)
+                | chunk.simd_eq(ws_lf)
+                | chunk.simd_eq(ws_cr)
+                | chunk.simd_eq(ws_ff)
+                | chunk.simd_eq(ws_nul);
+            let is_delim = chunk.simd_eq(d_paren_l)
+                | chunk.simd_eq(d_paren_r)
+                | chunk.simd_eq(d_lt)
+                | chunk.simd_eq(d_gt)
+                | chunk.simd_eq(d_brack_l)
+                | chunk.simd_eq(d_brack_r)
+                | chunk.simd_eq(d_brace_l)
+                | chunk.simd_eq(d_brace_r)
+                | chunk.simd_eq(d_slash)
+                | chunk.simd_eq(d_pct);
+            let is_end = is_ws | is_delim;
+            let mask = is_end.to_bitmask();
+            if mask != 0 {
+                return offset + mask.trailing_zeros() as usize;
+            }
+            offset += Self::SIMD_LANES;
+        }
+
+        for (idx, &b) in suffix.iter().enumerate() {
+            if Self::is_keyword_end(b) {
+                return offset + idx;
+            }
+        }
+
+        data.len()
+    }
+}
+
+fn hex_value(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn find_line_end(data: &[u8]) -> Option<usize> {
+    for (i, &b) in data.iter().enumerate() {
+        if b == b'\r' || b == b'\n' {
+            return Some(i);
+        }
+    }
+    None
 }
 
 impl PSBaseParser<'static> {

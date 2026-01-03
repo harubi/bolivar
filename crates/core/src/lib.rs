@@ -1,3 +1,4 @@
+#![feature(portable_simd)]
 //! bolivar - A Rust port of pdfminer.six for PDF text extraction.
 
 pub mod aes;

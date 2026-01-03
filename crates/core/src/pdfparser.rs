@@ -4,7 +4,7 @@
 
 use crate::error::{PdfError, Result};
 use crate::pdftypes::{PDFObjRef, PDFObject};
-use crate::psparser::{Keyword, PSBaseParser, PSToken};
+use crate::psparser::{ContentLexer, Keyword, PSBaseParser, PSToken};
 use std::collections::HashMap;
 
 /// PDF Parser - parses PDF object syntax
@@ -170,7 +170,7 @@ pub struct PDFContentParser;
 impl PDFContentParser {
     /// Parse a content stream into operations
     pub fn parse(data: &[u8]) -> Result<Vec<Operation>> {
-        let mut parser = PSBaseParser::new(data);
+        let mut parser = ContentLexer::new(data);
         let mut ops = Vec::new();
         let mut operands: Vec<PDFObject> = Vec::new();
         let mut context_stack: Vec<Vec<PDFObject>> = Vec::new();

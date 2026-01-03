@@ -134,6 +134,20 @@ fn generate_mixed_ops(n: usize) -> Vec<u8> {
     stream
 }
 
+/// Generate a content stream with TJ arrays (strings, numbers, hex strings).
+///
+/// Exercises array parsing and mixed operand types:
+/// - Literal strings
+/// - Numbers (kerning)
+/// - Hex strings (CID text)
+fn generate_tj_arrays(n: usize) -> Vec<u8> {
+    let mut stream = Vec::with_capacity(n * 80);
+    for _ in 0..n {
+        stream.extend_from_slice(b"[(Hello ) -200 (World) 120 <48656C6C6F>] TJ\n");
+    }
+    stream
+}
+
 /// Generate a content stream with nested arrays and dictionaries.
 ///
 /// Creates stress test for array/dict parsing:
@@ -289,6 +303,19 @@ fn bench_pdfinterp_content(c: &mut Criterion) {
         let stream = generate_mixed_ops(n);
 
         group.bench_with_input(BenchmarkId::new("mixed_ops", n), &stream, |b, stream| {
+            b.iter_batched(
+                || PDFContentParser::new(vec![stream.clone()]),
+                |mut parser| black_box(consume_all_tokens(&mut parser)),
+                BatchSize::SmallInput,
+            )
+        });
+    }
+
+    // TJ arrays (array parsing + mixed operand types)
+    for n in [100, 1_000, 10_000] {
+        let stream = generate_tj_arrays(n);
+
+        group.bench_with_input(BenchmarkId::new("tj_arrays", n), &stream, |b, stream| {
             b.iter_batched(
                 || PDFContentParser::new(vec![stream.clone()]),
                 |mut parser| black_box(consume_all_tokens(&mut parser)),

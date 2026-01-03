@@ -12,7 +12,7 @@ use crate::cmapdb::{CMap, CMapDB};
 use crate::error::{PdfError, Result};
 use crate::pdfcolor::{PDFColorSpace, PREDEFINED_COLORSPACE};
 use crate::pdftypes::{PDFObject, PDFStream};
-use crate::psparser::{Keyword, PSBaseParser, PSLiteral, PSToken};
+use crate::psparser::{ContentLexer, Keyword, PSLiteral, PSToken};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
@@ -56,8 +56,8 @@ pub struct PDFContentParser {
     context_stack: Vec<Context>,
     /// Whether we're collecting inline image dictionary
     in_inline_dict: bool,
-    /// Base parser reused for tokenization
-    base_parser: PSBaseParser<'static>,
+    /// Lexer reused for tokenization
+    lexer: ContentLexer<'static>,
 }
 
 impl PDFContentParser {
@@ -73,8 +73,8 @@ impl PDFContentParser {
         }
 
         let data: Rc<[u8]> = Rc::from(data.into_boxed_slice());
-        let mut base_parser = PSBaseParser::new_shared(data.clone());
-        base_parser.set_pos(0);
+        let mut lexer = ContentLexer::new_shared(data.clone());
+        lexer.set_pos(0);
 
         Self {
             data,
@@ -83,7 +83,7 @@ impl PDFContentParser {
             operand_stack: Vec::new(),
             context_stack: Vec::new(),
             in_inline_dict: false,
-            base_parser,
+            lexer,
         }
     }
 
@@ -96,12 +96,12 @@ impl PDFContentParser {
 
         loop {
             // Parse next token from base parser
-            let (rel_pos, token) = match self.base_parser.next_token() {
+            let (rel_pos, token) = match self.lexer.next_token() {
                 Some(Ok(t)) => t,
                 Some(Err(_)) => {
                     // Skip bad token and continue
                     self.pos += 1;
-                    self.base_parser.set_pos(self.pos);
+                    self.lexer.set_pos(self.pos);
                     continue;
                 }
                 None => {
@@ -120,11 +120,11 @@ impl PDFContentParser {
 
             let abs_pos = rel_pos;
             let prev_pos = self.pos;
-            self.pos = self.base_parser.tell();
+            self.pos = self.lexer.tell();
             if self.pos <= prev_pos && prev_pos < self.data.len() {
                 self.pos = prev_pos + 1;
             }
-            self.base_parser.set_pos(self.pos);
+            self.lexer.set_pos(self.pos);
 
             match &token {
                 PSToken::Keyword(kw) => {
@@ -189,7 +189,7 @@ impl PDFContentParser {
                             let eos = self.get_inline_eos(&dict);
                             let (img_data, consumed) = self.get_inline_data(&eos);
                             self.pos += consumed;
-                            self.base_parser.set_pos(self.pos);
+                            self.lexer.set_pos(self.pos);
                             return Some((
                                 abs_pos,
                                 ContentToken::InlineImage {
