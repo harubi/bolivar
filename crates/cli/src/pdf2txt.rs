@@ -9,7 +9,7 @@ use bolivar_core::converter::{
     HOCRConverter, HTMLConverter, PDFPageAggregator, TextConverter, XMLConverter,
 };
 use bolivar_core::error::{PdfError, Result};
-use bolivar_core::high_level::{ExtractOptions, extract_pages};
+use bolivar_core::high_level::{ExtractOptions, extract_pages_with_document};
 use bolivar_core::image::ImageWriter;
 use bolivar_core::layout::{LAParams, LTPage};
 use bolivar_core::pdfdocument::PDFDocument;
@@ -17,11 +17,13 @@ use bolivar_core::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use bolivar_core::pdfpage::PDFPage;
 use bolivar_core::table::{extract_tables_from_ltpage, PageGeometry, TableSettings};
 use clap::{ArgAction, Parser, ValueEnum};
+use memmap2::Mmap;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// Output type for the extracted content.
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
@@ -288,7 +290,7 @@ fn csv_escape(s: &str) -> String {
 }
 
 fn for_each_page_with_images<F>(
-    pdf_data: &[u8],
+    doc: &PDFDocument,
     options: &ExtractOptions,
     image_writer: Rc<RefCell<ImageWriter>>,
     mut on_page: F,
@@ -296,16 +298,11 @@ fn for_each_page_with_images<F>(
 where
     F: FnMut(bolivar_core::layout::LTPage),
 {
-    if pdf_data.len() < 8 || !pdf_data.starts_with(b"%PDF-") {
-        return Err(PdfError::SyntaxError("Invalid PDF header".to_string()));
-    }
-
-    let doc = PDFDocument::new(pdf_data, &options.password)?;
     let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
     let laparams = options.laparams.clone().unwrap_or_default();
 
     let mut page_count = 0;
-    for (page_idx, page_result) in PDFPage::create_pages(&doc).enumerate() {
+    for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
         if let Some(ref nums) = options.page_numbers {
             if !nums.contains(&page_idx) {
                 continue;
@@ -323,7 +320,7 @@ where
             Some(image_writer.clone()),
         );
         let mut interpreter = PDFPageInterpreter::new(&mut rsrcmgr, &mut aggregator);
-        interpreter.process_page(&page, Some(&doc));
+        interpreter.process_page(&page, Some(doc));
 
         let ltpage = aggregator.get_result().clone();
         on_page(ltpage);
@@ -340,8 +337,14 @@ fn process_file<W: Write>(
     args: &Args,
     output_type: OutputType,
 ) -> Result<()> {
-    // Read PDF file
-    let pdf_data = std::fs::read(path)?;
+    // Read PDF file via mmap
+    let file = File::open(path)?;
+    let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
+        PdfError::Io(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Failed to mmap PDF: {}", e),
+        ))
+    })?;
 
     // Build options
     let options = ExtractOptions {
@@ -353,14 +356,16 @@ fn process_file<W: Write>(
         threads: std::thread::available_parallelism().ok().map(|n| n.get()),
     };
 
+    // Create PDFDocument from mmap
+    let doc = PDFDocument::new_from_mmap(Arc::new(mmap), &options.password)?;
+
     // Handle table extraction mode
     if args.extract_tables {
         let settings = TableSettings::default();
         let mut page_num = 0;
         let mut all_pages_data: Vec<serde_json::Value> = Vec::new();
 
-        for page_result in extract_pages(&pdf_data, Some(options.clone()))? {
-            let page = page_result?;
+        for page in extract_pages_with_document(&doc, options.clone())? {
             page_num += 1;
             let geom = page_geometry_from_ltpage(&page);
             let tables = extract_tables_from_ltpage(&page, &geom, &settings);
@@ -424,7 +429,7 @@ fn process_file<W: Write>(
             OutputType::Text => {
                 let laparams = build_laparams(args)?;
                 let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
-                for_each_page_with_images(&pdf_data, &options, image_writer, |page| {
+                for_each_page_with_images(&doc, &options, image_writer, |page| {
                     converter.receive_layout(page);
                 })?;
             }
@@ -432,7 +437,7 @@ fn process_file<W: Write>(
                 let laparams = build_laparams(args)?;
                 let mut converter =
                     HTMLConverter::with_options(writer, &args.codec, 1, laparams, args.scale, 1.0);
-                for_each_page_with_images(&pdf_data, &options, image_writer, |page| {
+                for_each_page_with_images(&doc, &options, image_writer, |page| {
                     converter.receive_layout(page);
                 })?;
                 converter.close();
@@ -446,7 +451,7 @@ fn process_file<W: Write>(
                     laparams,
                     args.strip_control,
                 );
-                for_each_page_with_images(&pdf_data, &options, image_writer, |page| {
+                for_each_page_with_images(&doc, &options, image_writer, |page| {
                     converter.receive_layout(page);
                 })?;
                 converter.close();
@@ -454,7 +459,7 @@ fn process_file<W: Write>(
             OutputType::Tag => {
                 let laparams = build_laparams(args)?;
                 let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
-                for_each_page_with_images(&pdf_data, &options, image_writer, |page| {
+                for_each_page_with_images(&doc, &options, image_writer, |page| {
                     converter.receive_layout(page);
                 })?;
             }
@@ -467,7 +472,7 @@ fn process_file<W: Write>(
                     laparams,
                     args.strip_control,
                 );
-                for_each_page_with_images(&pdf_data, &options, image_writer, |page| {
+                for_each_page_with_images(&doc, &options, image_writer, |page| {
                     converter.receive_layout(page);
                 })?;
                 converter.close();
@@ -482,8 +487,7 @@ fn process_file<W: Write>(
         OutputType::Text => {
             let laparams = build_laparams(args)?;
             let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
-            for page_result in extract_pages(&pdf_data, Some(options.clone()))? {
-                let page = page_result?;
+            for page in extract_pages_with_document(&doc, options.clone())? {
                 converter.receive_layout(page);
             }
         }
@@ -497,8 +501,7 @@ fn process_file<W: Write>(
                 args.scale,
                 1.0, // fontscale
             );
-            for page_result in extract_pages(&pdf_data, Some(options.clone()))? {
-                let page = page_result?;
+            for page in extract_pages_with_document(&doc, options.clone())? {
                 converter.receive_layout(page);
             }
             converter.close();
@@ -507,8 +510,7 @@ fn process_file<W: Write>(
             let laparams = build_laparams(args)?;
             let mut converter =
                 XMLConverter::with_options(writer, &args.codec, 1, laparams, args.strip_control);
-            for page_result in extract_pages(&pdf_data, Some(options.clone()))? {
-                let page = page_result?;
+            for page in extract_pages_with_document(&doc, options.clone())? {
                 converter.receive_layout(page);
             }
             converter.close();
@@ -517,8 +519,7 @@ fn process_file<W: Write>(
             // Tag output - fall back to text for now
             let laparams = build_laparams(args)?;
             let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
-            for page_result in extract_pages(&pdf_data, Some(options.clone()))? {
-                let page = page_result?;
+            for page in extract_pages_with_document(&doc, options.clone())? {
                 converter.receive_layout(page);
             }
         }
@@ -526,8 +527,7 @@ fn process_file<W: Write>(
             let laparams = build_laparams(args)?;
             let mut converter =
                 HOCRConverter::with_options(writer, &args.codec, 1, laparams, args.strip_control);
-            for page_result in extract_pages(&pdf_data, Some(options.clone()))? {
-                let page = page_result?;
+            for page in extract_pages_with_document(&doc, options.clone())? {
                 converter.receive_layout(page);
             }
             converter.close();
