@@ -978,6 +978,22 @@ fn test_spatial_node_build_and_split() {
     assert!(!root.is_leaf(), "Root with 20 elements should be split");
 }
 
+#[test]
+fn test_spatial_node_internal_has_no_indices() {
+    use bolivar_core::layout::{PyId, SpatialNode};
+    use bolivar_core::utils::Rect;
+
+    let bboxes: Vec<(Rect, PyId)> = (0..20)
+        .map(|i| ((i as f64, 0.0, i as f64 + 0.5, 1.0), i as PyId))
+        .collect();
+    let mut arena = Vec::new();
+    let root = SpatialNode::build(&bboxes, &mut arena);
+
+    assert!(!arena[root].is_leaf());
+    assert!(arena[root].element_indices.is_empty());
+    assert_eq!(arena[root].element_count(), 20);
+}
+
 // ============================================================================
 // group_textboxes_exact tests - exact pdfminer-compatible grouping
 // ============================================================================

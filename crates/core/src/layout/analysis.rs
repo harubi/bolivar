@@ -40,6 +40,30 @@ pub enum TreeKind {
     Dynamic,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PlaneElem {
+    bbox: Rect,
+    idx: usize,
+}
+
+impl HasBBox for PlaneElem {
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+}
+
 /// Heap entry for group_textboxes_exact algorithm.
 /// Ordering matches pdfminer: (skip_isany, dist, id1, id2) lexicographic.
 /// BinaryHeap is max-heap, so we reverse comparison to get min-heap behavior.
@@ -139,6 +163,15 @@ fn f64_total_key(x: f64) -> DistKey {
     bits
 }
 
+#[inline(always)]
+fn dist_key_from_geom(a: Rect, area_a: f64, b: Rect, area_b: f64) -> DistKey {
+    let x0 = a.0.min(b.0);
+    let y0 = a.1.min(b.1);
+    let x1 = a.2.max(b.2);
+    let y1 = a.3.max(b.3);
+    f64_total_key((x1 - x0) * (y1 - y0) - area_a - area_b)
+}
+
 impl NodeStats {
     /// Create stats for a single element
     pub fn from_bbox_and_id(bbox: Rect, py_id: PyId) -> Self {
@@ -186,6 +219,7 @@ impl NodeStats {
 #[derive(Clone, Debug)]
 pub struct SpatialNode {
     pub stats: NodeStats,
+    pub count: usize,
     pub element_indices: Vec<usize>,
     pub left_child: Option<usize>,
     pub right_child: Option<usize>,
@@ -205,6 +239,7 @@ impl SpatialNode {
         indices: Vec<usize>,
         arena: &mut Vec<SpatialNode>,
     ) -> usize {
+        let count = indices.len();
         let stats = indices
             .iter()
             .map(|&i| NodeStats::from_bbox_and_id(elements[i].0, elements[i].1))
@@ -212,15 +247,27 @@ impl SpatialNode {
             .unwrap();
 
         let node_idx = arena.len();
+        if count <= LEAF_THRESHOLD {
+            arena.push(SpatialNode {
+                stats,
+                count,
+                element_indices: indices,
+                left_child: None,
+                right_child: None,
+            });
+            return node_idx;
+        }
+
         arena.push(SpatialNode {
             stats,
-            element_indices: indices.clone(),
+            count,
+            element_indices: Vec::new(),
             left_child: None,
             right_child: None,
         });
 
         // Split if > threshold
-        if indices.len() > LEAF_THRESHOLD {
+        if count > LEAF_THRESHOLD {
             let (x0, y0, x1, y1) = arena[node_idx].stats.bbox;
             let width = x1 - x0;
             let height = y1 - y0;
@@ -250,6 +297,7 @@ impl SpatialNode {
 
             arena[node_idx].left_child = Some(left_idx);
             arena[node_idx].right_child = Some(right_idx);
+            arena[node_idx].count = arena[left_idx].count + arena[right_idx].count;
         }
 
         node_idx
@@ -260,7 +308,7 @@ impl SpatialNode {
     }
 
     pub fn element_count(&self) -> usize {
-        self.element_indices.len()
+        self.count
     }
 }
 
@@ -299,6 +347,7 @@ impl DynamicSpatialTree {
         parents: &mut Vec<Option<usize>>,
         parent: Option<usize>,
     ) -> usize {
+        let count = indices.len();
         let stats = indices
             .iter()
             .map(|&i| NodeStats::from_bbox_and_id(elements[i].0, elements[i].1))
@@ -306,15 +355,28 @@ impl DynamicSpatialTree {
             .unwrap();
 
         let node_idx = nodes.len();
+        if count <= LEAF_THRESHOLD {
+            nodes.push(SpatialNode {
+                stats,
+                count,
+                element_indices: indices,
+                left_child: None,
+                right_child: None,
+            });
+            parents.push(parent);
+            return node_idx;
+        }
+
         nodes.push(SpatialNode {
             stats,
-            element_indices: indices.clone(),
+            count,
+            element_indices: Vec::new(),
             left_child: None,
             right_child: None,
         });
         parents.push(parent);
 
-        if indices.len() > LEAF_THRESHOLD {
+        if count > LEAF_THRESHOLD {
             let (x0, y0, x1, y1) = nodes[node_idx].stats.bbox;
             let width = x1 - x0;
             let height = y1 - y0;
@@ -345,9 +407,9 @@ impl DynamicSpatialTree {
 
             nodes[node_idx].left_child = Some(left_idx);
             nodes[node_idx].right_child = Some(right_idx);
-            nodes[node_idx].element_indices.clear();
             let merged = nodes[left_idx].stats.merge(&nodes[right_idx].stats);
             nodes[node_idx].stats = merged;
+            nodes[node_idx].count = nodes[left_idx].count + nodes[right_idx].count;
         }
 
         node_idx
@@ -364,6 +426,7 @@ impl DynamicSpatialTree {
             let stats = NodeStats::from_bbox_and_id(bbox, py_id);
             self.nodes.push(SpatialNode {
                 stats,
+                count: 1,
                 element_indices: vec![elem_idx],
                 left_child: None,
                 right_child: None,
@@ -380,6 +443,7 @@ impl DynamicSpatialTree {
 
         let leaf = self.choose_leaf(self.root, bbox);
         self.nodes[leaf].element_indices.push(elem_idx);
+        self.nodes[leaf].count = self.nodes[leaf].element_indices.len();
         self.nodes[leaf].stats = self.nodes[leaf]
             .stats
             .merge(&NodeStats::from_bbox_and_id(bbox, py_id));
@@ -429,7 +493,7 @@ impl DynamicSpatialTree {
     }
 
     fn split_leaf(&mut self, node_idx: usize, elem_idx: usize, elements: &[(Rect, PyId)]) -> usize {
-        let indices = self.nodes[node_idx].element_indices.clone();
+        let indices = std::mem::take(&mut self.nodes[node_idx].element_indices);
         let (x0, y0, x1, y1) = self.nodes[node_idx].stats.bbox;
         let width = x1 - x0;
         let height = y1 - y0;
@@ -450,8 +514,8 @@ impl DynamicSpatialTree {
         }
 
         let mid = sorted.len() / 2;
-        let left_indices = sorted[..mid].to_vec();
-        let right_indices = sorted[mid..].to_vec();
+        let right_indices = sorted.split_off(mid);
+        let left_indices = sorted;
 
         let left_stats = left_indices
             .iter()
@@ -467,6 +531,7 @@ impl DynamicSpatialTree {
         let left_idx = self.nodes.len();
         self.nodes.push(SpatialNode {
             stats: left_stats,
+            count: left_indices.len(),
             element_indices: left_indices,
             left_child: None,
             right_child: None,
@@ -476,6 +541,7 @@ impl DynamicSpatialTree {
         let right_idx = self.nodes.len();
         self.nodes.push(SpatialNode {
             stats: right_stats,
+            count: right_indices.len(),
             element_indices: right_indices,
             left_child: None,
             right_child: None,
@@ -484,11 +550,11 @@ impl DynamicSpatialTree {
 
         self.nodes[node_idx].left_child = Some(left_idx);
         self.nodes[node_idx].right_child = Some(right_idx);
-        self.nodes[node_idx].element_indices.clear();
         let merged = self.nodes[left_idx]
             .stats
             .merge(&self.nodes[right_idx].stats);
         self.nodes[node_idx].stats = merged;
+        self.nodes[node_idx].count = self.nodes[left_idx].count + self.nodes[right_idx].count;
 
         for &idx in &self.nodes[left_idx].element_indices {
             if idx >= self.elem_leaf.len() {
@@ -518,6 +584,7 @@ impl DynamicSpatialTree {
             let right = self.nodes[idx].right_child.unwrap();
             let merged = self.nodes[left].stats.merge(&self.nodes[right].stats);
             self.nodes[idx].stats = merged;
+            self.nodes[idx].count = self.nodes[left].count + self.nodes[right].count;
             node_idx = self.parents[idx];
         }
     }
@@ -1260,17 +1327,6 @@ impl LTLayoutContainer {
             return Vec::new();
         }
 
-        // Distance function (same as existing)
-        fn dist(obj1: &TextGroupElement, obj2: &TextGroupElement) -> DistKey {
-            let x0 = obj1.x0().min(obj2.x0());
-            let y0 = obj1.y0().min(obj2.y0());
-            let x1 = obj1.x1().max(obj2.x1());
-            let y1 = obj1.y1().max(obj2.y1());
-            f64_total_key(
-                (x1 - x0) * (y1 - y0) - obj1.width() * obj1.height() - obj2.width() * obj2.height(),
-            )
-        }
-
         // 1. Build elements with py_ids in PARSE ORDER
         let mut elements: Vec<TextGroupElement> = boxes
             .iter()
@@ -1281,27 +1337,36 @@ impl LTLayoutContainer {
         let reserve_extra = elements.len().saturating_sub(1);
         elements.reserve_exact(reserve_extra);
         py_ids.reserve_exact(reserve_extra);
+        let mut bboxes: Vec<Rect> = elements.iter().map(|e| e.bbox()).collect();
+        let mut areas: Vec<f64> = bboxes.iter().map(|b| (b.2 - b.0) * (b.3 - b.1)).collect();
+        bboxes.reserve_exact(reserve_extra);
+        areas.reserve_exact(reserve_extra);
 
         // 2. Build Plane for isany queries (uses existing infrastructure)
         let mut min_x0 = INF_F64;
         let mut min_y0 = INF_F64;
         let mut max_x1 = -INF_F64;
         let mut max_y1 = -INF_F64;
-        for elem in &elements {
-            min_x0 = min_x0.min(elem.x0());
-            min_y0 = min_y0.min(elem.y0());
-            max_x1 = max_x1.max(elem.x1());
-            max_y1 = max_y1.max(elem.y1());
+        for bbox in &bboxes {
+            min_x0 = min_x0.min(bbox.0);
+            min_y0 = min_y0.min(bbox.1);
+            max_x1 = max_x1.max(bbox.2);
+            max_y1 = max_y1.max(bbox.3);
         }
         let plane_bbox = (min_x0 - 1.0, min_y0 - 1.0, max_x1 + 1.0, max_y1 + 1.0);
-        let mut plane: Plane<TextGroupElement> = Plane::new(plane_bbox, 1);
-        plane.extend(elements.iter().cloned());
+        let mut plane: Plane<PlaneElem> = Plane::new(plane_bbox, 1);
+        plane.extend(
+            bboxes
+                .iter()
+                .enumerate()
+                .map(|(idx, &bbox)| PlaneElem { bbox, idx }),
+        );
 
         // 3. Build lightweight spatial tree for frontier
-        let mut bbox_ids: Vec<(Rect, PyId)> = elements
+        let mut bbox_ids: Vec<(Rect, PyId)> = bboxes
             .iter()
             .enumerate()
-            .map(|(i, e)| (e.bbox(), i as PyId))
+            .map(|(i, &bbox)| (bbox, i as PyId))
             .collect();
         bbox_ids.reserve_exact(reserve_extra);
         let mut initial_nodes: Vec<SpatialNode> = Vec::new();
@@ -1343,12 +1408,12 @@ impl LTLayoutContainer {
                     entry,
                     &initial_nodes,
                     &dynamic_tree,
-                    &elements,
+                    &bboxes,
+                    &areas,
                     &py_ids,
                     &done,
                     &mut main_heap,
                     &mut frontier,
-                    dist,
                 );
             }
 
@@ -1364,20 +1429,15 @@ impl LTLayoutContainer {
 
             // isany check using allocation-free Plane query
             if !best.skip_isany {
-                let x0 = elements[best.elem1_idx]
-                    .x0()
-                    .min(elements[best.elem2_idx].x0());
-                let y0 = elements[best.elem1_idx]
-                    .y0()
-                    .min(elements[best.elem2_idx].y0());
-                let x1 = elements[best.elem1_idx]
-                    .x1()
-                    .max(elements[best.elem2_idx].x1());
-                let y1 = elements[best.elem1_idx]
-                    .y1()
-                    .max(elements[best.elem2_idx].y1());
+                let bbox_a = bboxes[best.elem1_idx];
+                let bbox_b = bboxes[best.elem2_idx];
+                let x0 = bbox_a.0.min(bbox_b.0);
+                let y0 = bbox_a.1.min(bbox_b.1);
+                let x1 = bbox_a.2.max(bbox_b.2);
+                let y1 = bbox_a.3.max(bbox_b.3);
 
-                let has_between = plane.any_with_indices((x0, y0, x1, y1), |idx, _| {
+                let has_between = plane.any_with_indices((x0, y0, x1, y1), |_, elem| {
+                    let idx = elem.idx;
                     !done[idx] && idx != best.elem1_idx && idx != best.elem2_idx
                 });
 
@@ -1408,14 +1468,27 @@ impl LTLayoutContainer {
             let new_py_id = next_py_id;
             next_py_id += 1;
 
-            plane.add(group_elem.clone());
+            let bbox_a = bboxes[best.elem1_idx];
+            let bbox_b = bboxes[best.elem2_idx];
+            let x0 = bbox_a.0.min(bbox_b.0);
+            let y0 = bbox_a.1.min(bbox_b.1);
+            let x1 = bbox_a.2.max(bbox_b.2);
+            let y1 = bbox_a.3.max(bbox_b.3);
+            let new_bbox = (x0, y0, x1, y1);
+            let new_area = (x1 - x0) * (y1 - y0);
+
+            plane.add(PlaneElem {
+                bbox: new_bbox,
+                idx: new_idx,
+            });
             elements.push(group_elem);
+            bboxes.push(new_bbox);
+            areas.push(new_area);
             py_ids.push(new_py_id);
             done.push(false);
-            bbox_ids.push((elements[new_idx].bbox(), new_py_id));
+            bbox_ids.push((new_bbox, new_py_id));
 
-            let group_leaf =
-                dynamic_tree.insert(new_idx, elements[new_idx].bbox(), new_py_id, &bbox_ids);
+            let group_leaf = dynamic_tree.insert(new_idx, new_bbox, new_py_id, &bbox_ids);
             let group_stats = &dynamic_tree.nodes[group_leaf].stats;
             let root_stats = &dynamic_tree.nodes[dynamic_tree.root].stats;
             let lb = calc_dist_lower_bound(group_stats, root_stats);
@@ -1431,8 +1504,9 @@ impl LTLayoutContainer {
         }
 
         // Collect remaining elements as groups
-        plane
-            .iter_with_indices()
+        elements
+            .iter()
+            .enumerate()
             .filter(|(id, _)| !done[*id])
             .map(|(_, elem)| match elem {
                 TextGroupElement::Group(g) => g.as_ref().clone(),
@@ -1448,12 +1522,12 @@ impl LTLayoutContainer {
         entry: FrontierEntry,
         initial_nodes: &[SpatialNode],
         dynamic_tree: &DynamicSpatialTree,
-        elements: &[TextGroupElement],
+        bboxes: &[Rect],
+        areas: &[f64],
         py_ids: &[PyId],
         done: &[bool],
         main_heap: &mut BinaryHeap<GroupHeapEntry>,
         frontier: &mut BinaryHeap<FrontierEntry>,
-        dist: fn(&TextGroupElement, &TextGroupElement) -> DistKey,
     ) {
         let nodes = match entry.tree {
             TreeKind::Initial => initial_nodes,
@@ -1475,7 +1549,9 @@ impl LTLayoutContainer {
                                 if done[ei] || done[ej] {
                                     continue;
                                 }
-                                let d = dist(&elements[ei], &elements[ej]);
+                                let d = dist_key_from_geom(
+                                    bboxes[ei], areas[ei], bboxes[ej], areas[ej],
+                                );
                                 // py_ids equal indices for initial elements, so i<j means py_ids[i]<py_ids[j]
                                 main_heap.push(GroupHeapEntry {
                                     skip_isany: false,
@@ -1494,7 +1570,9 @@ impl LTLayoutContainer {
                                 if done[ei] || done[ej] {
                                     continue;
                                 }
-                                let d = dist(&elements[ei], &elements[ej]);
+                                let d = dist_key_from_geom(
+                                    bboxes[ei], areas[ei], bboxes[ej], areas[ej],
+                                );
                                 // Maintain i<j orientation
                                 let (id1, id2, idx1, idx2) = if py_ids[ei] < py_ids[ej] {
                                     (py_ids[ei], py_ids[ej], ei, ej)
@@ -1529,7 +1607,12 @@ impl LTLayoutContainer {
                         if ej == group_idx || done[ej] {
                             continue;
                         }
-                        let d = dist(&elements[group_idx], &elements[ej]);
+                        let d = dist_key_from_geom(
+                            bboxes[group_idx],
+                            areas[group_idx],
+                            bboxes[ej],
+                            areas[ej],
+                        );
                         main_heap.push(GroupHeapEntry {
                             skip_isany: false,
                             dist: d,
@@ -1794,7 +1877,7 @@ impl LTPage {
 
 #[cfg(test)]
 mod tests {
-    use super::f64_total_key;
+    use super::{dist_key_from_geom, f64_total_key};
 
     #[test]
     fn test_f64_total_key_matches_total_cmp() {
@@ -1812,5 +1895,15 @@ mod tests {
                 assert_eq!(f64_total_key(a).cmp(&f64_total_key(b)), a.total_cmp(&b));
             }
         }
+    }
+
+    #[test]
+    fn test_dist_key_from_geom_matches_manual_formula() {
+        let a = (0.0, 0.0, 10.0, 10.0);
+        let b = (20.0, 0.0, 30.0, 10.0);
+        let area_a = 100.0;
+        let area_b = 100.0;
+        let expected = f64_total_key((30.0 - 0.0) * (10.0 - 0.0) - area_a - area_b);
+        assert_eq!(dist_key_from_geom(a, area_a, b, area_b), expected);
     }
 }
