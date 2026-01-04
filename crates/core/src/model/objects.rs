@@ -222,6 +222,11 @@ impl PDFStream {
         self.rawdata.as_ref()
     }
 
+    /// Get raw data as shared bytes.
+    pub fn rawdata_bytes(&self) -> Bytes {
+        self.rawdata.clone()
+    }
+
     /// Check if rawdata has been decrypted already.
     pub fn rawdata_is_decrypted(&self) -> bool {
         self.rawdata_decrypted

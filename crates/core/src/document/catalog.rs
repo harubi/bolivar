@@ -568,6 +568,82 @@ impl PDFDocument {
         val
     }
 
+    fn stream_has_filters(stream: &crate::model::objects::PDFStream) -> bool {
+        stream.get("Filter").is_some()
+    }
+
+    /// Decode a PDF stream with caller-provided scratch storage.
+    ///
+    /// The closure receives a slice valid for the duration of the call.
+    pub fn with_decoded_stream<R>(
+        &self,
+        stream: &crate::model::objects::PDFStream,
+        objid: u32,
+        genno: u16,
+        scratch: &mut Vec<u8>,
+        f: impl FnOnce(&[u8]) -> R,
+    ) -> Result<R> {
+        let needs_decrypt =
+            !stream.rawdata_is_decrypted() && self.security_handler.is_some();
+        let has_filters = Self::stream_has_filters(stream);
+
+        if !needs_decrypt && !has_filters {
+            return Ok(f(stream.get_rawdata()));
+        }
+
+        let mut data = stream.get_rawdata();
+
+        if needs_decrypt {
+            let handler = self
+                .security_handler
+                .as_ref()
+                .expect("security handler checked");
+            *scratch = handler.decrypt_stream(objid, genno, data, &stream.attrs);
+            data = scratch.as_slice();
+        }
+
+        if !has_filters {
+            return Ok(f(data));
+        }
+
+        let decoded = self.apply_filters(data, stream)?;
+        *scratch = decoded;
+        Ok(f(scratch.as_slice()))
+    }
+
+    /// Decode a PDF stream to shared bytes.
+    ///
+    /// Returns a zero-copy view when no decryption or filters are required.
+    pub fn decode_stream_bytes_with_objid(
+        &self,
+        stream: &crate::model::objects::PDFStream,
+        objid: u32,
+        genno: u16,
+    ) -> Result<Bytes> {
+        let needs_decrypt =
+            !stream.rawdata_is_decrypted() && self.security_handler.is_some();
+        let has_filters = Self::stream_has_filters(stream);
+
+        if !needs_decrypt && !has_filters {
+            return Ok(stream.rawdata_bytes());
+        }
+
+        let mut scratch = Vec::new();
+        self.with_decoded_stream(stream, objid, genno, &mut scratch, |data| {
+            Bytes::copy_from_slice(data)
+        })
+    }
+
+    /// Decode a PDF stream to shared bytes without explicit objid/genno.
+    pub fn decode_stream_bytes(
+        &self,
+        stream: &crate::model::objects::PDFStream,
+    ) -> Result<Bytes> {
+        let objid = stream.objid.unwrap_or(0);
+        let genno = stream.genno.unwrap_or(0) as u16;
+        self.decode_stream_bytes_with_objid(stream, objid, genno)
+    }
+
     /// Decode a PDF stream (handle decryption and FlateDecode, etc.)
     ///
     /// # Arguments
@@ -1804,6 +1880,31 @@ mod tests {
         let expected_ptr = unsafe { base_ptr.add(stream_start) };
 
         assert_eq!(raw.as_ptr(), expected_ptr);
+    }
+
+    #[test]
+    fn test_decode_stream_bytes_no_filters_is_zero_copy() {
+        use bytes::Bytes;
+
+        let pdf = b"%PDF-1.4\n1 0 obj\n<< /Length 11 >>\nstream\nhello world\nendstream\nendobj\n";
+        let bytes = Bytes::from_static(pdf);
+        let base_ptr = bytes.as_ptr();
+        let doc = PDFDocument::new_from_bytes(bytes.clone(), "").unwrap();
+        let obj = doc.getobj(1).unwrap();
+        let stream = obj.as_stream().unwrap();
+        let decoded = doc.decode_stream_bytes(stream).unwrap();
+
+        assert_eq!(&decoded[..], b"hello world");
+
+        let needle = b"stream\n";
+        let stream_pos = pdf
+            .windows(needle.len())
+            .position(|window| window == needle)
+            .expect("stream marker not found");
+        let stream_start = stream_pos + needle.len();
+        let expected_ptr = unsafe { base_ptr.add(stream_start) };
+
+        assert_eq!(decoded.as_ptr(), expected_ptr);
     }
 
     #[test]
