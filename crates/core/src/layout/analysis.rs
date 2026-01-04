@@ -1278,6 +1278,9 @@ impl LTLayoutContainer {
             .collect();
         let mut py_ids: Vec<PyId> = (0..elements.len() as PyId).collect();
         let mut next_py_id = elements.len() as PyId;
+        let reserve_extra = elements.len().saturating_sub(1);
+        elements.reserve_exact(reserve_extra);
+        py_ids.reserve_exact(reserve_extra);
 
         // 2. Build Plane for isany queries (uses existing infrastructure)
         let mut min_x0 = INF_F64;
@@ -1300,6 +1303,7 @@ impl LTLayoutContainer {
             .enumerate()
             .map(|(i, e)| (e.bbox(), i as PyId))
             .collect();
+        bbox_ids.reserve_exact(reserve_extra);
         let mut initial_nodes: Vec<SpatialNode> = Vec::new();
         let root_idx = SpatialNode::build(&bbox_ids, &mut initial_nodes);
         let mut dynamic_tree = DynamicSpatialTree::build(&bbox_ids);
@@ -1319,6 +1323,7 @@ impl LTLayoutContainer {
 
         // 5. Track active elements (tombstone pattern via done set)
         let mut done: Vec<bool> = vec![false; elements.len()];
+        done.reserve_exact(reserve_extra);
 
         // 6. Main loop
         loop {
