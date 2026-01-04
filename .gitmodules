@@ -1,0 +1,9 @@
+[submodule "references/pdfminer.six"]
+	path = references/pdfminer.six
+	url = https://github.com/pdfminer/pdfminer.six
+[submodule "references/pdfplumber"]
+	path = references/pdfplumber
+	url = https://github.com/jsvine/pdfplumber.git
+[submodule "references/tabula-java"]
+	path = references/tabula-java
+	url = https://github.com/tabulapdf/tabula-java
