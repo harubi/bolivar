@@ -3,6 +3,7 @@
 //! Port of pdfminer.six pdftypes.py
 
 use crate::error::{PdfError, Result};
+use bytes::Bytes;
 use std::collections::HashMap;
 
 /// PDF Object types - the fundamental value type in PDF.
@@ -186,7 +187,7 @@ pub struct PDFStream {
     /// Stream dictionary attributes
     pub attrs: HashMap<String, PDFObject>,
     /// Raw (possibly encoded) data
-    rawdata: Vec<u8>,
+    rawdata: Bytes,
     /// Whether rawdata has already been decrypted
     rawdata_decrypted: bool,
     /// Decoded data (lazily populated)
@@ -199,10 +200,10 @@ pub struct PDFStream {
 
 impl PDFStream {
     /// Create a new stream.
-    pub fn new(attrs: HashMap<String, PDFObject>, rawdata: Vec<u8>) -> Self {
+    pub fn new(attrs: HashMap<String, PDFObject>, rawdata: impl Into<Bytes>) -> Self {
         Self {
             attrs,
-            rawdata,
+            rawdata: rawdata.into(),
             rawdata_decrypted: false,
             data: None,
             objid: None,
@@ -218,7 +219,7 @@ impl PDFStream {
 
     /// Get raw (undecoded) data.
     pub fn get_rawdata(&self) -> &[u8] {
-        &self.rawdata
+        self.rawdata.as_ref()
     }
 
     /// Check if rawdata has been decrypted already.
@@ -228,7 +229,7 @@ impl PDFStream {
 
     /// Replace rawdata and mark it as decrypted.
     pub fn set_rawdata_decrypted(&mut self, data: Vec<u8>) {
-        self.rawdata = data;
+        self.rawdata = Bytes::from(data);
         self.rawdata_decrypted = true;
         self.data = None;
     }
@@ -238,7 +239,7 @@ impl PDFStream {
     /// Note: In a full implementation, this would handle filters like
     /// FlateDecode, LZWDecode, etc. For now, returns raw data.
     pub fn get_data(&self) -> &[u8] {
-        self.data.as_ref().unwrap_or(&self.rawdata)
+        self.data.as_deref().unwrap_or_else(|| self.rawdata.as_ref())
     }
 
     /// Check if stream contains a key.

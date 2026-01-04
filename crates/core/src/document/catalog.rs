@@ -65,11 +65,15 @@ pub enum PdfBytes {
 }
 
 impl PdfBytes {
-    fn as_slice(&self) -> &[u8] {
+    fn as_bytes(&self) -> &Bytes {
         match self {
-            PdfBytes::Owned(data) => data.as_ref(),
-            PdfBytes::Shared(data) => data.as_ref(),
+            PdfBytes::Owned(data) => data,
+            PdfBytes::Shared(data) => data,
         }
+    }
+
+    fn as_slice(&self) -> &[u8] {
+        self.as_bytes().as_ref()
     }
 
     fn len(&self) -> usize {
@@ -1204,11 +1208,13 @@ impl PDFDocument {
                 self.data.len()
             )));
         }
-        let data = &self.data.as_slice()[offset..];
+        let mut cursor = offset;
+        let mut data = &self.data.as_slice()[offset..];
 
         // Parse "objid genno obj"
         let (_objid, consumed1) = self.read_number(data)?;
-        let data = &data[consumed1..];
+        cursor += consumed1;
+        data = &data[consumed1..];
 
         // Skip whitespace
         let mut skip = 0;
@@ -1217,10 +1223,12 @@ impl PDFDocument {
         {
             skip += 1;
         }
-        let data = &data[skip..];
+        cursor += skip;
+        data = &data[skip..];
 
         let (_genno, consumed2) = self.read_number(data)?;
-        let data = &data[consumed2..];
+        cursor += consumed2;
+        data = &data[consumed2..];
 
         // Skip whitespace
         let mut skip = 0;
@@ -1229,7 +1237,8 @@ impl PDFDocument {
         {
             skip += 1;
         }
-        let data = &data[skip..];
+        cursor += skip;
+        data = &data[skip..];
 
         // Expect "obj"
         if !data.starts_with(b"obj") {
@@ -1239,7 +1248,8 @@ impl PDFDocument {
                 String::from_utf8_lossy(&data[..std::cmp::min(10, data.len())])
             )));
         }
-        let data = &data[3..];
+        cursor += 3;
+        data = &data[3..];
 
         // Skip whitespace
         let mut skip = 0;
@@ -1248,11 +1258,13 @@ impl PDFDocument {
         {
             skip += 1;
         }
-        let data = &data[skip..];
+        cursor += skip;
+        data = &data[skip..];
 
         // Parse the object
         let mut parser = PDFParser::new(data);
         let obj = parser.parse_object()?;
+        let base_pos = parser.tell();
 
         // Check if this is a stream (dict followed by "stream")
         if let PDFObject::Dict(ref dict) = obj {
@@ -1296,25 +1308,28 @@ impl PDFDocument {
                 // Extract stream data
                 let stream_start = pos;
                 let remaining_len = remaining.len();
+        let stream_start_abs = cursor + base_pos + stream_start;
 
                 let stream_data = if fallback || force_scan || length == 0 {
                     // Fallback mode or missing length: scan for endstream
                     if let Some(end_pos) = Self::find_endstream(&remaining[stream_start..]) {
-                        let end = (stream_start + end_pos).min(remaining_len);
-                        remaining[stream_start..end].to_vec()
+                        let end = (stream_start_abs + end_pos).min(self.data.len());
+                        self.data.as_bytes().slice(stream_start_abs..end)
                     } else {
-                        remaining[stream_start..].to_vec()
+                        self.data.as_bytes().slice(stream_start_abs..)
                     }
                 } else if stream_start + length <= remaining_len {
                     // Trust declared /Length when it fits in the remaining buffer
-                    remaining[stream_start..stream_start + length].to_vec()
+                    self.data
+                        .as_bytes()
+                        .slice(stream_start_abs..stream_start_abs + length)
                 } else {
                     // Length looks corrupted; fall back to endstream scan
                     if let Some(end_pos) = Self::find_endstream(&remaining[stream_start..]) {
-                        let end = (stream_start + end_pos).min(remaining_len);
-                        remaining[stream_start..end].to_vec()
+                        let end = (stream_start_abs + end_pos).min(self.data.len());
+                        self.data.as_bytes().slice(stream_start_abs..end)
                     } else {
-                        remaining[stream_start..].to_vec()
+                        self.data.as_bytes().slice(stream_start_abs..)
                     }
                 };
 
@@ -1764,6 +1779,31 @@ mod tests {
             PdfBytes::Shared(_) => {}
             _ => panic!("expected PdfBytes::Shared for mmap input"),
         }
+    }
+
+    #[test]
+    fn test_stream_rawdata_is_slice_of_document_bytes() {
+        use bytes::Bytes;
+
+        let pdf = b"%PDF-1.4\n1 0 obj\n<< /Length 11 >>\nstream\nhello world\nendstream\nendobj\n";
+        let bytes = Bytes::from_static(pdf);
+        let base_ptr = bytes.as_ptr();
+        let doc = PDFDocument::new_from_bytes(bytes.clone(), "").unwrap();
+        let obj = doc.getobj(1).unwrap();
+        let stream = obj.as_stream().unwrap();
+        let raw = stream.get_rawdata();
+
+        assert_eq!(raw, b"hello world");
+
+        let needle = b"stream\n";
+        let stream_pos = pdf
+            .windows(needle.len())
+            .position(|window| window == needle)
+            .expect("stream marker not found");
+        let stream_start = stream_pos + needle.len();
+        let expected_ptr = unsafe { base_ptr.add(stream_start) };
+
+        assert_eq!(raw.as_ptr(), expected_ptr);
     }
 
     #[test]

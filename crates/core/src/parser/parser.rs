@@ -30,6 +30,11 @@ impl<'a> PDFParser<'a> {
         self.base.remaining()
     }
 
+    /// Get current parser position.
+    pub fn tell(&self) -> usize {
+        self.base.tell()
+    }
+
     /// Get next token (from lookahead or parser)
     fn next_token(&mut self) -> Result<Option<PSToken>> {
         if let Some(tok) = self.lookahead.pop() {
