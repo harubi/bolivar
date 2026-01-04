@@ -10,6 +10,7 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::hash::Hash;
+use std::ops::ControlFlow;
 
 use geo_index::rtree::sort::HilbertSort;
 use geo_index::rtree::{RTree as GeoRTree, RTreeBuilder, RTreeIndex, SimpleDistanceMetric};
@@ -202,6 +203,8 @@ pub struct Plane<T> {
     static_count: usize,
     /// Dynamic spatial index (id + bbox only)
     dynamic_tree: RTree<PlaneNode>,
+    /// Scratch stack for allocation-free static tree searches
+    static_search_stack: Vec<usize>,
 }
 
 impl<T: HasBBox> Plane<T> {
@@ -216,6 +219,7 @@ impl<T: HasBBox> Plane<T> {
             static_tree: None,
             static_count: 0,
             dynamic_tree: RTree::new(),
+            static_search_stack: Vec::new(),
         }
     }
 
@@ -250,6 +254,9 @@ impl<T: HasBBox> Plane<T> {
             }
             self.static_tree = Some(builder.finish::<HilbertSort>());
             self.static_count = nodes.len();
+            if let Some(tree) = &self.static_tree {
+                self.static_search_stack = Vec::with_capacity(tree.num_nodes());
+            }
         } else {
             for (id, bbox) in nodes {
                 self.dynamic_tree.insert(PlaneNode { id, bbox });
@@ -350,7 +357,7 @@ impl<T: HasBBox> Plane<T> {
     }
 
     /// Returns true if any intersecting object matches the predicate.
-    pub fn any_with_indices<F>(&self, bbox: Rect, mut pred: F) -> bool
+    pub fn any_with_indices<F>(&mut self, bbox: Rect, mut pred: F) -> bool
     where
         F: FnMut(usize, &T) -> bool,
     {
@@ -363,26 +370,70 @@ impl<T: HasBBox> Plane<T> {
         };
 
         if let Some(tree) = &self.static_tree {
-            for id in tree.search(x0, y0, x1, y1) {
-                let id = id as usize;
-                if id >= self.static_count || !self.alive[id] {
-                    continue;
-                }
-                let obj_bbox = self.bboxes[id];
-                if intersects(obj_bbox) && pred(id, &self.seq[id]) {
-                    return true;
+            let boxes = tree.boxes();
+            if !boxes.is_empty() {
+                let indices = tree.indices();
+                let level_bounds = tree.level_bounds();
+                let node_size = tree.node_size() as usize;
+                let leaf_limit = self.static_count * 4;
+
+                self.static_search_stack.clear();
+                let mut outer_node_index = boxes.len().checked_sub(4);
+
+                while let Some(node_index) = outer_node_index {
+                    let end =
+                        (node_index + node_size * 4).min(upper_bound(node_index, level_bounds));
+
+                    for pos in (node_index..end).step_by(4) {
+                        // Safety: pos is within bounds from computed end
+                        let (node_min_x, node_min_y, node_max_x, node_max_y) = unsafe {
+                            let node_min_x = *boxes.get_unchecked(pos);
+                            let node_min_y = *boxes.get_unchecked(pos + 1);
+                            let node_max_x = *boxes.get_unchecked(pos + 2);
+                            let node_max_y = *boxes.get_unchecked(pos + 3);
+                            (node_min_x, node_min_y, node_max_x, node_max_y)
+                        };
+
+                        if x1 < node_min_x || y1 < node_min_y || x0 > node_max_x || y0 > node_max_y
+                        {
+                            continue;
+                        }
+
+                        let index = indices.get(pos >> 2);
+                        if node_index >= leaf_limit {
+                            self.static_search_stack.push(index);
+                        } else {
+                            let id = index as usize;
+                            if id >= self.static_count || !self.alive[id] {
+                                continue;
+                            }
+                            let obj_bbox = self.bboxes[id];
+                            if intersects(obj_bbox) && pred(id, &self.seq[id]) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    outer_node_index = self.static_search_stack.pop();
                 }
             }
         }
 
-        for node in self.dynamic_tree.locate_in_envelope_intersecting(&env) {
-            if !self.alive.get(node.id).copied().unwrap_or(false) {
-                continue;
-            }
-            let obj_bbox = self.bboxes[node.id];
-            if intersects(obj_bbox) && pred(node.id, &self.seq[node.id]) {
-                return true;
-            }
+        if matches!(
+            self.dynamic_tree
+                .locate_in_envelope_intersecting_int(&env, |node| {
+                    if !self.alive.get(node.id).copied().unwrap_or(false) {
+                        return ControlFlow::Continue(());
+                    }
+                    let obj_bbox = self.bboxes[node.id];
+                    if intersects(obj_bbox) && pred(node.id, &self.seq[node.id]) {
+                        return ControlFlow::Break(());
+                    }
+                    ControlFlow::Continue(())
+                }),
+            ControlFlow::Break(())
+        ) {
+            return true;
         }
 
         false
@@ -471,6 +522,23 @@ impl<T: HasBBox> Plane<T> {
             .enumerate()
             .filter(|(i, _)| self.alive.get(*i).copied().unwrap_or(false))
     }
+}
+
+#[inline]
+fn upper_bound(value: usize, arr: &[usize]) -> usize {
+    let mut i = 0;
+    let mut j = arr.len() - 1;
+
+    while i < j {
+        let m = (i + j) >> 1;
+        if arr[m] > value {
+            j = m;
+        } else {
+            i = m + 1;
+        }
+    }
+
+    arr[i]
 }
 
 /// Groups every n elements of an iterator into tuples.

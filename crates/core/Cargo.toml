@@ -35,6 +35,8 @@ memmap2.workspace = true
 criterion.workspace = true
 hex.workspace = true
 insta.workspace = true
+stats_alloc.workspace = true
+stats_alloc_helper.workspace = true
 
 [[bench]]
 name = "plane_bench"

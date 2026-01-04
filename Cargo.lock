@@ -169,6 +169,8 @@ dependencies = [
  "rstar",
  "rustc-hash",
  "sha2",
+ "stats_alloc",
+ "stats_alloc_helper",
  "thiserror 2.0.17",
  "unicode-normalization",
  "weezl",
@@ -834,6 +836,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f89776e4d69bb58bc6993e99ffa1d11f228b839984854c7daeb5d37f87cbe950"
 
 [[package]]
+name = "probe"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "136558b6e1ebaecc92755d0ffaf9421f519531bed30cc2ad23b22cb00965cc5e"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1095,6 +1103,23 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "stats_alloc"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0e04424e733e69714ca1bbb9204c1a57f09f5493439520f9f68c132ad25eec"
+
+[[package]]
+name = "stats_alloc_helper"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b5cad4cacaec2bf6e843757d60f5791f1539176507461b9474352346c2f2d85"
+dependencies = [
+ "libc",
+ "probe",
+ "stats_alloc",
+]
 
 [[package]]
 name = "strsim"

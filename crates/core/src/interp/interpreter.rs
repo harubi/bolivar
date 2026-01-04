@@ -493,16 +493,32 @@ impl SegmentedContentLexer {
 
     fn parse_keyword(&mut self) -> Result<PSToken> {
         if !self.cursor.current_slice().is_empty() {
-            let (token, end_idx) = {
-                let slice = self.cursor.current_slice();
-                match slice.iter().position(|&b| is_keyword_end(b)) {
-                    Some(end_idx) => (Some(token_from_bytes(&slice[..end_idx])), Some(end_idx)),
-                    None => (None, None),
+            let slice = self.cursor.current_slice();
+            match slice.iter().position(|&b| is_keyword_end(b)) {
+                Some(end_idx) => {
+                    let token = token_from_bytes(&slice[..end_idx]);
+                    self.cursor.advance(end_idx);
+                    return Ok(token);
                 }
-            };
-            if let (Some(token), Some(end_idx)) = (token, end_idx) {
-                self.cursor.advance(end_idx);
-                return Ok(token);
+                None => {
+                    if let Some(next) = self.cursor.peek_at(slice.len()) {
+                        let starts_number = matches!(next, b'0'..=b'9' | b'+' | b'-' | b'.');
+                        if starts_number {
+                            let token = token_from_bytes(slice);
+                            let should_stop = match &token {
+                                PSToken::Keyword(Keyword::Unknown(_)) => false,
+                                PSToken::Keyword(Keyword::D) => !matches!(next, b'0' | b'1'),
+                                PSToken::Keyword(_) => true,
+                                PSToken::Bool(_) => true,
+                                _ => false,
+                            };
+                            if should_stop {
+                                self.cursor.advance(slice.len());
+                                return Ok(token);
+                            }
+                        }
+                    }
+                }
             }
         }
 
