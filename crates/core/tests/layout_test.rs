@@ -8,7 +8,7 @@ use bolivar_core::layout::{
     LTLine, LTPage, LTRect, LTTextBox, LTTextBoxHorizontal, LTTextBoxVertical, LTTextGroup,
     LTTextLine, LTTextLineHorizontal, LTTextLineVertical, TextLineType,
 };
-use bolivar_core::utils::{HasBBox, Plane};
+use bolivar_core::utils::{HasBBox, Plane, Rect};
 
 // ============================================================================
 // TestGroupTextLines - test grouping text lines into textboxes
@@ -126,6 +126,45 @@ fn test_find_neighbors_vertical() {
     assert!(neighbor_bboxes.contains(&(6.0, 10.0, 8.0, 15.0))); // bottom_aligned_right
     assert!(neighbor_bboxes.contains(&(2.0, 15.0, 4.0, 20.0))); // top_aligned_left
     assert!(neighbor_bboxes.contains(&(5.0, 13.0, 7.0, 17.0))); // centrally_aligned_overlapping
+}
+
+#[derive(Clone, Copy)]
+struct TestBox {
+    bbox: Rect,
+}
+
+impl HasBBox for TestBox {
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+}
+
+#[test]
+fn test_plane_any_with_indices_matches_find() {
+    let mut plane = Plane::new((0.0, 0.0, 100.0, 100.0), 1);
+    plane.extend(vec![
+        TestBox {
+            bbox: (0.0, 0.0, 10.0, 10.0),
+        },
+        TestBox {
+            bbox: (20.0, 20.0, 30.0, 30.0),
+        },
+    ]);
+    let q = (5.0, 5.0, 15.0, 15.0);
+    assert!(plane.any_with_indices(q, |idx, _| idx == 0));
+    assert!(!plane.any_with_indices(q, |idx, _| idx == 1));
 }
 
 // ============================================================================
@@ -731,12 +770,11 @@ fn test_ltchar_with_marked_content() {
 #[test]
 fn test_group_heap_entry_ordering() {
     use bolivar_core::layout::{GroupHeapEntry, PyId};
-    use ordered_float::OrderedFloat;
     use std::collections::BinaryHeap;
 
     let e1 = GroupHeapEntry {
         skip_isany: false,
-        dist: OrderedFloat(10.0),
+        dist: 10,
         id1: 5,
         id2: 10,
         elem1_idx: 0,
@@ -744,7 +782,7 @@ fn test_group_heap_entry_ordering() {
     };
     let e2 = GroupHeapEntry {
         skip_isany: false,
-        dist: OrderedFloat(10.0),
+        dist: 10,
         id1: 3,
         id2: 20,
         elem1_idx: 0,
@@ -761,11 +799,10 @@ fn test_group_heap_entry_ordering() {
 #[test]
 fn test_frontier_entry_ordering() {
     use bolivar_core::layout::{FrontierEntry, PairMode, TreeKind};
-    use ordered_float::OrderedFloat;
     use std::collections::BinaryHeap;
 
     let f1 = FrontierEntry {
-        lb_dist: OrderedFloat(10.0),
+        lb_dist: 10,
         lb_id1: 5,
         lb_id2: 10,
         node_a: 0,
@@ -774,7 +811,7 @@ fn test_frontier_entry_ordering() {
         tree: TreeKind::Initial,
     };
     let f2 = FrontierEntry {
-        lb_dist: OrderedFloat(10.0),
+        lb_dist: 10,
         lb_id1: 3,
         lb_id2: 20,
         node_a: 0,
@@ -793,10 +830,9 @@ fn test_frontier_entry_ordering() {
 #[test]
 fn test_frontier_could_beat() {
     use bolivar_core::layout::{FrontierEntry, GroupHeapEntry, PairMode, TreeKind};
-    use ordered_float::OrderedFloat;
 
     let frontier = FrontierEntry {
-        lb_dist: OrderedFloat(10.0),
+        lb_dist: 10,
         lb_id1: 3,
         lb_id2: 5,
         node_a: 0,
@@ -806,7 +842,7 @@ fn test_frontier_could_beat() {
     };
     let main_higher_id = GroupHeapEntry {
         skip_isany: false,
-        dist: OrderedFloat(10.0),
+        dist: 10,
         id1: 5,
         id2: 10,
         elem1_idx: 0,
@@ -814,7 +850,7 @@ fn test_frontier_could_beat() {
     };
     let main_lower_id = GroupHeapEntry {
         skip_isany: false,
-        dist: OrderedFloat(10.0),
+        dist: 10,
         id1: 1,
         id2: 2,
         elem1_idx: 0,
@@ -822,7 +858,7 @@ fn test_frontier_could_beat() {
     };
     let main_equal_id = GroupHeapEntry {
         skip_isany: false,
-        dist: OrderedFloat(10.0),
+        dist: 10,
         id1: 3,
         id2: 5,
         elem1_idx: 0,
@@ -863,6 +899,12 @@ fn test_node_stats_merge_tracks_second_min() {
     assert_eq!(merged.second_min_py_id, 5);
 }
 
+fn f64_total_key_for_test(x: f64) -> i64 {
+    let mut bits = x.to_bits() as i64;
+    bits ^= (((bits >> 63) as u64) >> 1) as i64;
+    bits
+}
+
 #[test]
 fn test_calc_lower_bound_non_overlapping() {
     use bolivar_core::layout::{NodeStats, calc_dist_lower_bound};
@@ -870,7 +912,10 @@ fn test_calc_lower_bound_non_overlapping() {
     let stats_a = NodeStats::from_bbox_and_id((0.0, 0.0, 10.0, 10.0), 0);
     let stats_b = NodeStats::from_bbox_and_id((100.0, 100.0, 110.0, 110.0), 1);
     let lb = calc_dist_lower_bound(&stats_a, &stats_b);
-    assert!(lb.0 > 0.0, "Non-overlapping boxes should have positive LB");
+    assert!(
+        lb > f64_total_key_for_test(0.0),
+        "Non-overlapping boxes should have positive LB"
+    );
 }
 
 #[test]
@@ -880,19 +925,27 @@ fn test_calc_lower_bound_overlapping() {
     let stats_a = NodeStats::from_bbox_and_id((0.0, 0.0, 50.0, 50.0), 0);
     let stats_b = NodeStats::from_bbox_and_id((25.0, 25.0, 75.0, 75.0), 1);
     let lb = calc_dist_lower_bound(&stats_a, &stats_b);
-    assert!(lb.0 >= -2500.0, "LB should be clamped");
+    assert!(
+        lb >= f64_total_key_for_test(-2500.0),
+        "LB should be clamped"
+    );
 }
 
 #[test]
 fn test_frontier_new_initial_skips_single_element() {
     use bolivar_core::layout::{FrontierEntry, NodeStats, PyId};
-    use ordered_float::OrderedFloat;
 
     let stats_single = NodeStats::from_bbox_and_id((0.0, 0.0, 10.0, 10.0), 5);
     assert_eq!(stats_single.second_min_py_id, PyId::MAX);
 
     // Self-pair with single element should return None
-    let entry = FrontierEntry::new_initial(OrderedFloat(0.0), &stats_single, &stats_single, 0, 0);
+    let entry = FrontierEntry::new_initial(
+        f64_total_key_for_test(0.0),
+        &stats_single,
+        &stats_single,
+        0,
+        0,
+    );
     assert!(entry.is_none(), "Should skip self-pair with < 2 elements");
 }
 
@@ -957,6 +1010,39 @@ fn test_group_textboxes_exact_two_boxes() {
         1,
         "Two nearby boxes should merge into one group"
     );
+}
+
+#[test]
+fn test_group_textboxes_exact_three_boxes_stable() {
+    use bolivar_core::layout::{
+        LAParams, LTLayoutContainer, LTTextBoxHorizontal, LTTextLineHorizontal, TextBoxType,
+    };
+
+    let container = LTLayoutContainer::new((0.0, 0.0, 200.0, 100.0));
+
+    let mut b1 = LTTextBoxHorizontal::new();
+    let mut l1 = LTTextLineHorizontal::new(0.1);
+    l1.set_bbox((0.0, 0.0, 40.0, 20.0));
+    b1.add(l1);
+
+    let mut b2 = LTTextBoxHorizontal::new();
+    let mut l2 = LTTextLineHorizontal::new(0.1);
+    l2.set_bbox((45.0, 0.0, 85.0, 20.0));
+    b2.add(l2);
+
+    let mut b3 = LTTextBoxHorizontal::new();
+    let mut l3 = LTTextLineHorizontal::new(0.1);
+    l3.set_bbox((90.0, 0.0, 130.0, 20.0));
+    b3.add(l3);
+
+    let boxes = vec![
+        TextBoxType::Horizontal(b1),
+        TextBoxType::Horizontal(b2),
+        TextBoxType::Horizontal(b3),
+    ];
+
+    let groups = container.group_textboxes_exact(&LAParams::default(), &boxes);
+    assert!(!groups.is_empty());
 }
 
 /// Test that analyze() uses exact grouping (now default).

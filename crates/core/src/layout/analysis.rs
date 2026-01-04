@@ -6,9 +6,7 @@
 //! - Hierarchical grouping of text boxes
 //! - Exact pdfminer-compatible grouping
 
-use std::collections::BinaryHeap;
-
-use ordered_float::OrderedFloat;
+use std::collections::{BinaryHeap, binary_heap::PeekMut};
 
 use crate::utils::{HasBBox, INF_F64, Plane, Rect, fsplit, uniq};
 
@@ -25,6 +23,7 @@ use super::params::LAParams;
 
 /// Monotonically increasing ID assigned in parse order (matches pdfminer's id() semantics)
 pub type PyId = u64;
+type DistKey = i64;
 
 /// Tracks how pairs are oriented for correct pdfminer semantics
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,7 +46,7 @@ pub enum TreeKind {
 #[derive(Clone, Debug)]
 pub struct GroupHeapEntry {
     pub skip_isany: bool,
-    pub dist: OrderedFloat<f64>,
+    pub dist: DistKey,
     pub id1: PyId,
     pub id2: PyId,
     pub elem1_idx: usize,
@@ -88,7 +87,7 @@ impl Ord for GroupHeapEntry {
 /// mode determines orientation semantics for lb_id1/lb_id2.
 #[derive(Clone, Debug)]
 pub struct FrontierEntry {
-    pub lb_dist: OrderedFloat<f64>,
+    pub lb_dist: DistKey,
     pub lb_id1: PyId,
     pub lb_id2: PyId,
     pub node_a: usize,
@@ -131,6 +130,13 @@ pub struct NodeStats {
     pub max_area: f64,
     pub min_py_id: PyId,
     pub second_min_py_id: PyId,
+}
+
+#[inline(always)]
+fn f64_total_key(x: f64) -> DistKey {
+    let mut bits = x.to_bits() as i64;
+    bits ^= (((bits >> 63) as u64) >> 1) as i64;
+    bits
 }
 
 impl NodeStats {
@@ -562,7 +568,7 @@ fn bbox_expand_area(current: Rect, add: Rect) -> f64 {
 
 /// Calculate lower bound on dist() for any pair between two nodes.
 /// Uses TIGHTER geometric bound: max(min_w) not min(min_w).
-pub fn calc_dist_lower_bound(a: &NodeStats, b: &NodeStats) -> OrderedFloat<f64> {
+pub fn calc_dist_lower_bound(a: &NodeStats, b: &NodeStats) -> DistKey {
     // Gap between bounding boxes
     let gap_x = (a.bbox.0.max(b.bbox.0) - a.bbox.2.min(b.bbox.2)).max(0.0);
     let gap_y = (a.bbox.1.max(b.bbox.1) - a.bbox.3.min(b.bbox.3)).max(0.0);
@@ -578,13 +584,13 @@ pub fn calc_dist_lower_bound(a: &NodeStats, b: &NodeStats) -> OrderedFloat<f64> 
     // Clamp: dist(a,b) >= -min(area(a), area(b))
     let clamped = geometric_lb.max(-a.max_area.min(b.max_area));
 
-    OrderedFloat(clamped)
+    f64_total_key(clamped)
 }
 
 impl FrontierEntry {
     /// Create frontier entry for InitialIJ mode (self-pair or cross-pair)
     pub fn new_initial(
-        lb_dist: OrderedFloat<f64>,
+        lb_dist: DistKey,
         stats_a: &NodeStats,
         stats_b: &NodeStats,
         node_a: usize,
@@ -625,7 +631,7 @@ impl FrontierEntry {
 
     /// Create frontier entry for GroupOther mode
     pub fn new_group_other(
-        lb_dist: OrderedFloat<f64>,
+        lb_dist: DistKey,
         group_id: PyId,
         group_idx: usize,
         other_stats: &NodeStats,
@@ -1241,7 +1247,7 @@ impl LTLayoutContainer {
             .collect()
     }
 
-    /// Exact pdfminer-compatible grouping using certified lazy all-pairs algorithm.
+    /// Exact pdfminer-compatible grouping using a certified lazy all-pairs algorithm.
     /// Uses existing Plane.find() for isany queries. Two-heap approach: main heap
     /// holds exact (dist, id) pairs; frontier heap holds spatial node-pairs with
     /// lower-bound keys for lazy pair generation.
@@ -1255,12 +1261,12 @@ impl LTLayoutContainer {
         }
 
         // Distance function (same as existing)
-        fn dist(obj1: &TextGroupElement, obj2: &TextGroupElement) -> OrderedFloat<f64> {
+        fn dist(obj1: &TextGroupElement, obj2: &TextGroupElement) -> DistKey {
             let x0 = obj1.x0().min(obj2.x0());
             let y0 = obj1.y0().min(obj2.y0());
             let x1 = obj1.x1().max(obj2.x1());
             let y1 = obj1.y1().max(obj2.y1());
-            OrderedFloat(
+            f64_total_key(
                 (x1 - x0) * (y1 - y0) - obj1.width() * obj1.height() - obj2.width() * obj2.height(),
             )
         }
@@ -1341,15 +1347,17 @@ impl LTLayoutContainer {
                 );
             }
 
-            // Pop from main heap
-            let Some(best) = main_heap.pop() else { break };
+            let Some(mut best) = main_heap.peek_mut() else {
+                break;
+            };
 
             // Skip if either element is already merged
             if done[best.elem1_idx] || done[best.elem2_idx] {
+                PeekMut::pop(best);
                 continue;
             }
 
-            // isany check using Plane.find() (existing infrastructure!)
+            // isany check using allocation-free Plane query
             if !best.skip_isany {
                 let x0 = elements[best.elem1_idx]
                     .x0()
@@ -1364,21 +1372,17 @@ impl LTLayoutContainer {
                     .y1()
                     .max(elements[best.elem2_idx].y1());
 
-                let between: Vec<_> = plane
-                    .find_with_indices((x0, y0, x1, y1))
-                    .into_iter()
-                    .filter(|(idx, _)| {
-                        !done[*idx] && *idx != best.elem1_idx && *idx != best.elem2_idx
-                    })
-                    .collect();
+                let has_between = plane.any_with_indices((x0, y0, x1, y1), |idx, _| {
+                    !done[idx] && idx != best.elem1_idx && idx != best.elem2_idx
+                });
 
-                if !between.is_empty() {
-                    let mut new_entry = best.clone();
-                    new_entry.skip_isany = true;
-                    main_heap.push(new_entry);
+                if has_between {
+                    best.skip_isany = true;
                     continue;
                 }
             }
+
+            let best = PeekMut::pop(best);
 
             // Merge!
             done[best.elem1_idx] = true;
@@ -1444,7 +1448,7 @@ impl LTLayoutContainer {
         done: &[bool],
         main_heap: &mut BinaryHeap<GroupHeapEntry>,
         frontier: &mut BinaryHeap<FrontierEntry>,
-        dist: fn(&TextGroupElement, &TextGroupElement) -> OrderedFloat<f64>,
+        dist: fn(&TextGroupElement, &TextGroupElement) -> DistKey,
     ) {
         let nodes = match entry.tree {
             TreeKind::Initial => initial_nodes,
@@ -1780,5 +1784,28 @@ impl LTPage {
     /// Performs layout analysis on the page.
     pub fn analyze(&mut self, laparams: &LAParams) {
         self.container.analyze(laparams);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::f64_total_key;
+
+    #[test]
+    fn test_f64_total_key_matches_total_cmp() {
+        let vals = [
+            f64::NEG_INFINITY,
+            -1.0,
+            -0.0,
+            0.0,
+            1.0,
+            f64::INFINITY,
+            f64::NAN,
+        ];
+        for &a in &vals {
+            for &b in &vals {
+                assert_eq!(f64_total_key(a).cmp(&f64_total_key(b)), a.total_cmp(&b));
+            }
+        }
     }
 }

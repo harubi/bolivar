@@ -349,6 +349,45 @@ impl<T: HasBBox> Plane<T> {
         result
     }
 
+    /// Returns true if any intersecting object matches the predicate.
+    pub fn any_with_indices<F>(&self, bbox: Rect, mut pred: F) -> bool
+    where
+        F: FnMut(usize, &T) -> bool,
+    {
+        let (x0, y0, x1, y1) = bbox;
+        let env = AABB::from_corners([x0, y0], [x1, y1]);
+
+        // Strict intersection test to match previous behavior
+        let intersects = |obj_bbox: Rect| {
+            !(obj_bbox.2 <= x0 || x1 <= obj_bbox.0 || obj_bbox.3 <= y0 || y1 <= obj_bbox.1)
+        };
+
+        if let Some(tree) = &self.static_tree {
+            for id in tree.search(x0, y0, x1, y1) {
+                let id = id as usize;
+                if id >= self.static_count || !self.alive[id] {
+                    continue;
+                }
+                let obj_bbox = self.bboxes[id];
+                if intersects(obj_bbox) && pred(id, &self.seq[id]) {
+                    return true;
+                }
+            }
+        }
+
+        for node in self.dynamic_tree.locate_in_envelope_intersecting(&env) {
+            if !self.alive.get(node.id).copied().unwrap_or(false) {
+                continue;
+            }
+            let obj_bbox = self.bboxes[node.id];
+            if intersects(obj_bbox) && pred(node.id, &self.seq[node.id]) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Find k-nearest neighbors to the center of the given bbox.
     /// Returns (index, &T) pairs sorted by distance from the query point.
     pub fn neighbors(&self, bbox: Rect, k: usize) -> Vec<(usize, &T)> {
