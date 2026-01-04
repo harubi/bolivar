@@ -1061,6 +1061,84 @@ fn test_group_textboxes_exact_three_boxes_stable() {
     assert!(!groups.is_empty());
 }
 
+#[test]
+fn test_group_textboxes_exact_ab_parity() {
+    use bolivar_core::layout::{
+        LAParams, LTLayoutContainer, LTTextBoxHorizontal, LTTextGroup, LTTextLineHorizontal,
+        TextBoxType,
+    };
+    use bolivar_core::utils::{HasBBox, Rect};
+
+    fn bbox_key(b: Rect) -> (i64, i64, i64, i64) {
+        (
+            f64_total_key_for_test(b.0),
+            f64_total_key_for_test(b.1),
+            f64_total_key_for_test(b.2),
+            f64_total_key_for_test(b.3),
+        )
+    }
+
+    fn group_signature(group: &LTTextGroup) -> Vec<(i64, i64, i64, i64)> {
+        let mut keys: Vec<_> = group
+            .collect_textboxes()
+            .iter()
+            .map(|tb| bbox_key(tb.bbox()))
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    fn group_signatures(groups: &[LTTextGroup]) -> Vec<Vec<(i64, i64, i64, i64)>> {
+        let mut sigs: Vec<_> = groups.iter().map(group_signature).collect();
+        sigs.sort();
+        sigs
+    }
+
+    let container = LTLayoutContainer::new((0.0, 0.0, 300.0, 200.0));
+
+    let mut b1 = LTTextBoxHorizontal::new();
+    let mut l1 = LTTextLineHorizontal::new(0.1);
+    l1.set_bbox((0.0, 0.0, 40.0, 12.0));
+    b1.add(l1);
+
+    let mut b2 = LTTextBoxHorizontal::new();
+    let mut l2 = LTTextLineHorizontal::new(0.1);
+    l2.set_bbox((41.0, 0.0, 80.0, 12.0));
+    b2.add(l2);
+
+    let mut b3 = LTTextBoxHorizontal::new();
+    let mut l3 = LTTextLineHorizontal::new(0.1);
+    l3.set_bbox((0.0, 20.0, 40.0, 32.0));
+    b3.add(l3);
+
+    let mut b4 = LTTextBoxHorizontal::new();
+    let mut l4 = LTTextLineHorizontal::new(0.1);
+    l4.set_bbox((41.0, 20.0, 80.0, 32.0));
+    b4.add(l4);
+
+    let mut b5 = LTTextBoxHorizontal::new();
+    let mut l5 = LTTextLineHorizontal::new(0.1);
+    l5.set_bbox((200.0, 0.0, 240.0, 12.0));
+    b5.add(l5);
+
+    let boxes = vec![
+        TextBoxType::Horizontal(b1),
+        TextBoxType::Horizontal(b2),
+        TextBoxType::Horizontal(b3),
+        TextBoxType::Horizontal(b4),
+        TextBoxType::Horizontal(b5),
+    ];
+
+    let laparams = LAParams::default();
+    let groups_dual = container.group_textboxes_exact_dual_heap(&laparams, &boxes);
+    let groups_single = container.group_textboxes_exact_single_heap(&laparams, &boxes);
+
+    assert_eq!(
+        group_signatures(&groups_dual),
+        group_signatures(&groups_single)
+    );
+}
+
 /// Test that analyze() uses exact grouping (now default).
 #[test]
 fn test_analyze_uses_exact_grouping() {

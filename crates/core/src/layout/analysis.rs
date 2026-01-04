@@ -144,6 +144,48 @@ impl Ord for FrontierEntry {
     }
 }
 
+#[derive(Clone, Debug)]
+enum BestEntry {
+    Frontier(FrontierEntry),
+    Pair(GroupHeapEntry),
+}
+
+impl BestEntry {
+    fn key_parts(&self) -> (bool, DistKey, PyId, PyId, u8) {
+        match self {
+            BestEntry::Frontier(entry) => (false, entry.lb_dist, entry.lb_id1, entry.lb_id2, 0),
+            BestEntry::Pair(entry) => (entry.skip_isany, entry.dist, entry.id1, entry.id2, 1),
+        }
+    }
+}
+
+impl PartialEq for BestEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.key_parts() == other.key_parts()
+    }
+}
+impl Eq for BestEntry {}
+
+impl PartialOrd for BestEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BestEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let (skip_a, dist_a, id1_a, id2_a, kind_a) = self.key_parts();
+        let (skip_b, dist_b, id1_b, id2_b, kind_b) = other.key_parts();
+        // Reverse for min-heap: smaller values should be "greater" so they pop first
+        skip_b
+            .cmp(&skip_a)
+            .then(dist_b.cmp(&dist_a))
+            .then(id1_b.cmp(&id1_a))
+            .then(id2_b.cmp(&id2_a))
+            .then(kind_b.cmp(&kind_a))
+    }
+}
+
 /// Cached statistics for a spatial tree node.
 /// Used for computing lower bounds on distances between node pairs.
 #[derive(Clone, Debug)]
@@ -1314,11 +1356,208 @@ impl LTLayoutContainer {
             .collect()
     }
 
+    /// Exact pdfminer-compatible grouping using a single-heap best-first algorithm.
+    pub fn group_textboxes_exact(
+        &self,
+        laparams: &LAParams,
+        boxes: &[TextBoxType],
+    ) -> Vec<LTTextGroup> {
+        self.group_textboxes_exact_single_heap(laparams, boxes)
+    }
+
+    /// Exact pdfminer-compatible grouping using a single-heap best-first algorithm.
+    pub fn group_textboxes_exact_single_heap(
+        &self,
+        _laparams: &LAParams,
+        boxes: &[TextBoxType],
+    ) -> Vec<LTTextGroup> {
+        if boxes.is_empty() {
+            return Vec::new();
+        }
+
+        // 1. Build elements with py_ids in PARSE ORDER
+        let mut elements: Vec<TextGroupElement> = boxes
+            .iter()
+            .map(|b| TextGroupElement::Box(b.clone()))
+            .collect();
+        let mut py_ids: Vec<PyId> = (0..elements.len() as PyId).collect();
+        let mut next_py_id = elements.len() as PyId;
+        let reserve_extra = elements.len().saturating_sub(1);
+        elements.reserve_exact(reserve_extra);
+        py_ids.reserve_exact(reserve_extra);
+        let mut bboxes: Vec<Rect> = elements.iter().map(|e| e.bbox()).collect();
+        let mut areas: Vec<f64> = bboxes.iter().map(|b| (b.2 - b.0) * (b.3 - b.1)).collect();
+        bboxes.reserve_exact(reserve_extra);
+        areas.reserve_exact(reserve_extra);
+
+        // 2. Build Plane for isany queries (uses existing infrastructure)
+        let mut min_x0 = INF_F64;
+        let mut min_y0 = INF_F64;
+        let mut max_x1 = -INF_F64;
+        let mut max_y1 = -INF_F64;
+        for bbox in &bboxes {
+            min_x0 = min_x0.min(bbox.0);
+            min_y0 = min_y0.min(bbox.1);
+            max_x1 = max_x1.max(bbox.2);
+            max_y1 = max_y1.max(bbox.3);
+        }
+        let plane_bbox = (min_x0 - 1.0, min_y0 - 1.0, max_x1 + 1.0, max_y1 + 1.0);
+        let mut plane: Plane<PlaneElem> = Plane::new(plane_bbox, 1);
+        plane.extend(
+            bboxes
+                .iter()
+                .enumerate()
+                .map(|(idx, &bbox)| PlaneElem { bbox, idx }),
+        );
+
+        // 3. Build lightweight spatial tree for frontier
+        let mut bbox_ids: Vec<(Rect, PyId)> = bboxes
+            .iter()
+            .enumerate()
+            .map(|(i, &bbox)| (bbox, i as PyId))
+            .collect();
+        bbox_ids.reserve_exact(reserve_extra);
+        let mut initial_nodes: Vec<SpatialNode> = Vec::new();
+        let root_idx = SpatialNode::build(&bbox_ids, &mut initial_nodes);
+        let mut dynamic_tree = DynamicSpatialTree::build(&bbox_ids);
+
+        // 4. Initialize best-first heap (frontier + exact pairs)
+        let mut best_heap: BinaryHeap<BestEntry> = BinaryHeap::new();
+
+        // Seed heap with root vs root (may be None if single element)
+        let root = &initial_nodes[root_idx];
+        let lb = calc_dist_lower_bound(&root.stats, &root.stats);
+        if let Some(entry) =
+            FrontierEntry::new_initial(lb, &root.stats, &root.stats, root_idx, root_idx)
+        {
+            best_heap.push(BestEntry::Frontier(entry));
+        }
+
+        // 5. Track active elements (tombstone pattern via done set)
+        let mut done: Vec<bool> = vec![false; elements.len()];
+        done.reserve_exact(reserve_extra);
+
+        // 6. Main loop
+        loop {
+            let Some(entry) = best_heap.pop() else {
+                break;
+            };
+
+            match entry {
+                BestEntry::Frontier(entry) => {
+                    Self::expand_frontier_best(
+                        entry,
+                        &initial_nodes,
+                        &dynamic_tree,
+                        &bboxes,
+                        &areas,
+                        &py_ids,
+                        &done,
+                        &mut best_heap,
+                    );
+                }
+                BestEntry::Pair(mut best) => {
+                    // Skip if either element is already merged
+                    if done[best.elem1_idx] || done[best.elem2_idx] {
+                        continue;
+                    }
+
+                    // isany check using allocation-free Plane query
+                    if !best.skip_isany {
+                        let bbox_a = bboxes[best.elem1_idx];
+                        let bbox_b = bboxes[best.elem2_idx];
+                        let x0 = bbox_a.0.min(bbox_b.0);
+                        let y0 = bbox_a.1.min(bbox_b.1);
+                        let x1 = bbox_a.2.max(bbox_b.2);
+                        let y1 = bbox_a.3.max(bbox_b.3);
+
+                        let has_between = plane.any_with_indices((x0, y0, x1, y1), |_, elem| {
+                            let idx = elem.idx;
+                            !done[idx] && idx != best.elem1_idx && idx != best.elem2_idx
+                        });
+
+                        if has_between {
+                            best.skip_isany = true;
+                            best_heap.push(BestEntry::Pair(best));
+                            continue;
+                        }
+                    }
+
+                    // Merge!
+                    done[best.elem1_idx] = true;
+                    done[best.elem2_idx] = true;
+
+                    let is_vertical = elements[best.elem1_idx].is_vertical()
+                        || elements[best.elem2_idx].is_vertical();
+                    let group = LTTextGroup::new(
+                        vec![
+                            elements[best.elem1_idx].clone(),
+                            elements[best.elem2_idx].clone(),
+                        ],
+                        is_vertical,
+                    );
+                    let group_elem = TextGroupElement::Group(Box::new(group));
+
+                    let new_idx = elements.len();
+                    let new_py_id = next_py_id;
+                    next_py_id += 1;
+
+                    let bbox_a = bboxes[best.elem1_idx];
+                    let bbox_b = bboxes[best.elem2_idx];
+                    let x0 = bbox_a.0.min(bbox_b.0);
+                    let y0 = bbox_a.1.min(bbox_b.1);
+                    let x1 = bbox_a.2.max(bbox_b.2);
+                    let y1 = bbox_a.3.max(bbox_b.3);
+                    let new_bbox = (x0, y0, x1, y1);
+                    let new_area = (x1 - x0) * (y1 - y0);
+
+                    plane.add(PlaneElem {
+                        bbox: new_bbox,
+                        idx: new_idx,
+                    });
+                    elements.push(group_elem);
+                    bboxes.push(new_bbox);
+                    areas.push(new_area);
+                    py_ids.push(new_py_id);
+                    done.push(false);
+                    bbox_ids.push((new_bbox, new_py_id));
+
+                    let group_leaf = dynamic_tree.insert(new_idx, new_bbox, new_py_id, &bbox_ids);
+                    let group_stats = &dynamic_tree.nodes[group_leaf].stats;
+                    let root_stats = &dynamic_tree.nodes[dynamic_tree.root].stats;
+                    let lb = calc_dist_lower_bound(group_stats, root_stats);
+                    let entry = FrontierEntry::new_group_other(
+                        lb,
+                        new_py_id,
+                        new_idx,
+                        root_stats,
+                        group_leaf,
+                        dynamic_tree.root,
+                    );
+                    best_heap.push(BestEntry::Frontier(entry));
+                }
+            }
+        }
+
+        // Collect remaining elements as groups
+        elements
+            .iter()
+            .enumerate()
+            .filter(|(id, _)| !done[*id])
+            .map(|(_, elem)| match elem {
+                TextGroupElement::Group(g) => g.as_ref().clone(),
+                TextGroupElement::Box(b) => {
+                    LTTextGroup::new(vec![TextGroupElement::Box(b.clone())], false)
+                }
+            })
+            .collect()
+    }
+
     /// Exact pdfminer-compatible grouping using a certified lazy all-pairs algorithm.
     /// Uses existing Plane.find() for isany queries. Two-heap approach: main heap
     /// holds exact (dist, id) pairs; frontier heap holds spatial node-pairs with
     /// lower-bound keys for lazy pair generation.
-    pub fn group_textboxes_exact(
+    pub fn group_textboxes_exact_dual_heap(
         &self,
         _laparams: &LAParams,
         boxes: &[TextBoxType],
@@ -1734,6 +1973,226 @@ impl LTLayoutContainer {
                                     child_idx,
                                 );
                                 frontier.push(e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Expand a frontier entry for the single-heap best-first algorithm.
+    fn expand_frontier_best(
+        entry: FrontierEntry,
+        initial_nodes: &[SpatialNode],
+        dynamic_tree: &DynamicSpatialTree,
+        bboxes: &[Rect],
+        areas: &[f64],
+        py_ids: &[PyId],
+        done: &[bool],
+        best_heap: &mut BinaryHeap<BestEntry>,
+    ) {
+        let nodes = match entry.tree {
+            TreeKind::Initial => initial_nodes,
+            TreeKind::Dynamic => &dynamic_tree.nodes,
+        };
+        let node_a = &nodes[entry.node_a];
+        let node_b = &nodes[entry.node_b];
+
+        if node_a.is_leaf() && node_b.is_leaf() {
+            // Emit concrete pairs
+            match entry.mode {
+                PairMode::InitialIJ => {
+                    if entry.node_a == entry.node_b {
+                        // Self-pair: emit (i, j) where py_ids[i] < py_ids[j]
+                        for i in 0..node_a.element_indices.len() {
+                            for j in (i + 1)..node_a.element_indices.len() {
+                                let ei = node_a.element_indices[i];
+                                let ej = node_a.element_indices[j];
+                                if done[ei] || done[ej] {
+                                    continue;
+                                }
+                                let d = dist_key_from_geom(
+                                    bboxes[ei], areas[ei], bboxes[ej], areas[ej],
+                                );
+                                best_heap.push(BestEntry::Pair(GroupHeapEntry {
+                                    skip_isany: false,
+                                    dist: d,
+                                    id1: py_ids[ei],
+                                    id2: py_ids[ej],
+                                    elem1_idx: ei,
+                                    elem2_idx: ej,
+                                }));
+                            }
+                        }
+                    } else {
+                        // Cross-pair: emit with i<j orientation
+                        for &ei in &node_a.element_indices {
+                            for &ej in &node_b.element_indices {
+                                if done[ei] || done[ej] {
+                                    continue;
+                                }
+                                let d = dist_key_from_geom(
+                                    bboxes[ei], areas[ei], bboxes[ej], areas[ej],
+                                );
+                                // Maintain i<j orientation
+                                let (id1, id2, idx1, idx2) = if py_ids[ei] < py_ids[ej] {
+                                    (py_ids[ei], py_ids[ej], ei, ej)
+                                } else {
+                                    (py_ids[ej], py_ids[ei], ej, ei)
+                                };
+                                best_heap.push(BestEntry::Pair(GroupHeapEntry {
+                                    skip_isany: false,
+                                    dist: d,
+                                    id1,
+                                    id2,
+                                    elem1_idx: idx1,
+                                    elem2_idx: idx2,
+                                }));
+                            }
+                        }
+                    }
+                }
+                PairMode::GroupOther {
+                    group_id,
+                    group_idx,
+                } => {
+                    // GroupOther: emit (group_id, other_id) in that order - NO min/max
+                    // node_a is the "group" side, node_b is "other" side
+                    if !dynamic_tree.contains_elem(entry.node_a, group_idx) {
+                        return;
+                    }
+                    if done[group_idx] {
+                        return;
+                    }
+                    for &ej in &node_b.element_indices {
+                        if ej == group_idx || done[ej] {
+                            continue;
+                        }
+                        let d = dist_key_from_geom(
+                            bboxes[group_idx],
+                            areas[group_idx],
+                            bboxes[ej],
+                            areas[ej],
+                        );
+                        best_heap.push(BestEntry::Pair(GroupHeapEntry {
+                            skip_isany: false,
+                            dist: d,
+                            id1: group_id,
+                            id2: py_ids[ej],
+                            elem1_idx: group_idx,
+                            elem2_idx: ej,
+                        }));
+                    }
+                }
+            }
+        } else {
+            // Split the larger node and re-enqueue
+            let (split_node_idx, other_node_idx, split_is_a) =
+                if node_a.element_count() >= node_b.element_count() && !node_a.is_leaf() {
+                    (entry.node_a, entry.node_b, true)
+                } else if !node_b.is_leaf() {
+                    (entry.node_b, entry.node_a, false)
+                } else {
+                    // node_a is larger but is leaf, node_b is not leaf
+                    (entry.node_b, entry.node_a, false)
+                };
+
+            let split_node = &nodes[split_node_idx];
+            let other_node = &nodes[other_node_idx];
+
+            if let (Some(left), Some(right)) = (split_node.left_child, split_node.right_child) {
+                let left_node = &nodes[left];
+                let right_node = &nodes[right];
+
+                match entry.mode {
+                    PairMode::InitialIJ => {
+                        if split_node_idx == other_node_idx {
+                            // Self-pair split: push (left, left), (right, right), (left, right)
+                            if let Some(e) = FrontierEntry::new_initial(
+                                calc_dist_lower_bound(&left_node.stats, &left_node.stats),
+                                &left_node.stats,
+                                &left_node.stats,
+                                left,
+                                left,
+                            ) {
+                                best_heap.push(BestEntry::Frontier(e));
+                            }
+                            if let Some(e) = FrontierEntry::new_initial(
+                                calc_dist_lower_bound(&right_node.stats, &right_node.stats),
+                                &right_node.stats,
+                                &right_node.stats,
+                                right,
+                                right,
+                            ) {
+                                best_heap.push(BestEntry::Frontier(e));
+                            }
+                            if let Some(e) = FrontierEntry::new_initial(
+                                calc_dist_lower_bound(&left_node.stats, &right_node.stats),
+                                &left_node.stats,
+                                &right_node.stats,
+                                left,
+                                right,
+                            ) {
+                                best_heap.push(BestEntry::Frontier(e));
+                            }
+                        } else {
+                            // Cross-pair split: push child pairs with other node
+                            for &child_idx in &[left, right] {
+                                let child_node = &nodes[child_idx];
+                                let lb =
+                                    calc_dist_lower_bound(&child_node.stats, &other_node.stats);
+                                if let Some(e) = FrontierEntry::new_initial(
+                                    lb,
+                                    &child_node.stats,
+                                    &other_node.stats,
+                                    child_idx,
+                                    other_node_idx,
+                                ) {
+                                    best_heap.push(BestEntry::Frontier(e));
+                                }
+                            }
+                        }
+                    }
+                    PairMode::GroupOther {
+                        group_id,
+                        group_idx,
+                    } => {
+                        // GroupOther split: maintain mode
+                        if split_is_a {
+                            // Only keep the child that contains group_idx
+                            let group_child = if dynamic_tree.contains_elem(left, group_idx) {
+                                left
+                            } else {
+                                right
+                            };
+                            let lb =
+                                calc_dist_lower_bound(&nodes[group_child].stats, &other_node.stats);
+                            let e = FrontierEntry::new_group_other(
+                                lb,
+                                group_id,
+                                group_idx,
+                                &other_node.stats,
+                                group_child,
+                                other_node_idx,
+                            );
+                            best_heap.push(BestEntry::Frontier(e));
+                        } else {
+                            for &child_idx in &[left, right] {
+                                let child_node = &nodes[child_idx];
+                                let lb = calc_dist_lower_bound(
+                                    &nodes[entry.node_a].stats,
+                                    &child_node.stats,
+                                );
+                                let e = FrontierEntry::new_group_other(
+                                    lb,
+                                    group_id,
+                                    group_idx,
+                                    &child_node.stats,
+                                    entry.node_a,
+                                    child_idx,
+                                );
+                                best_heap.push(BestEntry::Frontier(e));
                             }
                         }
                     }
