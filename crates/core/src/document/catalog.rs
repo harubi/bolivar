@@ -17,7 +17,7 @@ use memmap2::Mmap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 /// XRef entry - location of an object in the PDF file.
 #[derive(Debug, Clone)]
@@ -88,7 +88,7 @@ pub struct PDFDocument {
     xrefs: Vec<XRef>,
     catalog: HashMap<String, PDFObject>,
     info: Vec<HashMap<String, PDFObject>>,
-    cache: RwLock<HashMap<u32, PDFObject>>,
+    cache: RwLock<HashMap<u32, Arc<PDFObject>>>,
     objstm_index: RwLock<Option<HashMap<u32, (u32, usize)>>>,
     security_handler: Option<Box<dyn PDFSecurityHandler + Send + Sync>>,
 }
@@ -987,6 +987,11 @@ impl PDFDocument {
 
     /// Get an object by ID.
     pub fn getobj(&self, objid: u32) -> Result<PDFObject> {
+        Ok((*self.getobj_shared(objid)?).clone())
+    }
+
+    /// Get an object by ID without cloning the cached object.
+    pub fn getobj_shared(&self, objid: u32) -> Result<Arc<PDFObject>> {
         if objid == 0 {
             return Err(PdfError::ObjectNotFound(0));
         }
@@ -1033,7 +1038,7 @@ impl PDFDocument {
         // Check cache first
         if let Ok(cache) = self.cache.read() {
             if let Some(obj) = cache.get(&objid) {
-                return Ok(obj.clone());
+                return Ok(Arc::clone(obj));
             }
         }
 
@@ -1067,8 +1072,9 @@ impl PDFDocument {
                     obj
                 };
 
+                let obj = Arc::new(obj);
                 if let Ok(mut cache) = self.cache.write() {
-                    cache.insert(objid, obj.clone());
+                    cache.insert(objid, Arc::clone(&obj));
                 }
                 return Ok(obj);
             }
@@ -1077,8 +1083,9 @@ impl PDFDocument {
         // Fallback: scan object streams directly when xrefs are incomplete.
         if !self.all_xrefs_are_fallback() {
             if let Ok(Some(obj)) = self.find_obj_in_objstms(objid) {
+                let obj = Arc::new(obj);
                 if let Ok(mut cache) = self.cache.write() {
-                    cache.insert(objid, obj.clone());
+                    cache.insert(objid, Arc::clone(&obj));
                 }
                 return Ok(obj);
             }
@@ -1228,8 +1235,8 @@ impl PDFDocument {
     /// Parse an object from an object stream (ObjStm).
     fn parse_object_from_stream(&self, stream_objid: u32, index: usize) -> Result<PDFObject> {
         // Get the stream object
-        let stream_obj = self.getobj(stream_objid)?;
-        let stream = stream_obj.as_stream()?;
+        let stream_obj = self.getobj_shared(stream_objid)?;
+        let stream = stream_obj.as_ref().as_stream()?;
 
         // Decode stream data
         let data = self.decode_stream(stream)?;
@@ -1447,23 +1454,38 @@ impl PDFDocument {
 
     /// Resolve a reference to its actual object.
     pub fn resolve(&self, obj: &PDFObject) -> Result<PDFObject> {
-        self.resolve_internal(obj)
+        Ok((*self.resolve_shared(obj)?).clone())
+    }
+
+    /// Resolve a reference to its actual object without cloning.
+    pub fn resolve_shared(&self, obj: &PDFObject) -> Result<Arc<PDFObject>> {
+        self.resolve_internal_shared(obj)
     }
 
     /// Internal resolve that doesn't require mutable access.
     fn resolve_internal(&self, obj: &PDFObject) -> Result<PDFObject> {
-        let mut current = obj.clone();
+        Ok((*self.resolve_shared(obj)?).clone())
+    }
+
+    fn resolve_internal_shared(&self, obj: &PDFObject) -> Result<Arc<PDFObject>> {
         let mut seen = std::collections::HashSet::new();
+        let mut current = match obj {
+            PDFObject::Ref(r) => {
+                seen.insert(r.objid);
+                self.getobj_shared(r.objid)?
+            }
+            _ => return Ok(Arc::new(obj.clone())),
+        };
         loop {
-            match current {
-                PDFObject::Ref(ref r) => {
+            match current.as_ref() {
+                PDFObject::Ref(r) => {
                     if !seen.insert(r.objid) {
                         return Err(PdfError::SyntaxError(format!(
                             "circular reference detected for obj {}",
                             r.objid
                         )));
                     }
-                    current = self.getobj(r.objid)?;
+                    current = self.getobj_shared(r.objid)?;
                 }
                 _ => return Ok(current),
             }
@@ -1900,6 +1922,18 @@ mod tests {
         let expected_ptr = unsafe { base_ptr.add(stream_start) };
 
         assert_eq!(decoded.as_ptr(), expected_ptr);
+    }
+
+    #[test]
+    fn test_getobj_shared_cache_returns_same_arc() {
+        use std::sync::Arc;
+
+        let path = format!("{}/tests/fixtures/simple1.pdf", env!("CARGO_MANIFEST_DIR"));
+        let data = std::fs::read(path).unwrap();
+        let doc = PDFDocument::new(data, "").unwrap();
+        let obj1 = doc.getobj_shared(1).unwrap();
+        let obj2 = doc.getobj_shared(1).unwrap();
+        assert!(Arc::ptr_eq(&obj1, &obj2));
     }
 
     #[test]

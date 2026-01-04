@@ -108,13 +108,13 @@ impl PDFPage {
             None => return Vec::new(),
         };
 
-        let resolved = match doc.resolve(contents_obj) {
+        let resolved = match doc.resolve_shared(contents_obj) {
             Ok(obj) => obj,
             Err(_) => return Vec::new(),
         };
 
         // Contents can be a single stream or array of streams
-        match &resolved {
+        match resolved.as_ref() {
             PDFObject::Stream(stream) => {
                 // Decode the stream (handles FlateDecode, etc.)
                 match doc.decode_stream(stream) {
@@ -125,8 +125,11 @@ impl PDFPage {
             PDFObject::Array(arr) => arr
                 .iter()
                 .filter_map(|item| {
-                    doc.resolve(item).ok().and_then(|obj| {
-                        obj.as_stream().ok().and_then(|s| doc.decode_stream(s).ok())
+                    doc.resolve_shared(item).ok().and_then(|obj| {
+                        obj.as_ref()
+                            .as_stream()
+                            .ok()
+                            .and_then(|s| doc.decode_stream(s).ok())
                     })
                 })
                 .collect(),
@@ -149,8 +152,8 @@ impl PDFPage {
         doc: &PDFDocument,
     ) -> Option<[f64; 4]> {
         let obj = attrs.get(key)?;
-        let resolved = doc.resolve(obj).ok()?;
-        let arr = resolved.as_array().ok()?;
+        let resolved = doc.resolve_shared(obj).ok()?;
+        let arr = resolved.as_ref().as_array().ok()?;
         if arr.len() != 4 {
             return None;
         }
@@ -236,8 +239,8 @@ impl<'a> Iterator for PageIterator<'a> {
                 let objid = self.fallback_objids[self.fallback_idx];
                 self.fallback_idx += 1;
 
-                if let Ok(obj) = self.doc.getobj(objid) {
-                    if let Ok(dict) = obj.as_dict() {
+                if let Ok(obj) = self.doc.getobj_shared(objid) {
+                    if let Ok(dict) = obj.as_ref().as_dict() {
                         if let Some(PDFObject::Name(type_name)) = dict.get("Type") {
                             if type_name == "Page" {
                                 let label = self.get_next_label();
@@ -262,12 +265,12 @@ impl<'a> Iterator for PageIterator<'a> {
             }
             self.visited.insert(objid);
 
-            let obj = match self.doc.getobj(objid) {
+            let obj = match self.doc.getobj_shared(objid) {
                 Ok(o) => o,
                 Err(_) => continue,
             };
 
-            let dict = match obj.as_dict() {
+            let dict = match obj.as_ref().as_dict() {
                 Ok(d) => d.clone(),
                 Err(_) => continue,
             };

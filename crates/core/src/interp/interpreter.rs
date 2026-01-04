@@ -1109,9 +1109,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             Some(PDFObject::Dict(d)) => Some(d.clone()),
             Some(PDFObject::Ref(r)) => {
                 if let Some(doc) = doc {
-                    match doc.resolve(&PDFObject::Ref(r.clone())) {
-                        Ok(PDFObject::Dict(d)) => Some(d),
-                        _ => None,
+                    match doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                        Ok(resolved) => match resolved.as_ref() {
+                            PDFObject::Dict(d) => Some(d.clone()),
+                            _ => None,
+                        },
+                        Err(_) => None,
                     }
                 } else {
                     None
@@ -1127,9 +1130,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     PDFObject::Dict(d) => d.clone(),
                     PDFObject::Ref(r) => {
                         if let Some(doc) = doc {
-                            if let Ok(PDFObject::Dict(d)) = doc.resolve(&PDFObject::Ref(r.clone()))
-                            {
-                                d
+                            if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                                if let PDFObject::Dict(d) = resolved.as_ref() {
+                                    d.clone()
+                                } else {
+                                    continue;
+                                }
                             } else {
                                 continue;
                             }
@@ -1174,8 +1180,8 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 let mut final_spec = final_spec;
                 if let Some(PDFObject::Ref(r)) = final_spec.get("Encoding").cloned() {
                     if let Some(doc) = doc {
-                        if let Ok(resolved) = doc.resolve(&PDFObject::Ref(r)) {
-                            final_spec.insert("Encoding".to_string(), resolved);
+                        if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r)) {
+                            final_spec.insert("Encoding".to_string(), resolved.as_ref().clone());
                         }
                     }
                 }
@@ -1183,8 +1189,8 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 // Resolve Widths reference if present (needed for simple fonts)
                 if let Some(PDFObject::Ref(r)) = final_spec.get("Widths").cloned() {
                     if let Some(doc) = doc {
-                        if let Ok(resolved) = doc.resolve(&PDFObject::Ref(r)) {
-                            final_spec.insert("Widths".to_string(), resolved);
+                        if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r)) {
+                            final_spec.insert("Widths".to_string(), resolved.as_ref().clone());
                         }
                     }
                 }
@@ -1192,8 +1198,8 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 // Resolve W (CID font widths) reference if present
                 if let Some(PDFObject::Ref(r)) = final_spec.get("W").cloned() {
                     if let Some(doc) = doc {
-                        if let Ok(resolved) = doc.resolve(&PDFObject::Ref(r)) {
-                            final_spec.insert("W".to_string(), resolved);
+                        if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r)) {
+                            final_spec.insert("W".to_string(), resolved.as_ref().clone());
                         }
                     }
                 }
@@ -1201,8 +1207,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 // Resolve FontDescriptor reference if present (needed for accurate ascent/descent)
                 if let Some(PDFObject::Ref(r)) = final_spec.get("FontDescriptor").cloned() {
                     if let Some(doc) = doc {
-                        if let Ok(resolved) = doc.resolve(&PDFObject::Ref(r)) {
-                            final_spec.insert("FontDescriptor".to_string(), resolved);
+                        if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r)) {
+                            final_spec
+                                .insert("FontDescriptor".to_string(), resolved.as_ref().clone());
                         }
                     }
                 }
@@ -1228,9 +1235,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             Some(PDFObject::Dict(d)) => Some(d.clone()),
             Some(PDFObject::Ref(r)) => {
                 if let Some(doc) = doc {
-                    match doc.resolve(&PDFObject::Ref(r.clone())) {
-                        Ok(PDFObject::Dict(d)) => Some(d),
-                        _ => None,
+                    match doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                        Ok(resolved) => match resolved.as_ref() {
+                            PDFObject::Dict(d) => Some(d.clone()),
+                            _ => None,
+                        },
+                        Err(_) => None,
                     }
                 } else {
                     None
@@ -1245,9 +1255,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     PDFObject::Stream(s) => Some((**s).clone()),
                     PDFObject::Ref(r) => {
                         if let Some(doc) = doc {
-                            match doc.resolve(&PDFObject::Ref(r.clone())) {
-                                Ok(PDFObject::Stream(s)) => Some((*s).clone()),
-                                _ => None,
+                            match doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                                Ok(resolved) => match resolved.as_ref() {
+                                    PDFObject::Stream(s) => Some((**s).clone()),
+                                    _ => None,
+                                },
+                                Err(_) => None,
                             }
                         } else {
                             None
@@ -1274,8 +1287,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             PDFObject::Array(arr) => arr.clone(),
             PDFObject::Ref(r) => {
                 if let Some(doc) = doc {
-                    if let Ok(PDFObject::Array(arr)) = doc.resolve(&PDFObject::Ref(r.clone())) {
-                        arr
+                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                        if let PDFObject::Array(arr) = resolved.as_ref() {
+                            arr.clone()
+                        } else {
+                            return None;
+                        }
                     } else {
                         return None;
                     }
@@ -1294,8 +1311,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             PDFObject::Dict(d) => Some(d.clone()),
             PDFObject::Ref(r) => {
                 if let Some(doc) = doc {
-                    if let Ok(PDFObject::Dict(d)) = doc.resolve(&PDFObject::Ref(r.clone())) {
-                        Some(d)
+                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                        if let PDFObject::Dict(d) = resolved.as_ref() {
+                            Some(d.clone())
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -1326,8 +1347,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             PDFObject::Ref(r) => {
                 // Resolve reference and decode
                 if let Some(doc) = doc {
-                    if let Ok(PDFObject::Stream(stream)) = doc.resolve(&PDFObject::Ref(r.clone())) {
-                        doc.decode_stream(&stream).ok()
+                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                        if let PDFObject::Stream(stream) = resolved.as_ref() {
+                            doc.decode_stream(stream).ok()
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -1354,8 +1379,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             PDFObject::Dict(d) => d.clone(),
             PDFObject::Ref(r) => {
                 if let Some(doc) = doc {
-                    if let Ok(PDFObject::Dict(d)) = doc.resolve(&PDFObject::Ref(r.clone())) {
-                        d
+                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                        if let PDFObject::Dict(d) = resolved.as_ref() {
+                            d.clone()
+                        } else {
+                            return None;
+                        }
                     } else {
                         return None;
                     }
@@ -1380,8 +1409,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             }
             PDFObject::Ref(r) => {
                 if let Some(doc) = doc {
-                    if let Ok(PDFObject::Stream(stream)) = doc.resolve(&PDFObject::Ref(r.clone())) {
-                        doc.decode_stream(&stream).ok()
+                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                        if let PDFObject::Stream(stream) = resolved.as_ref() {
+                            doc.decode_stream(stream).ok()
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -2078,9 +2111,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             PDFObject::Dict(d) => Some(d.clone()),
             PDFObject::Ref(r) => {
                 if let Some(doc) = self.doc {
-                    match doc.resolve(&PDFObject::Ref(r.clone())) {
-                        Ok(PDFObject::Dict(d)) => Some(d),
-                        _ => None,
+                    match doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                        Ok(resolved) => match resolved.as_ref() {
+                            PDFObject::Dict(d) => Some(d.clone()),
+                            _ => None,
+                        },
+                        Err(_) => None,
                     }
                 } else {
                     None
@@ -2329,8 +2365,8 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             }
             PDFObject::Ref(r) => {
                 if let Some(doc) = self.doc {
-                    if let Ok(resolved) = doc.resolve(&PDFObject::Ref(r.clone())) {
-                        return self.pdfobject_to_stackvalue(&resolved);
+                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                        return self.pdfobject_to_stackvalue(resolved.as_ref());
                     }
                 }
                 None
@@ -2344,9 +2380,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             Some(PDFObject::Dict(d)) => Some(d.clone()),
             Some(PDFObject::Ref(r)) => {
                 if let Some(doc) = self.doc {
-                    match doc.resolve(&PDFObject::Ref(r.clone())) {
-                        Ok(PDFObject::Dict(d)) => Some(d),
-                        _ => None,
+                    match doc.resolve_shared(&PDFObject::Ref(r.clone())) {
+                        Ok(resolved) => match resolved.as_ref() {
+                            PDFObject::Dict(d) => Some(d.clone()),
+                            _ => None,
+                        },
+                        Err(_) => None,
                     }
                 } else {
                     None
