@@ -9,6 +9,7 @@
 //! - Page labels
 
 use super::security::{PDFSecurityHandler, create_security_handler};
+use bytes::Bytes;
 use crate::error::{PdfError, Result};
 use crate::model::objects::PDFObject;
 use crate::parser::parser::PDFParser;
@@ -60,6 +61,7 @@ impl XRef {
 #[derive(Clone)]
 pub enum PdfBytes {
     Owned(Arc<[u8]>),
+    Shared(Bytes),
     Mmap(Arc<Mmap>),
 }
 
@@ -67,6 +69,7 @@ impl PdfBytes {
     fn as_slice(&self) -> &[u8] {
         match self {
             PdfBytes::Owned(data) => data,
+            PdfBytes::Shared(data) => data.as_ref(),
             PdfBytes::Mmap(map) => map.as_ref(),
         }
     }
@@ -108,6 +111,21 @@ impl PDFDocument {
     pub fn new_from_mmap(mmap: Arc<Mmap>, password: &str) -> Result<Self> {
         let mut doc = Self {
             data: PdfBytes::Mmap(mmap),
+            xrefs: Vec::new(),
+            catalog: HashMap::new(),
+            info: Vec::new(),
+            cache: RwLock::new(HashMap::new()),
+            objstm_index: RwLock::new(None),
+            security_handler: None,
+        };
+        doc.parse(password)?;
+        Ok(doc)
+    }
+
+    /// Create a new PDFDocument from shared bytes (zero-copy).
+    pub fn new_from_bytes(data: Bytes, password: &str) -> Result<Self> {
+        let mut doc = Self {
+            data: PdfBytes::Shared(data),
             xrefs: Vec::new(),
             catalog: HashMap::new(),
             info: Vec::new(),

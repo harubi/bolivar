@@ -9,6 +9,7 @@ description = "PDF content extraction library"
 [dependencies]
 aes.workspace = true
 byteorder.workspace = true
+bytes.workspace = true
 cbc.workspace = true
 flate2.workspace = true
 html-escape.workspace = true

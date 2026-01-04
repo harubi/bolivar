@@ -18,7 +18,7 @@ def _read_input(pdf_file):
         data = pdf_file.read()
         return "bytes", data
     if isinstance(pdf_file, (bytes, bytearray, memoryview)):
-        return "bytes", bytes(pdf_file)
+        return "bytes", pdf_file
     raise TypeError("pdf_file must be a path, bytes, or file-like object")
 
 

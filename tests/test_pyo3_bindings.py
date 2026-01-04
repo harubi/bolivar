@@ -28,6 +28,15 @@ class TestPDFDocument:
         doc = PDFDocument(pdf_bytes, password="")
         assert doc is not None
 
+    def test_open_pdf_memoryview(self):
+        """PDFDocument accepts memoryview inputs by default"""
+        from bolivar import PDFDocument
+
+        pdf_path = FIXTURES_DIR / "simple1.pdf"
+        pdf_bytes = pdf_path.read_bytes()
+        doc = PDFDocument(memoryview(pdf_bytes))
+        assert doc is not None
+
     def test_get_pages_returns_iterator(self):
         """PDFDocument.get_pages() returns an iterator of PDFPage objects"""
         from bolivar import PDFDocument
@@ -137,6 +146,26 @@ def test_extract_tables_binding_exists():
     assert hasattr(bolivar, "extract_tables_from_page")
     assert hasattr(bolivar, "extract_words_from_page")
     assert hasattr(bolivar, "extract_text_from_page")
+
+
+def test_extract_text_memoryview():
+    import bolivar
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    text = bolivar.extract_text(memoryview(pdf_bytes))
+    assert isinstance(text, str)
+    assert len(text) > 0
+
+
+def test_high_level_memoryview():
+    from pdfminer import high_level
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    text = high_level.extract_text(memoryview(pdf_bytes))
+    assert isinstance(text, str)
+    assert len(text) > 0
 
 
 def test_extract_tables_settings_affects_output():

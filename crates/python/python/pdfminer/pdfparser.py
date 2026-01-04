@@ -35,6 +35,8 @@ class PDFParser:
         # If fp is a path-like, use it directly for mmap-backed parsing
         if isinstance(fp, (str, os.PathLike)):
             self._path = os.fspath(fp)
+        elif isinstance(fp, (bytes, bytearray, memoryview)):
+            self._data = fp
         else:
             # If fp has a real filesystem path, prefer that (mmap)
             path = getattr(fp, "name", None)
@@ -43,7 +45,8 @@ class PDFParser:
 
         # Fallback: read bytes into memory
         if self._path is None:
-            self._data = self._read_all_bytes()
+            if self._data is None:
+                self._data = self._read_all_bytes()
 
     def _read_all_bytes(self) -> bytes:
         if not hasattr(self.fp, "read"):

@@ -17,12 +17,15 @@ use bolivar_core::table::{
     extract_words_from_ltpage,
 };
 use bolivar_core::utils::HasBBox;
+use bytes::Bytes;
 use memmap2::Mmap;
-use pyo3::exceptions::PyValueError;
+use pyo3::buffer::PyBuffer;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PyType};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
+use std::slice;
 use std::sync::{Arc, Mutex};
 
 /// Convert a PDFObject to a string representation for Python.
@@ -50,6 +53,40 @@ fn pdf_object_to_string(obj: &PDFObject) -> String {
         }
         PDFObject::Stream(_) => "<stream>".to_string(),
         PDFObject::Ref(objref) => format!("{} {} R", objref.objid, objref.genno),
+    }
+}
+
+enum PdfInput {
+    Shared(Bytes),
+    Owned(Vec<u8>),
+}
+
+struct PyBufferOwner {
+    buffer: PyBuffer<u8>,
+}
+
+impl PyBufferOwner {
+    fn new(buffer: PyBuffer<u8>) -> Self {
+        Self { buffer }
+    }
+}
+
+impl AsRef<[u8]> for PyBufferOwner {
+    fn as_ref(&self) -> &[u8] {
+        unsafe {
+            slice::from_raw_parts(self.buffer.buf_ptr().cast::<u8>(), self.buffer.len_bytes())
+        }
+    }
+}
+
+fn pdf_input_from_py(data: &Bound<'_, PyAny>) -> PyResult<PdfInput> {
+    let buf = PyBuffer::<u8>::get(data)
+        .map_err(|_| PyTypeError::new_err("data must be a bytes-like object"))?;
+    if buf.readonly() && buf.is_c_contiguous() {
+        let owner = PyBufferOwner::new(buf);
+        Ok(PdfInput::Shared(Bytes::from_owner(owner)))
+    } else {
+        Ok(PdfInput::Owned(buf.to_vec(data.py())?))
     }
 }
 
@@ -547,9 +584,12 @@ impl PyPDFDocument {
     ///     ValueError: If the PDF cannot be parsed
     #[new]
     #[pyo3(signature = (data, password = ""))]
-    fn new(data: &[u8], password: &str) -> PyResult<Self> {
-        let doc = PDFDocument::new(data, password)
-            .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+    fn new(data: &Bound<'_, PyAny>, password: &str) -> PyResult<Self> {
+        let doc = match pdf_input_from_py(data)? {
+            PdfInput::Shared(bytes) => PDFDocument::new_from_bytes(bytes, password),
+            PdfInput::Owned(bytes) => PDFDocument::new(bytes, password),
+        }
+        .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
         Ok(Self {
             inner: doc,
             resolved_cache: Mutex::new(HashMap::new()),
@@ -1844,7 +1884,7 @@ fn word_obj_to_py(py: Python<'_>, w: &WordObj) -> PyResult<Py<PyAny>> {
 #[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, threads = None))]
 fn extract_text(
     py: Python<'_>,
-    data: &[u8],
+    data: &Bound<'_, PyAny>,
     password: &str,
     page_numbers: Option<Vec<usize>>,
     maxpages: usize,
@@ -1860,8 +1900,14 @@ fn extract_text(
         laparams: laparams.map(|p| p.clone().into()),
         threads: resolve_threads(threads),
     };
-    let data = data.to_vec();
-    let result = py.allow_threads(|| core_extract_text(&data, Some(options)));
+    let result = match pdf_input_from_py(data)? {
+        PdfInput::Shared(bytes) => {
+            let doc = PDFDocument::new_from_bytes(bytes, password)
+                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+            py.allow_threads(|| core_extract_text_with_document(&doc, options))
+        }
+        PdfInput::Owned(bytes) => py.allow_threads(|| core_extract_text(&bytes, Some(options))),
+    };
     result.map_err(|e| PyValueError::new_err(format!("Failed to extract text: {}", e)))
 }
 
@@ -1903,7 +1949,7 @@ fn extract_text_from_path(
 #[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, threads = None))]
 fn extract_pages(
     py: Python<'_>,
-    data: &[u8],
+    data: &Bound<'_, PyAny>,
     password: &str,
     page_numbers: Option<Vec<usize>>,
     maxpages: usize,
@@ -1919,13 +1965,18 @@ fn extract_pages(
         laparams: laparams.map(|p| p.clone().into()),
         threads: resolve_threads(threads),
     };
-    let data = data.to_vec();
-    let pages = py
-        .allow_threads(|| {
-            let iter = core_extract_pages(&data, Some(options))?;
+    let pages = match pdf_input_from_py(data)? {
+        PdfInput::Shared(bytes) => {
+            let doc = PDFDocument::new_from_bytes(bytes, password)
+                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+            py.allow_threads(|| core_extract_pages_with_document(&doc, options))
+        }
+        PdfInput::Owned(bytes) => py.allow_threads(|| {
+            let iter = core_extract_pages(&bytes, Some(options))?;
             iter.collect::<bolivar_core::error::Result<Vec<_>>>()
-        })
-        .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+        }),
+    }
+    .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
     Ok(pages.iter().map(ltpage_to_py).collect())
 }
 
@@ -2119,7 +2170,9 @@ mod tests {
         let path = write_temp_pdf(&pdf_data);
 
         Python::with_gil(|py| {
-            let text_bytes = extract_text(py, &pdf_data, "", None, 0, true, None, None).unwrap();
+            let py_bytes = PyBytes::new(py, &pdf_data);
+            let text_bytes =
+                extract_text(py, py_bytes.as_any(), "", None, 0, true, None, None).unwrap();
             let text_path = extract_text_from_path(
                 py,
                 path.to_string_lossy().as_ref(),
