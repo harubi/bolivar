@@ -65,3 +65,7 @@ harness = false
 [[bench]]
 name = "e2e_bench"
 harness = false
+
+[[bench]]
+name = "alloc_guard_bench"
+harness = false
