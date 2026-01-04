@@ -244,7 +244,9 @@ impl PDFStream {
     /// Note: In a full implementation, this would handle filters like
     /// FlateDecode, LZWDecode, etc. For now, returns raw data.
     pub fn get_data(&self) -> &[u8] {
-        self.data.as_deref().unwrap_or_else(|| self.rawdata.as_ref())
+        self.data
+            .as_deref()
+            .unwrap_or_else(|| self.rawdata.as_ref())
     }
 
     /// Check if stream contains a key.

@@ -244,6 +244,27 @@ fn test_parse_multiple_streams() {
 }
 
 #[test]
+fn test_parse_token_across_stream_boundary() {
+    let stream1 = b"12".to_vec();
+    let stream2 = b"3 4".to_vec();
+
+    let parser = PDFContentParser::new(vec![stream1, stream2]);
+    let tokens: Vec<ContentToken> = parser.collect();
+
+    assert!(
+        matches!(
+            tokens.get(0),
+            Some(ContentToken::Operand(PSToken::Int(123)))
+        ),
+        "Expected split number to be parsed as 123"
+    );
+    assert!(
+        matches!(tokens.get(1), Some(ContentToken::Operand(PSToken::Int(4)))),
+        "Expected second operand to be 4"
+    );
+}
+
+#[test]
 fn test_parse_empty_stream() {
     let parser = PDFContentParser::new(vec![]);
     let tokens: Vec<ContentToken> = parser.collect();

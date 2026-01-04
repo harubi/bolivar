@@ -12,9 +12,9 @@ use crate::cmapdb::{CMap, CMapDB};
 use crate::error::{PdfError, Result};
 use crate::pdfcolor::{PDFColorSpace, PREDEFINED_COLORSPACE};
 use crate::pdftypes::{PDFObject, PDFStream};
-use crate::psparser::{ContentLexer, Keyword, PSLiteral, PSToken};
+use crate::psparser::{Keyword, PSLiteral, PSToken};
+use bytes::Bytes;
 use std::collections::{HashMap, VecDeque};
-use std::rc::Rc;
 
 /// Token types produced by PDFContentParser.
 #[derive(Debug, Clone, PartialEq)]
@@ -38,16 +38,540 @@ enum Context {
     Proc(usize, Vec<PSToken>),
 }
 
+struct SegmentedCursor {
+    segments: Vec<Bytes>,
+    offsets: Vec<usize>,
+    seg_index: usize,
+    seg_pos: usize,
+    total_len: usize,
+}
+
+impl SegmentedCursor {
+    fn new(mut segments: Vec<Bytes>) -> Self {
+        segments.retain(|seg| !seg.is_empty());
+        let mut offsets = Vec::with_capacity(segments.len());
+        let mut total_len = 0usize;
+        for seg in &segments {
+            offsets.push(total_len);
+            total_len = total_len.saturating_add(seg.len());
+        }
+        Self {
+            segments,
+            offsets,
+            seg_index: 0,
+            seg_pos: 0,
+            total_len,
+        }
+    }
+
+    fn total_len(&self) -> usize {
+        self.total_len
+    }
+
+    fn at_end(&self) -> bool {
+        self.tell() >= self.total_len
+    }
+
+    fn tell(&self) -> usize {
+        if self.seg_index >= self.segments.len() {
+            self.total_len
+        } else {
+            self.offsets[self.seg_index] + self.seg_pos
+        }
+    }
+
+    fn set_pos(&mut self, pos: usize) {
+        let pos = pos.min(self.total_len);
+        if pos == self.total_len {
+            self.seg_index = self.segments.len();
+            self.seg_pos = 0;
+            return;
+        }
+        let idx = match self.offsets.binary_search(&pos) {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
+        self.seg_index = idx.min(self.segments.len());
+        if self.seg_index >= self.segments.len() {
+            self.seg_pos = 0;
+            return;
+        }
+        self.seg_pos = pos.saturating_sub(self.offsets[self.seg_index]);
+    }
+
+    fn normalize(&mut self) {
+        while self.seg_index < self.segments.len()
+            && self.seg_pos >= self.segments[self.seg_index].len()
+        {
+            self.seg_index += 1;
+            self.seg_pos = 0;
+        }
+    }
+
+    fn current_slice(&self) -> &[u8] {
+        if self.seg_index >= self.segments.len() {
+            &[]
+        } else {
+            &self.segments[self.seg_index][self.seg_pos..]
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.current_slice().first().copied()
+    }
+
+    fn peek_at(&self, offset: usize) -> Option<u8> {
+        let mut idx = self.seg_index;
+        let mut pos = self.seg_pos + offset;
+        while idx < self.segments.len() {
+            let seg = &self.segments[idx];
+            if pos < seg.len() {
+                return Some(seg[pos]);
+            }
+            pos = pos.saturating_sub(seg.len());
+            idx += 1;
+        }
+        None
+    }
+
+    fn advance(&mut self, mut count: usize) {
+        while count > 0 && self.seg_index < self.segments.len() {
+            let seg_len = self.segments[self.seg_index].len();
+            let remaining = seg_len.saturating_sub(self.seg_pos);
+            if count < remaining {
+                self.seg_pos += count;
+                return;
+            }
+            count = count.saturating_sub(remaining);
+            self.seg_index += 1;
+            self.seg_pos = 0;
+        }
+    }
+
+    fn advance_one(&mut self) -> Option<u8> {
+        let b = self.peek()?;
+        self.advance(1);
+        Some(b)
+    }
+
+    fn match_bytes(&self, target: &[u8]) -> bool {
+        for (i, &b) in target.iter().enumerate() {
+            if self.peek_at(i) != Some(b) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+struct SegmentedContentLexer {
+    cursor: SegmentedCursor,
+}
+
+impl SegmentedContentLexer {
+    fn new(segments: Vec<Bytes>) -> Self {
+        Self {
+            cursor: SegmentedCursor::new(segments),
+        }
+    }
+
+    fn total_len(&self) -> usize {
+        self.cursor.total_len()
+    }
+
+    fn tell(&self) -> usize {
+        self.cursor.tell()
+    }
+
+    fn set_pos(&mut self, pos: usize) {
+        self.cursor.set_pos(pos);
+    }
+
+    fn next_token(&mut self) -> Option<Result<(usize, PSToken)>> {
+        self.skip_whitespace();
+        if self.cursor.at_end() {
+            return None;
+        }
+
+        let token_pos = self.cursor.tell();
+        let b = self.cursor.peek()?;
+
+        let result = match b {
+            b'/' => self.parse_literal(),
+            b'(' => self.parse_string(),
+            b'<' => {
+                if self.cursor.peek_at(1) == Some(b'<') {
+                    self.cursor.advance(2);
+                    Ok(PSToken::Keyword(Keyword::DictStart))
+                } else {
+                    self.parse_hex_string()
+                }
+            }
+            b'>' => {
+                if self.cursor.peek_at(1) == Some(b'>') {
+                    self.cursor.advance(2);
+                    Ok(PSToken::Keyword(Keyword::DictEnd))
+                } else {
+                    self.cursor.advance(1);
+                    Ok(PSToken::Keyword(Keyword::Unknown(b">".to_vec())))
+                }
+            }
+            b'[' => {
+                self.cursor.advance(1);
+                Ok(PSToken::Keyword(Keyword::ArrayStart))
+            }
+            b']' => {
+                self.cursor.advance(1);
+                Ok(PSToken::Keyword(Keyword::ArrayEnd))
+            }
+            b'{' => {
+                self.cursor.advance(1);
+                Ok(PSToken::Keyword(Keyword::BraceOpen))
+            }
+            b'}' => {
+                self.cursor.advance(1);
+                Ok(PSToken::Keyword(Keyword::BraceClose))
+            }
+            b'+' | b'-' => {
+                if matches!(self.cursor.peek_at(1), Some(c) if c.is_ascii_digit() || c == b'.') {
+                    self.parse_number(token_pos)
+                } else {
+                    self.parse_keyword()
+                }
+            }
+            b'.' => {
+                if matches!(self.cursor.peek_at(1), Some(c) if c.is_ascii_digit()) {
+                    self.parse_number(token_pos)
+                } else {
+                    self.parse_keyword()
+                }
+            }
+            c if c.is_ascii_digit() => self.parse_number(token_pos),
+            _ => self.parse_keyword(),
+        };
+
+        Some(result.map(|token| (token_pos, token)))
+    }
+
+    fn skip_whitespace(&mut self) {
+        loop {
+            self.cursor.normalize();
+            let slice = self.cursor.current_slice();
+            if slice.is_empty() {
+                return;
+            }
+            enum Action {
+                Advance(usize),
+                Comment(usize),
+                ConsumeAll(usize),
+            }
+            let action = {
+                let mut idx = 0usize;
+                loop {
+                    if idx >= slice.len() {
+                        break Action::ConsumeAll(slice.len());
+                    }
+                    let b = slice[idx];
+                    if b == b'%' {
+                        break Action::Comment(idx + 1);
+                    }
+                    if !is_whitespace(b) {
+                        break Action::Advance(idx);
+                    }
+                    idx += 1;
+                }
+            };
+            match action {
+                Action::Advance(n) => {
+                    self.cursor.advance(n);
+                    return;
+                }
+                Action::Comment(n) => {
+                    self.cursor.advance(n);
+                    self.skip_comment();
+                }
+                Action::ConsumeAll(n) => {
+                    self.cursor.advance(n);
+                }
+            }
+        }
+    }
+
+    fn skip_comment(&mut self) {
+        while let Some(b) = self.cursor.advance_one() {
+            if b == b'\n' || b == b'\r' {
+                break;
+            }
+        }
+    }
+
+    fn parse_literal(&mut self) -> Result<PSToken> {
+        self.cursor.advance(1); // skip '/'
+        let mut name = Vec::with_capacity(16);
+
+        while let Some(b) = self.cursor.peek() {
+            if is_whitespace(b) || is_delimiter(b) {
+                break;
+            }
+            if b == b'#' {
+                let c1 = self.cursor.peek_at(1);
+                let c2 = self.cursor.peek_at(2);
+                if let (Some(h1), Some(h2)) = (c1.and_then(hex_value), c2.and_then(hex_value)) {
+                    self.cursor.advance(3);
+                    name.push((h1 << 4) | h2);
+                    continue;
+                }
+                self.cursor.advance(1);
+                continue;
+            }
+            name.push(self.cursor.advance_one().unwrap());
+        }
+
+        let name = match String::from_utf8(name) {
+            Ok(s) => s,
+            Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
+        };
+        Ok(PSToken::Literal(name))
+    }
+
+    fn parse_number(&mut self, start_pos: usize) -> Result<PSToken> {
+        let mut negative = false;
+        if matches!(self.cursor.peek(), Some(b'-')) {
+            negative = true;
+            self.cursor.advance(1);
+        } else if matches!(self.cursor.peek(), Some(b'+')) {
+            self.cursor.advance(1);
+        }
+
+        let mut int_part: i64 = 0;
+        let mut has_int = false;
+        while let Some(b) = self.cursor.peek() {
+            if b.is_ascii_digit() {
+                has_int = true;
+                int_part = int_part * 10 + (b - b'0') as i64;
+                self.cursor.advance(1);
+            } else {
+                break;
+            }
+        }
+
+        let mut has_dot = false;
+        let mut frac_part: i64 = 0;
+        let mut frac_digits: u32 = 0;
+        if self.cursor.peek() == Some(b'.') {
+            has_dot = true;
+            self.cursor.advance(1);
+            while let Some(b) = self.cursor.peek() {
+                if b.is_ascii_digit() {
+                    frac_part = frac_part * 10 + (b - b'0') as i64;
+                    frac_digits += 1;
+                    self.cursor.advance(1);
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if !has_int && frac_digits == 0 {
+            return Err(PdfError::TokenError {
+                pos: start_pos,
+                msg: "invalid number".into(),
+            });
+        }
+
+        if has_dot {
+            let mut value = int_part as f64;
+            if frac_digits > 0 {
+                let mut divisor = 1.0;
+                for _ in 0..frac_digits {
+                    divisor *= 10.0;
+                }
+                value += (frac_part as f64) / divisor;
+            }
+            if negative {
+                value = -value;
+            }
+            Ok(PSToken::Real(value))
+        } else {
+            let value = if negative { -int_part } else { int_part };
+            Ok(PSToken::Int(value))
+        }
+    }
+
+    fn parse_string(&mut self) -> Result<PSToken> {
+        self.cursor.advance(1); // skip '('
+        let mut result = Vec::with_capacity(32);
+        let mut depth = 1;
+
+        while depth > 0 {
+            match self.cursor.advance_one() {
+                Some(b'(') => {
+                    depth += 1;
+                    result.push(b'(');
+                }
+                Some(b')') => {
+                    depth -= 1;
+                    if depth > 0 {
+                        result.push(b')');
+                    }
+                }
+                Some(b'\\') => match self.cursor.advance_one() {
+                    Some(b'n') => result.push(b'\n'),
+                    Some(b'r') => result.push(b'\r'),
+                    Some(b't') => result.push(b'\t'),
+                    Some(b'b') => result.push(0x08),
+                    Some(b'f') => result.push(0x0c),
+                    Some(b'(') => result.push(b'('),
+                    Some(b')') => result.push(b')'),
+                    Some(b'\\') => result.push(b'\\'),
+                    Some(b'\r') => {
+                        if self.cursor.peek() == Some(b'\n') {
+                            self.cursor.advance(1);
+                        }
+                    }
+                    Some(b'\n') => {}
+                    Some(c) if c.is_ascii_digit() && c < b'8' => {
+                        let mut octal = (c - b'0') as u32;
+                        for _ in 0..2 {
+                            if let Some(d) = self.cursor.peek() {
+                                if d.is_ascii_digit() && d < b'8' {
+                                    self.cursor.advance(1);
+                                    octal = octal * 8 + (d - b'0') as u32;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        result.push((octal & 0xFF) as u8);
+                    }
+                    Some(c) => result.push(c),
+                    None => return Err(PdfError::UnexpectedEof),
+                },
+                Some(c) => result.push(c),
+                None => return Err(PdfError::UnexpectedEof),
+            }
+        }
+
+        Ok(PSToken::String(result))
+    }
+
+    fn parse_hex_string(&mut self) -> Result<PSToken> {
+        self.cursor.advance(1); // skip '<'
+        let mut result = Vec::new();
+        let mut pending: Option<u8> = None;
+
+        loop {
+            match self.cursor.peek() {
+                Some(b'>') => {
+                    self.cursor.advance(1);
+                    break;
+                }
+                Some(c) if c.is_ascii_hexdigit() => {
+                    self.cursor.advance(1);
+                    let nibble = hex_value(c).unwrap_or(0);
+                    if let Some(high) = pending {
+                        result.push((high << 4) | nibble);
+                        pending = None;
+                    } else {
+                        pending = Some(nibble);
+                    }
+                }
+                Some(c) if is_whitespace(c) => {
+                    self.cursor.advance(1);
+                }
+                Some(_) => break,
+                None => return Err(PdfError::UnexpectedEof),
+            }
+        }
+
+        if let Some(nibble) = pending {
+            result.push(nibble);
+        }
+
+        Ok(PSToken::String(result))
+    }
+
+    fn parse_keyword(&mut self) -> Result<PSToken> {
+        if !self.cursor.current_slice().is_empty() {
+            let (token, end_idx) = {
+                let slice = self.cursor.current_slice();
+                match slice.iter().position(|&b| is_keyword_end(b)) {
+                    Some(end_idx) => (Some(token_from_bytes(&slice[..end_idx])), Some(end_idx)),
+                    None => (None, None),
+                }
+            };
+            if let (Some(token), Some(end_idx)) = (token, end_idx) {
+                self.cursor.advance(end_idx);
+                return Ok(token);
+            }
+        }
+
+        let mut bytes = Vec::with_capacity(8);
+        while let Some(b) = self.cursor.peek() {
+            if is_keyword_end(b) {
+                break;
+            }
+            bytes.push(b);
+            self.cursor.advance(1);
+        }
+
+        Ok(token_from_bytes(&bytes))
+    }
+
+    fn read_inline_data(&mut self, target: &[u8]) -> Vec<u8> {
+        self.cursor.normalize();
+        while matches!(self.cursor.peek(), Some(b) if is_whitespace(b)) {
+            self.cursor.advance(1);
+        }
+
+        let mut data = Vec::new();
+        while !self.cursor.at_end() {
+            if self.cursor.match_bytes(target) {
+                let after = self.cursor.peek_at(target.len());
+                if after.map_or(true, is_whitespace) {
+                    self.cursor.advance(target.len());
+                    if matches!(self.cursor.peek(), Some(b) if is_whitespace(b)) {
+                        self.cursor.advance(1);
+                    }
+                    while data.last() == Some(&b'\r') || data.last() == Some(&b'\n') {
+                        data.pop();
+                    }
+                    return data;
+                }
+            }
+            if let Some(b) = self.cursor.advance_one() {
+                data.push(b);
+            } else {
+                break;
+            }
+        }
+
+        while data.last() == Some(&b'\r') || data.last() == Some(&b'\n') {
+            data.pop();
+        }
+        data
+    }
+}
+
+fn token_from_bytes(bytes: &[u8]) -> PSToken {
+    if bytes == b"true" {
+        return PSToken::Bool(true);
+    } else if bytes == b"false" {
+        return PSToken::Bool(false);
+    }
+    PSToken::Keyword(Keyword::from_bytes(bytes))
+}
+
 /// Parser for PDF content streams.
 ///
 /// Content streams contain a sequence of operators and operands.
 /// Operands precede their operator. Special handling is needed
 /// for inline images (BI/ID/EI sequence).
 pub struct PDFContentParser {
-    /// Concatenated data from all streams
-    data: Rc<[u8]>,
     /// Current position in data
     pos: usize,
+    /// Total length of all streams
+    total_len: usize,
     /// Pending tokens (for buffering during inline image handling)
     pending: VecDeque<(usize, ContentToken)>,
     /// Current operand stack
@@ -57,28 +581,19 @@ pub struct PDFContentParser {
     /// Whether we're collecting inline image dictionary
     in_inline_dict: bool,
     /// Lexer reused for tokenization
-    lexer: ContentLexer<'static>,
+    lexer: SegmentedContentLexer,
 }
 
 impl PDFContentParser {
     /// Create a new content parser from one or more content streams.
     pub fn new(streams: Vec<Vec<u8>>) -> Self {
-        // Concatenate all streams with space separators
-        let mut data = Vec::new();
-        for (i, stream) in streams.into_iter().enumerate() {
-            if i > 0 && !data.is_empty() {
-                data.push(b' ');
-            }
-            data.extend(stream);
-        }
-
-        let data: Rc<[u8]> = Rc::from(data.into_boxed_slice());
-        let mut lexer = ContentLexer::new_shared(data.clone());
-        lexer.set_pos(0);
+        let segments: Vec<Bytes> = streams.into_iter().map(Bytes::from).collect();
+        let lexer = SegmentedContentLexer::new(segments);
+        let total_len = lexer.total_len();
 
         Self {
-            data,
             pos: 0,
+            total_len,
             pending: VecDeque::new(),
             operand_stack: Vec::new(),
             context_stack: Vec::new(),
@@ -121,7 +636,7 @@ impl PDFContentParser {
             let abs_pos = rel_pos;
             let prev_pos = self.pos;
             self.pos = self.lexer.tell();
-            if self.pos <= prev_pos && prev_pos < self.data.len() {
+            if self.pos <= prev_pos && prev_pos < self.total_len {
                 self.pos = prev_pos + 1;
             }
             self.lexer.set_pos(self.pos);
@@ -187,9 +702,8 @@ impl PDFContentParser {
                             self.in_inline_dict = false;
                             let dict = self.build_inline_dict();
                             let eos = self.get_inline_eos(&dict);
-                            let (img_data, consumed) = self.get_inline_data(&eos);
-                            self.pos += consumed;
-                            self.lexer.set_pos(self.pos);
+                            let img_data = self.get_inline_data(&eos);
+                            self.pos = self.lexer.tell();
                             return Some((
                                 abs_pos,
                                 ContentToken::InlineImage {
@@ -303,34 +817,8 @@ impl PDFContentParser {
     }
 
     /// Get inline image data by scanning for end marker.
-    fn get_inline_data(&self, target: &[u8]) -> (Vec<u8>, usize) {
-        let remaining = &self.data[self.pos..];
-
-        // Skip leading whitespace after ID
-        let mut start = 0;
-        while start < remaining.len() && is_whitespace(remaining[start]) {
-            start += 1;
-        }
-
-        let data_start = start;
-        let mut i = data_start;
-
-        while i < remaining.len() {
-            if remaining[i..].starts_with(target) {
-                let after = i + target.len();
-                if after >= remaining.len() || is_whitespace(remaining[after]) {
-                    let mut data = remaining[data_start..i].to_vec();
-                    while data.last() == Some(&b'\r') || data.last() == Some(&b'\n') {
-                        data.pop();
-                    }
-                    let consumed = after + if after < remaining.len() { 1 } else { 0 };
-                    return (data, consumed);
-                }
-            }
-            i += 1;
-        }
-
-        (remaining[data_start..].to_vec(), remaining.len())
+    fn get_inline_data(&mut self, target: &[u8]) -> Vec<u8> {
+        self.lexer.read_inline_data(target)
     }
 }
 
@@ -345,6 +833,26 @@ impl Iterator for PDFContentParser {
 /// Check if byte is PDF whitespace.
 fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x00' | b'\x0c')
+}
+
+fn is_delimiter(b: u8) -> bool {
+    matches!(
+        b,
+        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+    )
+}
+
+fn is_keyword_end(b: u8) -> bool {
+    is_whitespace(b) || is_delimiter(b)
+}
+
+fn hex_value(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
 }
 
 // ============================================================================

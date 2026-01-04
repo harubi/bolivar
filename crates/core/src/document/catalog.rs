@@ -583,8 +583,7 @@ impl PDFDocument {
         scratch: &mut Vec<u8>,
         f: impl FnOnce(&[u8]) -> R,
     ) -> Result<R> {
-        let needs_decrypt =
-            !stream.rawdata_is_decrypted() && self.security_handler.is_some();
+        let needs_decrypt = !stream.rawdata_is_decrypted() && self.security_handler.is_some();
         let has_filters = Self::stream_has_filters(stream);
 
         if !needs_decrypt && !has_filters {
@@ -620,8 +619,7 @@ impl PDFDocument {
         objid: u32,
         genno: u16,
     ) -> Result<Bytes> {
-        let needs_decrypt =
-            !stream.rawdata_is_decrypted() && self.security_handler.is_some();
+        let needs_decrypt = !stream.rawdata_is_decrypted() && self.security_handler.is_some();
         let has_filters = Self::stream_has_filters(stream);
 
         if !needs_decrypt && !has_filters {
@@ -635,10 +633,7 @@ impl PDFDocument {
     }
 
     /// Decode a PDF stream to shared bytes without explicit objid/genno.
-    pub fn decode_stream_bytes(
-        &self,
-        stream: &crate::model::objects::PDFStream,
-    ) -> Result<Bytes> {
+    pub fn decode_stream_bytes(&self, stream: &crate::model::objects::PDFStream) -> Result<Bytes> {
         let objid = stream.objid.unwrap_or(0);
         let genno = stream.genno.unwrap_or(0) as u16;
         self.decode_stream_bytes_with_objid(stream, objid, genno)
@@ -1384,7 +1379,7 @@ impl PDFDocument {
                 // Extract stream data
                 let stream_start = pos;
                 let remaining_len = remaining.len();
-        let stream_start_abs = cursor + base_pos + stream_start;
+                let stream_start_abs = cursor + base_pos + stream_start;
 
                 let stream_data = if fallback || force_scan || length == 0 {
                     // Fallback mode or missing length: scan for endstream
