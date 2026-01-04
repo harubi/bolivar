@@ -9,15 +9,15 @@
 //! - Page labels
 
 use super::security::{PDFSecurityHandler, create_security_handler};
-use bytes::Bytes;
 use crate::error::{PdfError, Result};
 use crate::model::objects::PDFObject;
 use crate::parser::parser::PDFParser;
+use bytes::Bytes;
 use memmap2::Mmap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 /// XRef entry - location of an object in the PDF file.
 #[derive(Debug, Clone)]
@@ -60,17 +60,15 @@ impl XRef {
 
 #[derive(Clone)]
 pub enum PdfBytes {
-    Owned(Arc<[u8]>),
+    Owned(Bytes),
     Shared(Bytes),
-    Mmap(Arc<Mmap>),
 }
 
 impl PdfBytes {
     fn as_slice(&self) -> &[u8] {
         match self {
-            PdfBytes::Owned(data) => data,
+            PdfBytes::Owned(data) => data.as_ref(),
             PdfBytes::Shared(data) => data.as_ref(),
-            PdfBytes::Mmap(map) => map.as_ref(),
         }
     }
 
@@ -80,7 +78,7 @@ impl PdfBytes {
 }
 
 /// PDF Document - provides access to PDF objects and metadata.
-/// Owns its data via Arc for thread-safe sharing.
+/// Owns its data via Bytes for thread-safe sharing.
 pub struct PDFDocument {
     data: PdfBytes,
     xrefs: Vec<XRef>,
@@ -95,7 +93,7 @@ impl PDFDocument {
     /// Create a new PDFDocument from raw PDF data.
     pub fn new<D: AsRef<[u8]>>(data: D, password: &str) -> Result<Self> {
         let mut doc = Self {
-            data: PdfBytes::Owned(Arc::from(data.as_ref())),
+            data: PdfBytes::Owned(Bytes::copy_from_slice(data.as_ref())),
             xrefs: Vec::new(),
             catalog: HashMap::new(),
             info: Vec::new(),
@@ -108,9 +106,9 @@ impl PDFDocument {
     }
 
     /// Create a new PDFDocument from a memory-mapped PDF.
-    pub fn new_from_mmap(mmap: Arc<Mmap>, password: &str) -> Result<Self> {
+    pub fn new_from_mmap(mmap: Mmap, password: &str) -> Result<Self> {
         let mut doc = Self {
-            data: PdfBytes::Mmap(mmap),
+            data: PdfBytes::Shared(Bytes::from_owner(mmap)),
             xrefs: Vec::new(),
             catalog: HashMap::new(),
             info: Vec::new(),
@@ -1737,7 +1735,7 @@ mod tests {
     use super::*;
 
     /// Test that PDFDocument can be created from owned data and stored.
-    /// This requires Arc ownership - will fail with borrowed reference design.
+    /// This requires owned Bytes - will fail with borrowed reference design.
     #[test]
     fn test_pdfdocument_owns_data() {
         fn create_doc() -> PDFDocument {
@@ -1752,6 +1750,20 @@ mod tests {
     fn test_pdfdocument_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<PDFDocument>();
+    }
+
+    #[test]
+    fn test_pdfdocument_mmap_uses_shared_bytes() {
+        use std::fs::File;
+
+        let path = format!("{}/tests/fixtures/simple1.pdf", env!("CARGO_MANIFEST_DIR"));
+        let file = File::open(path).unwrap();
+        let mmap = unsafe { Mmap::map(&file) }.unwrap();
+        let doc = PDFDocument::new_from_mmap(mmap, "").unwrap();
+        match doc.data {
+            PdfBytes::Shared(_) => {}
+            _ => panic!("expected PdfBytes::Shared for mmap input"),
+        }
     }
 
     #[test]

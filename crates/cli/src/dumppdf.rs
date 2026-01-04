@@ -14,7 +14,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 /// Escape special characters for XML output.
 fn escape(s: &[u8]) -> String {
@@ -681,7 +680,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Read PDF
         let file = File::open(path)?;
         let mmap = unsafe { Mmap::map(&file) }?;
-        let doc = PDFDocument::new_from_mmap(Arc::new(mmap), &args.password)?;
+        let doc = PDFDocument::new_from_mmap(mmap, &args.password)?;
 
         if args.extract_toc {
             dumpoutline(&mut output, &doc)?;

@@ -26,7 +26,7 @@ use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PyType};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::slice;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 /// Convert a PDFObject to a string representation for Python.
 fn pdf_object_to_string(obj: &PDFObject) -> String {
@@ -563,7 +563,7 @@ impl From<bolivar_core::layout::LAParams> for PyLAParams {
 /// Creates a document from PDF bytes and provides access to pages.
 #[pyclass(name = "PDFDocument")]
 pub struct PyPDFDocument {
-    /// The underlying Rust PDFDocument (owns the data via Arc)
+    /// The underlying Rust PDFDocument (owns the data via Bytes)
     inner: PDFDocument,
     /// Cache resolved objects for faster PDFObjRef resolution
     resolved_cache: Mutex<HashMap<u32, Py<PyAny>>>,
@@ -614,7 +614,7 @@ impl PyPDFDocument {
             .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
         let mmap = unsafe { Mmap::map(&file) }
             .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-        let doc = PDFDocument::new_from_mmap(Arc::new(mmap), password)
+        let doc = PDFDocument::new_from_mmap(mmap, password)
             .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
         Ok(Self {
             inner: doc,
@@ -1928,7 +1928,7 @@ fn extract_text_from_path(
         .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
     let mmap = unsafe { Mmap::map(&file) }
         .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-    let doc = PDFDocument::new_from_mmap(Arc::new(mmap), password)
+    let doc = PDFDocument::new_from_mmap(mmap, password)
         .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
 
     let options = ExtractOptions {
@@ -1997,7 +1997,7 @@ fn extract_pages_from_path(
         .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
     let mmap = unsafe { Mmap::map(&file) }
         .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-    let doc = PDFDocument::new_from_mmap(Arc::new(mmap), password)
+    let doc = PDFDocument::new_from_mmap(mmap, password)
         .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
 
     let mut options = ExtractOptions {

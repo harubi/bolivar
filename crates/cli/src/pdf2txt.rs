@@ -23,7 +23,6 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::Arc;
 
 /// Output type for the extracted content.
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
@@ -357,7 +356,7 @@ fn process_file<W: Write>(
     };
 
     // Create PDFDocument from mmap
-    let doc = PDFDocument::new_from_mmap(Arc::new(mmap), &options.password)?;
+    let doc = PDFDocument::new_from_mmap(mmap, &options.password)?;
 
     // Handle table extraction mode
     if args.extract_tables {
