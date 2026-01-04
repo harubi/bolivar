@@ -2,7 +2,7 @@
 //!
 //! Port of pdfminer.six pdfparser.py
 
-use super::lexer::{ContentLexer, Keyword, PSBaseParser, PSToken};
+use super::lexer::{ContentLexer, Keyword, PSBaseParser, PSToken, name_from_bytes};
 use crate::error::{PdfError, Result};
 use crate::pdftypes::{PDFObjRef, PDFObject};
 use std::collections::HashMap;
@@ -90,7 +90,7 @@ impl<'a> PDFParser<'a> {
                 Keyword::ArrayStart => self.parse_array(),
                 Keyword::DictStart => self.parse_dict(),
                 Keyword::Unknown(bytes) => {
-                    let name = String::from_utf8_lossy(&bytes).to_string();
+                    let name = name_from_bytes(&bytes);
                     Ok(PDFObject::Name(name))
                 }
                 _ => Err(PdfError::TokenError {

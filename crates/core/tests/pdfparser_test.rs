@@ -48,6 +48,15 @@ fn test_parse_array() {
 }
 
 #[test]
+fn test_parse_name_non_utf8_bytes() {
+    let data = b"/A#80B";
+    let mut parser = PDFParser::new(data);
+    let obj = parser.parse_object().unwrap();
+    let expected = format!("A{}B", '\u{80}');
+    assert_eq!(obj.as_name().unwrap(), expected);
+}
+
+#[test]
 fn test_parse_indirect_ref() {
     let data = b"10 0 R";
     let mut parser = PDFParser::new(data);

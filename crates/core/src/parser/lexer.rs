@@ -827,11 +827,7 @@ impl<'a> PSBaseParser<'a> {
             }
         }
 
-        // Try to convert to UTF-8 string
-        let name_str = String::from_utf8(name.clone())
-            .unwrap_or_else(|_| String::from_utf8_lossy(&name).into_owned());
-
-        Ok(PSToken::Literal(name_str))
+        Ok(PSToken::Literal(name_from_bytes(&name)))
     }
 
     /// Parse a number (integer or real)
@@ -1203,11 +1199,7 @@ impl<'a> ContentLexer<'a> {
         }
 
         self.pos = pos;
-        let name = match String::from_utf8(name) {
-            Ok(s) => s,
-            Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
-        };
-        Ok(PSToken::Literal(name))
+        Ok(PSToken::Literal(name_from_bytes(&name)))
     }
 
     fn parse_number(&mut self) -> Result<PSToken> {
@@ -1671,6 +1663,14 @@ fn find_line_end(data: &[u8]) -> Option<usize> {
         }
     }
     None
+}
+
+pub(crate) fn name_from_bytes(bytes: &[u8]) -> String {
+    let mut name = String::with_capacity(bytes.len());
+    for &b in bytes {
+        name.push(char::from(b));
+    }
+    name
 }
 
 impl PSBaseParser<'static> {

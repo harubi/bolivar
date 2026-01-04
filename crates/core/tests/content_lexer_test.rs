@@ -65,6 +65,14 @@ fn test_content_lexer_literal_hex_escape() {
 }
 
 #[test]
+fn test_content_lexer_literal_non_utf8_bytes() {
+    let data = b"/A#80B";
+    let tokens = collect_tokens(data);
+    let expected = format!("A{}B", '\u{80}');
+    assert_eq!(tokens, vec![PSToken::Literal(expected)]);
+}
+
+#[test]
 fn test_content_lexer_skips_comments() {
     let data = b"% comment\nBT";
     let tokens = collect_tokens(data);
