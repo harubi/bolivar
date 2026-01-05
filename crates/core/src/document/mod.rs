@@ -8,6 +8,7 @@
 
 pub mod catalog;
 pub mod page;
+pub mod repair;
 pub mod saslprep;
 pub mod security;
 

@@ -387,6 +387,158 @@ fn py_text_to_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
     Ok(obj.str()?.to_string())
 }
 
+#[pyfunction]
+fn decode_text(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<String> {
+    let buf = PyBuffer::<u8>::get(data)
+        .map_err(|_| PyTypeError::new_err("decode_text expects bytes-like object"))?;
+    let bytes = buf.to_vec(py)?;
+    Ok(bolivar_core::utils::decode_text(&bytes))
+}
+
+#[pyfunction]
+fn isnumber(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if obj.extract::<i64>().is_ok() || obj.extract::<f64>().is_ok() {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn is_pdf_obj_ref(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    Ok(obj.hasattr("objid")? && obj.hasattr("resolve")?)
+}
+
+fn resolve_pdf_obj(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let mut current = obj.clone().into_any().unbind();
+    loop {
+        let bound = current.bind(py);
+        if !is_pdf_obj_ref(&bound)? {
+            return Ok(current);
+        }
+        let resolved = match bound.call_method0("resolve") {
+            Ok(v) => v.into_any().unbind(),
+            Err(_) => return Ok(py.None()),
+        };
+        current = resolved;
+    }
+}
+
+fn parse_number_tree(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+    visited: &mut HashSet<i64>,
+    out: &mut Vec<(i64, Py<PyAny>)>,
+) -> PyResult<()> {
+    if is_pdf_obj_ref(obj)? {
+        if let Ok(objid) = obj.getattr("objid")?.extract::<i64>() {
+            if visited.contains(&objid) {
+                return Ok(());
+            }
+            visited.insert(objid);
+        }
+    }
+
+    let resolved = resolve_pdf_obj(py, obj)?;
+    let resolved = resolved.bind(py);
+    if resolved.is_none() {
+        return Ok(());
+    }
+
+    let dict = match resolved.downcast::<PyDict>() {
+        Ok(d) => d,
+        Err(_) => return Ok(()),
+    };
+
+    if let Some(nums_obj) = dict.get_item("Nums")? {
+        let nums_resolved = resolve_pdf_obj(py, &nums_obj)?;
+        let nums = nums_resolved.bind(py);
+        if let Ok(seq) = nums.downcast::<PySequence>() {
+            let len = seq.len().unwrap_or(0);
+            let mut idx = 0;
+            while idx + 1 < len {
+                let key_obj = seq.get_item(idx)?;
+                let key_resolved = resolve_pdf_obj(py, &key_obj)?;
+                let key_bound = key_resolved.bind(py);
+                if let Ok(key_val) = key_bound.extract::<i64>() {
+                    let val_obj = seq.get_item(idx + 1)?;
+                    out.push((key_val, val_obj.into_any().unbind()));
+                }
+                idx += 2;
+            }
+        }
+    }
+
+    if let Some(kids_obj) = dict.get_item("Kids")? {
+        let kids_resolved = resolve_pdf_obj(py, &kids_obj)?;
+        let kids = kids_resolved.bind(py);
+        if let Ok(seq) = kids.downcast::<PySequence>() {
+            let len = seq.len().unwrap_or(0);
+            for idx in 0..len {
+                let kid = seq.get_item(idx)?;
+                parse_number_tree(py, &kid, visited, out)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[pyclass(name = "NumberTree")]
+struct PyNumberTree {
+    obj: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyNumberTree {
+    #[new]
+    fn new(obj: Py<PyAny>) -> Self {
+        Self { obj }
+    }
+
+    #[getter]
+    fn values(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let vals = self.compute_values(py)?;
+        let list = PyList::empty(py);
+        for (k, v) in vals {
+            let k_obj = k.into_pyobject(py)?.into_any().unbind();
+            let tup = PyTuple::new(py, [k_obj, v.clone_ref(py)])?;
+            list.append(tup)?;
+        }
+        Ok(list.into_any().unbind())
+    }
+
+    fn lookup(&self, py: Python<'_>, key: i64) -> PyResult<Py<PyAny>> {
+        let vals = self.compute_values(py)?;
+        for (k, v) in vals {
+            if k == key {
+                return Ok(v);
+            }
+            if k > key {
+                break;
+            }
+        }
+        Ok(py.None())
+    }
+
+    fn __iter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let values = self.values(py)?;
+        Ok(values
+            .bind(py)
+            .call_method0("__iter__")?
+            .into_any()
+            .unbind())
+    }
+}
+
+impl PyNumberTree {
+    fn compute_values(&self, py: Python<'_>) -> PyResult<Vec<(i64, Py<PyAny>)>> {
+        let mut visited = HashSet::new();
+        let mut out = Vec::new();
+        let obj = self.obj.bind(py);
+        parse_number_tree(py, &obj, &mut visited, &mut out)?;
+        Ok(out)
+    }
+}
+
 fn page_objects_to_chars_edges(
     py: Python<'_>,
     page: &Bound<'_, PyAny>,
@@ -3113,6 +3265,15 @@ fn extract_table_from_page_filtered(
     Ok(extract_table_from_objects(chars, edges, &geom, &settings))
 }
 
+/// Repair a PDF and return the repaired bytes.
+#[pyfunction]
+fn repair_pdf(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let (bytes, _path) = read_bytes_and_path(py, data)?;
+    let repaired = bolivar_core::document::repair::repair_bytes(&bytes)
+        .map_err(|e| PyValueError::new_err(format!("repair failed: {e}")))?;
+    Ok(PyBytes::new(py, &repaired).into_any().unbind())
+}
+
 /// Extract words from a page using Rust text extraction.
 #[pyfunction]
 #[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, threads = None, force_crop = false))]
@@ -3425,15 +3586,26 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTextConverter>()?;
     m.add_class::<PyHTMLConverter>()?;
     m.add_class::<PyXMLConverter>()?;
+    m.add_class::<PyNumberTree>()?;
     m.add_function(wrap_pyfunction!(LIT, m)?)?;
     m.add_function(wrap_pyfunction!(KWD, m)?)?;
     let py = m.py();
+    let encoding_bytes: Vec<u8> = (0u8..=255).collect();
+    let pdf_doc_encoding = bolivar_core::utils::decode_text(&encoding_bytes);
+    m.add("PDFDocEncoding", pdf_doc_encoding)?;
+    m.add("INF", (1i64 << 31) - 1)?;
+    m.add(
+        "MATRIX_IDENTITY",
+        (1.0_f64, 0.0_f64, 0.0_f64, 1.0_f64, 0.0_f64, 0.0_f64),
+    )?;
     m.add("KEYWORD_PROC_BEGIN", intern_pskeyword(py, b"{".to_vec())?)?;
     m.add("KEYWORD_PROC_END", intern_pskeyword(py, b"}".to_vec())?)?;
     m.add("KEYWORD_ARRAY_BEGIN", intern_pskeyword(py, b"[".to_vec())?)?;
     m.add("KEYWORD_ARRAY_END", intern_pskeyword(py, b"]".to_vec())?)?;
     m.add("KEYWORD_DICT_BEGIN", intern_pskeyword(py, b"<<".to_vec())?)?;
     m.add("KEYWORD_DICT_END", intern_pskeyword(py, b">>".to_vec())?)?;
+    m.add_function(wrap_pyfunction!(decode_text, m)?)?;
+    m.add_function(wrap_pyfunction!(isnumber, m)?)?;
     m.add_function(wrap_pyfunction!(extract_text, m)?)?;
     m.add_function(wrap_pyfunction!(extract_text_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages, m)?)?;
@@ -3444,6 +3616,7 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_table_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page_filtered, m)?)?;
     m.add_function(wrap_pyfunction!(extract_table_from_page_filtered, m)?)?;
+    m.add_function(wrap_pyfunction!(repair_pdf, m)?)?;
     m.add_function(wrap_pyfunction!(extract_words_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_text_from_page, m)?)?;
     Ok(())

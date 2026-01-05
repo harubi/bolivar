@@ -37,8 +37,8 @@ fn test_tounicode_maps_simple_font_cid_67() {
     let fonts_obj = page.resources.get("Font").expect("no Font resources");
     let fonts = resolve_dict(&doc, fonts_obj).expect("failed to resolve Font dict");
 
-    // Find HelveticaNeueLTPro-Lt font
-    let mut tounicode_data: Option<Vec<u8>> = None;
+    // Collect all HelveticaNeueLTPro-Lt ToUnicode candidates (order is non-deterministic).
+    let mut candidates: Vec<(String, Vec<u8>)> = Vec::new();
     for (_name, spec_obj) in fonts.iter() {
         let spec = resolve_dict(&doc, spec_obj).expect("failed to resolve font spec");
         let basefont = spec
@@ -46,42 +46,58 @@ fn test_tounicode_maps_simple_font_cid_67() {
             .and_then(|v| v.as_name().ok())
             .unwrap_or("");
         if basefont.contains("HelveticaNeueLTPro-Lt") {
-            let tounicode = spec.get("ToUnicode").expect("ToUnicode missing");
+            let tounicode = match spec.get("ToUnicode") {
+                Some(value) => value,
+                None => continue,
+            };
             let stream = match doc.resolve(tounicode).expect("ToUnicode resolve failed") {
                 PDFObject::Stream(s) => s,
-                _ => panic!("ToUnicode not a stream"),
+                _ => continue,
             };
             let decoded = doc
                 .decode_stream(&stream)
                 .expect("failed to decode ToUnicode stream");
-            tounicode_data = Some(decoded);
-            break;
+            candidates.push((basefont.to_string(), decoded));
         }
     }
 
-    let data = tounicode_data.expect("HelveticaNeueLTPro-Lt font not found");
-    if std::env::var("BOLIVAR_DEBUG_TOUNICODE").is_ok() {
-        let nul_count = data.iter().filter(|&&b| b == 0).count();
-        println!(
-            "ToUnicode bytes len={}, nul_count={}",
-            data.len(),
-            nul_count
-        );
-        let preview: Vec<u8> = data.iter().cloned().take(80).collect();
-        println!("ToUnicode preview: {:?}", preview);
-    }
-    let content = String::from_utf8_lossy(&data);
     assert!(
-        content.contains("beginbfchar") || content.contains("beginbfrange"),
-        "decoded ToUnicode stream missing expected markers"
+        !candidates.is_empty(),
+        "HelveticaNeueLTPro-Lt font not found"
     );
-    let cmap = parse_tounicode_cmap(&data);
-    let space = cmap
-        .get_unichr(0x20)
-        .expect("CID 0x20 missing from ToUnicode map");
-    assert_eq!(space, " ");
-    let mapped = cmap
-        .get_unichr(0x43)
-        .expect("CID 0x43 missing from ToUnicode map");
-    assert_eq!(mapped, "C");
+
+    let debug = std::env::var("BOLIVAR_DEBUG_TOUNICODE").is_ok();
+    for (basefont, data) in candidates.into_iter() {
+        if debug {
+            let nul_count = data.iter().filter(|&&b| b == 0).count();
+            println!(
+                "ToUnicode font={}, bytes len={}, nul_count={}",
+                basefont,
+                data.len(),
+                nul_count
+            );
+            let preview: Vec<u8> = data.iter().cloned().take(80).collect();
+            println!("ToUnicode preview: {:?}", preview);
+        }
+        let content = String::from_utf8_lossy(&data);
+        if !content.contains("beginbfchar") && !content.contains("beginbfrange") {
+            continue;
+        }
+        let cmap = parse_tounicode_cmap(&data);
+        let space = match cmap.get_unichr(0x20) {
+            Some(value) => value,
+            None => continue,
+        };
+        if space != " " {
+            continue;
+        }
+        let mapped = match cmap.get_unichr(0x43) {
+            Some(value) => value,
+            None => continue,
+        };
+        assert_eq!(mapped, "C");
+        return;
+    }
+
+    panic!("No matching ToUnicode map contained CID 0x20 and 0x43 for HelveticaNeueLTPro-Lt");
 }

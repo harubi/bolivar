@@ -68,6 +68,44 @@ def _apply_patch(module) -> bool:
     page_mod.Page.extract_tables = _extract_tables
     _extract_table._bolivar_patched = True
     page_mod.Page.extract_table = _extract_table
+
+    # Patch pdfplumber.repair to use Rust repair
+    try:
+        import pdfplumber.repair as repair_mod
+    except Exception:
+        repair_mod = None
+
+    if repair_mod is not None:
+        from io import BytesIO
+        from bolivar import repair_pdf
+
+        def _rust_repair(path_or_fp, password=None, gs_path=None, setting="default"):
+            # Ignore gs_path/setting; Rust repair is internal.
+            return BytesIO(repair_pdf(path_or_fp))
+
+        def _rust_repair_public(
+            path_or_fp,
+            outfile=None,
+            password=None,
+            gs_path=None,
+            setting="default",
+        ):
+            repaired = _rust_repair(
+                path_or_fp, password=password, gs_path=gs_path, setting=setting
+            )
+            if outfile:
+                with open(outfile, "wb") as f:
+                    f.write(repaired.read())
+                return None
+            return repaired
+
+        repair_mod._repair = _rust_repair
+        repair_mod.repair = _rust_repair_public
+        if hasattr(module, "repair"):
+            module.repair = repair_mod.repair
+        pdf_mod = sys.modules.get("pdfplumber.pdf")
+        if pdf_mod is not None and hasattr(pdf_mod, "_repair"):
+            pdf_mod._repair = _rust_repair
     return True
 
 

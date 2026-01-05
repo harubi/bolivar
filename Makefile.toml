@@ -70,11 +70,31 @@ description = "Run all benchmarks"
 command = "cargo"
 args = ["bench", "-p", "bolivar-core"]
 
+[tasks.bench-quick]
+category = "Rust"
+description = "Run quick benchmarks"
+command = "cargo"
+args = ["bench", "-p", "bolivar-core"]
+env = { BOLIVAR_BENCH_TIER = "quick" }
+
+[tasks.bench-full]
+category = "Rust"
+description = "Run full benchmarks"
+command = "cargo"
+args = ["bench", "-p", "bolivar-core"]
+env = { BOLIVAR_BENCH_TIER = "full" }
+
 [tasks.bench-save]
 category = "Rust"
 description = "Run benchmarks and save baseline"
 command = "cargo"
 args = ["bench", "-p", "bolivar-core", "--", "--save-baseline", "main"]
+
+[tasks.bench-py]
+category = "Python"
+description = "Run Python benchmarks"
+command = "uv"
+args = ["run", "--extra", "bench", "pytest", "benchmarks/python", "-v", "--benchmark-only"]
 
 [tasks.clippy]
 category = "Rust"
@@ -183,3 +203,13 @@ script = "cargo run --bin pdf2txt -- ${@}"
 category = "CLI"
 description = "Run dumppdf CLI (pass args after --)"
 script = "cargo run --bin dumppdf -- ${@}"
+
+[tasks.test-parity]
+category = "Workflow"
+description = "Run Rust + pdfminer.six + pdfplumber parity gate"
+command = "bash"
+args = ["-lc", """
+cargo make test && \
+  PYTHONPATH=crates/python/python:references/pdfminer.six uv run --with pytest --with pytest-cov --with pandas -m pytest references/pdfminer.six/tests/ && \
+  PYTHONPATH=crates/python/python:references/pdfplumber uv run --with pytest --with pytest-cov --with pandas -m pytest references/pdfplumber/
+"""]

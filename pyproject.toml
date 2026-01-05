@@ -22,7 +22,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest-cov"]
+test = ["pytest", "pytest-cov"]
+bench = ["pytest", "pytest-benchmark"]
 
 [tool.maturin]
 manifest-path = "crates/python/Cargo.toml"
