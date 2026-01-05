@@ -683,9 +683,20 @@ impl PDFDocument {
     ) -> Result<Vec<u8>> {
         let mut output = data.to_vec();
 
-        // Check for Filter
+        // Check for Filter (resolve indirects)
         if let Some(filter) = stream.get("Filter") {
-            let filter_name = match filter {
+            let filter = match self.resolve_internal(filter) {
+                Ok(PDFObject::Array(arr)) => {
+                    let mut resolved = Vec::with_capacity(arr.len());
+                    for item in arr.iter() {
+                        resolved.push(self.resolve_internal(item).unwrap_or_else(|_| item.clone()));
+                    }
+                    PDFObject::Array(resolved)
+                }
+                Ok(obj) => obj,
+                Err(_) => filter.clone(),
+            };
+            let filter_name = match &filter {
                 PDFObject::Name(name) => Some(name.as_str()),
                 PDFObject::Array(arr) if arr.len() == 1 => {
                     if let PDFObject::Name(name) = &arr[0] {
@@ -711,7 +722,18 @@ impl PDFDocument {
 
         // Apply predictor if specified in DecodeParms
         if let Some(parms) = stream.get("DecodeParms") {
-            let parms_dict = match parms {
+            let parms = match self.resolve_internal(parms) {
+                Ok(PDFObject::Array(arr)) => {
+                    let mut resolved = Vec::with_capacity(arr.len());
+                    for item in arr.iter() {
+                        resolved.push(self.resolve_internal(item).unwrap_or_else(|_| item.clone()));
+                    }
+                    PDFObject::Array(resolved)
+                }
+                Ok(obj) => obj,
+                Err(_) => parms.clone(),
+            };
+            let parms_dict = match &parms {
                 PDFObject::Dict(d) => Some(d),
                 PDFObject::Array(arr) if !arr.is_empty() => {
                     if let PDFObject::Dict(d) = &arr[0] {

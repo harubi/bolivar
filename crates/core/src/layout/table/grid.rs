@@ -6,7 +6,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use super::intersections::{EdgeStore, IntersectionIdx};
-use super::text::extract_text_from_char_ids;
+use super::text::{extract_text_from_char_ids, extract_text_from_char_ids_layout};
 use super::types::{
     BBox, BBoxKey, CharId, CharObj, KeyF64, KeyPoint, TextSettings, bbox_key, key_f64, key_point,
 };
@@ -471,7 +471,17 @@ impl Table {
                     if indices.is_empty() {
                         row_out.push(Some(String::new()));
                     } else {
-                        let text = extract_text_from_char_ids(chars, indices, text_settings);
+                        let cell_bbox = &cell_infos[cell_id].bbox;
+                        let text = if text_settings.layout {
+                            extract_text_from_char_ids_layout(
+                                chars,
+                                indices,
+                                text_settings,
+                                cell_bbox,
+                            )
+                        } else {
+                            extract_text_from_char_ids(chars, indices, text_settings)
+                        };
                         row_out.push(Some(text));
                     }
                 } else {

@@ -2,6 +2,7 @@
 //!
 //! Based on pdfminer.six pdftypes.py functionality.
 
+use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdftypes::{PDFObjRef, PDFObject, PDFStream};
 use std::collections::HashMap;
 
@@ -125,6 +126,28 @@ fn test_stream_attrs() {
         stream.attrs.get("Filter").unwrap().as_name().unwrap(),
         "FlateDecode"
     );
+}
+
+#[test]
+fn test_decode_stream_bytes() {
+    let pdf_bytes = include_bytes!("fixtures/contrib/issue-1062-filters.pdf");
+    let doc = PDFDocument::new(pdf_bytes.as_slice(), "").expect("parse fixture");
+    let mut decoded_any = false;
+
+    for objid in doc.get_objids() {
+        let obj = match doc.getobj(objid) {
+            Ok(obj) => obj,
+            Err(_) => continue,
+        };
+        if let Ok(stream) = obj.as_stream() {
+            let decoded = doc.decode_stream(stream).expect("decode stream");
+            assert!(!decoded.is_empty());
+            decoded_any = true;
+            break;
+        }
+    }
+
+    assert!(decoded_any, "expected at least one stream to decode");
 }
 
 // === Type conversion helper tests ===

@@ -1808,6 +1808,18 @@ impl<'a> PSStackParser<'a> {
     }
 }
 
+impl PSStackParser<'static> {
+    /// Create a parser from a raw byte slice (copies into shared storage).
+    pub fn from_bytes(data: &[u8]) -> Self {
+        Self {
+            base: PSBaseParser::from_bytes(data),
+            stack: Vec::new(),
+            context: Vec::new(),
+            results: Vec::new(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

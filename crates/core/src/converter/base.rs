@@ -1021,6 +1021,7 @@ impl PDFDevice for PDFPageAggregator {
                             scolor,
                         );
                         ltchar.set_ncs(Some(graphicstate.ncs.name.clone()));
+                        ltchar.set_scs(Some(graphicstate.scs.name.clone()));
 
                         if let Some(ref mut container) = self.analyzer.cur_item {
                             container.add(LTItem::Char(ltchar));
@@ -1073,9 +1074,9 @@ impl PDFDevice for PDFPageAggregator {
 ///
 /// Port of PDFConverter from pdfminer.six converter.py
 #[allow(dead_code)]
-pub struct PDFConverter<'a, W: Write> {
+pub struct PDFConverter<W: Write> {
     /// Output writer
-    outfp: &'a mut W,
+    outfp: W,
     /// Output encoding
     codec: String,
     /// Current page number
@@ -1086,9 +1087,9 @@ pub struct PDFConverter<'a, W: Write> {
     outfp_binary: bool,
 }
 
-impl<'a, W: Write> PDFConverter<'a, W> {
+impl<W: Write> PDFConverter<W> {
     /// Create a new converter.
-    pub fn new(outfp: &'a mut W, codec: &str, pageno: i32, laparams: Option<LAParams>) -> Self {
+    pub fn new(outfp: W, codec: &str, pageno: i32, laparams: Option<LAParams>) -> Self {
         Self {
             outfp,
             codec: codec.to_string(),

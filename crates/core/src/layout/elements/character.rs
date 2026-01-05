@@ -52,6 +52,7 @@ pub struct LTCharBuilder {
     mcid: Option<i32>,
     tag: Option<String>,
     ncs: Option<String>,
+    scs: Option<String>,
     non_stroking_color: Color,
     stroking_color: Color,
 }
@@ -71,6 +72,7 @@ impl LTCharBuilder {
             mcid: None,
             tag: None,
             ncs: None,
+            scs: None,
             non_stroking_color: None,
             stroking_color: None,
         }
@@ -112,6 +114,12 @@ impl LTCharBuilder {
         self
     }
 
+    /// Sets the stroking colorspace name (e.g., "DeviceRGB").
+    pub fn scs(mut self, scs: Option<String>) -> Self {
+        self.scs = scs;
+        self
+    }
+
     /// Sets the non-stroking (fill) color.
     pub fn non_stroking_color(mut self, color: Color) -> Self {
         self.non_stroking_color = color;
@@ -137,6 +145,7 @@ impl LTCharBuilder {
             mcid: self.mcid,
             tag: self.tag,
             ncs: self.ncs,
+            scs: self.scs,
             non_stroking_color: self.non_stroking_color,
             stroking_color: self.stroking_color,
         }
@@ -160,6 +169,8 @@ pub struct LTChar {
     tag: Option<String>,
     /// Non-stroking colorspace name (e.g., "DeviceRGB")
     ncs: Option<String>,
+    /// Stroking colorspace name (e.g., "DeviceRGB")
+    scs: Option<String>,
     /// Non-stroking (fill) color
     non_stroking_color: Color,
     /// Stroking color
@@ -372,6 +383,14 @@ impl LTChar {
         self.ncs = ncs;
     }
 
+    pub fn scs(&self) -> Option<String> {
+        self.scs.clone()
+    }
+
+    pub fn set_scs(&mut self, scs: Option<String>) {
+        self.scs = scs;
+    }
+
     pub fn non_stroking_color(&self) -> &Color {
         &self.non_stroking_color
     }
@@ -417,6 +436,7 @@ mod tests {
         assert_eq!(via_new.mcid(), via_builder.mcid());
         assert_eq!(via_new.tag(), via_builder.tag());
         assert_eq!(via_new.ncs(), via_builder.ncs());
+        assert_eq!(via_new.scs(), via_builder.scs());
         assert_eq!(via_new.bbox(), via_builder.bbox());
     }
 
@@ -478,6 +498,7 @@ mod tests {
         assert_eq!(ch.mcid(), None);
         assert_eq!(ch.tag(), None);
         assert_eq!(ch.ncs(), None);
+        assert_eq!(ch.scs(), None);
         assert_eq!(ch.non_stroking_color(), &None);
         assert_eq!(ch.stroking_color(), &None);
     }

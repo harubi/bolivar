@@ -9,11 +9,17 @@ use bolivar_core::high_level::{
     extract_text as core_extract_text,
     extract_text_with_document as core_extract_text_with_document,
 };
+use bolivar_core::parser::{
+    PDFParser as CorePDFParser, PSBaseParser as CorePSBaseParser,
+    PSStackParser as CorePSStackParser, PSToken,
+};
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdftypes::PDFObject;
+use bolivar_core::pdftypes::PDFStream;
 use bolivar_core::table::{
-    BBox, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TextDir, TextSettings,
-    WordObj, extract_table_from_ltpage, extract_tables_from_ltpage, extract_text_from_ltpage,
+    BBox, CharObj, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TextDir,
+    TextSettings, WordObj, extract_table_from_ltpage, extract_table_from_objects,
+    extract_tables_from_ltpage, extract_tables_from_objects, extract_text_from_ltpage,
     extract_words_from_ltpage,
 };
 use bolivar_core::utils::HasBBox;
@@ -22,11 +28,12 @@ use memmap2::Mmap;
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PyType};
+use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PyTuple, PyType};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
+use std::io::Write;
 use std::slice;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 /// Convert a PDFObject to a string representation for Python.
 fn pdf_object_to_string(obj: &PDFObject) -> String {
@@ -158,23 +165,16 @@ fn pdf_object_to_py_internal(
             Ok(py_dict.into_any().unbind())
         }
         PDFObject::Stream(stream) => {
-            // Return attrs part only for annotations
-            let py_dict = PyDict::new(py);
-            for (k, v) in stream.attrs.iter() {
-                py_dict.set_item(
-                    k,
-                    pdf_object_to_py_internal(
-                        py,
-                        v,
-                        doc,
-                        visited,
-                        name_as_psliteral,
-                        resolve_refs,
-                        py_doc,
-                    )?,
-                )?;
-            }
-            Ok(py_dict.into_any().unbind())
+            let py_stream = PyPDFStream::from_core(
+                py,
+                stream,
+                doc,
+                visited,
+                name_as_psliteral,
+                resolve_refs,
+                py_doc,
+            )?;
+            Ok(Py::new(py, py_stream)?.into_any())
         }
         PDFObject::Ref(objref) => {
             if !resolve_refs {
@@ -218,6 +218,442 @@ fn pdf_object_to_py(
     visited: &mut HashSet<(u32, u32)>,
 ) -> PyResult<Py<PyAny>> {
     pdf_object_to_py_internal(py, obj, doc, visited, false, true, None)
+}
+
+fn ps_exception(py: Python<'_>, class_name: &str, msg: &str) -> PyErr {
+    if let Ok(module) = py.import("pdfminer.psexceptions") {
+        if let Ok(cls) = module.getattr(class_name) {
+            if let Ok(err) = cls.call1((msg,)) {
+                return PyErr::from_value(err);
+            }
+        }
+    }
+    PyValueError::new_err(msg.to_string())
+}
+
+static PSLITERAL_TABLE: OnceLock<Mutex<HashMap<Vec<u8>, Py<PyAny>>>> = OnceLock::new();
+static PSKEYWORD_TABLE: OnceLock<Mutex<HashMap<Vec<u8>, Py<PyAny>>>> = OnceLock::new();
+
+fn ps_name_to_bytes(name: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
+    if let Ok(bytes) = name.extract::<Vec<u8>>() {
+        return Ok(bytes);
+    }
+    let s: String = name.extract()?;
+    Ok(s.into_bytes())
+}
+
+fn intern_psliteral(py: Python<'_>, name: Vec<u8>) -> PyResult<Py<PyAny>> {
+    let table = PSLITERAL_TABLE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut guard) = table.lock() {
+        if let Some(existing) = guard.get(&name) {
+            return Ok(existing.clone_ref(py));
+        }
+        let obj = Py::new(py, PyPSLiteral { name: name.clone() })?.into_any();
+        guard.insert(name, obj.clone_ref(py));
+        return Ok(obj);
+    }
+    // Fallback if mutex is poisoned.
+    Ok(Py::new(py, PyPSLiteral { name })?.into_any())
+}
+
+fn intern_pskeyword(py: Python<'_>, name: Vec<u8>) -> PyResult<Py<PyAny>> {
+    let table = PSKEYWORD_TABLE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut guard) = table.lock() {
+        if let Some(existing) = guard.get(&name) {
+            return Ok(existing.clone_ref(py));
+        }
+        let obj = Py::new(py, PyPSKeyword { name: name.clone() })?.into_any();
+        guard.insert(name, obj.clone_ref(py));
+        return Ok(obj);
+    }
+    Ok(Py::new(py, PyPSKeyword { name })?.into_any())
+}
+
+fn pstoken_to_py(py: Python<'_>, token: PSToken) -> PyResult<Py<PyAny>> {
+    match token {
+        PSToken::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
+        PSToken::Int(i) => Ok(i.into_pyobject(py)?.to_owned().into_any().unbind()),
+        PSToken::Real(f) => Ok(f.into_pyobject(py)?.to_owned().into_any().unbind()),
+        PSToken::Literal(name) => intern_psliteral(py, name.into_bytes()),
+        PSToken::Keyword(kw) => intern_pskeyword(py, kw.as_bytes().to_vec()),
+        PSToken::String(bytes) => Ok(PyBytes::new(py, &bytes).into_any().unbind()),
+        PSToken::Array(items) => {
+            let list = PyList::empty(py);
+            for item in items {
+                let py_item = pstoken_to_py(py, item)?;
+                list.append(py_item)?;
+            }
+            Ok(list.into_any().unbind())
+        }
+        PSToken::Dict(map) => {
+            let dict = PyDict::new(py);
+            for (k, v) in map {
+                let key = intern_psliteral(py, k.into_bytes())?;
+                let val = pstoken_to_py(py, v)?;
+                dict.set_item(key, val)?;
+            }
+            Ok(dict.into_any().unbind())
+        }
+    }
+}
+
+fn pdf_object_to_py_simple(py: Python<'_>, obj: &PDFObject) -> PyResult<Py<PyAny>> {
+    match obj {
+        PDFObject::Null => Ok(py.None()),
+        PDFObject::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
+        PDFObject::Int(i) => Ok(i.into_pyobject(py)?.to_owned().into_any().unbind()),
+        PDFObject::Real(f) => Ok(f.into_pyobject(py)?.to_owned().into_any().unbind()),
+        PDFObject::Name(n) => intern_psliteral(py, n.as_bytes().to_vec()),
+        PDFObject::String(s) => Ok(PyBytes::new(py, s).into_any().unbind()),
+        PDFObject::Array(arr) => {
+            let list = PyList::empty(py);
+            for item in arr {
+                let py_item = pdf_object_to_py_simple(py, item)?;
+                list.append(py_item)?;
+            }
+            Ok(list.into_any().unbind())
+        }
+        PDFObject::Dict(map) => {
+            let dict = PyDict::new(py);
+            for (k, v) in map {
+                let key = intern_psliteral(py, k.as_bytes().to_vec())?;
+                let val = pdf_object_to_py_simple(py, v)?;
+                dict.set_item(key, val)?;
+            }
+            Ok(dict.into_any().unbind())
+        }
+        PDFObject::Ref(objref) => {
+            let pdftypes = py.import("pdfminer.pdftypes")?;
+            let cls = pdftypes.getattr("PDFObjRef")?;
+            let obj = cls.call1((py.None(), objref.objid, objref.genno))?;
+            Ok(obj.into_any().unbind())
+        }
+        PDFObject::Stream(_) => Ok(py.None()),
+    }
+}
+
+fn read_bytes_and_path(
+    py: Python<'_>,
+    fp: &Bound<'_, PyAny>,
+) -> PyResult<(Vec<u8>, Option<String>)> {
+    if let Ok(buf) = PyBuffer::<u8>::get(fp) {
+        return Ok((buf.to_vec(py)?, None));
+    }
+
+    if let Ok(os) = py.import("os") {
+        if let Ok(fspath) = os.getattr("fspath") {
+            if let Ok(path_obj) = fspath.call1((fp,)) {
+                if let Ok(path_str) = path_obj.extract::<String>() {
+                    if std::path::Path::new(&path_str).is_file() {
+                        let data = std::fs::read(&path_str).map_err(|e| {
+                            PyValueError::new_err(format!("failed to read {path_str}: {e}"))
+                        })?;
+                        return Ok((data, Some(path_str)));
+                    }
+                }
+            }
+        }
+    }
+
+    if fp.hasattr("read")? {
+        let start_pos = fp
+            .call_method0("tell")
+            .ok()
+            .and_then(|v| v.extract::<u64>().ok());
+        let data: Vec<u8> = fp.call_method0("read")?.extract()?;
+        if let Some(pos) = start_pos {
+            let _ = fp.call_method1("seek", (pos,));
+        }
+        let path = fp
+            .getattr("name")
+            .ok()
+            .and_then(|v| v.extract::<String>().ok())
+            .filter(|p| std::path::Path::new(p).is_file());
+        return Ok((data, path));
+    }
+
+    Err(PyTypeError::new_err(
+        "expected bytes-like object, file-like object, or path-like",
+    ))
+}
+
+fn py_text_to_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(s);
+    }
+    if let Ok(bytes) = obj.extract::<Vec<u8>>() {
+        return Ok(String::from_utf8_lossy(&bytes).to_string());
+    }
+    Ok(obj.str()?.to_string())
+}
+
+fn page_objects_to_chars_edges(
+    py: Python<'_>,
+    page: &Bound<'_, PyAny>,
+) -> PyResult<(Vec<CharObj>, Vec<EdgeObj>, PageGeometry)> {
+    let bbox: (f64, f64, f64, f64) = page.getattr("bbox")?.extract()?;
+    let mediabox: (f64, f64, f64, f64) = page
+        .getattr("mediabox")
+        .ok()
+        .and_then(|v| v.extract().ok())
+        .unwrap_or(bbox);
+    let initial_doctop: f64 = page
+        .getattr("initial_doctop")
+        .ok()
+        .and_then(|v| v.extract().ok())
+        .unwrap_or(0.0);
+    let is_original: bool = page
+        .getattr("is_original")
+        .ok()
+        .and_then(|v| v.extract().ok())
+        .unwrap_or(true);
+
+    let geom = PageGeometry {
+        page_bbox: bbox,
+        mediabox,
+        initial_doctop,
+        force_crop: !is_original,
+    };
+
+    let mut chars: Vec<CharObj> = Vec::new();
+    let chars_obj = page.getattr("chars")?;
+    let chars_seq = chars_obj
+        .downcast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("page.chars must be a sequence"))?;
+    let chars_len = chars_seq.len().unwrap_or(0);
+    for i in 0..chars_len {
+        let item = chars_seq.get_item(i)?;
+        let dict = item
+            .downcast::<PyDict>()
+            .map_err(|_| PyValueError::new_err("char must be a dict"))?;
+        let text_obj = dict
+            .get_item("text")?
+            .ok_or_else(|| PyValueError::new_err("char missing text"))?;
+        let text = py_text_to_string(&text_obj)?;
+        let x0: f64 = dict
+            .get_item("x0")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let x1: f64 = dict
+            .get_item("x1")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let top: f64 = dict
+            .get_item("top")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let bottom: f64 = dict
+            .get_item("bottom")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let width = dict
+            .get_item("width")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or((x1 - x0).abs());
+        let height = dict
+            .get_item("height")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or((bottom - top).abs());
+        let size = dict
+            .get_item("size")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(height);
+        let doctop = dict
+            .get_item("doctop")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(top);
+        let upright = dict
+            .get_item("upright")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(true);
+        chars.push(CharObj {
+            text,
+            x0,
+            x1,
+            top,
+            bottom,
+            doctop,
+            width,
+            height,
+            size,
+            upright,
+        });
+    }
+
+    let mut edges: Vec<EdgeObj> = Vec::new();
+
+    let lines_obj = page.getattr("lines")?;
+    let lines_seq = lines_obj
+        .downcast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("page.lines must be a sequence"))?;
+    let lines_len = lines_seq.len().unwrap_or(0);
+    for i in 0..lines_len {
+        let item = lines_seq.get_item(i)?;
+        let dict = item
+            .downcast::<PyDict>()
+            .map_err(|_| PyValueError::new_err("line must be a dict"))?;
+        let x0: f64 = dict
+            .get_item("x0")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let x1: f64 = dict
+            .get_item("x1")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let top: f64 = dict
+            .get_item("top")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let bottom: f64 = dict
+            .get_item("bottom")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let width = dict
+            .get_item("width")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or((x1 - x0).abs());
+        let height = dict
+            .get_item("height")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or((bottom - top).abs());
+        let orientation = if (top - bottom).abs() < f64::EPSILON {
+            Some(Orientation::Horizontal)
+        } else if (x0 - x1).abs() < f64::EPSILON {
+            Some(Orientation::Vertical)
+        } else {
+            None
+        };
+        edges.push(EdgeObj {
+            x0,
+            x1,
+            top,
+            bottom,
+            width,
+            height,
+            orientation,
+            object_type: "line",
+        });
+    }
+
+    let rects_obj = page.getattr("rects")?;
+    let rects_seq = rects_obj
+        .downcast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("page.rects must be a sequence"))?;
+    let rects_len = rects_seq.len().unwrap_or(0);
+    for i in 0..rects_len {
+        let item = rects_seq.get_item(i)?;
+        let dict = item
+            .downcast::<PyDict>()
+            .map_err(|_| PyValueError::new_err("rect must be a dict"))?;
+        let x0: f64 = dict
+            .get_item("x0")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let x1: f64 = dict
+            .get_item("x1")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let top: f64 = dict
+            .get_item("top")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let bottom: f64 = dict
+            .get_item("bottom")?
+            .and_then(|v| v.extract().ok())
+            .unwrap_or(0.0);
+        let bbox = BBox {
+            x0,
+            x1,
+            top,
+            bottom,
+        };
+        edges.extend(vec![
+            EdgeObj {
+                x0: bbox.x0,
+                x1: bbox.x1,
+                top: bbox.top,
+                bottom: bbox.top,
+                width: bbox.x1 - bbox.x0,
+                height: 0.0,
+                orientation: Some(Orientation::Horizontal),
+                object_type: "rect_edge",
+            },
+            EdgeObj {
+                x0: bbox.x0,
+                x1: bbox.x1,
+                top: bbox.bottom,
+                bottom: bbox.bottom,
+                width: bbox.x1 - bbox.x0,
+                height: 0.0,
+                orientation: Some(Orientation::Horizontal),
+                object_type: "rect_edge",
+            },
+            EdgeObj {
+                x0: bbox.x0,
+                x1: bbox.x0,
+                top: bbox.top,
+                bottom: bbox.bottom,
+                width: 0.0,
+                height: bbox.bottom - bbox.top,
+                orientation: Some(Orientation::Vertical),
+                object_type: "rect_edge",
+            },
+            EdgeObj {
+                x0: bbox.x1,
+                x1: bbox.x1,
+                top: bbox.top,
+                bottom: bbox.bottom,
+                width: 0.0,
+                height: bbox.bottom - bbox.top,
+                orientation: Some(Orientation::Vertical),
+                object_type: "rect_edge",
+            },
+        ]);
+    }
+
+    let curves_obj = page.getattr("curves")?;
+    let curves_seq = curves_obj
+        .downcast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("page.curves must be a sequence"))?;
+    let curves_len = curves_seq.len().unwrap_or(0);
+    for i in 0..curves_len {
+        let item = curves_seq.get_item(i)?;
+        let dict = item
+            .downcast::<PyDict>()
+            .map_err(|_| PyValueError::new_err("curve must be a dict"))?;
+        let pts_obj = dict.get_item("pts")?;
+        if let Some(pts_obj) = pts_obj {
+            if let Ok(pts) = pts_obj.extract::<Vec<(f64, f64)>>() {
+                for pair in pts.windows(2) {
+                    let p0 = pair[0];
+                    let p1 = pair[1];
+                    let x0 = p0.0.min(p1.0);
+                    let x1 = p0.0.max(p1.0);
+                    let top = p0.1.min(p1.1);
+                    let bottom = p0.1.max(p1.1);
+                    let orientation = if (p0.0 - p1.0).abs() < f64::EPSILON {
+                        Some(Orientation::Vertical)
+                    } else if (p0.1 - p1.1).abs() < f64::EPSILON {
+                        Some(Orientation::Horizontal)
+                    } else {
+                        None
+                    };
+                    edges.push(EdgeObj {
+                        x0,
+                        x1,
+                        top,
+                        bottom,
+                        width: (x1 - x0).abs(),
+                        height: (bottom - top).abs(),
+                        orientation,
+                        object_type: "curve_edge",
+                    });
+                }
+            }
+        }
+    }
+
+    Ok((chars, edges, geom))
 }
 
 fn parse_text_dir(value: &str) -> Result<TextDir, PyErr> {
@@ -448,6 +884,11 @@ fn parse_table_settings(
                     apply_text_settings_from_dict(&mut text_settings, ts_dict)?;
                 }
             }
+            "text_layout" => {
+                if !v.is_none() {
+                    text_settings.layout = v.extract()?;
+                }
+            }
             "explicit_vertical_lines" => {
                 settings.explicit_vertical_lines = parse_explicit_lines(py, &v)?;
             }
@@ -555,6 +996,277 @@ impl From<bolivar_core::layout::LAParams> for PyLAParams {
             detect_vertical: la.detect_vertical,
             all_texts: la.all_texts,
         }
+    }
+}
+
+/// PDF resource manager - Rust-backed pdfminer compatibility.
+#[pyclass(name = "PDFResourceManager")]
+pub struct PyPDFResourceManager {
+    inner: bolivar_core::pdfinterp::PDFResourceManager,
+}
+
+#[pymethods]
+impl PyPDFResourceManager {
+    #[new]
+    #[pyo3(signature = (caching = true))]
+    fn new(caching: bool) -> Self {
+        Self {
+            inner: bolivar_core::pdfinterp::PDFResourceManager::with_caching(caching),
+        }
+    }
+
+    #[getter]
+    fn caching(&self) -> bool {
+        self.inner.caching_enabled()
+    }
+
+    fn get_font(&mut self, objid: Option<u64>, spec: &Bound<'_, PyAny>) -> PyResult<u64> {
+        let mut objid_opt = objid.filter(|id| *id > 0);
+        if objid_opt.is_none() {
+            if let Ok(attr) = spec.getattr("objid") {
+                if let Ok(val) = attr.extract::<u64>() {
+                    if val > 0 {
+                        objid_opt = Some(val);
+                    }
+                }
+            }
+        }
+        let spec_dict: HashMap<String, PDFObject> = HashMap::new();
+        Ok(self.inner.get_font(objid_opt, &spec_dict))
+    }
+}
+
+/// PostScript literal name.
+#[pyclass(name = "PSLiteral")]
+pub struct PyPSLiteral {
+    name: Vec<u8>,
+}
+
+#[pymethods]
+impl PyPSLiteral {
+    #[new]
+    fn new(_py: Python<'_>, name: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            name: ps_name_to_bytes(name)?,
+        })
+    }
+
+    #[getter]
+    fn name(&self, py: Python<'_>) -> Py<PyAny> {
+        PyBytes::new(py, &self.name).into_any().unbind()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("/{}", String::from_utf8_lossy(&self.name))
+    }
+}
+
+/// PostScript keyword.
+#[pyclass(name = "PSKeyword")]
+pub struct PyPSKeyword {
+    name: Vec<u8>,
+}
+
+#[pymethods]
+impl PyPSKeyword {
+    #[new]
+    fn new(_py: Python<'_>, name: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self {
+            name: ps_name_to_bytes(name)?,
+        })
+    }
+
+    #[getter]
+    fn name(&self, py: Python<'_>) -> Py<PyAny> {
+        PyBytes::new(py, &self.name).into_any().unbind()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("/{}", String::from_utf8_lossy(&self.name))
+    }
+}
+
+#[pyfunction]
+fn LIT(py: Python<'_>, name: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let bytes = ps_name_to_bytes(name)?;
+    intern_psliteral(py, bytes)
+}
+
+#[pyfunction]
+fn KWD(py: Python<'_>, name: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let bytes = ps_name_to_bytes(name)?;
+    intern_pskeyword(py, bytes)
+}
+
+/// PostScript base parser.
+#[pyclass(name = "PSBaseParser", unsendable)]
+pub struct PyPSBaseParser {
+    parser: CorePSBaseParser<'static>,
+}
+
+#[pymethods]
+impl PyPSBaseParser {
+    #[new]
+    fn new(py: Python<'_>, fp: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let (data, _) = read_bytes_and_path(py, fp)?;
+        Ok(Self {
+            parser: CorePSBaseParser::from_bytes(&data),
+        })
+    }
+
+    fn nexttoken(&mut self, py: Python<'_>) -> PyResult<(usize, Py<PyAny>)> {
+        match self.parser.next_token() {
+            Some(Ok((pos, tok))) => Ok((pos, pstoken_to_py(py, tok)?)),
+            Some(Err(e)) => Err(ps_exception(py, "PSSyntaxError", &format!("{e}"))),
+            None => Err(ps_exception(py, "PSEOF", "Unexpected EOF")),
+        }
+    }
+
+    fn tell(&self) -> usize {
+        self.parser.tell()
+    }
+
+    fn seek(&mut self, pos: usize) {
+        self.parser.set_pos(pos);
+    }
+}
+
+/// PostScript stack parser.
+#[pyclass(name = "PSStackParser", unsendable)]
+pub struct PyPSStackParser {
+    parser: CorePSStackParser<'static>,
+}
+
+#[pymethods]
+impl PyPSStackParser {
+    #[new]
+    fn new(py: Python<'_>, fp: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let (data, _) = read_bytes_and_path(py, fp)?;
+        Ok(Self {
+            parser: CorePSStackParser::from_bytes(&data),
+        })
+    }
+
+    fn nextobject(&mut self, py: Python<'_>) -> PyResult<(usize, Py<PyAny>)> {
+        match self.parser.next_object() {
+            Some(Ok((pos, tok))) => Ok((pos, pstoken_to_py(py, tok)?)),
+            Some(Err(e)) => Err(ps_exception(py, "PSSyntaxError", &format!("{e}"))),
+            None => Err(ps_exception(py, "PSEOF", "Unexpected EOF")),
+        }
+    }
+}
+
+/// PDF object parser.
+#[pyclass(name = "PDFParser", unsendable)]
+pub struct PyPDFParser {
+    data: Vec<u8>,
+    path: Option<String>,
+    parser: CorePDFParser<'static>,
+}
+
+#[pymethods]
+impl PyPDFParser {
+    #[new]
+    fn new(py: Python<'_>, fp: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let (data, path) = read_bytes_and_path(py, fp)?;
+        Ok(Self {
+            data: data.clone(),
+            path,
+            parser: CorePDFParser::from_bytes(&data),
+        })
+    }
+
+    fn get_data(&self) -> Vec<u8> {
+        self.data.clone()
+    }
+
+    fn get_path(&self) -> Option<String> {
+        self.path.clone()
+    }
+
+    fn nextobject(&mut self, py: Python<'_>) -> PyResult<(usize, Py<PyAny>)> {
+        let pos = self.parser.tell();
+        let obj = self
+            .parser
+            .parse_object()
+            .map_err(|e| ps_exception(py, "PSSyntaxError", &format!("{e}")))?;
+        let py_obj = pdf_object_to_py_simple(py, &obj)?;
+        Ok((pos, py_obj))
+    }
+}
+
+/// PDF Stream - dictionary attributes + binary data.
+#[pyclass(name = "PDFStream")]
+pub struct PyPDFStream {
+    stream: PDFStream,
+    attrs: Py<PyDict>,
+    doc: Option<Py<PyAny>>,
+}
+
+impl PyPDFStream {
+    fn from_core(
+        py: Python<'_>,
+        stream: &PDFStream,
+        doc: &PDFDocument,
+        visited: &mut HashSet<(u32, u32)>,
+        name_as_psliteral: bool,
+        resolve_refs: bool,
+        py_doc: Option<&Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let py_dict = PyDict::new(py);
+        for (k, v) in stream.attrs.iter() {
+            let py_val = pdf_object_to_py_internal(
+                py,
+                v,
+                doc,
+                visited,
+                name_as_psliteral,
+                resolve_refs,
+                py_doc,
+            )?;
+            py_dict.set_item(k, py_val)?;
+        }
+        Ok(Self {
+            stream: stream.clone(),
+            attrs: py_dict.unbind(),
+            doc: py_doc.map(|doc_obj| doc_obj.clone_ref(py)),
+        })
+    }
+}
+
+#[pymethods]
+impl PyPDFStream {
+    #[getter]
+    fn attrs(&self, py: Python<'_>) -> Py<PyDict> {
+        self.attrs.clone_ref(py)
+    }
+
+    #[getter]
+    fn rawdata(&self, py: Python<'_>) -> Py<PyAny> {
+        PyBytes::new(py, self.stream.get_rawdata())
+            .into_any()
+            .unbind()
+    }
+
+    #[getter]
+    fn decipher(&self, py: Python<'_>) -> Py<PyAny> {
+        py.None()
+    }
+
+    fn get_data(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let decoded = if let Some(doc_obj) = &self.doc {
+            let doc: PyRef<'_, PyPDFDocument> = doc_obj.extract(py)?;
+            doc.inner
+                .decode_stream(&self.stream)
+                .map_err(|e| PyValueError::new_err(format!("decode failed: {e}")))?
+        } else {
+            self.stream.get_rawdata().to_vec()
+        };
+        Ok(PyBytes::new(py, &decoded).into_any().unbind())
+    }
+
+    fn __repr__(&self) -> String {
+        format!("PDFStream({} bytes)", self.stream.get_rawdata().len())
     }
 }
 
@@ -881,7 +1593,7 @@ impl PyPDFPage {
 }
 
 /// Layout page - result of processing a PDF page.
-#[pyclass(name = "LTPage")]
+#[pyclass(name = "LTPage", dict)]
 #[derive(Clone)]
 pub struct PyLTPage {
     /// Page identifier (1-based page number)
@@ -968,24 +1680,174 @@ impl<'py> IntoPyObject<'py> for PyLTItem {
 
     fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
         match self {
-            PyLTItem::Char(c) => Ok(Bound::new(py, c)?.into_any()),
-            PyLTItem::Rect(r) => Ok(Bound::new(py, r)?.into_any()),
-            PyLTItem::Line(l) => Ok(Bound::new(py, l)?.into_any()),
-            PyLTItem::Curve(c) => Ok(Bound::new(py, c)?.into_any()),
-            PyLTItem::Anno(a) => Ok(Bound::new(py, a)?.into_any()),
-            PyLTItem::TextLineH(l) => Ok(Bound::new(py, l)?.into_any()),
-            PyLTItem::TextLineV(l) => Ok(Bound::new(py, l)?.into_any()),
-            PyLTItem::TextBoxH(b) => Ok(Bound::new(py, b)?.into_any()),
-            PyLTItem::TextBoxV(b) => Ok(Bound::new(py, b)?.into_any()),
-            PyLTItem::Image(i) => Ok(Bound::new(py, i)?.into_any()),
-            PyLTItem::Figure(f) => Ok(Bound::new(py, f)?.into_any()),
+            PyLTItem::Char(c) => {
+                let bbox = c.bbox;
+                let adv = c.adv;
+                let size = c.size;
+                let fontname = c.fontname.clone();
+                let matrix = c.matrix;
+                let upright = c.upright;
+                let mcid = c.mcid;
+                let tag = c.tag.clone();
+                let text = c.text.clone();
+                let non_stroking_color = c.non_stroking_color.clone();
+                let stroking_color = c.stroking_color.clone();
+                let bound = Bound::new(py, c)?;
+                set_bbox_attrs(&bound, bbox)?;
+                let dict = instance_dict(&bound)?;
+                dict.set_item("adv", adv)?;
+                dict.set_item("size", size)?;
+                dict.set_item("fontname", fontname)?;
+                dict.set_item("matrix", matrix)?;
+                dict.set_item("upright", upright)?;
+                dict.set_item("mcid", mcid)?;
+                dict.set_item("tag", tag)?;
+                dict.set_item("text", text)?;
+                dict.set_item("non_stroking_color", non_stroking_color)?;
+                dict.set_item("stroking_color", stroking_color)?;
+                Ok(bound.into_any())
+            }
+            PyLTItem::Rect(r) => {
+                let bbox = r.bbox;
+                let linewidth = r.linewidth;
+                let stroke = r.stroke;
+                let fill = r.fill;
+                let non_stroking_color = r.non_stroking_color.clone();
+                let stroking_color = r.stroking_color.clone();
+                let bound = Bound::new(py, r)?;
+                set_bbox_attrs(&bound, bbox)?;
+                let dict = instance_dict(&bound)?;
+                dict.set_item("linewidth", linewidth)?;
+                dict.set_item("stroke", stroke)?;
+                dict.set_item("fill", fill)?;
+                dict.set_item("non_stroking_color", non_stroking_color)?;
+                dict.set_item("stroking_color", stroking_color)?;
+                Ok(bound.into_any())
+            }
+            PyLTItem::Line(l) => {
+                let bbox = l.bbox;
+                let p0 = l.p0;
+                let p1 = l.p1;
+                let linewidth = l.linewidth;
+                let stroke = l.stroke;
+                let fill = l.fill;
+                let non_stroking_color = l.non_stroking_color.clone();
+                let stroking_color = l.stroking_color.clone();
+                let bound = Bound::new(py, l)?;
+                set_bbox_attrs(&bound, bbox)?;
+                let dict = instance_dict(&bound)?;
+                dict.set_item("pts", vec![p0, p1])?;
+                dict.set_item("linewidth", linewidth)?;
+                dict.set_item("stroke", stroke)?;
+                dict.set_item("fill", fill)?;
+                dict.set_item("non_stroking_color", non_stroking_color)?;
+                dict.set_item("stroking_color", stroking_color)?;
+                Ok(bound.into_any())
+            }
+            PyLTItem::Curve(c) => {
+                let bbox = c.bbox;
+                let pts = c.pts.clone();
+                let linewidth = c.linewidth;
+                let stroke = c.stroke;
+                let fill = c.fill;
+                let evenodd = c.evenodd;
+                let non_stroking_color = c.non_stroking_color.clone();
+                let stroking_color = c.stroking_color.clone();
+                let bound = Bound::new(py, c)?;
+                set_bbox_attrs(&bound, bbox)?;
+                let dict = instance_dict(&bound)?;
+                dict.set_item("pts", pts)?;
+                dict.set_item("linewidth", linewidth)?;
+                dict.set_item("stroke", stroke)?;
+                dict.set_item("fill", fill)?;
+                dict.set_item("evenodd", evenodd)?;
+                dict.set_item("non_stroking_color", non_stroking_color)?;
+                dict.set_item("stroking_color", stroking_color)?;
+                Ok(bound.into_any())
+            }
+            PyLTItem::Anno(a) => {
+                let text = a.text.clone();
+                let bound = Bound::new(py, a)?;
+                let dict = instance_dict(&bound)?;
+                dict.set_item("text", text)?;
+                Ok(bound.into_any())
+            }
+            PyLTItem::TextLineH(l) => {
+                let bbox = l.bbox;
+                let bound = Bound::new(py, l)?;
+                set_bbox_attrs(&bound, bbox)?;
+                Ok(bound.into_any())
+            }
+            PyLTItem::TextLineV(l) => {
+                let bbox = l.bbox;
+                let bound = Bound::new(py, l)?;
+                set_bbox_attrs(&bound, bbox)?;
+                Ok(bound.into_any())
+            }
+            PyLTItem::TextBoxH(b) => {
+                let bbox = b.bbox;
+                let bound = Bound::new(py, b)?;
+                set_bbox_attrs(&bound, bbox)?;
+                Ok(bound.into_any())
+            }
+            PyLTItem::TextBoxV(b) => {
+                let bbox = b.bbox;
+                let bound = Bound::new(py, b)?;
+                set_bbox_attrs(&bound, bbox)?;
+                Ok(bound.into_any())
+            }
+            PyLTItem::Image(i) => {
+                let bbox = i.bbox;
+                let name = i.name.clone();
+                let srcsize = i.srcsize;
+                let imagemask = i.imagemask;
+                let bits = i.bits;
+                let colorspace = i.colorspace.clone();
+                let bound = Bound::new(py, i)?;
+                set_bbox_attrs(&bound, bbox)?;
+                let dict = instance_dict(&bound)?;
+                dict.set_item("name", name)?;
+                dict.set_item("srcsize", srcsize)?;
+                dict.set_item("imagemask", imagemask)?;
+                dict.set_item("bits", bits)?;
+                dict.set_item("colorspace", colorspace)?;
+                Ok(bound.into_any())
+            }
+            PyLTItem::Figure(f) => {
+                let bbox = f.bbox;
+                let name = f.name.clone();
+                let matrix = f.matrix;
+                let bound = Bound::new(py, f)?;
+                set_bbox_attrs(&bound, bbox)?;
+                let dict = instance_dict(&bound)?;
+                dict.set_item("name", name)?;
+                dict.set_item("matrix", matrix)?;
+                Ok(bound.into_any())
+            }
             PyLTItem::Page(p) => Ok(Bound::new(py, p)?.into_any()),
         }
     }
 }
 
+fn set_bbox_attrs(obj: &Bound<'_, PyAny>, bbox: (f64, f64, f64, f64)) -> PyResult<()> {
+    let dict = instance_dict(obj)?;
+    dict.set_item("x0", bbox.0)?;
+    dict.set_item("y0", bbox.1)?;
+    dict.set_item("x1", bbox.2)?;
+    dict.set_item("y1", bbox.3)?;
+    dict.set_item("width", bbox.2 - bbox.0)?;
+    dict.set_item("height", bbox.3 - bbox.1)?;
+    dict.set_item("bbox", bbox)?;
+    Ok(())
+}
+
+fn instance_dict<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
+    let dict_obj = obj.getattr("__dict__")?;
+    Ok(dict_obj.downcast::<PyDict>()?.clone())
+}
+
 /// Layout character - a single character with position and font info.
-#[pyclass(name = "LTChar")]
+#[pyclass(name = "LTChar", dict)]
 #[derive(Clone)]
 pub struct PyLTChar {
     /// Bounding box as (x0, y0, x1, y1)
@@ -1014,8 +1876,9 @@ pub struct PyLTChar {
     #[pyo3(get)]
     pub tag: Option<String>,
     /// Non-stroking colorspace name (e.g., "DeviceRGB")
-    #[pyo3(get)]
-    pub ncs: Option<String>,
+    ncs_name: Option<String>,
+    /// Stroking colorspace name (e.g., "DeviceRGB")
+    scs_name: Option<String>,
     /// Non-stroking (fill) color as tuple of floats
     #[pyo3(get)]
     pub non_stroking_color: Option<Vec<f64>>,
@@ -1036,7 +1899,8 @@ impl PyLTChar {
             matrix: c.matrix(),
             mcid: c.mcid(),
             tag: c.tag(),
-            ncs: c.ncs(),
+            ncs_name: c.ncs(),
+            scs_name: c.scs(),
             non_stroking_color: c.non_stroking_color().clone(),
             stroking_color: c.stroking_color().clone(),
         }
@@ -1048,6 +1912,52 @@ impl PyLTChar {
     /// Get the character text
     fn get_text(&self) -> &str {
         &self.text
+    }
+
+    #[getter]
+    fn ncs(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match self.ncs_name.as_deref() {
+            Some(name) => name_to_psliteral(py, name),
+            None => Err(pyo3::exceptions::PyAttributeError::new_err("ncs")),
+        }
+    }
+
+    #[getter]
+    fn scs(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match self.scs_name.as_deref() {
+            Some(name) => name_to_psliteral(py, name),
+            None => Err(pyo3::exceptions::PyAttributeError::new_err("scs")),
+        }
+    }
+
+    #[getter]
+    fn graphicstate(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let types = py.import("types")?;
+        let ns = types.getattr("SimpleNamespace")?.call0()?;
+
+        let scolor = match &self.stroking_color {
+            Some(values) => PyTuple::new(py, values)?.into_any(),
+            None => 0i32.into_pyobject(py)?.into_any(),
+        };
+        let ncolor = match &self.non_stroking_color {
+            Some(values) => PyTuple::new(py, values)?.into_any(),
+            None => 0i32.into_pyobject(py)?.into_any(),
+        };
+
+        ns.setattr("scolor", scolor)?;
+        ns.setattr("ncolor", ncolor)?;
+
+        if let Some(name) = self.ncs_name.as_deref() {
+            let ncs = name_to_psliteral(py, name)?;
+            ns.setattr("ncs", ncs)?;
+        }
+
+        if let Some(name) = self.scs_name.as_deref() {
+            let scs = name_to_psliteral(py, name)?;
+            ns.setattr("scs", scs)?;
+        }
+
+        Ok(ns.into_any().unbind())
     }
 
     /// Get bounding box as (x0, y0, x1, y1)
@@ -1062,7 +1972,7 @@ impl PyLTChar {
 }
 
 /// Layout text line - horizontal.
-#[pyclass(name = "LTTextLineHorizontal")]
+#[pyclass(name = "LTTextLineHorizontal", dict)]
 #[derive(Clone)]
 pub struct PyLTTextLineHorizontal {
     bbox: (f64, f64, f64, f64),
@@ -1109,7 +2019,7 @@ impl PyLTTextLineHorizontal {
 }
 
 /// Layout text line - vertical.
-#[pyclass(name = "LTTextLineVertical")]
+#[pyclass(name = "LTTextLineVertical", dict)]
 #[derive(Clone)]
 pub struct PyLTTextLineVertical {
     bbox: (f64, f64, f64, f64),
@@ -1156,7 +2066,7 @@ impl PyLTTextLineVertical {
 }
 
 /// Layout text box - horizontal.
-#[pyclass(name = "LTTextBoxHorizontal")]
+#[pyclass(name = "LTTextBoxHorizontal", dict)]
 #[derive(Clone)]
 pub struct PyLTTextBoxHorizontal {
     bbox: (f64, f64, f64, f64),
@@ -1196,7 +2106,7 @@ impl PyLTTextBoxHorizontal {
 }
 
 /// Layout text box - vertical.
-#[pyclass(name = "LTTextBoxVertical")]
+#[pyclass(name = "LTTextBoxVertical", dict)]
 #[derive(Clone)]
 pub struct PyLTTextBoxVertical {
     bbox: (f64, f64, f64, f64),
@@ -1236,7 +2146,7 @@ impl PyLTTextBoxVertical {
 }
 
 /// Layout image.
-#[pyclass(name = "LTImage")]
+#[pyclass(name = "LTImage", dict)]
 #[derive(Clone)]
 pub struct PyLTImage {
     bbox: (f64, f64, f64, f64),
@@ -1274,7 +2184,7 @@ impl PyLTImage {
 }
 
 /// Layout figure (Form XObject).
-#[pyclass(name = "LTFigure")]
+#[pyclass(name = "LTFigure", dict)]
 #[derive(Clone)]
 pub struct PyLTFigure {
     bbox: (f64, f64, f64, f64),
@@ -1320,7 +2230,7 @@ impl PyLTFigure {
 }
 
 /// Layout rectangle - a rectangle in the PDF.
-#[pyclass(name = "LTRect")]
+#[pyclass(name = "LTRect", dict)]
 #[derive(Clone)]
 pub struct PyLTRect {
     /// Bounding box as (x0, y0, x1, y1)
@@ -1390,7 +2300,7 @@ impl PyLTRect {
 }
 
 /// Layout line - a straight line in the PDF.
-#[pyclass(name = "LTLine")]
+#[pyclass(name = "LTLine", dict)]
 #[derive(Clone)]
 pub struct PyLTLine {
     /// Bounding box as (x0, y0, x1, y1)
@@ -1473,7 +2383,7 @@ impl PyLTLine {
 }
 
 /// Python wrapper for LTCurve
-#[pyclass(name = "LTCurve")]
+#[pyclass(name = "LTCurve", dict)]
 #[derive(Clone)]
 pub struct PyLTCurve {
     /// Bounding box as (x0, y0, x1, y1)
@@ -1550,7 +2460,7 @@ impl PyLTCurve {
 }
 
 /// Python wrapper for LTAnno (virtual annotation like spaces/newlines)
-#[pyclass(name = "LTAnno")]
+#[pyclass(name = "LTAnno", dict)]
 #[derive(Clone)]
 pub struct PyLTAnno {
     /// The text content (space, newline, etc.)
@@ -1580,6 +2490,422 @@ impl PyLTAnno {
     fn __repr__(&self) -> String {
         format!("LTAnno({:?})", self.text)
     }
+}
+
+struct PyWriter {
+    outfp: Py<PyAny>,
+}
+
+impl PyWriter {
+    fn new(outfp: Py<PyAny>) -> Self {
+        Self { outfp }
+    }
+}
+
+impl Write for PyWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Python::with_gil(|py| {
+            let out = self.outfp.bind(py);
+            let bytes = PyBytes::new(py, buf);
+            out.call_method1("write", (bytes,))
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            Ok(buf.len())
+        })
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Python::with_gil(|py| {
+            let out = self.outfp.bind(py);
+            if let Ok(has_flush) = out.hasattr("flush") {
+                if has_flush {
+                    out.call_method0("flush").map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                    })?;
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+fn py_textline_element_from_item(item: &PyLTItem) -> Option<bolivar_core::layout::TextLineElement> {
+    match item {
+        PyLTItem::Char(c) => Some(bolivar_core::layout::TextLineElement::Char(
+            py_ltchar_to_core(c),
+        )),
+        PyLTItem::Anno(a) => Some(bolivar_core::layout::TextLineElement::Anno(
+            bolivar_core::layout::LTAnno::new(&a.text),
+        )),
+        _ => None,
+    }
+}
+
+fn py_ltchar_to_core(c: &PyLTChar) -> bolivar_core::layout::LTChar {
+    let mut ch = bolivar_core::layout::LTChar::with_colors_matrix(
+        c.bbox,
+        &c.text,
+        &c.fontname,
+        c.size,
+        c.upright,
+        c.adv,
+        c.matrix,
+        c.mcid,
+        c.tag.clone(),
+        c.non_stroking_color.clone(),
+        c.stroking_color.clone(),
+    );
+    ch.set_ncs(c.ncs_name.clone());
+    ch.set_scs(c.scs_name.clone());
+    ch
+}
+
+fn py_textline_h_to_core(
+    line: &PyLTTextLineHorizontal,
+) -> bolivar_core::layout::LTTextLineHorizontal {
+    let mut core_line = bolivar_core::layout::LTTextLineHorizontal::new(0.1);
+    for item in &line.items {
+        if let Some(elem) = py_textline_element_from_item(item) {
+            core_line.add_element(elem);
+        }
+    }
+    core_line.set_bbox(line.bbox);
+    core_line
+}
+
+fn py_textline_v_to_core(line: &PyLTTextLineVertical) -> bolivar_core::layout::LTTextLineVertical {
+    let mut core_line = bolivar_core::layout::LTTextLineVertical::new(0.1);
+    for item in &line.items {
+        if let Some(elem) = py_textline_element_from_item(item) {
+            core_line.add_element(elem);
+        }
+    }
+    core_line.set_bbox(line.bbox);
+    core_line
+}
+
+fn py_ltitem_to_core(item: &PyLTItem) -> bolivar_core::layout::LTItem {
+    match item {
+        PyLTItem::Char(c) => bolivar_core::layout::LTItem::Char(py_ltchar_to_core(c)),
+        PyLTItem::Anno(a) => {
+            bolivar_core::layout::LTItem::Anno(bolivar_core::layout::LTAnno::new(&a.text))
+        }
+        PyLTItem::Rect(r) => {
+            let original_path = r.original_path.clone();
+            let dashing_style = r.dashing_style.clone();
+            let mut rect = if original_path.is_some() || dashing_style.is_some() {
+                bolivar_core::layout::LTRect::new_with_dashing(
+                    r.linewidth,
+                    r.bbox,
+                    r.stroke,
+                    r.fill,
+                    false,
+                    r.stroking_color.clone(),
+                    r.non_stroking_color.clone(),
+                    original_path,
+                    dashing_style,
+                )
+            } else {
+                bolivar_core::layout::LTRect::new(
+                    r.linewidth,
+                    r.bbox,
+                    r.stroke,
+                    r.fill,
+                    false,
+                    r.stroking_color.clone(),
+                    r.non_stroking_color.clone(),
+                )
+            };
+            rect.set_marked_content(r.mcid, r.tag.clone());
+            bolivar_core::layout::LTItem::Rect(rect)
+        }
+        PyLTItem::Line(l) => {
+            let original_path = l.original_path.clone();
+            let dashing_style = l.dashing_style.clone();
+            let mut line = if original_path.is_some() || dashing_style.is_some() {
+                bolivar_core::layout::LTLine::new_with_dashing(
+                    l.linewidth,
+                    l.p0,
+                    l.p1,
+                    l.stroke,
+                    l.fill,
+                    false,
+                    l.stroking_color.clone(),
+                    l.non_stroking_color.clone(),
+                    original_path,
+                    dashing_style,
+                )
+            } else {
+                bolivar_core::layout::LTLine::new(
+                    l.linewidth,
+                    l.p0,
+                    l.p1,
+                    l.stroke,
+                    l.fill,
+                    false,
+                    l.stroking_color.clone(),
+                    l.non_stroking_color.clone(),
+                )
+            };
+            line.set_marked_content(l.mcid, l.tag.clone());
+            bolivar_core::layout::LTItem::Line(line)
+        }
+        PyLTItem::Curve(c) => {
+            let original_path = c.original_path.clone();
+            let dashing_style = c.dashing_style.clone();
+            let mut curve = if original_path.is_some() || dashing_style.is_some() {
+                bolivar_core::layout::LTCurve::new_with_dashing(
+                    c.linewidth,
+                    c.pts.clone(),
+                    c.stroke,
+                    c.fill,
+                    c.evenodd,
+                    c.stroking_color.clone(),
+                    c.non_stroking_color.clone(),
+                    original_path,
+                    dashing_style,
+                )
+            } else {
+                bolivar_core::layout::LTCurve::new(
+                    c.linewidth,
+                    c.pts.clone(),
+                    c.stroke,
+                    c.fill,
+                    c.evenodd,
+                    c.stroking_color.clone(),
+                    c.non_stroking_color.clone(),
+                )
+            };
+            curve.set_marked_content(c.mcid, c.tag.clone());
+            bolivar_core::layout::LTItem::Curve(curve)
+        }
+        PyLTItem::TextLineH(l) => bolivar_core::layout::LTItem::TextLine(
+            bolivar_core::layout::TextLineType::Horizontal(py_textline_h_to_core(l)),
+        ),
+        PyLTItem::TextLineV(l) => bolivar_core::layout::LTItem::TextLine(
+            bolivar_core::layout::TextLineType::Vertical(py_textline_v_to_core(l)),
+        ),
+        PyLTItem::TextBoxH(b) => {
+            let mut boxh = bolivar_core::layout::LTTextBoxHorizontal::new();
+            for item in &b.items {
+                if let PyLTItem::TextLineH(line) = item {
+                    boxh.add(py_textline_h_to_core(line));
+                }
+            }
+            bolivar_core::layout::LTItem::TextBox(bolivar_core::layout::TextBoxType::Horizontal(
+                boxh,
+            ))
+        }
+        PyLTItem::TextBoxV(b) => {
+            let mut boxv = bolivar_core::layout::LTTextBoxVertical::new();
+            for item in &b.items {
+                if let PyLTItem::TextLineV(line) = item {
+                    boxv.add(py_textline_v_to_core(line));
+                }
+            }
+            bolivar_core::layout::LTItem::TextBox(bolivar_core::layout::TextBoxType::Vertical(boxv))
+        }
+        PyLTItem::Image(i) => {
+            bolivar_core::layout::LTItem::Image(bolivar_core::layout::LTImage::new(
+                &i.name,
+                i.bbox,
+                i.srcsize,
+                i.imagemask,
+                i.bits,
+                i.colorspace.clone(),
+            ))
+        }
+        PyLTItem::Figure(f) => {
+            let bbox = f.bbox;
+            let width = bbox.2 - bbox.0;
+            let height = bbox.3 - bbox.1;
+            let mut fig = bolivar_core::layout::LTFigure::new(
+                &f.name,
+                (bbox.0, bbox.1, width, height),
+                f.matrix,
+            );
+            for child in &f.items {
+                fig.add(py_ltitem_to_core(child));
+            }
+            bolivar_core::layout::LTItem::Figure(Box::new(fig))
+        }
+        PyLTItem::Page(p) => {
+            let core = py_ltpage_to_core(p);
+            bolivar_core::layout::LTItem::Page(Box::new(core))
+        }
+    }
+}
+
+fn py_ltpage_to_core(page: &PyLTPage) -> bolivar_core::layout::LTPage {
+    let mut core_page = bolivar_core::layout::LTPage::new(page.pageid, page.bbox, page.rotate);
+    for item in &page.items {
+        core_page.add(py_ltitem_to_core(item));
+    }
+    core_page
+}
+
+#[pyclass(name = "TextConverter")]
+pub struct PyTextConverter {
+    converter: bolivar_core::converter::TextConverter<PyWriter>,
+}
+
+#[pymethods]
+impl PyTextConverter {
+    #[new]
+    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, showpageno=false, imagewriter=None))]
+    fn new(
+        rsrcmgr: &Bound<'_, PyAny>,
+        outfp: Py<PyAny>,
+        codec: &str,
+        pageno: i32,
+        laparams: Option<&PyLAParams>,
+        showpageno: bool,
+        imagewriter: Option<&Bound<'_, PyAny>>,
+    ) -> Self {
+        let _ = rsrcmgr;
+        let _ = imagewriter;
+        let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+        let mut converter = bolivar_core::converter::TextConverter::new(
+            PyWriter::new(outfp),
+            codec,
+            pageno,
+            la,
+            showpageno,
+        );
+        converter.set_showpageno(showpageno);
+        Self { converter }
+    }
+
+    fn _receive_layout(&mut self, ltpage: &PyLTPage) {
+        let core_page = py_ltpage_to_core(ltpage);
+        self.converter.receive_layout(core_page);
+    }
+
+    fn close(&mut self) {
+        let _ = self.converter.flush();
+    }
+}
+
+#[pyclass(name = "HTMLConverter")]
+pub struct PyHTMLConverter {
+    converter: bolivar_core::converter::HTMLConverter<PyWriter>,
+}
+
+#[pymethods]
+impl PyHTMLConverter {
+    #[new]
+    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, scale=1.0, fontscale=1.0, layoutmode="normal", showpageno=true, pagemargin=50, imagewriter=None, debug=0, rect_colors=None, text_colors=None))]
+    fn new(
+        rsrcmgr: &Bound<'_, PyAny>,
+        outfp: Py<PyAny>,
+        codec: &str,
+        pageno: i32,
+        laparams: Option<&PyLAParams>,
+        scale: f64,
+        fontscale: f64,
+        layoutmode: &str,
+        showpageno: bool,
+        pagemargin: i32,
+        imagewriter: Option<&Bound<'_, PyAny>>,
+        debug: i32,
+        rect_colors: Option<&Bound<'_, PyAny>>,
+        text_colors: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
+        let _ = rsrcmgr;
+        let _ = imagewriter;
+        let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+        let writer = PyWriter::new(outfp);
+        let mut converter =
+            if (scale - 1.0).abs() > f64::EPSILON || (fontscale - 1.0).abs() > f64::EPSILON {
+                bolivar_core::converter::HTMLConverter::with_options(
+                    writer, codec, pageno, la, scale, fontscale,
+                )
+            } else if debug > 0 {
+                bolivar_core::converter::HTMLConverter::with_debug(writer, codec, pageno, la, debug)
+            } else {
+                bolivar_core::converter::HTMLConverter::new(writer, codec, pageno, la)
+            };
+
+        converter.set_layoutmode(layoutmode);
+        converter.set_showpageno(showpageno);
+        converter.set_pagemargin(pagemargin);
+        converter.set_scale(scale);
+        converter.set_fontscale(fontscale);
+
+        if let Some(obj) = rect_colors {
+            converter.set_rect_colors(py_any_to_string_map(obj)?);
+        } else if debug > 0 {
+            converter.set_rect_colors(
+                bolivar_core::converter::HTMLConverter::<PyWriter>::debug_rect_colors(),
+            );
+        }
+
+        if let Some(obj) = text_colors {
+            converter.set_text_colors(py_any_to_string_map(obj)?);
+        } else if debug > 0 {
+            converter.set_text_colors(
+                bolivar_core::converter::HTMLConverter::<PyWriter>::debug_text_colors(),
+            );
+        }
+
+        Ok(Self { converter })
+    }
+
+    fn _receive_layout(&mut self, ltpage: &PyLTPage) {
+        let core_page = py_ltpage_to_core(ltpage);
+        self.converter.receive_layout(core_page);
+    }
+
+    fn close(&mut self) {
+        self.converter.close();
+        let _ = self.converter.flush();
+    }
+}
+
+#[pyclass(name = "XMLConverter")]
+pub struct PyXMLConverter {
+    converter: bolivar_core::converter::XMLConverter<PyWriter>,
+}
+
+#[pymethods]
+impl PyXMLConverter {
+    #[new]
+    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, stripcontrol=false, imagewriter=None))]
+    fn new(
+        rsrcmgr: &Bound<'_, PyAny>,
+        outfp: Py<PyAny>,
+        codec: &str,
+        pageno: i32,
+        laparams: Option<&PyLAParams>,
+        stripcontrol: bool,
+        imagewriter: Option<&Bound<'_, PyAny>>,
+    ) -> Self {
+        let _ = rsrcmgr;
+        let _ = imagewriter;
+        let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+        let mut converter = bolivar_core::converter::XMLConverter::with_options(
+            PyWriter::new(outfp),
+            codec,
+            pageno,
+            la,
+            stripcontrol,
+        );
+        converter.set_stripcontrol(stripcontrol);
+        Self { converter }
+    }
+
+    fn _receive_layout(&mut self, ltpage: &PyLTPage) {
+        let core_page = py_ltpage_to_core(ltpage);
+        self.converter.receive_layout(core_page);
+    }
+
+    fn close(&mut self) {
+        self.converter.close();
+        let _ = self.converter.flush();
+    }
+}
+
+fn py_any_to_string_map(obj: &Bound<'_, PyAny>) -> PyResult<HashMap<String, String>> {
+    obj.extract()
 }
 
 fn resolve_threads(threads: Option<usize>) -> Option<usize> {
@@ -1759,6 +3085,32 @@ fn extract_table_from_page(
         force_crop,
     };
     Ok(extract_table_from_ltpage(ltpage, &geom, &settings))
+}
+
+/// Extract tables from a filtered/cropped pdfplumber Page using Rust table extraction.
+#[pyfunction]
+#[pyo3(signature = (page, table_settings = None))]
+fn extract_tables_from_page_filtered(
+    py: Python<'_>,
+    page: &Bound<'_, PyAny>,
+    table_settings: Option<Py<PyAny>>,
+) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
+    let settings = parse_table_settings(py, table_settings)?;
+    let (chars, edges, geom) = page_objects_to_chars_edges(py, page)?;
+    Ok(extract_tables_from_objects(chars, edges, &geom, &settings))
+}
+
+/// Extract a single table from a filtered/cropped pdfplumber Page using Rust table extraction.
+#[pyfunction]
+#[pyo3(signature = (page, table_settings = None))]
+fn extract_table_from_page_filtered(
+    py: Python<'_>,
+    page: &Bound<'_, PyAny>,
+    table_settings: Option<Py<PyAny>>,
+) -> PyResult<Option<Vec<Vec<Option<String>>>>> {
+    let settings = parse_table_settings(py, table_settings)?;
+    let (chars, edges, geom) = page_objects_to_chars_edges(py, page)?;
+    Ok(extract_table_from_objects(chars, edges, &geom, &settings))
 }
 
 /// Extract words from a page using Rust text extraction.
@@ -2049,7 +3401,14 @@ fn ltitem_to_py(item: &bolivar_core::layout::LTItem) -> PyLTItem {
 fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_class::<PyLAParams>()?;
+    m.add_class::<PyPDFResourceManager>()?;
+    m.add_class::<PyPSLiteral>()?;
+    m.add_class::<PyPSKeyword>()?;
+    m.add_class::<PyPSBaseParser>()?;
+    m.add_class::<PyPSStackParser>()?;
+    m.add_class::<PyPDFParser>()?;
     m.add_class::<PyPDFDocument>()?;
+    m.add_class::<PyPDFStream>()?;
     m.add_class::<PyPDFPage>()?;
     m.add_class::<PyLTPage>()?;
     m.add_class::<PyLTChar>()?;
@@ -2063,6 +3422,18 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLTLine>()?;
     m.add_class::<PyLTCurve>()?;
     m.add_class::<PyLTAnno>()?;
+    m.add_class::<PyTextConverter>()?;
+    m.add_class::<PyHTMLConverter>()?;
+    m.add_class::<PyXMLConverter>()?;
+    m.add_function(wrap_pyfunction!(LIT, m)?)?;
+    m.add_function(wrap_pyfunction!(KWD, m)?)?;
+    let py = m.py();
+    m.add("KEYWORD_PROC_BEGIN", intern_pskeyword(py, b"{".to_vec())?)?;
+    m.add("KEYWORD_PROC_END", intern_pskeyword(py, b"}".to_vec())?)?;
+    m.add("KEYWORD_ARRAY_BEGIN", intern_pskeyword(py, b"[".to_vec())?)?;
+    m.add("KEYWORD_ARRAY_END", intern_pskeyword(py, b"]".to_vec())?)?;
+    m.add("KEYWORD_DICT_BEGIN", intern_pskeyword(py, b"<<".to_vec())?)?;
+    m.add("KEYWORD_DICT_END", intern_pskeyword(py, b">>".to_vec())?)?;
     m.add_function(wrap_pyfunction!(extract_text, m)?)?;
     m.add_function(wrap_pyfunction!(extract_text_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages, m)?)?;
@@ -2071,6 +3442,8 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_table_from_page, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tables_from_page_filtered, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_table_from_page_filtered, m)?)?;
     m.add_function(wrap_pyfunction!(extract_words_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_text_from_page, m)?)?;
     Ok(())

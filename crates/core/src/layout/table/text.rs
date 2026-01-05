@@ -8,6 +8,9 @@ use std::collections::HashMap;
 use super::clustering::{bbox_from_chars, cluster_objects};
 use super::types::{CharId, CharObj, TextDir, TextSettings, WordObj};
 
+const DEFAULT_X_DENSITY: f64 = 7.25;
+const DEFAULT_Y_DENSITY: f64 = 13.0;
+
 /// Get the line cluster key for a word based on text direction.
 pub(crate) fn get_line_cluster_key(dir: TextDir, obj: &WordObj) -> f64 {
     match dir {
@@ -138,7 +141,7 @@ fn char_begins_new_word(
 
 /// Group characters into words.
 pub(crate) fn iter_chars_to_words<'a>(
-    ordered: &'a [&'a CharObj],
+    ordered: &[&'a CharObj],
     direction: TextDir,
     settings: &TextSettings,
 ) -> Vec<Vec<&'a CharObj>> {
@@ -185,7 +188,7 @@ pub(crate) fn iter_chars_to_words<'a>(
 
 /// Group characters into lines.
 fn iter_chars_to_lines<'a>(
-    chars: &'a [&'a CharObj],
+    chars: &[&'a CharObj],
     settings: &TextSettings,
 ) -> Vec<(Vec<&'a CharObj>, TextDir)> {
     let upright = chars.first().map(|c| c.upright).unwrap_or(true);
@@ -259,6 +262,198 @@ fn extract_words_refs<'a>(chars: &'a [&'a CharObj], settings: &TextSettings) -> 
         }
     }
     words
+}
+
+fn extract_word_map<'a>(
+    chars: &'a [&'a CharObj],
+    settings: &TextSettings,
+) -> Vec<(WordObj, Vec<&'a CharObj>)> {
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let mut grouped: HashMap<(bool, String), Vec<&CharObj>> = HashMap::new();
+    for &c in chars {
+        let key = (c.upright, String::new());
+        grouped.entry(key).or_default().push(c);
+    }
+
+    let mut words = Vec::new();
+    for (_key, group) in grouped {
+        let line_groups = if settings.use_text_flow {
+            vec![(group.clone(), settings.char_dir)]
+        } else {
+            iter_chars_to_lines(&group, settings)
+        };
+        for (line_chars, direction) in line_groups {
+            for word_chars in iter_chars_to_words(&line_chars, direction, settings) {
+                let word = merge_chars(&word_chars, settings);
+                words.push((word, word_chars));
+            }
+        }
+    }
+    words
+}
+
+fn bbox_origin(bbox: &super::types::BBox, dir: TextDir) -> f64 {
+    match dir {
+        TextDir::Ttb => bbox.top,
+        TextDir::Btt => bbox.bottom,
+        TextDir::Ltr => bbox.x0,
+        TextDir::Rtl => bbox.x1,
+    }
+}
+
+fn word_position(word: &WordObj, dir: TextDir) -> f64 {
+    match dir {
+        TextDir::Ttb => word.top,
+        TextDir::Btt => word.bottom,
+        TextDir::Ltr => word.x0,
+        TextDir::Rtl => word.x1,
+    }
+}
+
+fn extract_text_layout_refs(
+    chars: &[&CharObj],
+    settings: &TextSettings,
+    layout_bbox: &super::types::BBox,
+) -> String {
+    let word_map = extract_word_map(chars, settings);
+    if word_map.is_empty() {
+        return String::new();
+    }
+
+    let layout_width = layout_bbox.x1 - layout_bbox.x0;
+    let layout_height = layout_bbox.bottom - layout_bbox.top;
+    let layout_width_chars = (layout_width / DEFAULT_X_DENSITY).round() as i64;
+    let layout_height_chars = (layout_height / DEFAULT_Y_DENSITY).round() as i64;
+
+    let line_dir = settings.line_dir;
+    let char_dir = settings.char_dir;
+
+    let line_cluster_key = |w: &(WordObj, Vec<&CharObj>)| get_line_cluster_key(line_dir, &w.0);
+    let tolerance = if matches!(line_dir, TextDir::Ttb | TextDir::Btt) {
+        settings.y_tolerance
+    } else {
+        settings.x_tolerance
+    };
+
+    let mut tuples = word_map;
+    if !settings.use_text_flow {
+        tuples.sort_by(|a, b| {
+            line_cluster_key(a)
+                .partial_cmp(&line_cluster_key(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    let tuples_by_line =
+        cluster_objects(&tuples, line_cluster_key, tolerance, settings.use_text_flow);
+
+    let y_origin = bbox_origin(layout_bbox, line_dir);
+    let x_origin = bbox_origin(layout_bbox, char_dir);
+
+    let mut out = String::new();
+    let mut num_newlines: i64 = 0;
+
+    for (line_idx, line_tuples) in tuples_by_line.into_iter().enumerate() {
+        let y_dist = {
+            let line_position = word_position(&line_tuples[0].0, line_dir);
+            let adj = if matches!(line_dir, TextDir::Btt | TextDir::Rtl) {
+                -1.0
+            } else {
+                1.0
+            };
+            (line_position - y_origin) * adj / DEFAULT_Y_DENSITY
+        };
+
+        let num_newlines_prepend = std::cmp::max(
+            if line_idx > 0 { 1 } else { 0 },
+            y_dist.round() as i64 - num_newlines,
+        );
+
+        for _ in 0..num_newlines_prepend {
+            if out.is_empty() || out.ends_with('\n') {
+                if layout_width_chars > 0 {
+                    out.push_str(&" ".repeat(layout_width_chars as usize));
+                }
+            }
+            out.push('\n');
+        }
+
+        num_newlines += num_newlines_prepend;
+
+        let mut line_len: i64 = 0;
+
+        let mut line_sorted = line_tuples;
+        if !settings.use_text_flow {
+            line_sorted.sort_by(|a, b| {
+                let key_a = match char_dir {
+                    TextDir::Ltr => a.0.x0,
+                    TextDir::Rtl => -a.0.x1,
+                    TextDir::Ttb => a.0.top,
+                    TextDir::Btt => -a.0.bottom,
+                };
+                let key_b = match char_dir {
+                    TextDir::Ltr => b.0.x0,
+                    TextDir::Rtl => -b.0.x1,
+                    TextDir::Ttb => b.0.top,
+                    TextDir::Btt => -b.0.bottom,
+                };
+                key_a
+                    .partial_cmp(&key_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
+        for (word, chars) in line_sorted {
+            let x_dist = {
+                let char_position = word_position(&word, char_dir);
+                let adj = if matches!(char_dir, TextDir::Btt | TextDir::Rtl) {
+                    -1.0
+                } else {
+                    1.0
+                };
+                (char_position - x_origin) * adj / DEFAULT_X_DENSITY
+            };
+
+            let min_space = if line_len > 0 { 1 } else { 0 };
+            let num_spaces_prepend = std::cmp::max(min_space, x_dist.round() as i64 - line_len);
+            if num_spaces_prepend > 0 {
+                out.push_str(&" ".repeat(num_spaces_prepend as usize));
+                line_len += num_spaces_prepend;
+            }
+
+            for c in chars {
+                let expanded = expand_ligature(&c.text, settings.expand_ligatures);
+                for ch in expanded.chars() {
+                    out.push(ch);
+                    line_len += 1;
+                }
+            }
+        }
+
+        if layout_width_chars > 0 {
+            let pad = layout_width_chars - line_len;
+            if pad > 0 {
+                out.push_str(&" ".repeat(pad as usize));
+            }
+        }
+    }
+
+    if layout_height_chars > 0 {
+        let num_newlines_append = layout_height_chars - (num_newlines + 1);
+        for i in 0..num_newlines_append {
+            if i > 0 && layout_width_chars > 0 {
+                out.push_str(&" ".repeat(layout_width_chars as usize));
+            }
+            out.push('\n');
+        }
+        if out.ends_with('\n') {
+            out.pop();
+        }
+    }
+
+    out
 }
 
 /// Convert lines to text string with proper direction handling.
@@ -370,4 +565,21 @@ pub(crate) fn extract_text_from_char_ids(
         refs.push(&chars[id.0]);
     }
     extract_text_refs(&refs, settings)
+}
+
+/// Extract text from specific character indices with layout spacing.
+pub(crate) fn extract_text_from_char_ids_layout(
+    chars: &[CharObj],
+    ids: &[CharId],
+    settings: &TextSettings,
+    layout_bbox: &super::types::BBox,
+) -> String {
+    if ids.is_empty() {
+        return String::new();
+    }
+    let mut refs: Vec<&CharObj> = Vec::with_capacity(ids.len());
+    for id in ids {
+        refs.push(&chars[id.0]);
+    }
+    extract_text_layout_refs(&refs, settings, layout_bbox)
 }

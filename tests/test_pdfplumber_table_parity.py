@@ -94,7 +94,9 @@ class TestTableParity(unittest.TestCase):
                 "Handling Rate",
                 "PO number",
             ]
-            col = [page.crop(bbox).extract_text() for bbox in table_obj.columns[1].cells]
+            col = [
+                page.crop(bbox).extract_text() for bbox in table_obj.columns[1].cells
+            ]
             assert col == [
                 "UPC code",
                 "0085648100305",

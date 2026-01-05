@@ -109,6 +109,11 @@ impl LTTextLineHorizontal {
         self.elements.iter()
     }
 
+    /// Add a text line element.
+    pub fn add_element(&mut self, element: TextLineElement) {
+        self.elements.push(element);
+    }
+
     /// Performs analysis on the text line.
     ///
     /// Adds a newline annotation at the end of the text line.
@@ -232,6 +237,11 @@ impl LTTextLineVertical {
     /// Returns an iterator over elements in this text line.
     pub fn iter(&self) -> impl Iterator<Item = &TextLineElement> {
         self.elements.iter()
+    }
+
+    /// Add a text line element.
+    pub fn add_element(&mut self, element: TextLineElement) {
+        self.elements.push(element);
     }
 
     /// Performs analysis on the text line.

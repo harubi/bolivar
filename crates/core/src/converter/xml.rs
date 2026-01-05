@@ -14,9 +14,9 @@ use crate::utils::{HasBBox, bbox2str, enc};
 /// XML Converter - outputs XML with full structure.
 ///
 /// Port of XMLConverter from pdfminer.six converter.py
-pub struct XMLConverter<'a, W: Write> {
+pub struct XMLConverter<W: Write> {
     /// Output writer
-    outfp: &'a mut W,
+    outfp: W,
     /// Output encoding
     codec: String,
     /// Current page number
@@ -31,9 +31,9 @@ pub struct XMLConverter<'a, W: Write> {
     control_re: Regex,
 }
 
-impl<'a, W: Write> XMLConverter<'a, W> {
+impl<W: Write> XMLConverter<W> {
     /// Create a new XML converter.
-    pub fn new(outfp: &'a mut W, codec: &str, pageno: i32, laparams: Option<LAParams>) -> Self {
+    pub fn new(outfp: W, codec: &str, pageno: i32, laparams: Option<LAParams>) -> Self {
         let mut converter = Self {
             outfp,
             codec: codec.to_string(),
@@ -48,7 +48,7 @@ impl<'a, W: Write> XMLConverter<'a, W> {
 
     /// Create with options.
     pub fn with_options(
-        outfp: &'a mut W,
+        outfp: W,
         codec: &str,
         pageno: i32,
         laparams: Option<LAParams>,
@@ -59,9 +59,19 @@ impl<'a, W: Write> XMLConverter<'a, W> {
         converter
     }
 
+    /// Set whether to strip control characters.
+    pub fn set_stripcontrol(&mut self, stripcontrol: bool) {
+        self.stripcontrol = stripcontrol;
+    }
+
     /// Write output.
     fn write(&mut self, text: &str) {
         let _ = self.outfp.write_all(text.as_bytes());
+    }
+
+    /// Flush output.
+    pub fn flush(&mut self) {
+        let _ = self.outfp.flush();
     }
 
     /// Write header.

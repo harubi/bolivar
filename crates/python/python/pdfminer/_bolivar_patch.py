@@ -27,26 +27,16 @@ def _apply_patch(module) -> bool:
     if getattr(page_mod.Page.extract_tables, "_bolivar_patched", False):
         return True
 
-    from bolivar import extract_table_from_page, extract_tables_from_page
-
-    orig_extract_tables = page_mod.Page.extract_tables
-    orig_extract_table = page_mod.Page.extract_table
-
-    def _needs_python_fallback(page, table_settings):
-        # FilteredPage/dedupe uses filter_fn; respect Python semantics
-        if hasattr(page, "filter_fn"):
-            return True
-        if isinstance(table_settings, dict):
-            if table_settings.get("text_layout"):
-                return True
-            ts = table_settings.get("text_settings")
-            if isinstance(ts, dict) and ts.get("layout"):
-                return True
-        return False
+    from bolivar import (
+        extract_table_from_page,
+        extract_table_from_page_filtered,
+        extract_tables_from_page,
+        extract_tables_from_page_filtered,
+    )
 
     def _extract_tables(self, table_settings=None):
-        if _needs_python_fallback(self, table_settings):
-            return orig_extract_tables(self, table_settings)
+        if hasattr(self, "filter_fn") or not getattr(self, "is_original", True):
+            return extract_tables_from_page_filtered(self, table_settings)
         page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
         force_crop = not getattr(self, "is_original", True)
         return extract_tables_from_page(
@@ -60,8 +50,8 @@ def _apply_patch(module) -> bool:
         )
 
     def _extract_table(self, table_settings=None):
-        if _needs_python_fallback(self, table_settings):
-            return orig_extract_table(self, table_settings)
+        if hasattr(self, "filter_fn") or not getattr(self, "is_original", True):
+            return extract_table_from_page_filtered(self, table_settings)
         page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
         force_crop = not getattr(self, "is_original", True)
         return extract_table_from_page(
@@ -129,7 +119,9 @@ def _remove_hook():
     global _HOOK_INSTALLED
     if not _HOOK_INSTALLED:
         return
-    sys.meta_path = [m for m in sys.meta_path if not isinstance(m, _PdfplumberPatchFinder)]
+    sys.meta_path = [
+        m for m in sys.meta_path if not isinstance(m, _PdfplumberPatchFinder)
+    ]
     _HOOK_INSTALLED = False
 
 

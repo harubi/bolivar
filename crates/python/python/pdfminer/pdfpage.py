@@ -39,13 +39,25 @@ class PDFPage:
         self.label = rust_page.label
 
         # Get annotations from Rust page
-        self.annots = rust_page.annots if hasattr(rust_page, 'annots') else None
+        self.annots = rust_page.annots if hasattr(rust_page, "annots") else None
         self.beads = None  # Reading order chain
 
         # Optional box types - get from Rust if available
-        self.bleedbox = list(rust_page.bleedbox) if hasattr(rust_page, 'bleedbox') and rust_page.bleedbox else None
-        self.trimbox = list(rust_page.trimbox) if hasattr(rust_page, 'trimbox') and rust_page.trimbox else None
-        self.artbox = list(rust_page.artbox) if hasattr(rust_page, 'artbox') and rust_page.artbox else None
+        self.bleedbox = (
+            list(rust_page.bleedbox)
+            if hasattr(rust_page, "bleedbox") and rust_page.bleedbox
+            else None
+        )
+        self.trimbox = (
+            list(rust_page.trimbox)
+            if hasattr(rust_page, "trimbox") and rust_page.trimbox
+            else None
+        )
+        self.artbox = (
+            list(rust_page.artbox)
+            if hasattr(rust_page, "artbox") and rust_page.artbox
+            else None
+        )
 
         # Populate attrs dict from Rust when available
         if hasattr(rust_page, "attrs"):
@@ -97,8 +109,15 @@ class PDFPage:
             yield cls(rust_page, document, page_index=idx)
 
     @classmethod
-    def get_pages(cls, fp, page_numbers=None, maxpages=0, password=b"",
-                  caching=True, check_extractable=True):
+    def get_pages(
+        cls,
+        fp,
+        page_numbers=None,
+        maxpages=0,
+        password=b"",
+        caching=True,
+        check_extractable=True,
+    ):
         """Legacy interface for iterating pages.
 
         This is a convenience method that creates parser and document.

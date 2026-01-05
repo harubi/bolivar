@@ -19,9 +19,9 @@ use crate::utils::{HasBBox, Rect, enc, make_compat_str};
 /// HTML Converter - outputs HTML with positioning.
 ///
 /// Port of HTMLConverter from pdfminer.six converter.py
-pub struct HTMLConverter<'a, W: Write> {
+pub struct HTMLConverter<W: Write> {
     /// Output writer
-    outfp: &'a mut W,
+    outfp: W,
     /// Output encoding
     codec: String,
     /// Current page number
@@ -52,7 +52,7 @@ pub struct HTMLConverter<'a, W: Write> {
     yoffset: f64,
 }
 
-impl<'a, W: Write> HTMLConverter<'a, W> {
+impl<W: Write> HTMLConverter<W> {
     /// Default rectangle colors.
     pub fn default_rect_colors() -> HashMap<String, String> {
         let mut colors = HashMap::new();
@@ -86,7 +86,7 @@ impl<'a, W: Write> HTMLConverter<'a, W> {
     }
 
     /// Create a new HTML converter.
-    pub fn new(outfp: &'a mut W, codec: &str, pageno: i32, laparams: Option<LAParams>) -> Self {
+    pub fn new(outfp: W, codec: &str, pageno: i32, laparams: Option<LAParams>) -> Self {
         let mut converter = Self {
             outfp,
             codec: codec.to_string(),
@@ -107,7 +107,7 @@ impl<'a, W: Write> HTMLConverter<'a, W> {
 
     /// Create with debug mode.
     pub fn with_debug(
-        outfp: &'a mut W,
+        outfp: W,
         codec: &str,
         pageno: i32,
         laparams: Option<LAParams>,
@@ -123,7 +123,7 @@ impl<'a, W: Write> HTMLConverter<'a, W> {
 
     /// Create with custom options.
     pub fn with_options(
-        outfp: &'a mut W,
+        outfp: W,
         codec: &str,
         pageno: i32,
         laparams: Option<LAParams>,
@@ -146,9 +146,49 @@ impl<'a, W: Write> HTMLConverter<'a, W> {
         &self.rect_colors
     }
 
+    /// Set layout mode.
+    pub fn set_layoutmode(&mut self, layoutmode: &str) {
+        self.layoutmode = layoutmode.to_string();
+    }
+
+    /// Set whether to show page numbers.
+    pub fn set_showpageno(&mut self, showpageno: bool) {
+        self.showpageno = showpageno;
+    }
+
+    /// Set page margin.
+    pub fn set_pagemargin(&mut self, pagemargin: i32) {
+        self.pagemargin = pagemargin;
+    }
+
+    /// Set scale factor.
+    pub fn set_scale(&mut self, scale: f64) {
+        self.scale = scale;
+    }
+
+    /// Set font scale factor.
+    pub fn set_fontscale(&mut self, fontscale: f64) {
+        self.fontscale = fontscale;
+    }
+
+    /// Replace rectangle colors.
+    pub fn set_rect_colors(&mut self, rect_colors: HashMap<String, String>) {
+        self.rect_colors = rect_colors;
+    }
+
+    /// Replace text colors.
+    pub fn set_text_colors(&mut self, text_colors: HashMap<String, String>) {
+        self.text_colors = text_colors;
+    }
+
     /// Write output.
     fn write(&mut self, text: &str) {
         let _ = self.outfp.write_all(text.as_bytes());
+    }
+
+    /// Flush output.
+    pub fn flush(&mut self) {
+        let _ = self.outfp.flush();
     }
 
     /// Write header.
@@ -452,9 +492,9 @@ impl<'a, W: Write> HTMLConverter<'a, W> {
 /// coordinates for each word/line. This converter extracts explicit text
 /// information from PDFs that have it and generates hOCR representation
 /// that can be used in conjunction with page images.
-pub struct HOCRConverter<'a, W: Write> {
+pub struct HOCRConverter<W: Write> {
     /// Output writer
-    outfp: &'a mut W,
+    outfp: W,
     /// Output encoding
     codec: String,
     /// Current page number
@@ -481,9 +521,9 @@ pub struct HOCRConverter<'a, W: Write> {
     working_size: f64,
 }
 
-impl<'a, W: Write> HOCRConverter<'a, W> {
+impl<W: Write> HOCRConverter<W> {
     /// Create a new HOCR converter.
-    pub fn new(outfp: &'a mut W, codec: &str, pageno: i32, laparams: Option<LAParams>) -> Self {
+    pub fn new(outfp: W, codec: &str, pageno: i32, laparams: Option<LAParams>) -> Self {
         let mut converter = Self {
             outfp,
             codec: codec.to_string(),
@@ -504,7 +544,7 @@ impl<'a, W: Write> HOCRConverter<'a, W> {
 
     /// Create with options.
     pub fn with_options(
-        outfp: &'a mut W,
+        outfp: W,
         codec: &str,
         pageno: i32,
         laparams: Option<LAParams>,

@@ -9,9 +9,9 @@ use crate::layout::{LAParams, LTItem, LTPage, LTTextBox, LTTextLine, TextBoxType
 /// Text Converter - outputs plain text.
 ///
 /// Port of TextConverter from pdfminer.six converter.py
-pub struct TextConverter<'a, W: Write> {
+pub struct TextConverter<W: Write> {
     /// Output writer
-    outfp: &'a mut W,
+    outfp: W,
     /// Output encoding
     #[allow(dead_code)]
     codec: String,
@@ -25,10 +25,10 @@ pub struct TextConverter<'a, W: Write> {
     showpageno: bool,
 }
 
-impl<'a, W: Write> TextConverter<'a, W> {
+impl<W: Write> TextConverter<W> {
     /// Create a new text converter.
     pub fn new(
-        outfp: &'a mut W,
+        outfp: W,
         codec: &str,
         pageno: i32,
         laparams: Option<LAParams>,
@@ -43,6 +43,11 @@ impl<'a, W: Write> TextConverter<'a, W> {
         }
     }
 
+    /// Set whether to show page numbers.
+    pub fn set_showpageno(&mut self, showpageno: bool) {
+        self.showpageno = showpageno;
+    }
+
     /// Check if page numbers are shown.
     pub fn show_pageno(&self) -> bool {
         self.showpageno
@@ -51,6 +56,11 @@ impl<'a, W: Write> TextConverter<'a, W> {
     /// Write text to output.
     pub fn write_text(&mut self, text: &str) {
         let _ = self.outfp.write_all(text.as_bytes());
+    }
+
+    /// Flush output.
+    pub fn flush(&mut self) {
+        let _ = self.outfp.flush();
     }
 
     /// Receive and render a layout page.

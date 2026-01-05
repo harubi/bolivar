@@ -31,7 +31,7 @@ class PDFDocument:
 
         # Convert password to string if bytes
         if isinstance(password, bytes):
-            password = password.decode('utf-8', errors='replace')
+            password = password.decode("utf-8", errors="replace")
 
         # Prefer mmap-backed parsing when a real path is available
         path = None

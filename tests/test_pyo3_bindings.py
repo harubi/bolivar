@@ -1,4 +1,5 @@
 """Tests for PyO3 bindings (TDD)"""
+
 import pytest
 from pathlib import Path
 

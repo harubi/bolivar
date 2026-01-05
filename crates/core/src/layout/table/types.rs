@@ -69,7 +69,7 @@ impl BBox {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CharObj {
+pub struct CharObj {
     pub text: String,
     pub x0: f64,
     pub x1: f64,

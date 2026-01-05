@@ -57,29 +57,68 @@ class PDFPageAggregator:
 
 class PDFConverter:
     """Base class for PDF converters - stub."""
+
     pass
 
 
 class TextConverter:
     """Converts PDF to plain text - stub."""
 
-    def __init__(self, rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None,
-                 showpageno=False, imagewriter=None):
+    def __init__(
+        self,
+        rsrcmgr,
+        outfp,
+        codec="utf-8",
+        pageno=1,
+        laparams=None,
+        showpageno=False,
+        imagewriter=None,
+    ):
         raise NotImplementedError("TextConverter not yet implemented via bolivar")
 
 
 class HTMLConverter:
     """Converts PDF to HTML - stub."""
 
-    def __init__(self, rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None,
-                 scale=1, fontscale=1.0, layoutmode="normal", showpageno=True,
-                 imagewriter=None):
+    def __init__(
+        self,
+        rsrcmgr,
+        outfp,
+        codec="utf-8",
+        pageno=1,
+        laparams=None,
+        scale=1,
+        fontscale=1.0,
+        layoutmode="normal",
+        showpageno=True,
+        imagewriter=None,
+    ):
         raise NotImplementedError("HTMLConverter not yet implemented via bolivar")
 
 
 class XMLConverter:
     """Converts PDF to XML - stub."""
 
-    def __init__(self, rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None,
-                 stripcontrol=False, imagewriter=None):
+    def __init__(
+        self,
+        rsrcmgr,
+        outfp,
+        codec="utf-8",
+        pageno=1,
+        laparams=None,
+        stripcontrol=False,
+        imagewriter=None,
+    ):
         raise NotImplementedError("XMLConverter not yet implemented via bolivar")
+
+
+# Rust-backed converters (override stubs).
+from bolivar._bolivar import (  # noqa: E402
+    TextConverter as _RustTextConverter,
+    HTMLConverter as _RustHTMLConverter,
+    XMLConverter as _RustXMLConverter,
+)
+
+TextConverter = _RustTextConverter
+HTMLConverter = _RustHTMLConverter
+XMLConverter = _RustXMLConverter

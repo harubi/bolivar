@@ -157,6 +157,16 @@ impl<'a> PDFParser<'a> {
     }
 }
 
+impl PDFParser<'static> {
+    /// Create a parser from a raw byte slice (copies into shared storage).
+    pub fn from_bytes(data: &[u8]) -> Self {
+        Self {
+            base: PSBaseParser::from_bytes(data),
+            lookahead: Vec::new(),
+        }
+    }
+}
+
 /// Content stream operation
 #[derive(Debug, Clone)]
 pub struct Operation {

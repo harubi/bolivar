@@ -54,7 +54,9 @@ def test_extract_tables_uses_bolivar(monkeypatch):
     from bolivar import extract_tables_from_page
 
     pdf_path = os.path.join(
-        os.path.dirname(__file__), "..", "references/pdfplumber/tests/pdfs/pdffill-demo.pdf"
+        os.path.dirname(__file__),
+        "..",
+        "references/pdfplumber/tests/pdfs/pdffill-demo.pdf",
     )
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]

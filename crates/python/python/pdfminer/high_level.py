@@ -38,7 +38,9 @@ def extract_text(
         return _extract_text_from_path(
             value, password, page_numbers, maxpages, caching, laparams, threads
         )
-    return _extract_text(value, password, page_numbers, maxpages, caching, laparams, threads)
+    return _extract_text(
+        value, password, page_numbers, maxpages, caching, laparams, threads
+    )
 
 
 def extract_pages(

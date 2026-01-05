@@ -320,6 +320,26 @@ impl TableFinder {
         }
     }
 
+    fn from_objects(
+        chars: Vec<CharObj>,
+        edges: Vec<EdgeObj>,
+        geom: &PageGeometry,
+        settings: TableSettings,
+    ) -> Self {
+        let page_bbox = BBox {
+            x0: geom.page_bbox.0,
+            top: geom.page_bbox.1,
+            x1: geom.page_bbox.2,
+            bottom: geom.page_bbox.3,
+        };
+        Self {
+            page_bbox,
+            chars,
+            edges,
+            settings,
+        }
+    }
+
     fn get_edges(&self) -> Vec<EdgeObj> {
         let settings = &self.settings;
 
@@ -500,6 +520,30 @@ pub fn extract_tables_from_ltpage(
         .collect()
 }
 
+/// Extract all tables from precomputed characters/edges.
+pub fn extract_tables_from_objects(
+    chars: Vec<CharObj>,
+    edges: Vec<EdgeObj>,
+    geom: &PageGeometry,
+    settings: &TableSettings,
+) -> Vec<Vec<Vec<Option<String>>>> {
+    let finder = TableFinder::from_objects(chars, edges, geom, settings.clone());
+    let mut tables = finder.find_tables();
+    if geom.force_crop {
+        let crop = BBox {
+            x0: geom.page_bbox.0,
+            top: geom.page_bbox.1,
+            x1: geom.page_bbox.2,
+            bottom: geom.page_bbox.3,
+        };
+        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
+    }
+    tables
+        .iter()
+        .map(|t| t.extract(&finder.chars, &settings.text_settings))
+        .collect()
+}
+
 /// Extract the largest table from a page.
 pub fn extract_table_from_ltpage(
     page: &LTPage,
@@ -507,6 +551,63 @@ pub fn extract_table_from_ltpage(
     settings: &TableSettings,
 ) -> Option<Vec<Vec<Option<String>>>> {
     let finder = TableFinder::new(page, geom, settings.clone());
+    let mut tables = finder.find_tables();
+    if geom.force_crop {
+        let crop = BBox {
+            x0: geom.page_bbox.0,
+            top: geom.page_bbox.1,
+            x1: geom.page_bbox.2,
+            bottom: geom.page_bbox.3,
+        };
+        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
+    }
+    if tables.is_empty() {
+        return None;
+    }
+
+    let mut best_idx = 0usize;
+    for (idx, table) in tables.iter().enumerate().skip(1) {
+        let best = &tables[best_idx];
+        let table_cells = table.cells.len();
+        let best_cells = best.cells.len();
+        if table_cells > best_cells {
+            best_idx = idx;
+            continue;
+        }
+        if table_cells == best_cells {
+            let table_bbox = table.bbox();
+            let best_bbox = best.bbox();
+            let top_cmp = table_bbox
+                .top
+                .partial_cmp(&best_bbox.top)
+                .unwrap_or(std::cmp::Ordering::Equal);
+            if top_cmp == std::cmp::Ordering::Less {
+                best_idx = idx;
+                continue;
+            }
+            if top_cmp == std::cmp::Ordering::Equal {
+                let x_cmp = table_bbox
+                    .x0
+                    .partial_cmp(&best_bbox.x0)
+                    .unwrap_or(std::cmp::Ordering::Equal);
+                if x_cmp == std::cmp::Ordering::Less {
+                    best_idx = idx;
+                }
+            }
+        }
+    }
+
+    Some(tables[best_idx].extract(&finder.chars, &settings.text_settings))
+}
+
+/// Extract the largest table from precomputed characters/edges.
+pub fn extract_table_from_objects(
+    chars: Vec<CharObj>,
+    edges: Vec<EdgeObj>,
+    geom: &PageGeometry,
+    settings: &TableSettings,
+) -> Option<Vec<Vec<Option<String>>>> {
+    let finder = TableFinder::from_objects(chars, edges, geom, settings.clone());
     let mut tables = finder.find_tables();
     if geom.force_crop {
         let crop = BBox {

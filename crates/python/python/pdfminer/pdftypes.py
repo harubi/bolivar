@@ -2,6 +2,8 @@
 
 from typing import Any, Dict, List
 
+from bolivar._bolivar import PDFStream
+
 
 class PDFObjRef:
     """PDF object reference.
@@ -23,23 +25,6 @@ class PDFObjRef:
             return self.doc.getobj(self.objid)
         except Exception:
             return default
-
-
-class PDFStream:
-    """PDF stream object."""
-
-    def __init__(self, attrs, rawdata, decipher=None):
-        self.attrs = attrs
-        self.rawdata = rawdata
-        self.decipher = decipher
-        self._data = None
-
-    def get_data(self):
-        """Get decoded stream data."""
-        if self._data is None:
-            # TODO: Implement stream decoding
-            self._data = self.rawdata
-        return self._data
 
 
 def resolve1(x, default=None):

@@ -9,6 +9,7 @@ from bolivar import (
     process_page as _rust_process_page,
     process_pages as _rust_process_pages,
 )
+from bolivar._bolivar import PDFResourceManager as _RustPDFResourceManager
 
 # PDFStackT type alias (matches pdfminer.six)
 PDFStackT = Union[
@@ -23,20 +24,8 @@ PDFStackT = Union[
 ]
 
 
-class PDFResourceManager:
-    """PDF resource manager - compatibility wrapper.
-
-    In bolivar, resource management is handled internally by the Rust
-    interpreter. This class exists for API compatibility.
-    """
-
-    def __init__(self, caching=True):
-        self.caching = caching
-        self._cached_fonts = {}
-
-    def get_font(self, objid, spec):
-        """Get a font resource (not implemented - internal to Rust)."""
-        raise NotImplementedError("PDFResourceManager.get_font is internal to bolivar")
+# Rust-backed resource manager (drop-in compatible API).
+PDFResourceManager = _RustPDFResourceManager
 
 
 class PDFPageInterpreter:
@@ -66,11 +55,11 @@ class PDFPageInterpreter:
         rust_page = page._rust_page
 
         # Get LAParams from the device if available
-        laparams = getattr(self.device, '_laparams', None)
+        laparams = getattr(self.device, "_laparams", None)
         rust_laparams = None
         if laparams is not None:
             # Convert to Rust LAParams if it's a shim LAParams
-            if hasattr(laparams, '_to_rust'):
+            if hasattr(laparams, "_to_rust"):
                 rust_laparams = laparams._to_rust()
             else:
                 # Already a Rust LAParams or compatible

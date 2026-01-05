@@ -3,6 +3,7 @@
 These tests verify that the pdfminer shim provides API compatibility
 for pdfplumber and other pdfminer.six consumers.
 """
+
 import pytest
 from pathlib import Path
 from io import BytesIO
@@ -221,7 +222,9 @@ class TestPDFPage:
 
             # Each annotation should be a dict with Rect
             for annot in page.annots:
-                assert isinstance(annot, dict), f"Annotation should be dict, got {type(annot)}"
+                assert isinstance(annot, dict), (
+                    f"Annotation should be dict, got {type(annot)}"
+                )
                 assert "Rect" in annot, "Annotation should have Rect field"
 
 
@@ -377,14 +380,16 @@ class TestColorExtraction:
                 chars_with_color = []
                 for item in layout:
                     if isinstance(item, LTChar):
-                        if hasattr(item, 'graphicstate') and item.graphicstate:
+                        if hasattr(item, "graphicstate") and item.graphicstate:
                             ncolor = item.graphicstate.ncolor
                             # Should NOT be default (0) for colored text
                             if ncolor != 0 and ncolor != (0,):
                                 chars_with_color.append(item)
 
                 # pdffill-demo.pdf should have some colored text
-                assert len(chars_with_color) > 0, "Expected some chars with non-default colors"
+                assert len(chars_with_color) > 0, (
+                    "Expected some chars with non-default colors"
+                )
                 break
 
     def test_rgb_color_extraction(self):
@@ -414,7 +419,7 @@ class TestColorExtraction:
                 red_chars = []
                 for item in layout:
                     if isinstance(item, LTChar):
-                        if hasattr(item, 'graphicstate') and item.graphicstate:
+                        if hasattr(item, "graphicstate") and item.graphicstate:
                             nc = item.graphicstate.ncolor
                             if isinstance(nc, tuple) and len(nc) == 3:
                                 r, g, b = nc
@@ -422,8 +427,10 @@ class TestColorExtraction:
                                     red_chars.append(item.get_text())
 
                 # Should find the red "November - 2015" text
-                red_text = ''.join(red_chars)
-                assert "November" in red_text, f"Expected 'November' in red text, got: {red_text}"
+                red_text = "".join(red_chars)
+                assert "November" in red_text, (
+                    f"Expected 'November' in red text, got: {red_text}"
+                )
                 break
 
 
@@ -467,7 +474,9 @@ class TestObjectExtraction:
 
                 # Find LTRect objects
                 rects = [item for item in layout if isinstance(item, LTRect)]
-                assert len(rects) > 0, "Should extract LTRect objects from pdffill-demo.pdf"
+                assert len(rects) > 0, (
+                    "Should extract LTRect objects from pdffill-demo.pdf"
+                )
                 break
 
     def test_ltpage_contains_lines(self):
@@ -599,7 +608,9 @@ class TestPdfplumberParity:
             # Red color: R > 0.9, G < 0.1, B < 0.1
             if isinstance(color, tuple) and len(color) == 3:
                 r, g, b = color
-                assert r > 0.9 and g < 0.1 and b < 0.1, f"Expected red color, got RGB{color}"
+                assert r > 0.9 and g < 0.1 and b < 0.1, (
+                    f"Expected red color, got RGB{color}"
+                )
 
 
 class TestPdfplumberLayoutParity:

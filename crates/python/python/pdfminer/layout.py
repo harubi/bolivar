@@ -80,8 +80,7 @@ class LTTextContainer(LTContainer):
     def get_text(self) -> str:
         """Get text content."""
         return "".join(
-            obj.get_text() if hasattr(obj, "get_text") else ""
-            for obj in self._objs
+            obj.get_text() if hasattr(obj, "get_text") else "" for obj in self._objs
         )
 
 
@@ -142,21 +141,49 @@ class LTChar(LTComponent):
             self.textdisp = None
             # Create graphicstate with actual colors from Rust
             gs = PDFGraphicState()
+
             # pdfplumber expects colors as tuples - (r, g, b) or (gray,)
             def _normalize_gray(vals):
-                if len(vals) == 1 and isinstance(vals[0], float) and vals[0].is_integer():
+                if (
+                    len(vals) == 1
+                    and isinstance(vals[0], float)
+                    and vals[0].is_integer()
+                ):
                     return (int(vals[0]),)
                 return tuple(vals)
 
-            if hasattr(_rust_char, 'non_stroking_color') and _rust_char.non_stroking_color:
+            if (
+                hasattr(_rust_char, "non_stroking_color")
+                and _rust_char.non_stroking_color
+            ):
                 gs.ncolor = _normalize_gray(_rust_char.non_stroking_color)
-            if hasattr(_rust_char, 'stroking_color') and _rust_char.stroking_color:
+            if hasattr(_rust_char, "stroking_color") and _rust_char.stroking_color:
                 gs.scolor = _normalize_gray(_rust_char.stroking_color)
             self.graphicstate = gs
-            if hasattr(_rust_char, 'ncs') and _rust_char.ncs:
-                self.ncs = PSLiteral(_rust_char.ncs)
-            # Don't set ncs - pdfplumber uses hasattr() check for colorspace
-            # Setting to None would make hasattr return True but .name access fails
+            if hasattr(_rust_char, "ncs"):
+                try:
+                    ncs_val = _rust_char.ncs
+                except Exception:
+                    ncs_val = None
+                if ncs_val:
+                    self.ncs = (
+                        ncs_val
+                        if isinstance(ncs_val, PSLiteral)
+                        else PSLiteral(ncs_val)
+                    )
+                    gs.ncs = self.ncs
+            if hasattr(_rust_char, "scs"):
+                try:
+                    scs_val = _rust_char.scs
+                except Exception:
+                    scs_val = None
+                if scs_val:
+                    gs.scs = (
+                        scs_val
+                        if isinstance(scs_val, PSLiteral)
+                        else PSLiteral(scs_val)
+                    )
+            # Don't set ncs/scs to None - pdfplumber uses hasattr() and .name
         else:
             # Traditional pdfminer.six constructor
             self._rust_char = None
@@ -243,8 +270,14 @@ class LTCurve(LTComponent):
     def from_rust(cls, rust_curve) -> "LTCurve":
         """Create an LTCurve from a Rust LTCurve."""
         # Get colors from Rust
-        non_stroking = tuple(rust_curve.non_stroking_color) if rust_curve.non_stroking_color else None
-        stroking = tuple(rust_curve.stroking_color) if rust_curve.stroking_color else None
+        non_stroking = (
+            tuple(rust_curve.non_stroking_color)
+            if rust_curve.non_stroking_color
+            else None
+        )
+        stroking = (
+            tuple(rust_curve.stroking_color) if rust_curve.stroking_color else None
+        )
         # Get points
         pts = list(rust_curve.pts)
         curve = cls(
@@ -262,9 +295,7 @@ class LTCurve(LTComponent):
             curve.tag = rust_curve.tag
         # Copy original_path from Rust (pdfplumber expects this)
         if rust_curve.original_path:
-            curve.original_path = [
-                (cmd, *pts) for cmd, pts in rust_curve.original_path
-            ]
+            curve.original_path = [(cmd, *pts) for cmd, pts in rust_curve.original_path]
         else:
             curve.original_path = None
         # Copy dashing_style
@@ -276,8 +307,8 @@ class LTCurve(LTComponent):
             del curve.scs
         # Store height/width as instance attrs for pdfplumber __dict__ iteration
         # Use __dict__ to shadow the @property from parent class
-        curve.__dict__['height'] = curve.y1 - curve.y0
-        curve.__dict__['width'] = curve.x1 - curve.x0
+        curve.__dict__["height"] = curve.y1 - curve.y0
+        curve.__dict__["width"] = curve.x1 - curve.x0
         return curve
 
 
@@ -288,7 +319,11 @@ class LTLine(LTCurve):
     def from_rust(cls, rust_line) -> "LTLine":
         """Create an LTLine from a Rust LTLine."""
         # Get colors from Rust
-        non_stroking = tuple(rust_line.non_stroking_color) if rust_line.non_stroking_color else None
+        non_stroking = (
+            tuple(rust_line.non_stroking_color)
+            if rust_line.non_stroking_color
+            else None
+        )
         stroking = tuple(rust_line.stroking_color) if rust_line.stroking_color else None
         # Get points
         pts = list(rust_line.pts)
@@ -306,9 +341,7 @@ class LTLine(LTCurve):
             line.tag = rust_line.tag
         # Copy original_path from Rust (pdfplumber expects this)
         if rust_line.original_path:
-            line.original_path = [
-                (cmd, *pts) for cmd, pts in rust_line.original_path
-            ]
+            line.original_path = [(cmd, *pts) for cmd, pts in rust_line.original_path]
         else:
             line.original_path = None
         # Copy dashing_style
@@ -320,8 +353,8 @@ class LTLine(LTCurve):
             del line.scs
         # Store height/width as instance attrs for pdfplumber __dict__ iteration
         # Use __dict__ to shadow the @property from parent class
-        line.__dict__['height'] = line.y1 - line.y0
-        line.__dict__['width'] = line.x1 - line.x0
+        line.__dict__["height"] = line.y1 - line.y0
+        line.__dict__["width"] = line.x1 - line.x0
         return line
 
 
@@ -333,7 +366,11 @@ class LTRect(LTCurve):
         """Create an LTRect from a Rust LTRect."""
         bbox = rust_rect.bbox
         # Get colors from Rust
-        non_stroking = tuple(rust_rect.non_stroking_color) if rust_rect.non_stroking_color else None
+        non_stroking = (
+            tuple(rust_rect.non_stroking_color)
+            if rust_rect.non_stroking_color
+            else None
+        )
         stroking = tuple(rust_rect.stroking_color) if rust_rect.stroking_color else None
         # Create with pts from bbox (4 corners of rectangle)
         x0, y0, x1, y1 = bbox
@@ -353,9 +390,7 @@ class LTRect(LTCurve):
         # Copy original_path from Rust (pdfplumber expects this)
         # Format: [(cmd, pt1, pt2, ...), ...] not [(cmd, [pt1, ...]), ...]
         if rust_rect.original_path:
-            rect.original_path = [
-                (cmd, *pts) for cmd, pts in rust_rect.original_path
-            ]
+            rect.original_path = [(cmd, *pts) for cmd, pts in rust_rect.original_path]
         else:
             rect.original_path = None
         # Copy dashing_style from Rust
@@ -368,8 +403,8 @@ class LTRect(LTCurve):
             del rect.scs
         # Store height/width as instance attrs for pdfplumber __dict__ iteration
         # Use __dict__ to shadow the @property from parent class
-        rect.__dict__['height'] = rect.y1 - rect.y0
-        rect.__dict__['width'] = rect.x1 - rect.x0
+        rect.__dict__["height"] = rect.y1 - rect.y0
+        rect.__dict__["width"] = rect.x1 - rect.x0
         return rect
 
 
@@ -393,6 +428,7 @@ class LTFigure(LTContainer):
 
 class LTTextLine(LTTextContainer):
     """A line of text."""
+
     pass
 
 
@@ -522,7 +558,7 @@ class LTPage(LTContainer):
         rotate: int = 0,
     ):
         # Check if first arg is a Rust LTPage (has pageid attribute and bbox property)
-        if hasattr(pageid_or_rust, 'pageid') and hasattr(pageid_or_rust, 'bbox'):
+        if hasattr(pageid_or_rust, "pageid") and hasattr(pageid_or_rust, "bbox"):
             # Wrapping a Rust LTPage
             rust_page = pageid_or_rust
             self._rust_page = rust_page

@@ -1,55 +1,45 @@
-# pdfminer.psparser compatibility shim
+# pdfminer.psparser compatibility shim (Rust-backed)
+
+from bolivar._bolivar import (
+    PSBaseParser,
+    PSStackParser,
+    PSLiteral,
+    PSKeyword,
+    LIT,
+    KWD,
+    KEYWORD_PROC_BEGIN,
+    KEYWORD_PROC_END,
+    KEYWORD_ARRAY_BEGIN,
+    KEYWORD_ARRAY_END,
+    KEYWORD_DICT_BEGIN,
+    KEYWORD_DICT_END,
+)
+
+from . import psexceptions
+
+PSException = psexceptions.PSException
+PSEOF = psexceptions.PSEOF
+PSSyntaxError = psexceptions.PSSyntaxError
+PSTypeError = psexceptions.PSTypeError
+PSValueError = psexceptions.PSValueError
 
 
-class PSLiteral:
-    """PostScript literal name.
-
-    Represents a /Name in PDF syntax.
-    """
-
-    def __init__(self, name):
-        if isinstance(name, bytes):
-            self.name = name
-        else:
-            self.name = name.encode("latin-1")
-
-    def __repr__(self):
-        return f"/{self.name.decode('latin-1', errors='replace')}"
-
-    def __eq__(self, other):
-        if isinstance(other, PSLiteral):
-            return self.name == other.name
-        return False
-
-    def __hash__(self):
-        return hash(self.name)
+def literal_name(x):
+    if isinstance(x, PSLiteral):
+        name = x.name
+        if isinstance(name, str):
+            return name
+        try:
+            return bytes(name).decode("utf-8")
+        except UnicodeDecodeError:
+            return str(name)
+    return str(x)
 
 
-class PSKeyword:
-    """PostScript keyword."""
-
-    def __init__(self, name):
-        if isinstance(name, bytes):
-            self.name = name
-        else:
-            self.name = name.encode("latin-1")
-
-    def __repr__(self):
-        return f"PSKeyword({self.name!r})"
-
-
-# Keyword singletons (commonly used)
-KEYWORD_PROC_BEGIN = PSKeyword(b"{")
-KEYWORD_PROC_END = PSKeyword(b"}")
-KEYWORD_ARRAY_BEGIN = PSKeyword(b"[")
-KEYWORD_ARRAY_END = PSKeyword(b"]")
-KEYWORD_DICT_BEGIN = PSKeyword(b"<<")
-KEYWORD_DICT_END = PSKeyword(b">>")
-
-
-class PSSyntaxError(Exception):
-    pass
-
-
-class PSEOF(Exception):
-    pass
+def keyword_name(x):
+    if not isinstance(x, PSKeyword):
+        return x
+    name = x.name
+    if isinstance(name, bytes):
+        return name.decode("utf-8", "ignore")
+    return str(name)
