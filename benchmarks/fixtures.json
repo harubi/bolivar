@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "id": "simple1",
+      "path": "crates/core/tests/fixtures/simple1.pdf",
+      "tiers": ["quick", "full"],
+      "tags": ["text", "layout"],
+      "expect": { "min_pages": 1, "min_text_len": 10 }
+    },
+    {
+      "id": "simple4",
+      "path": "crates/core/tests/fixtures/simple4.pdf",
+      "tiers": ["quick", "full"],
+      "tags": ["text", "layout"],
+      "expect": { "min_pages": 1, "min_text_len": 10 }
+    },
+    {
+      "id": "font_size",
+      "path": "crates/core/tests/fixtures/font-size-test.pdf",
+      "tiers": ["quick", "full"],
+      "tags": ["text", "layout"],
+      "expect": { "min_pages": 1, "min_text_len": 10 }
+    },
+    {
+      "id": "pdffill_demo",
+      "path": "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+      "tiers": ["quick", "full"],
+      "tags": ["tables", "text"],
+      "expect": { "min_pages": 1, "min_text_len": 10, "min_tables": 1 }
+    },
+    {
+      "id": "tabula_twotables",
+      "path": "references/tabula-java/src/test/resources/technology/tabula/twotables.pdf",
+      "tiers": ["quick", "full"],
+      "tags": ["tables"],
+      "expect": { "min_pages": 1, "min_tables": 1 }
+    },
+    {
+      "id": "tabula_schools",
+      "path": "references/tabula-java/src/test/resources/technology/tabula/schools.pdf",
+      "tiers": ["full"],
+      "tags": ["tables"],
+      "expect": { "min_pages": 1, "min_tables": 1 }
+    },
+    {
+      "id": "nics_background_checks",
+      "path": "crates/core/tests/fixtures/pdfplumber/nics-background-checks-2015-11.pdf",
+      "tiers": ["full"],
+      "tags": ["tables", "text"],
+      "expect": { "min_pages": 1, "min_text_len": 10, "min_tables": 1 }
+    },
+    {
+      "id": "federal_register",
+      "path": "references/pdfplumber/tests/pdfs/federal-register-2020-17221.pdf",
+      "tiers": ["full"],
+      "tags": ["text", "layout"],
+      "expect": { "min_pages": 1, "min_text_len": 100 }
+    },
+    {
+      "id": "warn_report",
+      "path": "references/pdfplumber/tests/pdfs/WARN-Report-for-7-1-2015-to-03-25-2016.pdf",
+      "tiers": ["full"],
+      "tags": ["text", "layout"],
+      "expect": { "min_pages": 1, "min_text_len": 100 }
+    }
+  ]
+}

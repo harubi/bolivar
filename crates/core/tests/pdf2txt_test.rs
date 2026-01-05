@@ -11,6 +11,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Once;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bolivar_core::high_level::extract_text;
 
@@ -97,12 +98,12 @@ fn run_with_output(fixture: &str, options: Option<&str>) -> (i32, String) {
     let path = fixture_path(fixture);
     let path_str = path.to_string_lossy();
 
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let temp_file = std::env::temp_dir().join(format!(
-        "pdf2txt_test_{}.txt",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
+        "pdf2txt_test_{}_{}.txt",
+        std::process::id(),
+        counter
     ));
     let temp_path = temp_file.to_string_lossy().to_string();
 

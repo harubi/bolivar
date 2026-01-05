@@ -30,6 +30,11 @@ ordered-float.workspace = true
 geo-index.workspace = true
 rayon.workspace = true
 memmap2.workspace = true
+criterion-perf-events = { workspace = true, optional = true }
+perfcnt = { workspace = true, optional = true }
+
+[features]
+perf-counters = ["criterion-perf-events", "perfcnt"]
 
 [dev-dependencies]
 criterion.workspace = true
@@ -37,7 +42,25 @@ hex.workspace = true
 insta.workspace = true
 stats_alloc.workspace = true
 stats_alloc_helper.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json.workspace = true
 
 [[bench]]
-name = "alloc_guard_bench"
+name = "alloc_bench"
+harness = false
+
+[[bench]]
+name = "micro_plane_bench"
+harness = false
+
+[[bench]]
+name = "layout_bench"
+harness = false
+
+[[bench]]
+name = "table_bench"
+harness = false
+
+[[bench]]
+name = "e2e_bench"
 harness = false
