@@ -832,19 +832,6 @@ fn extract_hex_sequences(line: &str) -> Vec<&str> {
     results
 }
 
-/// Parse a hex pair like "<0048><0048>" or "<0048> <0048>".
-fn parse_hex_pair(line: &str) -> Option<(u32, Vec<u8>)> {
-    let hex_values = extract_hex_sequences(line);
-    if hex_values.len() < 2 {
-        return None;
-    }
-
-    let cid = parse_hex_value(hex_values[0])?;
-    let unicode_bytes = parse_hex_bytes(hex_values[1])?;
-
-    Some((cid, unicode_bytes))
-}
-
 /// Parse a hex value like "<0048>" to u32.
 fn parse_hex_value(s: &str) -> Option<u32> {
     let s = s.trim_start_matches('<').trim_end_matches('>');

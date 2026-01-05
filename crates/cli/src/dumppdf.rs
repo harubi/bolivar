@@ -32,12 +32,12 @@ fn escape(s: &[u8]) -> String {
             _ => result.push(byte as char),
         }
     }
-    return result
+    return result;
 }
 
 /// Escape a string for XML output.
 fn escape_str(s: &str) -> String {
-    return escape(s.as_bytes())
+    return escape(s.as_bytes());
 }
 
 /// Stream codec for output.
@@ -125,7 +125,7 @@ fn dumpxml<W: Write>(out: &mut W, obj: &PDFObject, codec: StreamCodec) -> Result
             write!(out, r#"<ref id="{}" />"#, objref.objid)?;
         }
     }
-    return Ok(())
+    return Ok(());
 }
 
 /// Dump all trailers from the document.
@@ -155,7 +155,7 @@ fn dumptrailers<W: Write>(out: &mut W, doc: &PDFDocument, show_fallback_xref: bo
         );
     }
 
-    return Ok(())
+    return Ok(());
 }
 
 /// Dump all objects from the document.
@@ -196,7 +196,7 @@ fn dumpallobjs<W: Write>(
     dumptrailers(out, doc, show_fallback_xref)?;
 
     write!(out, "</pdf>")?;
-    return Ok(())
+    return Ok(());
 }
 
 /// Dump outline/table of contents.
@@ -223,7 +223,7 @@ fn dumpoutline<W: Write>(out: &mut W, doc: &PDFDocument) -> Result<()> {
     }
 
     writeln!(out, "</outlines>")?;
-    return Ok(())
+    return Ok(());
 }
 
 /// Dump a single outline item and its siblings.
@@ -300,7 +300,7 @@ fn dump_outline_item<W: Write>(
         dump_outline_item(out, doc, next, pages, level)?;
     }
 
-    return Ok(())
+    return Ok(());
 }
 
 /// Resolve a destination to its full form.
@@ -312,18 +312,18 @@ fn resolve_dest(doc: &PDFDocument, dest: &PDFObject) -> Option<PDFObject> {
     match &resolved {
         PDFObject::String(s) => {
             // Named destination - look up via Names/Dests
-            return doc.get_dest(s).ok()
+            return doc.get_dest(s).ok();
         }
         PDFObject::Name(name) => {
             // Named destination as name literal
-            return doc.get_dest(name.as_bytes()).ok()
+            return doc.get_dest(name.as_bytes()).ok();
         }
         PDFObject::Dict(dict) => {
             // Destination dict with "D" key
             if let Some(d) = dict.get("D") {
-                return doc.resolve(d).ok()
+                return doc.resolve(d).ok();
             } else {
-                return Some(resolved)
+                return Some(resolved);
             }
         }
         _ => return Some(resolved),
@@ -346,7 +346,7 @@ fn resolve_dest_to_pageno(
             if let PDFObject::Ref(objref) = &arr[0] {
                 return pages.get(&objref.objid).copied();
             }
-            return None
+            return None;
         }
         _ => return None,
     }
@@ -366,7 +366,7 @@ fn extractembedded(doc: &PDFDocument, extractdir: &str) -> Result<()> {
         extract_embedded_files_from_tree(doc, &ef, extractdir)?;
     }
 
-    return Ok(())
+    return Ok(());
 }
 
 /// Extract embedded files from a name tree.
@@ -413,7 +413,7 @@ fn extract_embedded_files_from_tree(
         }
     }
 
-    return Ok(())
+    return Ok(());
 }
 
 /// Extract a single embedded file.
@@ -432,8 +432,10 @@ fn extract_single_embedded(
         filename.to_owned()
     };
 
-    let basename = std::path::Path::new(&basename)
-        .file_name().map_or_else(|| return basename.clone(), |s| return s.to_string_lossy().to_string());
+    let basename = std::path::Path::new(&basename).file_name().map_or_else(
+        || return basename.clone(),
+        |s| return s.to_string_lossy().to_string(),
+    );
 
     // Get EF dictionary
     let ef = match filespec.get("EF") {
@@ -454,7 +456,9 @@ fn extract_single_embedded(
     };
 
     let file_obj = doc.resolve(file_ref)?;
-    let stream = if let Ok(s) = file_obj.as_stream() { s } else {
+    let stream = if let Ok(s) = file_obj.as_stream() {
+        s
+    } else {
         eprintln!("Warning: reference for {basename} is not a stream");
         return Ok(());
     };
@@ -478,7 +482,7 @@ fn extract_single_embedded(
     let data = stream.get_data();
     std::fs::write(&path, data)?;
 
-    return Ok(())
+    return Ok(());
 }
 
 /// Main PDF dump function.
@@ -529,7 +533,7 @@ fn dumppdf<W: Write>(
         writeln!(out)?;
     }
 
-    return Ok(())
+    return Ok(());
 }
 
 /// A command line tool for dumping PDF internal structure as XML.
@@ -688,5 +692,5 @@ fn main() -> core::result::Result<(), Box<dyn core::error::Error>> {
     }
 
     output.flush()?;
-    return Ok(())
+    return Ok(());
 }

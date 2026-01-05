@@ -5,7 +5,7 @@ use std::hash::Hash;
 use crate::utils::{HasBBox, INF_F64, Rect};
 
 use super::component::LTComponent;
-use super::textline::{Axis, LTTextLine, LTTextLineHorizontal, LTTextLineVertical};
+use super::textline::{Axis, LTTextLineHorizontal, LTTextLineVertical, TextLineElement};
 use crate::layout::params::LAParams;
 
 /// Trait for text box types.
@@ -76,7 +76,26 @@ impl Default for LTTextBoxHorizontal {
 
 impl LTTextBox for LTTextBoxHorizontal {
     fn get_text(&self) -> String {
-        self.lines.iter().map(|l| l.get_text()).collect()
+        let mut total_len = 0;
+        for line in &self.lines {
+            for e in line.iter() {
+                total_len += match e {
+                    TextLineElement::Char(c) => c.get_text().len(),
+                    TextLineElement::Anno(a) => a.get_text().len(),
+                };
+            }
+        }
+
+        let mut out = String::with_capacity(total_len);
+        for line in &self.lines {
+            for e in line.iter() {
+                match e {
+                    TextLineElement::Char(c) => out.push_str(c.get_text()),
+                    TextLineElement::Anno(a) => out.push_str(a.get_text()),
+                }
+            }
+        }
+        out
     }
 
     fn get_writing_mode(&self) -> &'static str {
@@ -163,7 +182,26 @@ impl Default for LTTextBoxVertical {
 
 impl LTTextBox for LTTextBoxVertical {
     fn get_text(&self) -> String {
-        self.lines.iter().map(|l| l.get_text()).collect()
+        let mut total_len = 0;
+        for line in &self.lines {
+            for e in line.iter() {
+                total_len += match e {
+                    TextLineElement::Char(c) => c.get_text().len(),
+                    TextLineElement::Anno(a) => a.get_text().len(),
+                };
+            }
+        }
+
+        let mut out = String::with_capacity(total_len);
+        for line in &self.lines {
+            for e in line.iter() {
+                match e {
+                    TextLineElement::Char(c) => out.push_str(c.get_text()),
+                    TextLineElement::Anno(a) => out.push_str(a.get_text()),
+                }
+            }
+        }
+        out
     }
 
     fn get_writing_mode(&self) -> &'static str {
@@ -378,8 +416,10 @@ impl LTTextGroup {
         if self.vertical {
             // Vertical text: reorder from top-right to bottom-left
             self.elements.sort_by(|a, b| {
-                let key_a = (-(1.0 + boxes_flow)).mul_add(a.x0() + a.x1(), -((1.0 - boxes_flow) * a.y1()));
-                let key_b = (-(1.0 + boxes_flow)).mul_add(b.x0() + b.x1(), -((1.0 - boxes_flow) * b.y1()));
+                let key_a =
+                    (-(1.0 + boxes_flow)).mul_add(a.x0() + a.x1(), -((1.0 - boxes_flow) * a.y1()));
+                let key_b =
+                    (-(1.0 + boxes_flow)).mul_add(b.x0() + b.x1(), -((1.0 - boxes_flow) * b.y1()));
                 key_a
                     .partial_cmp(&key_b)
                     .unwrap_or(std::cmp::Ordering::Equal)
@@ -387,8 +427,10 @@ impl LTTextGroup {
         } else {
             // Horizontal text: reorder from top-left to bottom-right
             self.elements.sort_by(|a, b| {
-                let key_a = (1.0 - boxes_flow).mul_add(a.x0(), -((1.0 + boxes_flow) * (a.y0() + a.y1())));
-                let key_b = (1.0 - boxes_flow).mul_add(b.x0(), -((1.0 + boxes_flow) * (b.y0() + b.y1())));
+                let key_a =
+                    (1.0 - boxes_flow).mul_add(a.x0(), -((1.0 + boxes_flow) * (a.y0() + a.y1())));
+                let key_b =
+                    (1.0 - boxes_flow).mul_add(b.x0(), -((1.0 + boxes_flow) * (b.y0() + b.y1())));
                 key_a
                     .partial_cmp(&key_b)
                     .unwrap_or(std::cmp::Ordering::Equal)
@@ -428,8 +470,10 @@ impl LTTextGroupLRTB {
     /// Sorts elements from top-left to bottom-right based on boxes_flow.
     pub fn analyze(&mut self, boxes_flow: f64) {
         self.0.elements.sort_by(|a, b| {
-            let key_a = (1.0 - boxes_flow).mul_add(a.x0(), -((1.0 + boxes_flow) * (a.y0() + a.y1())));
-            let key_b = (1.0 - boxes_flow).mul_add(b.x0(), -((1.0 + boxes_flow) * (b.y0() + b.y1())));
+            let key_a =
+                (1.0 - boxes_flow).mul_add(a.x0(), -((1.0 + boxes_flow) * (a.y0() + a.y1())));
+            let key_b =
+                (1.0 - boxes_flow).mul_add(b.x0(), -((1.0 + boxes_flow) * (b.y0() + b.y1())));
             key_a
                 .partial_cmp(&key_b)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -458,8 +502,10 @@ impl LTTextGroupTBRL {
     /// Sorts elements from top-right to bottom-left based on boxes_flow.
     pub fn analyze(&mut self, boxes_flow: f64) {
         self.0.elements.sort_by(|a, b| {
-            let key_a = (-(1.0 + boxes_flow)).mul_add(a.x0() + a.x1(), -((1.0 - boxes_flow) * a.y1()));
-            let key_b = (-(1.0 + boxes_flow)).mul_add(b.x0() + b.x1(), -((1.0 - boxes_flow) * b.y1()));
+            let key_a =
+                (-(1.0 + boxes_flow)).mul_add(a.x0() + a.x1(), -((1.0 - boxes_flow) * a.y1()));
+            let key_b =
+                (-(1.0 + boxes_flow)).mul_add(b.x0() + b.x1(), -((1.0 - boxes_flow) * b.y1()));
             key_a
                 .partial_cmp(&key_b)
                 .unwrap_or(std::cmp::Ordering::Equal)

@@ -7,6 +7,7 @@
 //! - Table extraction functionality
 
 pub mod analysis;
+pub mod arena;
 pub mod elements;
 pub mod params;
 pub mod table;

@@ -3,18 +3,16 @@
 //! Contains the primary entry point for layout analysis on LTLayoutContainer,
 //! LTFigure, and LTPage.
 
-use crate::utils::{HasBBox, fsplit};
+use crate::utils::HasBBox;
 
 use super::super::elements::{
     IndexAssigner, LTChar, LTFigure, LTItem, LTLayoutContainer, LTPage, LTTextBox, LTTextGroup,
     TextBoxType, TextLineType,
 };
 use super::super::params::LAParams;
-use super::clustering::{
-    group_textboxes, group_textboxes_exact, group_textboxes_exact_dual_heap,
-    group_textboxes_exact_single_heap,
-};
-use super::grouping::{group_objects, group_textlines};
+use super::clustering::group_textboxes_exact;
+use super::grouping::{group_objects, group_objects_arena, group_textlines, group_textlines_arena};
+use crate::layout::arena::LayoutArena;
 
 impl LTLayoutContainer {
     /// Groups character objects into text lines.
@@ -35,13 +33,6 @@ impl LTLayoutContainer {
         group_textlines(laparams, lines)
     }
 
-    /// Groups text boxes hierarchically using approximate algorithm.
-    ///
-    /// Delegates to module-level function for testability.
-    pub fn group_textboxes(&self, laparams: &LAParams, boxes: &[TextBoxType]) -> Vec<LTTextGroup> {
-        group_textboxes(laparams, boxes)
-    }
-
     /// Groups text boxes using exact pdfminer-compatible algorithm.
     ///
     /// Delegates to module-level function for testability.
@@ -53,28 +44,6 @@ impl LTLayoutContainer {
         group_textboxes_exact(laparams, boxes)
     }
 
-    /// Groups text boxes using dual-heap exact algorithm.
-    ///
-    /// Delegates to module-level function for testability.
-    pub fn group_textboxes_exact_dual_heap(
-        &self,
-        laparams: &LAParams,
-        boxes: &[TextBoxType],
-    ) -> Vec<LTTextGroup> {
-        group_textboxes_exact_dual_heap(laparams, boxes)
-    }
-
-    /// Groups text boxes using single-heap best-first algorithm.
-    ///
-    /// Delegates to module-level function for testability.
-    pub fn group_textboxes_exact_single_heap(
-        &self,
-        laparams: &LAParams,
-        boxes: &[TextBoxType],
-    ) -> Vec<LTTextGroup> {
-        group_textboxes_exact_single_heap(laparams, boxes)
-    }
-
     /// Performs layout analysis on the container's items.
     ///
     /// This is the main entry point for layout analysis. It:
@@ -84,31 +53,32 @@ impl LTLayoutContainer {
     /// 4. Optionally groups text boxes hierarchically (if boxes_flow is set)
     /// 5. Assigns reading order indices to text boxes
     pub fn analyze(&mut self, laparams: &LAParams) {
-        // Separate text objects from other objects
-        let (textobjs, otherobjs): (Vec<_>, Vec<_>) =
-            self.items.iter().cloned().partition(|obj| obj.is_char());
+        let mut otherobjs: Vec<LTItem> = Vec::new();
+        let mut arena = LayoutArena::new();
 
-        if textobjs.is_empty() {
+        for item in std::mem::take(&mut self.items) {
+            match item {
+                LTItem::Char(ch) => {
+                    arena.push_char(ch);
+                }
+                other => otherobjs.push(other),
+            }
+        }
+
+        if arena.chars.is_empty() {
+            self.items = otherobjs;
             return;
         }
 
-        // Extract LTChar objects
-        let chars: Vec<LTChar> = textobjs
-            .into_iter()
-            .filter_map(|item| match item {
-                LTItem::Char(c) => Some(c),
-                _ => None,
-            })
-            .collect();
+        let line_ids = group_objects_arena(laparams, &mut arena);
+        let (empty_ids, non_empty_ids): (Vec<_>, Vec<_>) = line_ids
+            .iter()
+            .copied()
+            .partition(|id| arena.line_is_empty(*id));
 
-        // Group characters into text lines
-        let textlines = group_objects(laparams, &chars);
-
-        // Separate empty lines
-        let (empties, textlines) = fsplit(|l| l.is_empty(), textlines);
-
-        // Group lines into text boxes
-        let mut textboxes = group_textlines(laparams, textlines);
+        let box_ids = group_textlines_arena(laparams, &mut arena, &non_empty_ids);
+        let mut textboxes = arena.materialize_boxes(&box_ids);
+        let empties = arena.materialize_lines(&empty_ids);
 
         if laparams.boxes_flow.is_none() {
             // Analyze each textbox (sorts internal lines)

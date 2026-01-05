@@ -71,8 +71,7 @@ impl HuffNode {
             } else {
                 match current {
                     Self::Empty => {
-                        *current =
-                            Self::Branch(Box::new(Self::Empty), Box::new(Self::Empty));
+                        *current = Self::Branch(Box::new(Self::Empty), Box::new(Self::Empty));
                         if let Self::Branch(left, right) = current {
                             current = if bit { right } else { left };
                         }

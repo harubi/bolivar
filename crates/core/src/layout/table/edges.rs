@@ -203,19 +203,6 @@ pub fn filter_edges(
         .collect()
 }
 
-/// Convert a line object to an edge with orientation.
-pub fn line_to_edge(line: &EdgeObj) -> EdgeObj {
-    let orientation = if (line.top - line.bottom).abs() < f64::EPSILON {
-        Some(Orientation::Horizontal)
-    } else {
-        Some(Orientation::Vertical)
-    };
-    EdgeObj {
-        orientation,
-        ..line.clone()
-    }
-}
-
 /// Convert a rectangle to four edges.
 pub fn rect_to_edges(rect: BBox) -> Vec<EdgeObj> {
     let top = EdgeObj {

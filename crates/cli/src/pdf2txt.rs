@@ -190,9 +190,7 @@ fn parse_boxes_flow(s: &str) -> std::result::Result<Option<f64>, String> {
             if (-1.0..=1.0).contains(&v) {
                 Ok(Some(v))
             } else {
-                Err(format!(
-                    "boxes_flow must be between -1.0 and 1.0, got {v}"
-                ))
+                Err(format!("boxes_flow must be between -1.0 and 1.0, got {v}"))
             }
         }
         Err(_) => Err(format!("invalid float value: {s}")),
@@ -347,7 +345,9 @@ fn process_file<W: Write>(
         maxpages: args.maxpages,
         caching: !args.disable_caching,
         laparams: build_laparams(args)?,
-        threads: std::thread::available_parallelism().ok().map(std::num::NonZero::get),
+        threads: std::thread::available_parallelism()
+            .ok()
+            .map(std::num::NonZero::get),
     };
 
     // Create PDFDocument from mmap

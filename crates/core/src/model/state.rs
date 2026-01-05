@@ -65,10 +65,7 @@ impl Color {
 
     /// Check if this color is a pattern color.
     pub const fn is_pattern(&self) -> bool {
-        matches!(
-            self,
-            Self::PatternColored(_) | Self::PatternUncolored(_, _)
-        )
+        matches!(self, Self::PatternColored(_) | Self::PatternUncolored(_, _))
     }
 }
 

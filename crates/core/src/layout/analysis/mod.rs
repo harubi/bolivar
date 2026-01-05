@@ -12,9 +12,9 @@ mod grouping;
 mod spatial_tree;
 
 // Re-export public types and functions
-pub use clustering::{group_textboxes, group_textboxes_exact, group_textboxes_exact_dual_heap};
-pub use grouping::{group_objects, group_textlines};
+pub use clustering::group_textboxes_exact;
+pub use grouping::{group_objects, group_objects_arena, group_textlines, group_textlines_arena};
 pub use spatial_tree::{
     BestEntry, DynamicSpatialTree, FrontierEntry, GroupHeapEntry, NodeStats, PairMode, PlaneElem,
-    PyId, SpatialNode, TreeKind, calc_dist_lower_bound, expand_frontier, expand_frontier_best,
+    PyId, SpatialNode, TreeKind, calc_dist_lower_bound, expand_frontier_best,
 };

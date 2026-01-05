@@ -62,11 +62,7 @@ impl LTTextLineHorizontal {
     }
 
     /// Finds neighboring horizontal text lines in the plane.
-    pub fn find_neighbors<'a>(
-        &self,
-        plane: &'a Plane<Self>,
-        ratio: f64,
-    ) -> Vec<&'a Self> {
+    pub fn find_neighbors<'a>(&self, plane: &'a Plane<Self>, ratio: f64) -> Vec<&'a Self> {
         let d = ratio * self.component.height();
         let search_bbox = (
             self.component.x0,
@@ -139,20 +135,43 @@ impl LTTextLine for LTTextLineHorizontal {
     }
 
     fn get_text(&self) -> String {
-        self.elements
-            .iter()
-            .map(|e| match e {
-                TextLineElement::Char(c) => c.get_text().to_string(),
-                TextLineElement::Anno(a) => a.get_text().to_string(),
-            })
-            .collect()
+        let mut total_len = 0;
+        for e in &self.elements {
+            total_len += match e {
+                TextLineElement::Char(c) => c.get_text().len(),
+                TextLineElement::Anno(a) => a.get_text().len(),
+            };
+        }
+
+        let mut out = String::with_capacity(total_len);
+        for e in &self.elements {
+            match e {
+                TextLineElement::Char(c) => out.push_str(c.get_text()),
+                TextLineElement::Anno(a) => out.push_str(a.get_text()),
+            }
+        }
+        out
     }
 
     fn is_empty(&self) -> bool {
-        // Note: Python's str.isspace() returns False for empty string,
-        // but Rust's all() on empty iterator returns true. Match Python behavior.
-        let text = self.get_text();
-        self.component.is_empty() || (!text.is_empty() && text.chars().all(|c| c.is_whitespace()))
+        if self.component.is_empty() {
+            return true;
+        }
+
+        let mut has_any = false;
+        for e in &self.elements {
+            let s = match e {
+                TextLineElement::Char(c) => c.get_text(),
+                TextLineElement::Anno(a) => a.get_text(),
+            };
+            if !s.is_empty() {
+                has_any = true;
+            }
+            if s.chars().any(|c| !c.is_whitespace()) {
+                return false;
+            }
+        }
+        has_any
     }
 
     fn set_bbox(&mut self, bbox: Rect) {
@@ -192,11 +211,7 @@ impl LTTextLineVertical {
     }
 
     /// Finds neighboring vertical text lines in the plane.
-    pub fn find_neighbors<'a>(
-        &self,
-        plane: &'a Plane<Self>,
-        ratio: f64,
-    ) -> Vec<&'a Self> {
+    pub fn find_neighbors<'a>(&self, plane: &'a Plane<Self>, ratio: f64) -> Vec<&'a Self> {
         let d = ratio * self.component.width();
         let search_bbox = (
             self.component.x0 - d,
@@ -269,20 +284,43 @@ impl LTTextLine for LTTextLineVertical {
     }
 
     fn get_text(&self) -> String {
-        self.elements
-            .iter()
-            .map(|e| match e {
-                TextLineElement::Char(c) => c.get_text().to_string(),
-                TextLineElement::Anno(a) => a.get_text().to_string(),
-            })
-            .collect()
+        let mut total_len = 0;
+        for e in &self.elements {
+            total_len += match e {
+                TextLineElement::Char(c) => c.get_text().len(),
+                TextLineElement::Anno(a) => a.get_text().len(),
+            };
+        }
+
+        let mut out = String::with_capacity(total_len);
+        for e in &self.elements {
+            match e {
+                TextLineElement::Char(c) => out.push_str(c.get_text()),
+                TextLineElement::Anno(a) => out.push_str(a.get_text()),
+            }
+        }
+        out
     }
 
     fn is_empty(&self) -> bool {
-        // Note: Python's str.isspace() returns False for empty string,
-        // but Rust's all() on empty iterator returns true. Match Python behavior.
-        let text = self.get_text();
-        self.component.is_empty() || (!text.is_empty() && text.chars().all(|c| c.is_whitespace()))
+        if self.component.is_empty() {
+            return true;
+        }
+
+        let mut has_any = false;
+        for e in &self.elements {
+            let s = match e {
+                TextLineElement::Char(c) => c.get_text(),
+                TextLineElement::Anno(a) => a.get_text(),
+            };
+            if !s.is_empty() {
+                has_any = true;
+            }
+            if s.chars().any(|c| !c.is_whitespace()) {
+                return false;
+            }
+        }
+        has_any
     }
 
     fn set_bbox(&mut self, bbox: Rect) {
