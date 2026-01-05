@@ -39,33 +39,5 @@ stats_alloc.workspace = true
 stats_alloc_helper.workspace = true
 
 [[bench]]
-name = "plane_bench"
-harness = false
-
-[[bench]]
-name = "layout_bench"
-harness = false
-
-[[bench]]
-name = "filters_bench"
-harness = false
-
-[[bench]]
-name = "pdfdocument_bench"
-harness = false
-
-[[bench]]
-name = "pdfinterp_bench"
-harness = false
-
-[[bench]]
-name = "psparser_bench"
-harness = false
-
-[[bench]]
-name = "e2e_bench"
-harness = false
-
-[[bench]]
 name = "alloc_guard_bench"
 harness = false
