@@ -53,20 +53,20 @@ impl LTTextLineHorizontal {
         }
     }
 
-    pub fn set_bbox(&mut self, bbox: Rect) {
+    pub const fn set_bbox(&mut self, bbox: Rect) {
         self.component.set_bbox(bbox);
     }
 
-    pub fn bbox(&self) -> Rect {
+    pub const fn bbox(&self) -> Rect {
         self.component.bbox()
     }
 
     /// Finds neighboring horizontal text lines in the plane.
     pub fn find_neighbors<'a>(
         &self,
-        plane: &'a Plane<LTTextLineHorizontal>,
+        plane: &'a Plane<Self>,
         ratio: f64,
-    ) -> Vec<&'a LTTextLineHorizontal> {
+    ) -> Vec<&'a Self> {
         let d = ratio * self.component.height();
         let search_bbox = (
             self.component.x0,
@@ -86,21 +86,21 @@ impl LTTextLineHorizontal {
             .collect()
     }
 
-    fn is_left_aligned_with(&self, other: &LTTextLineHorizontal, tolerance: f64) -> bool {
+    fn is_left_aligned_with(&self, other: &Self, tolerance: f64) -> bool {
         (other.component.x0 - self.component.x0).abs() <= tolerance
     }
 
-    fn is_right_aligned_with(&self, other: &LTTextLineHorizontal, tolerance: f64) -> bool {
+    fn is_right_aligned_with(&self, other: &Self, tolerance: f64) -> bool {
         (other.component.x1 - self.component.x1).abs() <= tolerance
     }
 
-    fn is_centrally_aligned_with(&self, other: &LTTextLineHorizontal, tolerance: f64) -> bool {
+    fn is_centrally_aligned_with(&self, other: &Self, tolerance: f64) -> bool {
         let self_center = (self.component.x0 + self.component.x1) / 2.0;
         let other_center = (other.component.x0 + other.component.x1) / 2.0;
         (other_center - self_center).abs() <= tolerance
     }
 
-    fn is_same_height_as(&self, other: &LTTextLineHorizontal, tolerance: f64) -> bool {
+    fn is_same_height_as(&self, other: &Self, tolerance: f64) -> bool {
         (other.component.height() - self.component.height()).abs() <= tolerance
     }
 
@@ -183,20 +183,20 @@ impl LTTextLineVertical {
         }
     }
 
-    pub fn set_bbox(&mut self, bbox: Rect) {
+    pub const fn set_bbox(&mut self, bbox: Rect) {
         self.component.set_bbox(bbox);
     }
 
-    pub fn bbox(&self) -> Rect {
+    pub const fn bbox(&self) -> Rect {
         self.component.bbox()
     }
 
     /// Finds neighboring vertical text lines in the plane.
     pub fn find_neighbors<'a>(
         &self,
-        plane: &'a Plane<LTTextLineVertical>,
+        plane: &'a Plane<Self>,
         ratio: f64,
-    ) -> Vec<&'a LTTextLineVertical> {
+    ) -> Vec<&'a Self> {
         let d = ratio * self.component.width();
         let search_bbox = (
             self.component.x0 - d,
@@ -216,21 +216,21 @@ impl LTTextLineVertical {
             .collect()
     }
 
-    fn is_lower_aligned_with(&self, other: &LTTextLineVertical, tolerance: f64) -> bool {
+    fn is_lower_aligned_with(&self, other: &Self, tolerance: f64) -> bool {
         (other.component.y0 - self.component.y0).abs() <= tolerance
     }
 
-    fn is_upper_aligned_with(&self, other: &LTTextLineVertical, tolerance: f64) -> bool {
+    fn is_upper_aligned_with(&self, other: &Self, tolerance: f64) -> bool {
         (other.component.y1 - self.component.y1).abs() <= tolerance
     }
 
-    fn is_centrally_aligned_with(&self, other: &LTTextLineVertical, tolerance: f64) -> bool {
+    fn is_centrally_aligned_with(&self, other: &Self, tolerance: f64) -> bool {
         let self_center = (self.component.y0 + self.component.y1) / 2.0;
         let other_center = (other.component.y0 + other.component.y1) / 2.0;
         (other_center - self_center).abs() <= tolerance
     }
 
-    fn is_same_width_as(&self, other: &LTTextLineVertical, tolerance: f64) -> bool {
+    fn is_same_width_as(&self, other: &Self, tolerance: f64) -> bool {
         (other.component.width() - self.component.width()).abs() <= tolerance
     }
 
@@ -304,30 +304,30 @@ pub enum TextLineType {
 impl TextLineType {
     pub fn is_empty(&self) -> bool {
         match self {
-            TextLineType::Horizontal(l) => l.is_empty(),
-            TextLineType::Vertical(l) => l.is_empty(),
+            Self::Horizontal(l) => l.is_empty(),
+            Self::Vertical(l) => l.is_empty(),
         }
     }
 
     pub fn bbox(&self) -> Rect {
         match self {
-            TextLineType::Horizontal(l) => l.bbox(),
-            TextLineType::Vertical(l) => l.bbox(),
+            Self::Horizontal(l) => l.bbox(),
+            Self::Vertical(l) => l.bbox(),
         }
     }
 
     pub fn set_bbox(&mut self, bbox: Rect) {
         match self {
-            TextLineType::Horizontal(l) => l.set_bbox(bbox),
-            TextLineType::Vertical(l) => l.set_bbox(bbox),
+            Self::Horizontal(l) => l.set_bbox(bbox),
+            Self::Vertical(l) => l.set_bbox(bbox),
         }
     }
 
     /// Returns the axis (horizontal or vertical) of this text line.
-    pub fn axis(&self) -> Axis {
+    pub const fn axis(&self) -> Axis {
         match self {
-            TextLineType::Horizontal(_) => Axis::Horizontal,
-            TextLineType::Vertical(_) => Axis::Vertical,
+            Self::Horizontal(_) => Axis::Horizontal,
+            Self::Vertical(_) => Axis::Vertical,
         }
     }
 
@@ -337,8 +337,8 @@ impl TextLineType {
     /// Matches Python layout.py:484-487.
     pub fn analyze(&mut self) {
         match self {
-            TextLineType::Horizontal(l) => l.analyze(),
-            TextLineType::Vertical(l) => l.analyze(),
+            Self::Horizontal(l) => l.analyze(),
+            Self::Vertical(l) => l.analyze(),
         }
     }
 }
@@ -346,26 +346,26 @@ impl TextLineType {
 impl HasBBox for TextLineType {
     fn x0(&self) -> f64 {
         match self {
-            TextLineType::Horizontal(l) => l.x0(),
-            TextLineType::Vertical(l) => l.x0(),
+            Self::Horizontal(l) => l.x0(),
+            Self::Vertical(l) => l.x0(),
         }
     }
     fn y0(&self) -> f64 {
         match self {
-            TextLineType::Horizontal(l) => l.y0(),
-            TextLineType::Vertical(l) => l.y0(),
+            Self::Horizontal(l) => l.y0(),
+            Self::Vertical(l) => l.y0(),
         }
     }
     fn x1(&self) -> f64 {
         match self {
-            TextLineType::Horizontal(l) => l.x1(),
-            TextLineType::Vertical(l) => l.x1(),
+            Self::Horizontal(l) => l.x1(),
+            Self::Vertical(l) => l.x1(),
         }
     }
     fn y1(&self) -> f64 {
         match self {
-            TextLineType::Horizontal(l) => l.y1(),
-            TextLineType::Vertical(l) => l.y1(),
+            Self::Horizontal(l) => l.y1(),
+            Self::Vertical(l) => l.y1(),
         }
     }
 }

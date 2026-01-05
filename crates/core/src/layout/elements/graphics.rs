@@ -102,7 +102,7 @@ impl LTCurve {
             .join(",")
     }
 
-    pub fn mcid(&self) -> Option<i32> {
+    pub const fn mcid(&self) -> Option<i32> {
         self.mcid
     }
 
@@ -289,7 +289,7 @@ impl_has_bbox_delegate!(LTRect, curve, method);
 /// An image object.
 ///
 /// Embedded images can be in JPEG, Bitmap, JBIG2, or other formats.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LTImage {
     component: LTComponent,
     /// Image name/identifier

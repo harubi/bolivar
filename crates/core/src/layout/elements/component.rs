@@ -14,12 +14,12 @@ pub struct LTComponent {
 }
 
 impl LTComponent {
-    pub fn new(bbox: Rect) -> Self {
+    pub const fn new(bbox: Rect) -> Self {
         let (x0, y0, x1, y1) = bbox;
         Self { x0, y0, x1, y1 }
     }
 
-    pub fn set_bbox(&mut self, bbox: Rect) {
+    pub const fn set_bbox(&mut self, bbox: Rect) {
         let (x0, y0, x1, y1) = bbox;
         self.x0 = x0;
         self.y0 = y0;
@@ -27,19 +27,19 @@ impl LTComponent {
         self.y1 = y1;
     }
 
-    pub fn x0(&self) -> f64 {
+    pub const fn x0(&self) -> f64 {
         self.x0
     }
 
-    pub fn y0(&self) -> f64 {
+    pub const fn y0(&self) -> f64 {
         self.y0
     }
 
-    pub fn x1(&self) -> f64 {
+    pub const fn x1(&self) -> f64 {
         self.x1
     }
 
-    pub fn y1(&self) -> f64 {
+    pub const fn y1(&self) -> f64 {
         self.y1
     }
 
@@ -51,7 +51,7 @@ impl LTComponent {
         self.y1 - self.y0
     }
 
-    pub fn bbox(&self) -> Rect {
+    pub const fn bbox(&self) -> Rect {
         (self.x0, self.y0, self.x1, self.y1)
     }
 
@@ -60,13 +60,13 @@ impl LTComponent {
     }
 
     /// Returns true if there is horizontal overlap with another component.
-    pub fn is_hoverlap(&self, other: &LTComponent) -> bool {
+    pub fn is_hoverlap(&self, other: &Self) -> bool {
         other.x0 <= self.x1 && self.x0 <= other.x1
     }
 
     /// Returns the horizontal distance to another component.
     /// Returns 0 if they overlap.
-    pub fn hdistance(&self, other: &LTComponent) -> f64 {
+    pub fn hdistance(&self, other: &Self) -> f64 {
         if self.is_hoverlap(other) {
             0.0
         } else {
@@ -75,7 +75,7 @@ impl LTComponent {
     }
 
     /// Returns the amount of horizontal overlap with another component.
-    pub fn hoverlap(&self, other: &LTComponent) -> f64 {
+    pub fn hoverlap(&self, other: &Self) -> f64 {
         if self.is_hoverlap(other) {
             (self.x0 - other.x1).abs().min((self.x1 - other.x0).abs())
         } else {
@@ -84,13 +84,13 @@ impl LTComponent {
     }
 
     /// Returns true if there is vertical overlap with another component.
-    pub fn is_voverlap(&self, other: &LTComponent) -> bool {
+    pub fn is_voverlap(&self, other: &Self) -> bool {
         other.y0 <= self.y1 && self.y0 <= other.y1
     }
 
     /// Returns the vertical distance to another component.
     /// Returns 0 if they overlap.
-    pub fn vdistance(&self, other: &LTComponent) -> f64 {
+    pub fn vdistance(&self, other: &Self) -> f64 {
         if self.is_voverlap(other) {
             0.0
         } else {
@@ -99,7 +99,7 @@ impl LTComponent {
     }
 
     /// Returns the amount of vertical overlap with another component.
-    pub fn voverlap(&self, other: &LTComponent) -> f64 {
+    pub fn voverlap(&self, other: &Self) -> f64 {
         if self.is_voverlap(other) {
             (self.y0 - other.y1).abs().min((self.y1 - other.y0).abs())
         } else {

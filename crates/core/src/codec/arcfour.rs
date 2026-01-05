@@ -38,7 +38,7 @@ impl Arcfour {
     }
 
     /// Pseudo-random generation algorithm (PRGA).
-    fn prga(&mut self) -> u8 {
+    const fn prga(&mut self) -> u8 {
         self.i = self.i.wrapping_add(1);
         self.j = self.j.wrapping_add(self.state[self.i as usize]);
         self.state.swap(self.i as usize, self.j as usize);

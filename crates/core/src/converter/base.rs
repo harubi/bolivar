@@ -33,7 +33,7 @@ pub struct LTContainer {
 
 impl LTContainer {
     /// Create a new container with the given bounding box.
-    pub fn new(bbox: Rect) -> Self {
+    pub const fn new(bbox: Rect) -> Self {
         Self {
             bbox,
             items: Vec::new(),
@@ -46,12 +46,12 @@ impl LTContainer {
     }
 
     /// Return the number of items.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.items.len()
     }
 
     /// Return true if empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 
@@ -61,7 +61,7 @@ impl LTContainer {
     }
 
     /// Get bounding box.
-    pub fn bbox(&self) -> Rect {
+    pub const fn bbox(&self) -> Rect {
         self.bbox
     }
 }
@@ -114,12 +114,12 @@ impl PDFLayoutAnalyzer {
     /// # Arguments
     /// * `laparams` - Layout analysis parameters (None to disable analysis)
     /// * `pageno` - Starting page number (1-indexed)
-    pub fn new(laparams: Option<LAParams>, pageno: i32) -> Self {
+    pub const fn new(laparams: Option<LAParams>, pageno: i32) -> Self {
         Self::new_with_imagewriter(laparams, pageno, None)
     }
 
     /// Create a new layout analyzer with an optional image writer.
-    pub fn new_with_imagewriter(
+    pub const fn new_with_imagewriter(
         laparams: Option<LAParams>,
         pageno: i32,
         image_writer: Option<Rc<RefCell<ImageWriter>>>,
@@ -137,12 +137,12 @@ impl PDFLayoutAnalyzer {
     }
 
     /// Get the current page number.
-    pub fn pageno(&self) -> i32 {
+    pub const fn pageno(&self) -> i32 {
         self.pageno
     }
 
     /// Set the current transformation matrix.
-    pub fn set_ctm(&mut self, ctm: Matrix) {
+    pub const fn set_ctm(&mut self, ctm: Matrix) {
         self.ctm = ctm;
     }
 
@@ -220,7 +220,7 @@ impl PDFLayoutAnalyzer {
     }
 
     /// Check if currently in a figure.
-    pub fn in_figure(&self) -> bool {
+    pub const fn in_figure(&self) -> bool {
         !self.stack.is_empty()
     }
 
@@ -389,7 +389,7 @@ impl PDFLayoutAnalyzer {
                     evenodd,
                     scolor,
                     ncolor,
-                    original_path.clone(),
+                    original_path,
                     dashing_style,
                 ))
             }
@@ -469,9 +469,9 @@ impl PDFLayoutAnalyzer {
         let mcid = self.current_mcid();
         let tag = self.current_tag().map(|s| s.to_string());
         match &mut item {
-            LTItem::Line(l) => l.set_marked_content(mcid, tag.clone()),
-            LTItem::Rect(r) => r.set_marked_content(mcid, tag.clone()),
-            LTItem::Curve(c) => c.set_marked_content(mcid, tag.clone()),
+            LTItem::Line(l) => l.set_marked_content(mcid, tag),
+            LTItem::Rect(r) => r.set_marked_content(mcid, tag),
+            LTItem::Curve(c) => c.set_marked_content(mcid, tag),
             _ => {}
         }
 
@@ -753,7 +753,7 @@ impl PDFPageAggregator {
     }
 
     /// Create a new page aggregator with an optional image writer.
-    pub fn new_with_imagewriter(
+    pub const fn new_with_imagewriter(
         laparams: Option<LAParams>,
         pageno: i32,
         image_writer: Option<Rc<RefCell<ImageWriter>>>,
@@ -770,12 +770,12 @@ impl PDFPageAggregator {
     }
 
     /// Get the result (if any).
-    pub fn result(&self) -> Option<&LTPage> {
+    pub const fn result(&self) -> Option<&LTPage> {
         self.result.as_ref()
     }
 
     /// Get the result, panicking if none.
-    pub fn get_result(&self) -> &LTPage {
+    pub const fn get_result(&self) -> &LTPage {
         self.result.as_ref().expect("No result available")
     }
 
@@ -945,8 +945,8 @@ impl PDFDevice for PDFPageAggregator {
                             matrix.1,
                             matrix.2,
                             matrix.3,
-                            matrix.0 * x + matrix.2 * y + matrix.4,
-                            matrix.1 * x + matrix.3 * y + matrix.5,
+                            matrix.0.mul_add(x, matrix.2 * y) + matrix.4,
+                            matrix.1.mul_add(x, matrix.3 * y) + matrix.5,
                         );
 
                         // Compute bounding box - match Python's formula exactly
@@ -1005,7 +1005,7 @@ impl PDFDevice for PDFPageAggregator {
                         let fontname = font
                             .as_ref()
                             .and_then(|f| f.fontname())
-                            .or_else(|| textstate.fontname.as_deref())
+                            .or(textstate.fontname.as_deref())
                             .unwrap_or("unknown");
                         let mut ltchar = LTChar::with_colors_matrix(
                             bbox,
@@ -1103,12 +1103,12 @@ impl<W: Write> PDFConverter<W> {
     ///
     /// In Rust, we use type-based detection rather than runtime checks.
     /// This is a simplified version that always returns true for byte writers.
-    pub fn is_binary_stream<T>(_stream: &T) -> bool {
+    pub const fn is_binary_stream<T>(_stream: &T) -> bool {
         true
     }
 
     /// Check if output is text (not binary).
-    pub fn is_text_stream<T>(_stream: &T) -> bool {
+    pub const fn is_text_stream<T>(_stream: &T) -> bool {
         false
     }
 }

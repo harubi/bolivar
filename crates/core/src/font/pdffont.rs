@@ -82,7 +82,7 @@ pub struct MockPdfFont {
 
 impl MockPdfFont {
     /// Create a new mock font.
-    pub fn new(
+    pub const fn new(
         descriptor: HashMap<String, PDFObject>,
         widths: FontWidthDict,
         default_width: f64,
@@ -96,7 +96,7 @@ impl MockPdfFont {
 
     /// Get the descriptor (unused in tests, but matches Python).
     #[allow(dead_code)]
-    pub fn descriptor(&self) -> &HashMap<String, PDFObject> {
+    pub const fn descriptor(&self) -> &HashMap<String, PDFObject> {
         &self.descriptor
     }
 }
@@ -187,7 +187,7 @@ where
 }
 
 /// Convert a PDFObject to f64 if it's a number.
-fn pdf_object_to_f64(obj: &PDFObject) -> Option<f64> {
+const fn pdf_object_to_f64(obj: &PDFObject) -> Option<f64> {
     match obj {
         PDFObject::Int(n) => Some(*n as f64),
         PDFObject::Real(n) => Some(*n),
@@ -211,18 +211,18 @@ pub enum DynCMap {
 
 impl DynCMap {
     /// Check if this is a standard CMap.
-    pub fn is_cmap(&self) -> bool {
-        matches!(self, DynCMap::CMap(_))
+    pub const fn is_cmap(&self) -> bool {
+        matches!(self, Self::CMap(_))
     }
 
     /// Check if this is a 2-byte identity CMap.
-    pub fn is_identity_cmap(&self) -> bool {
-        matches!(self, DynCMap::IdentityCMap(_))
+    pub const fn is_identity_cmap(&self) -> bool {
+        matches!(self, Self::IdentityCMap(_))
     }
 
     /// Check if this is a 1-byte identity CMap.
-    pub fn is_identity_cmap_byte(&self) -> bool {
-        matches!(self, DynCMap::IdentityCMapByte(_))
+    pub const fn is_identity_cmap_byte(&self) -> bool {
+        matches!(self, Self::IdentityCMapByte(_))
     }
 
     /// Check if this CMap has any mappings.
@@ -231,9 +231,9 @@ impl DynCMap {
     /// For standard CMaps, this checks if any code-to-CID mappings exist.
     pub fn has_mappings(&self) -> bool {
         match self {
-            DynCMap::CMap(c) => c.has_mappings(),
+            Self::CMap(c) => c.has_mappings(),
             // Identity CMaps always have mappings (they map all valid codes)
-            DynCMap::IdentityCMap(_) | DynCMap::IdentityCMapByte(_) => true,
+            Self::IdentityCMap(_) | Self::IdentityCMapByte(_) => true,
         }
     }
 
@@ -242,8 +242,8 @@ impl DynCMap {
     /// Returns None for identity CMaps (they don't store attrs).
     pub fn name(&self) -> Option<&str> {
         match self {
-            DynCMap::CMap(c) => c.name(),
-            DynCMap::IdentityCMap(_) | DynCMap::IdentityCMapByte(_) => None,
+            Self::CMap(c) => c.name(),
+            Self::IdentityCMap(_) | Self::IdentityCMapByte(_) => None,
         }
     }
 }
@@ -261,8 +261,8 @@ impl DynUnicodeMap {
     /// Get Unicode string for a CID.
     pub fn get_unichr(&self, cid: u32) -> Option<String> {
         match self {
-            DynUnicodeMap::UnicodeMap(map) => map.get_unichr(cid),
-            DynUnicodeMap::IdentityUnicodeMap(map) => map.get_unichr(cid),
+            Self::UnicodeMap(map) => map.get_unichr(cid),
+            Self::IdentityUnicodeMap(map) => map.get_unichr(cid),
         }
     }
 }
@@ -349,36 +349,35 @@ impl PDFCIDFont {
         // If ToUnicode is a Name containing "Identity", use IdentityUnicodeMap
         // This takes priority over TrueType cmap extraction
         let unicode_map = unicode_map.or_else(|| {
-            if let Some(PDFObject::Name(name)) = spec.get("ToUnicode") {
-                if name.contains("Identity") {
-                    return Some(DynUnicodeMap::IdentityUnicodeMap(IdentityUnicodeMap::new()));
-                }
+            if let Some(PDFObject::Name(name)) = spec.get("ToUnicode")
+                && name.contains("Identity")
+            {
+                return Some(DynUnicodeMap::IdentityUnicodeMap(IdentityUnicodeMap::new()));
             }
             None
         });
 
         // If no ToUnicode, try TrueType cmap for Adobe-Identity/Adobe-UCS fonts
         let unicode_map = unicode_map.or_else(|| {
-            if let Some(ref coding) = cidcoding {
-                if (coding == "Adobe-Identity" || coding == "Adobe-UCS") && ttf_data.is_some() {
-                    if let Some(ttf) = ttf_data {
-                        if let Ok(map) = create_unicode_map_from_ttf(ttf) {
-                            return Some(DynUnicodeMap::UnicodeMap(Box::new(map)));
-                        }
-                    }
-                }
+            if let Some(ref coding) = cidcoding
+                && (coding == "Adobe-Identity" || coding == "Adobe-UCS")
+                && ttf_data.is_some()
+                && let Some(ttf) = ttf_data
+                && let Ok(map) = create_unicode_map_from_ttf(ttf)
+            {
+                return Some(DynUnicodeMap::UnicodeMap(Box::new(map)));
             }
             None
         });
 
         // Fallback for Adobe-Japan1 fonts without ToUnicode: use JIS→Unicode mapping
         let unicode_map = unicode_map.or_else(|| {
-            if let Some(ref coding) = cidcoding {
-                if coding == "Adobe-Japan1" {
-                    return Some(DynUnicodeMap::UnicodeMap(Box::new(
-                        super::cmap::create_jis_unicode_map(),
-                    )));
-                }
+            if let Some(ref coding) = cidcoding
+                && coding == "Adobe-Japan1"
+            {
+                return Some(DynUnicodeMap::UnicodeMap(Box::new(
+                    super::cmap::create_jis_unicode_map(),
+                )));
             }
             None
         });
@@ -475,11 +474,11 @@ impl PDFCIDFont {
     /// Get descent from FontDescriptor.
     fn get_descent_from_descriptor(spec: &HashMap<String, PDFObject>) -> f64 {
         // Try to get FontDescriptor
-        if let Some(PDFObject::Dict(desc)) = spec.get("FontDescriptor") {
-            if let Some(descent) = desc.get("Descent").and_then(|d| d.as_num().ok()) {
-                // Descent is in 1/1000 em units, convert to normalized units
-                return descent / 1000.0;
-            }
+        if let Some(PDFObject::Dict(desc)) = spec.get("FontDescriptor")
+            && let Some(descent) = desc.get("Descent").and_then(|d| d.as_num().ok())
+        {
+            // Descent is in 1/1000 em units, convert to normalized units
+            return descent / 1000.0;
         }
         // Default descent: 25% below baseline
         -0.25
@@ -582,17 +581,17 @@ impl PDFCIDFont {
         }
 
         // Simple fonts use Widths array with FirstChar/LastChar
-        if result.is_empty() {
-            if let Some(PDFObject::Array(widths_array)) = spec.get("Widths") {
-                let first_char = spec
-                    .get("FirstChar")
-                    .and_then(|v| v.as_int().ok())
-                    .unwrap_or(0) as u32;
+        if result.is_empty()
+            && let Some(PDFObject::Array(widths_array)) = spec.get("Widths")
+        {
+            let first_char = spec
+                .get("FirstChar")
+                .and_then(|v| v.as_int().ok())
+                .unwrap_or(0) as u32;
 
-                for (i, width_obj) in widths_array.iter().enumerate() {
-                    if let Ok(width) = width_obj.as_num() {
-                        result.insert(first_char + i as u32, Some(width));
-                    }
+            for (i, width_obj) in widths_array.iter().enumerate() {
+                if let Ok(width) = width_obj.as_num() {
+                    result.insert(first_char + i as u32, Some(width));
                 }
             }
         }
@@ -674,7 +673,7 @@ impl PDFCIDFont {
                 cmap.attrs.insert("CMapName".to_string(), name.to_string());
                 DynCMap::CMap(Box::new(cmap))
             }
-            None => DynCMap::CMap(Box::new(CMap::new())),
+            None => DynCMap::CMap(Box::default()),
         }
     }
 
@@ -692,12 +691,12 @@ impl PDFCIDFont {
     }
 
     /// Check if this font is for vertical writing.
-    pub fn is_vertical(&self) -> bool {
+    pub const fn is_vertical(&self) -> bool {
         self.vertical
     }
 
     /// Check if this is a multibyte font.
-    pub fn is_multibyte(&self) -> bool {
+    pub const fn is_multibyte(&self) -> bool {
         true // CID fonts are always multibyte
     }
 }
@@ -705,21 +704,20 @@ impl PDFCIDFont {
 impl PDFFont for PDFCIDFont {
     fn to_unichr(&self, cid: u32) -> Option<String> {
         // Try unicode_map first (from ToUnicode stream)
-        if let Some(ref map) = self.unicode_map {
-            if let Some(s) = map.get_unichr(cid) {
-                return Some(s);
-            }
-            // If ToUnicode exists but CID not found, fall through to cid2unicode
-            // (matches pdfminer.six PDFSimpleFont behavior)
+        if let Some(ref map) = self.unicode_map
+            && let Some(s) = map.get_unichr(cid)
+        {
+            return Some(s);
         }
+        // If ToUnicode exists but CID not found, fall through to cid2unicode
+        // (matches pdfminer.six PDFSimpleFont behavior)
 
         // Try cid2unicode (from Encoding entry for simple fonts)
-        if let Some(ref enc) = self.cid2unicode {
-            if cid <= 255 {
-                if let Some(s) = enc.get(&(cid as u8)) {
-                    return Some(s.clone());
-                }
-            }
+        if let Some(ref enc) = self.cid2unicode
+            && cid <= 255
+            && let Some(s) = enc.get(&(cid as u8))
+        {
+            return Some(s.clone());
         }
 
         // No ASCII fallback - matches Python behavior
@@ -734,14 +732,14 @@ impl PDFFont for PDFCIDFont {
         }
 
         // Try Standard 14 font metrics as fallback
-        if let Some(ref basefont) = self.basefont {
-            if let Some(metrics) = super::metrics::get_font_metrics(basefont) {
-                // CID for simple fonts is the byte value, which maps to a char
-                if let Some(ch) = char::from_u32(cid) {
-                    if let Some(&width) = metrics.widths.get(&ch) {
-                        return (width as f64) * self.hscale();
-                    }
-                }
+        if let Some(ref basefont) = self.basefont
+            && let Some(metrics) = super::metrics::get_font_metrics(basefont)
+        {
+            // CID for simple fonts is the byte value, which maps to a char
+            if let Some(ch) = char::from_u32(cid)
+                && let Some(&width) = metrics.widths.get(&ch)
+            {
+                return (width as f64) * self.hscale();
             }
         }
 
@@ -757,9 +755,7 @@ impl PDFFont for PDFCIDFont {
     }
 
     fn fontname(&self) -> Option<&str> {
-        self.fontname
-            .as_deref()
-            .or_else(|| self.basefont.as_deref())
+        self.fontname.as_deref().or(self.basefont.as_deref())
     }
 
     fn is_vertical(&self) -> bool {

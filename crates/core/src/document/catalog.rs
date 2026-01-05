@@ -65,10 +65,10 @@ pub enum PdfBytes {
 }
 
 impl PdfBytes {
-    fn as_bytes(&self) -> &Bytes {
+    const fn as_bytes(&self) -> &Bytes {
         match self {
-            PdfBytes::Owned(data) => data,
-            PdfBytes::Shared(data) => data,
+            Self::Owned(data) => data,
+            Self::Shared(data) => data,
         }
     }
 
@@ -146,10 +146,11 @@ impl PDFDocument {
 
         // Try loading xrefs, fallback if necessary
         let mut loaded = false;
-        if let Ok(pos) = startxref {
-            if self.load_xrefs(pos).is_ok() && !self.xrefs.is_empty() {
-                loaded = true;
-            }
+        if let Ok(pos) = startxref
+            && self.load_xrefs(pos).is_ok()
+            && !self.xrefs.is_empty()
+        {
+            loaded = true;
         }
 
         // Fallback: scan file for objects
@@ -187,21 +188,18 @@ impl PDFDocument {
 
         // Extract catalog and info from trailer
         for xref in &self.xrefs {
-            if let Some(root_ref) = xref.trailer.get("Root") {
-                if self.catalog.is_empty() {
-                    if let Ok(root_obj) = self.resolve_internal(root_ref) {
-                        if let Ok(dict) = root_obj.as_dict() {
-                            self.catalog = dict.clone();
-                        }
-                    }
-                }
+            if let Some(root_ref) = xref.trailer.get("Root")
+                && self.catalog.is_empty()
+                && let Ok(root_obj) = self.resolve_internal(root_ref)
+                && let Ok(dict) = root_obj.as_dict()
+            {
+                self.catalog = dict.clone();
             }
-            if let Some(info_ref) = xref.trailer.get("Info") {
-                if let Ok(info_obj) = self.resolve_internal(info_ref) {
-                    if let Ok(dict) = info_obj.as_dict() {
-                        self.info.push(dict.clone());
-                    }
-                }
+            if let Some(info_ref) = xref.trailer.get("Info")
+                && let Ok(info_obj) = self.resolve_internal(info_ref)
+                && let Ok(dict) = info_obj.as_dict()
+            {
+                self.info.push(dict.clone());
             }
         }
 
@@ -277,13 +275,12 @@ impl PDFDocument {
 
             self.xrefs.push(xref);
 
-            if let Some(xref_stm_pos) = xref_stm {
-                if !visited.contains(&xref_stm_pos) {
-                    if let Ok(xref_stm) = self.load_xref_stream(xref_stm_pos) {
-                        self.xrefs.push(xref_stm);
-                        visited.insert(xref_stm_pos);
-                    }
-                }
+            if let Some(xref_stm_pos) = xref_stm
+                && !visited.contains(&xref_stm_pos)
+                && let Ok(xref_stm) = self.load_xref_stream(xref_stm_pos)
+            {
+                self.xrefs.push(xref_stm);
+                visited.insert(xref_stm_pos);
             }
 
             if let Some(prev_pos) = prev {
@@ -437,10 +434,10 @@ impl PDFDocument {
         // Parse trailer dict
         if data[cursor..].starts_with(b"<<") {
             let mut parser = PDFParser::new(&data[cursor..]);
-            if let Ok(trailer_obj) = parser.parse_object() {
-                if let Ok(dict) = trailer_obj.as_dict() {
-                    xref.trailer = dict.clone();
-                }
+            if let Ok(trailer_obj) = parser.parse_object()
+                && let Ok(dict) = trailer_obj.as_dict()
+            {
+                xref.trailer = dict.clone();
             }
         }
 
@@ -656,10 +653,10 @@ impl PDFDocument {
         let mut raw = stream.get_rawdata().to_vec();
 
         // Decrypt stream data BEFORE decompressing (if encrypted), unless already done
-        if !stream.rawdata_is_decrypted() {
-            if let Some(ref handler) = self.security_handler {
-                raw = handler.decrypt_stream(objid, genno, &raw, &stream.attrs);
-            }
+        if !stream.rawdata_is_decrypted()
+            && let Some(ref handler) = self.security_handler
+        {
+            raw = handler.decrypt_stream(objid, genno, &raw, &stream.attrs);
         }
 
         // Apply filters (decompression)
@@ -886,7 +883,7 @@ impl PDFDocument {
     }
 
     /// Paeth predictor function used in PNG filtering.
-    fn paeth_predictor(left: u8, above: u8, upper_left: u8) -> u8 {
+    const fn paeth_predictor(left: u8, above: u8, upper_left: u8) -> u8 {
         let a = left as i32;
         let b = above as i32;
         let c = upper_left as i32;
@@ -952,10 +949,10 @@ impl PDFDocument {
             }
             if data[skip..].starts_with(b"<<") {
                 let mut parser = PDFParser::new(&data[skip..]);
-                if let Ok(trailer_obj) = parser.parse_object() {
-                    if let Ok(dict) = trailer_obj.as_dict() {
-                        xref.trailer = dict.clone();
-                    }
+                if let Ok(trailer_obj) = parser.parse_object()
+                    && let Ok(dict) = trailer_obj.as_dict()
+                {
+                    xref.trailer = dict.clone();
                 }
             }
         }
@@ -1058,10 +1055,10 @@ impl PDFDocument {
         let _guard = ThreadLocalGuard { objid };
 
         // Check cache first
-        if let Ok(cache) = self.cache.read() {
-            if let Some(obj) = cache.get(&objid) {
-                return Ok(Arc::clone(obj));
-            }
+        if let Ok(cache) = self.cache.read()
+            && let Some(obj) = cache.get(&objid)
+        {
+            return Ok(Arc::clone(obj));
         }
 
         // Find in xrefs
@@ -1103,14 +1100,14 @@ impl PDFDocument {
         }
 
         // Fallback: scan object streams directly when xrefs are incomplete.
-        if !self.all_xrefs_are_fallback() {
-            if let Ok(Some(obj)) = self.find_obj_in_objstms(objid) {
-                let obj = Arc::new(obj);
-                if let Ok(mut cache) = self.cache.write() {
-                    cache.insert(objid, Arc::clone(&obj));
-                }
-                return Ok(obj);
+        if !self.all_xrefs_are_fallback()
+            && let Ok(Some(obj)) = self.find_obj_in_objstms(objid)
+        {
+            let obj = Arc::new(obj);
+            if let Ok(mut cache) = self.cache.write() {
+                cache.insert(objid, Arc::clone(&obj));
             }
+            return Ok(obj);
         }
 
         Err(PdfError::ObjectNotFound(objid))
@@ -1120,13 +1117,13 @@ impl PDFDocument {
     fn find_obj_in_objstms(&self, objid: u32) -> Result<Option<PDFObject>> {
         use regex::bytes::Regex;
 
-        if let Ok(index_guard) = self.objstm_index.read() {
-            if let Some(index) = index_guard.as_ref() {
-                if let Some((stream_objid, idx)) = index.get(&objid).copied() {
-                    return Ok(Some(self.parse_object_from_stream(stream_objid, idx)?));
-                }
-                return Ok(None);
+        if let Ok(index_guard) = self.objstm_index.read()
+            && let Some(index) = index_guard.as_ref()
+        {
+            if let Some((stream_objid, idx)) = index.get(&objid).copied() {
+                return Ok(Some(self.parse_object_from_stream(stream_objid, idx)?));
             }
+            return Ok(None);
         }
 
         let re = Regex::new(r"(\d+)\s+(\d+)\s+obj\b").unwrap();
@@ -1460,12 +1457,12 @@ impl PDFDocument {
     }
 
     /// Get document catalog.
-    pub fn catalog(&self) -> &HashMap<String, PDFObject> {
+    pub const fn catalog(&self) -> &HashMap<String, PDFObject> {
         &self.catalog
     }
 
     /// Get document info dictionaries.
-    pub fn info(&self) -> &Vec<HashMap<String, PDFObject>> {
+    pub const fn info(&self) -> &Vec<HashMap<String, PDFObject>> {
         &self.info
     }
 
@@ -1516,16 +1513,13 @@ impl PDFDocument {
 
     /// Get the total page count from the Pages tree.
     fn get_page_count(&self) -> usize {
-        if let Some(pages_ref) = self.catalog.get("Pages") {
-            if let Ok(pages) = self.resolve_internal(pages_ref) {
-                if let Ok(dict) = pages.as_dict() {
-                    if let Some(count) = dict.get("Count") {
-                        if let Ok(n) = count.as_int() {
-                            return n as usize;
-                        }
-                    }
-                }
-            }
+        if let Some(pages_ref) = self.catalog.get("Pages")
+            && let Ok(pages) = self.resolve_internal(pages_ref)
+            && let Ok(dict) = pages.as_dict()
+            && let Some(count) = dict.get("Count")
+            && let Ok(n) = count.as_int()
+        {
+            return n as usize;
         }
         0
     }
@@ -1566,29 +1560,24 @@ impl PDFDocument {
     /// Looks up the name in the document's Names/Dests tree or catalog Dests dict.
     pub fn get_dest(&self, name: &[u8]) -> Result<PDFObject> {
         // First try Names/Dests tree (PDF 1.2+)
-        if let Some(names_ref) = self.catalog.get("Names") {
-            if let Ok(names) = self.resolve_internal(names_ref) {
-                if let Ok(names_dict) = names.as_dict() {
-                    if let Some(dests_ref) = names_dict.get("Dests") {
-                        if let Ok(dests) = self.resolve_internal(dests_ref) {
-                            if let Some(result) = self.lookup_name_tree(&dests, name)? {
-                                return Ok(result);
-                            }
-                        }
-                    }
-                }
-            }
+        if let Some(names_ref) = self.catalog.get("Names")
+            && let Ok(names) = self.resolve_internal(names_ref)
+            && let Ok(names_dict) = names.as_dict()
+            && let Some(dests_ref) = names_dict.get("Dests")
+            && let Ok(dests) = self.resolve_internal(dests_ref)
+            && let Some(result) = self.lookup_name_tree(&dests, name)?
+        {
+            return Ok(result);
         }
 
         // Try catalog Dests dict (PDF 1.1)
-        if let Some(dests_ref) = self.catalog.get("Dests") {
-            if let Ok(dests) = self.resolve_internal(dests_ref) {
-                if let Ok(dests_dict) = dests.as_dict() {
-                    let name_str = String::from_utf8_lossy(name);
-                    if let Some(dest) = dests_dict.get(name_str.as_ref()) {
-                        return self.resolve_internal(dest);
-                    }
-                }
+        if let Some(dests_ref) = self.catalog.get("Dests")
+            && let Ok(dests) = self.resolve_internal(dests_ref)
+            && let Ok(dests_dict) = dests.as_dict()
+        {
+            let name_str = String::from_utf8_lossy(name);
+            if let Some(dest) = dests_dict.get(name_str.as_ref()) {
+                return self.resolve_internal(dest);
             }
         }
 
@@ -1605,43 +1594,41 @@ impl PDFDocument {
         };
 
         // Check Names array (leaf node)
-        if let Some(names_arr) = dict.get("Names") {
-            if let Ok(arr) = self.resolve_internal(names_arr)?.as_array() {
-                // Names array is pairs: [name1, value1, name2, value2, ...]
-                let mut i = 0;
-                while i + 1 < arr.len() {
-                    if let Ok(key) = arr[i].as_string() {
-                        if key == name {
-                            return Ok(Some(self.resolve_internal(&arr[i + 1])?));
-                        }
-                    }
-                    i += 2;
+        if let Some(names_arr) = dict.get("Names")
+            && let Ok(arr) = self.resolve_internal(names_arr)?.as_array()
+        {
+            // Names array is pairs: [name1, value1, name2, value2, ...]
+            let mut i = 0;
+            while i + 1 < arr.len() {
+                if let Ok(key) = arr[i].as_string()
+                    && key == name
+                {
+                    return Ok(Some(self.resolve_internal(&arr[i + 1])?));
                 }
+                i += 2;
             }
         }
 
         // Check Kids array (intermediate node)
-        if let Some(kids) = dict.get("Kids") {
-            if let Ok(kids_arr) = self.resolve_internal(kids)?.as_array() {
-                for kid in kids_arr {
-                    if let Ok(kid_obj) = self.resolve_internal(kid) {
-                        // Check Limits to optimize search
-                        if let Ok(kid_dict) = kid_obj.as_dict() {
-                            if let Some(limits) = kid_dict.get("Limits") {
-                                if let Ok(limits_arr) = limits.as_array() {
-                                    if limits_arr.len() >= 2 {
-                                        let min = limits_arr[0].as_string().unwrap_or(&[]);
-                                        let max = limits_arr[1].as_string().unwrap_or(&[]);
-                                        if name < min || name > max {
-                                            continue;
-                                        }
-                                    }
-                                }
-                            }
+        if let Some(kids) = dict.get("Kids")
+            && let Ok(kids_arr) = self.resolve_internal(kids)?.as_array()
+        {
+            for kid in kids_arr {
+                if let Ok(kid_obj) = self.resolve_internal(kid) {
+                    // Check Limits to optimize search
+                    if let Ok(kid_dict) = kid_obj.as_dict()
+                        && let Some(limits) = kid_dict.get("Limits")
+                        && let Ok(limits_arr) = limits.as_array()
+                        && limits_arr.len() >= 2
+                    {
+                        let min = limits_arr[0].as_string().unwrap_or(&[]);
+                        let max = limits_arr[1].as_string().unwrap_or(&[]);
+                        if name < min || name > max {
+                            continue;
                         }
-                        if let Some(result) = self.lookup_name_tree(&kid_obj, name)? {
-                            return Ok(Some(result));
-                        }
+                    }
+                    if let Some(result) = self.lookup_name_tree(&kid_obj, name)? {
+                        return Ok(Some(result));
                     }
                 }
             }
@@ -1794,10 +1781,10 @@ impl<'a> Iterator for PageLabels<'a> {
         }
 
         // Check if we need to move to next range
-        if let Some(end) = self.range_end {
-            if self.current_page >= end {
-                self.init_range(self.range_idx + 1);
-            }
+        if let Some(end) = self.range_end
+            && self.current_page >= end
+        {
+            self.init_range(self.range_idx + 1);
         }
 
         let label = self.format_label();

@@ -9,7 +9,7 @@ use once_cell::sync::Lazy;
 /// Huffman tree node - either a branch (left/right children) or a leaf value
 #[derive(Clone, Debug)]
 enum HuffNode {
-    Branch(Box<HuffNode>, Box<HuffNode>),
+    Branch(Box<Self>, Box<Self>),
     Leaf(HuffValue),
     Empty,
 }
@@ -34,11 +34,11 @@ enum Mode {
 }
 
 impl HuffNode {
-    fn new() -> Self {
-        HuffNode::Empty
+    const fn new() -> Self {
+        Self::Empty
     }
 
-    fn add(root: &mut HuffNode, value: HuffValue, bits: &str) {
+    fn add(root: &mut Self, value: HuffValue, bits: &str) {
         let mut current = root;
         for (i, c) in bits.chars().enumerate() {
             let is_last = i == bits.len() - 1;
@@ -46,41 +46,41 @@ impl HuffNode {
 
             if is_last {
                 match current {
-                    HuffNode::Empty => {
+                    Self::Empty => {
                         if bit {
-                            *current = HuffNode::Branch(
-                                Box::new(HuffNode::Empty),
-                                Box::new(HuffNode::Leaf(value.clone())),
+                            *current = Self::Branch(
+                                Box::new(Self::Empty),
+                                Box::new(Self::Leaf(value.clone())),
                             );
                         } else {
-                            *current = HuffNode::Branch(
-                                Box::new(HuffNode::Leaf(value.clone())),
-                                Box::new(HuffNode::Empty),
+                            *current = Self::Branch(
+                                Box::new(Self::Leaf(value.clone())),
+                                Box::new(Self::Empty),
                             );
                         }
                     }
-                    HuffNode::Branch(left, right) => {
+                    Self::Branch(left, right) => {
                         if bit {
-                            **right = HuffNode::Leaf(value.clone());
+                            **right = Self::Leaf(value.clone());
                         } else {
-                            **left = HuffNode::Leaf(value.clone());
+                            **left = Self::Leaf(value.clone());
                         }
                     }
-                    HuffNode::Leaf(_) => panic!("Conflicting Huffman codes"),
+                    Self::Leaf(_) => panic!("Conflicting Huffman codes"),
                 }
             } else {
                 match current {
-                    HuffNode::Empty => {
+                    Self::Empty => {
                         *current =
-                            HuffNode::Branch(Box::new(HuffNode::Empty), Box::new(HuffNode::Empty));
-                        if let HuffNode::Branch(left, right) = current {
+                            Self::Branch(Box::new(Self::Empty), Box::new(Self::Empty));
+                        if let Self::Branch(left, right) = current {
                             current = if bit { right } else { left };
                         }
                     }
-                    HuffNode::Branch(left, right) => {
+                    Self::Branch(left, right) => {
                         current = if bit { right } else { left };
                     }
-                    HuffNode::Leaf(_) => panic!("Conflicting Huffman codes"),
+                    Self::Leaf(_) => panic!("Conflicting Huffman codes"),
                 }
             }
         }
@@ -454,7 +454,7 @@ pub struct CCITTG4Parser {
 
 impl CCITTG4Parser {
     pub fn new(width: usize, bytealign: bool) -> Self {
-        let mut parser = CCITTG4Parser {
+        let mut parser = Self {
             width,
             bytealign,
             curline: vec![1; width],
@@ -463,7 +463,7 @@ impl CCITTG4Parser {
             color: 1,
             y: 0,
             state: ParseState::Mode,
-            huff_state: &*MODE_TREE,
+            huff_state: &MODE_TREE,
             n1: 0,
             n2: 0,
             completed_lines: Vec::new(),
@@ -613,19 +613,19 @@ impl CCITTG4Parser {
         }
     }
 
-    pub fn curpos(&self) -> isize {
+    pub const fn curpos(&self) -> isize {
         self.curpos
     }
 
-    pub fn color(&self) -> i8 {
+    pub const fn color(&self) -> i8 {
         self.color
     }
 
-    pub fn set_curpos(&mut self, pos: isize) {
+    pub const fn set_curpos(&mut self, pos: isize) {
         self.curpos = pos;
     }
 
-    pub fn set_color(&mut self, color: i8) {
+    pub const fn set_color(&mut self, color: i8) {
         self.color = color;
     }
 
@@ -662,9 +662,9 @@ impl CCITTG4Parser {
         let next: &'static HuffNode = match self.huff_state {
             HuffNode::Branch(left, right) => {
                 if bit {
-                    &**right
+                    right
                 } else {
-                    &**left
+                    left
                 }
             }
             _ => return None,
@@ -827,7 +827,7 @@ pub struct CCITTFaxDecoder {
 
 impl CCITTFaxDecoder {
     pub fn new(width: usize, bytealign: bool, reversed: bool) -> Self {
-        CCITTFaxDecoder {
+        Self {
             parser: CCITTG4Parser::new(width, bytealign),
             reversed,
             buf: Vec::new(),

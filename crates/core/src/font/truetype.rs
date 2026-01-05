@@ -22,7 +22,7 @@ pub enum TrueTypeFontError {
 
 impl From<std::io::Error> for TrueTypeFontError {
     fn from(e: std::io::Error) -> Self {
-        TrueTypeFontError::IoError(e)
+        Self::IoError(e)
     }
 }
 

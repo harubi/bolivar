@@ -17,12 +17,11 @@ static GLYPH_TO_CHAR: LazyLock<HashMap<&'static str, char>> = LazyLock::new(|| {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some((name, hex)) = line.split_once(';') {
-            if let Ok(code) = u32::from_str_radix(hex.trim(), 16) {
-                if let Some(ch) = char::from_u32(code) {
-                    map.insert(name, ch);
-                }
-            }
+        if let Some((name, hex)) = line.split_once(';')
+            && let Ok(code) = u32::from_str_radix(hex.trim(), 16)
+            && let Some(ch) = char::from_u32(code)
+        {
+            map.insert(name, ch);
         }
     }
     map

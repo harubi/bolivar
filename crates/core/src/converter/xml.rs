@@ -60,7 +60,7 @@ impl<W: Write> XMLConverter<W> {
     }
 
     /// Set whether to strip control characters.
-    pub fn set_stripcontrol(&mut self, stripcontrol: bool) {
+    pub const fn set_stripcontrol(&mut self, stripcontrol: bool) {
         self.stripcontrol = stripcontrol;
     }
 

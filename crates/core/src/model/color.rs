@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// Represents a PDF color space.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PDFColorSpace {
     /// Name of the color space (e.g., "DeviceRGB")
     pub name: String,

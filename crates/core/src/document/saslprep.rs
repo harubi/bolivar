@@ -8,7 +8,7 @@ use unicode_normalization::UnicodeNormalization;
 use crate::{PdfError, Result};
 
 /// RFC 3454 Table B.1: Characters commonly mapped to nothing.
-fn in_table_b1(c: char) -> bool {
+const fn in_table_b1(c: char) -> bool {
     matches!(
         c,
         '\u{00AD}'          // SOFT HYPHEN
@@ -28,7 +28,7 @@ fn in_table_b1(c: char) -> bool {
 }
 
 /// RFC 3454 Table C.1.2: Non-ASCII space characters.
-fn in_table_c12(c: char) -> bool {
+const fn in_table_c12(c: char) -> bool {
     matches!(
         c,
         '\u{00A0}'          // NO-BREAK SPACE
@@ -44,12 +44,12 @@ fn in_table_c12(c: char) -> bool {
 }
 
 /// RFC 3454 Table C.2.1: ASCII control characters.
-fn in_table_c21(c: char) -> bool {
+const fn in_table_c21(c: char) -> bool {
     matches!(c, '\u{0000}'..='\u{001F}' | '\u{007F}')
 }
 
 /// RFC 3454 Table C.2.2: Non-ASCII control characters.
-fn in_table_c22(c: char) -> bool {
+const fn in_table_c22(c: char) -> bool {
     matches!(
         c,
         '\u{0080}'..='\u{009F}'
@@ -70,7 +70,7 @@ fn in_table_c22(c: char) -> bool {
 }
 
 /// RFC 3454 Table C.3: Private use characters.
-fn in_table_c3(c: char) -> bool {
+const fn in_table_c3(c: char) -> bool {
     matches!(
         c,
         '\u{E000}'..='\u{F8FF}'       // Private Use Area
@@ -80,7 +80,7 @@ fn in_table_c3(c: char) -> bool {
 }
 
 /// RFC 3454 Table C.4: Non-character code points.
-fn in_table_c4(c: char) -> bool {
+const fn in_table_c4(c: char) -> bool {
     matches!(
         c,
         '\u{FDD0}'..='\u{FDEF}'
@@ -105,13 +105,13 @@ fn in_table_c4(c: char) -> bool {
 }
 
 /// RFC 3454 Table C.5: Surrogate codes (not applicable in Rust - handled by char).
-fn in_table_c5(_c: char) -> bool {
+const fn in_table_c5(_c: char) -> bool {
     // Rust's char type cannot represent surrogate code points
     false
 }
 
 /// RFC 3454 Table C.6: Inappropriate for plain text.
-fn in_table_c6(c: char) -> bool {
+const fn in_table_c6(c: char) -> bool {
     matches!(
         c,
         '\u{FFF9}'          // INTERLINEAR ANNOTATION ANCHOR
@@ -123,12 +123,12 @@ fn in_table_c6(c: char) -> bool {
 }
 
 /// RFC 3454 Table C.7: Inappropriate for canonical representation.
-fn in_table_c7(c: char) -> bool {
+const fn in_table_c7(c: char) -> bool {
     matches!(c, '\u{2FF0}'..='\u{2FFB}') // Ideographic Description Characters
 }
 
 /// RFC 3454 Table C.8: Change display properties or deprecated.
-fn in_table_c8(c: char) -> bool {
+const fn in_table_c8(c: char) -> bool {
     matches!(
         c,
         '\u{0340}'          // COMBINING GRAVE TONE MARK
@@ -150,12 +150,12 @@ fn in_table_c8(c: char) -> bool {
 }
 
 /// RFC 3454 Table C.9: Tagging characters.
-fn in_table_c9(c: char) -> bool {
+const fn in_table_c9(c: char) -> bool {
     matches!(c, '\u{E0001}' | '\u{E0020}'..='\u{E007F}')
 }
 
 /// RFC 3454 Table A.1: Unassigned code points in Unicode 3.2.
-fn in_table_a1(c: char) -> bool {
+const fn in_table_a1(c: char) -> bool {
     let cp = c as u32;
     matches!(
         cp,
@@ -559,7 +559,7 @@ fn in_table_a1(c: char) -> bool {
 }
 
 /// RFC 3454 Table D.1: Characters with bidirectional property "R" or "AL".
-fn in_table_d1(c: char) -> bool {
+const fn in_table_d1(c: char) -> bool {
     // This is a simplified version covering the main RTL ranges.
     // A complete implementation would check Unicode Bidi_Class property.
     matches!(
@@ -602,7 +602,7 @@ fn in_table_d1(c: char) -> bool {
 }
 
 /// RFC 3454 Table D.2: Characters with bidirectional property "L".
-fn in_table_d2(c: char) -> bool {
+const fn in_table_d2(c: char) -> bool {
     // Simplified: Check if character is in typical LTR ranges
     // Most Latin, Greek, Cyrillic, etc. characters have Bidi_Class L
     matches!(
@@ -645,7 +645,7 @@ fn in_table_d2(c: char) -> bool {
 }
 
 /// Check if character is prohibited according to RFC 4013 section 2.3.
-fn is_prohibited(c: char, check_d1: bool, check_d2: bool, check_a1: bool) -> bool {
+const fn is_prohibited(c: char, check_d1: bool, check_d2: bool, check_a1: bool) -> bool {
     in_table_c12(c)
         || in_table_c21(c)
         || in_table_c22(c)

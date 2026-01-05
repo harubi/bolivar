@@ -45,7 +45,7 @@ impl LTTextBoxHorizontal {
         self.lines.push(line);
     }
 
-    pub fn bbox(&self) -> Rect {
+    pub const fn bbox(&self) -> Rect {
         self.component.bbox()
     }
 
@@ -132,7 +132,7 @@ impl LTTextBoxVertical {
         self.lines.push(line);
     }
 
-    pub fn bbox(&self) -> Rect {
+    pub const fn bbox(&self) -> Rect {
         self.component.bbox()
     }
 
@@ -202,16 +202,16 @@ pub enum TextBoxType {
 impl TextBoxType {
     pub fn is_empty(&self) -> bool {
         match self {
-            TextBoxType::Horizontal(b) => b.is_empty(),
-            TextBoxType::Vertical(b) => b.is_empty(),
+            Self::Horizontal(b) => b.is_empty(),
+            Self::Vertical(b) => b.is_empty(),
         }
     }
 
     /// Returns the axis (horizontal or vertical) of this text box.
-    pub fn axis(&self) -> Axis {
+    pub const fn axis(&self) -> Axis {
         match self {
-            TextBoxType::Horizontal(_) => Axis::Horizontal,
-            TextBoxType::Vertical(_) => Axis::Vertical,
+            Self::Horizontal(_) => Axis::Horizontal,
+            Self::Vertical(_) => Axis::Vertical,
         }
     }
 }
@@ -219,26 +219,26 @@ impl TextBoxType {
 impl HasBBox for TextBoxType {
     fn x0(&self) -> f64 {
         match self {
-            TextBoxType::Horizontal(b) => b.x0(),
-            TextBoxType::Vertical(b) => b.x0(),
+            Self::Horizontal(b) => b.x0(),
+            Self::Vertical(b) => b.x0(),
         }
     }
     fn y0(&self) -> f64 {
         match self {
-            TextBoxType::Horizontal(b) => b.y0(),
-            TextBoxType::Vertical(b) => b.y0(),
+            Self::Horizontal(b) => b.y0(),
+            Self::Vertical(b) => b.y0(),
         }
     }
     fn x1(&self) -> f64 {
         match self {
-            TextBoxType::Horizontal(b) => b.x1(),
-            TextBoxType::Vertical(b) => b.x1(),
+            Self::Horizontal(b) => b.x1(),
+            Self::Vertical(b) => b.x1(),
         }
     }
     fn y1(&self) -> f64 {
         match self {
-            TextBoxType::Horizontal(b) => b.y1(),
-            TextBoxType::Vertical(b) => b.y1(),
+            Self::Horizontal(b) => b.y1(),
+            Self::Vertical(b) => b.y1(),
         }
     }
 }
@@ -253,8 +253,8 @@ pub enum TextGroupElement {
 impl TextGroupElement {
     pub fn is_vertical(&self) -> bool {
         match self {
-            TextGroupElement::Box(TextBoxType::Vertical(_)) => true,
-            TextGroupElement::Group(g) => g.is_vertical(),
+            Self::Box(TextBoxType::Vertical(_)) => true,
+            Self::Group(g) => g.is_vertical(),
             _ => false,
         }
     }
@@ -263,26 +263,26 @@ impl TextGroupElement {
 impl HasBBox for TextGroupElement {
     fn x0(&self) -> f64 {
         match self {
-            TextGroupElement::Box(b) => b.x0(),
-            TextGroupElement::Group(g) => g.x0(),
+            Self::Box(b) => b.x0(),
+            Self::Group(g) => g.x0(),
         }
     }
     fn y0(&self) -> f64 {
         match self {
-            TextGroupElement::Box(b) => b.y0(),
-            TextGroupElement::Group(g) => g.y0(),
+            Self::Box(b) => b.y0(),
+            Self::Group(g) => g.y0(),
         }
     }
     fn x1(&self) -> f64 {
         match self {
-            TextGroupElement::Box(b) => b.x1(),
-            TextGroupElement::Group(g) => g.x1(),
+            Self::Box(b) => b.x1(),
+            Self::Group(g) => g.x1(),
         }
     }
     fn y1(&self) -> f64 {
         match self {
-            TextGroupElement::Box(b) => b.y1(),
-            TextGroupElement::Group(g) => g.y1(),
+            Self::Box(b) => b.y1(),
+            Self::Group(g) => g.y1(),
         }
     }
 }
@@ -334,7 +334,7 @@ impl LTTextGroup {
         }
     }
 
-    pub fn is_vertical(&self) -> bool {
+    pub const fn is_vertical(&self) -> bool {
         self.vertical
     }
 
@@ -378,8 +378,8 @@ impl LTTextGroup {
         if self.vertical {
             // Vertical text: reorder from top-right to bottom-left
             self.elements.sort_by(|a, b| {
-                let key_a = -(1.0 + boxes_flow) * (a.x0() + a.x1()) - (1.0 - boxes_flow) * a.y1();
-                let key_b = -(1.0 + boxes_flow) * (b.x0() + b.x1()) - (1.0 - boxes_flow) * b.y1();
+                let key_a = (-(1.0 + boxes_flow)).mul_add(a.x0() + a.x1(), -((1.0 - boxes_flow) * a.y1()));
+                let key_b = (-(1.0 + boxes_flow)).mul_add(b.x0() + b.x1(), -((1.0 - boxes_flow) * b.y1()));
                 key_a
                     .partial_cmp(&key_b)
                     .unwrap_or(std::cmp::Ordering::Equal)
@@ -387,8 +387,8 @@ impl LTTextGroup {
         } else {
             // Horizontal text: reorder from top-left to bottom-right
             self.elements.sort_by(|a, b| {
-                let key_a = (1.0 - boxes_flow) * a.x0() - (1.0 + boxes_flow) * (a.y0() + a.y1());
-                let key_b = (1.0 - boxes_flow) * b.x0() - (1.0 + boxes_flow) * (b.y0() + b.y1());
+                let key_a = (1.0 - boxes_flow).mul_add(a.x0(), -((1.0 + boxes_flow) * (a.y0() + a.y1())));
+                let key_b = (1.0 - boxes_flow).mul_add(b.x0(), -((1.0 + boxes_flow) * (b.y0() + b.y1())));
                 key_a
                     .partial_cmp(&key_b)
                     .unwrap_or(std::cmp::Ordering::Equal)
@@ -428,8 +428,8 @@ impl LTTextGroupLRTB {
     /// Sorts elements from top-left to bottom-right based on boxes_flow.
     pub fn analyze(&mut self, boxes_flow: f64) {
         self.0.elements.sort_by(|a, b| {
-            let key_a = (1.0 - boxes_flow) * a.x0() - (1.0 + boxes_flow) * (a.y0() + a.y1());
-            let key_b = (1.0 - boxes_flow) * b.x0() - (1.0 + boxes_flow) * (b.y0() + b.y1());
+            let key_a = (1.0 - boxes_flow).mul_add(a.x0(), -((1.0 + boxes_flow) * (a.y0() + a.y1())));
+            let key_b = (1.0 - boxes_flow).mul_add(b.x0(), -((1.0 + boxes_flow) * (b.y0() + b.y1())));
             key_a
                 .partial_cmp(&key_b)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -458,8 +458,8 @@ impl LTTextGroupTBRL {
     /// Sorts elements from top-right to bottom-left based on boxes_flow.
     pub fn analyze(&mut self, boxes_flow: f64) {
         self.0.elements.sort_by(|a, b| {
-            let key_a = -(1.0 + boxes_flow) * (a.x0() + a.x1()) - (1.0 - boxes_flow) * a.y1();
-            let key_b = -(1.0 + boxes_flow) * (b.x0() + b.x1()) - (1.0 - boxes_flow) * b.y1();
+            let key_a = (-(1.0 + boxes_flow)).mul_add(a.x0() + a.x1(), -((1.0 - boxes_flow) * a.y1()));
+            let key_b = (-(1.0 + boxes_flow)).mul_add(b.x0() + b.x1(), -((1.0 - boxes_flow) * b.y1()));
             key_a
                 .partial_cmp(&key_b)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -482,7 +482,7 @@ pub struct IndexAssigner {
 }
 
 impl IndexAssigner {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { index: 0 }
     }
 

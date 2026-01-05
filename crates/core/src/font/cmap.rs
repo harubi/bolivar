@@ -25,7 +25,7 @@ pub struct IdentityCMap {
 }
 
 impl IdentityCMap {
-    pub fn new(vertical: bool) -> Self {
+    pub const fn new(vertical: bool) -> Self {
         Self { vertical }
     }
 }
@@ -52,7 +52,7 @@ pub struct IdentityCMapByte {
 }
 
 impl IdentityCMapByte {
-    pub fn new(vertical: bool) -> Self {
+    pub const fn new(vertical: bool) -> Self {
         Self { vertical }
     }
 }
@@ -104,7 +104,7 @@ impl CMap {
     }
 
     /// Set vertical writing mode.
-    pub fn set_vertical(&mut self, v: bool) {
+    pub const fn set_vertical(&mut self, v: bool) {
         self.vertical = v;
     }
 
@@ -267,12 +267,12 @@ impl UnicodeMap {
     }
 
     /// Set vertical writing mode.
-    pub fn set_vertical(&mut self, v: bool) {
+    pub const fn set_vertical(&mut self, v: bool) {
         self.vertical = v;
     }
 
     /// Check if this is a vertical writing map.
-    pub fn is_vertical(&self) -> bool {
+    pub const fn is_vertical(&self) -> bool {
         self.vertical
     }
 
@@ -288,12 +288,11 @@ impl UnicodeMap {
     pub fn add_cid2unichr(&mut self, cid: u32, unicode: String) {
         // Special handling: non-breaking space should not override regular space
         // Some fonts have both U+0020 and U+00A0 mapping to the same glyph
-        if unicode == "\u{00a0}" {
-            if let Some(existing) = self.cid2unichr.get(&cid) {
-                if existing == " " {
-                    return; // Keep regular space, don't override with non-breaking space
-                }
-            }
+        if unicode == "\u{00a0}"
+            && let Some(existing) = self.cid2unichr.get(&cid)
+            && existing == " "
+        {
+            return; // Keep regular space, don't override with non-breaking space
         }
         self.cid2unichr.insert(cid, unicode);
     }
@@ -386,12 +385,12 @@ pub struct IdentityUnicodeMap {
 }
 
 impl IdentityUnicodeMap {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { vertical: false }
     }
 
     /// Check if this is a vertical writing map.
-    pub fn is_vertical(&self) -> bool {
+    pub const fn is_vertical(&self) -> bool {
         self.vertical
     }
 
@@ -564,7 +563,7 @@ pub fn parse_tounicode_cmap(data: &[u8]) -> UnicodeMap {
 fn parse_bfchar_blocks(content: &str, unicode_map: &mut UnicodeMap) {
     let mut in_bfchar = false;
 
-    for line in content.split(|c| c == '\n' || c == '\r') {
+    for line in content.split(['\n', '\r']) {
         let line = line.trim();
 
         // Check for "N beginbfchar" or just "beginbfchar"
@@ -611,7 +610,7 @@ fn parse_bfrange_blocks(content: &str, unicode_map: &mut UnicodeMap) {
     let mut in_bfrange = false;
     let mut pending_lines: Vec<String> = Vec::new();
 
-    for line in content.split(|c| c == '\n' || c == '\r') {
+    for line in content.split(['\n', '\r']) {
         let line = line.trim();
 
         // Check for "N beginbfrange" or just "beginbfrange"
@@ -665,10 +664,10 @@ fn parse_bfrange_line(line: &str, unicode_map: &mut UnicodeMap) {
         // Array of unicode values for each CID in range
         for (i, hex_str) in hex_values[2..].iter().enumerate() {
             let cid = start + i as u32;
-            if cid <= end {
-                if let Some(unicode_bytes) = parse_hex_bytes(hex_str) {
-                    unicode_map.add_cid2unichr_bytes(cid, &unicode_bytes);
-                }
+            if cid <= end
+                && let Some(unicode_bytes) = parse_hex_bytes(hex_str)
+            {
+                unicode_map.add_cid2unichr_bytes(cid, &unicode_bytes);
             }
         }
     } else {
@@ -693,7 +692,7 @@ fn parse_bfrange_line(line: &str, unicode_map: &mut UnicodeMap) {
 fn parse_cidchar_blocks(content: &str, unicode_map: &mut UnicodeMap) {
     let mut in_cidchar = false;
 
-    for line in content.split(|c| c == '\n' || c == '\r') {
+    for line in content.split(['\n', '\r']) {
         let line = line.trim();
 
         // Check for "N begincidchar" or just "begincidchar"
@@ -709,10 +708,10 @@ fn parse_cidchar_blocks(content: &str, unicode_map: &mut UnicodeMap) {
 
         if in_cidchar && !line.is_empty() {
             // Parse line: <cid_hex> unicode_decimal
-            if let Some((cid, unicode)) = parse_cidchar_line(line) {
-                if let Some(ch) = char::from_u32(unicode) {
-                    unicode_map.add_cid2unichr(cid, ch.to_string());
-                }
+            if let Some((cid, unicode)) = parse_cidchar_line(line)
+                && let Some(ch) = char::from_u32(unicode)
+            {
+                unicode_map.add_cid2unichr(cid, ch.to_string());
             }
         }
     }
@@ -751,7 +750,7 @@ fn parse_cidrange_blocks(content: &str, unicode_map: &mut UnicodeMap) {
     let mut in_cidrange = false;
     let mut pending_lines: Vec<String> = Vec::new();
 
-    for line in content.split(|c| c == '\n' || c == '\r') {
+    for line in content.split(['\n', '\r']) {
         let line = line.trim();
 
         // Check for "N begincidrange" or just "begincidrange"
@@ -821,7 +820,7 @@ fn extract_hex_sequences(line: &str) -> Vec<&str> {
     while let Some((start_idx, ch)) = chars.next() {
         if ch == '<' {
             // Find matching >
-            while let Some((end_idx, ch2)) = chars.next() {
+            for (end_idx, ch2) in chars.by_ref() {
                 if ch2 == '>' {
                     results.push(&line[start_idx..=end_idx]);
                     break;
@@ -857,7 +856,7 @@ fn parse_hex_bytes(s: &str) -> Option<Vec<u8>> {
     let s = s.trim_start_matches('<').trim_end_matches('>');
 
     // Must be even length
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
 

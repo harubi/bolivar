@@ -43,8 +43,8 @@ pub enum LTItem {
 }
 
 impl LTItem {
-    pub fn is_char(&self) -> bool {
-        matches!(self, LTItem::Char(_))
+    pub const fn is_char(&self) -> bool {
+        matches!(self, Self::Char(_))
     }
 }
 

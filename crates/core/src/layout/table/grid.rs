@@ -12,17 +12,17 @@ use super::types::{
 };
 
 /// Convert intersections to table cells.
-pub(crate) fn intersections_to_cells(
+pub fn intersections_to_cells(
     store: &EdgeStore,
     intersections: &HashMap<KeyPoint, IntersectionIdx>,
 ) -> Vec<BBox> {
-    fn edge_id_key(edge_id: &BBoxKey) -> (u64, u64, u64, u64) {
+    const fn edge_id_key(edge_id: &BBoxKey) -> (u64, u64, u64, u64) {
         let BBoxKey(a, b, c, d) = *edge_id;
         (a, b, c, d)
     }
 
     fn sort_dedup_edge_ids(ids: &mut Vec<BBoxKey>) {
-        ids.sort_by(|a, b| edge_id_key(a).cmp(&edge_id_key(b)));
+        ids.sort_by_key(edge_id_key);
         ids.dedup();
     }
 
@@ -124,10 +124,10 @@ pub(crate) fn intersections_to_cells(
     for (idx, point) in points.iter().enumerate() {
         let mut below_candidates: Vec<usize> = Vec::new();
         for edge_id in &point_v_edges[idx] {
-            if let Some(point_ids) = edge_points_v.get(edge_id) {
-                if let Ok(pos) = point_ids.binary_search_by(|pid| points[*pid].1.cmp(&point.1)) {
-                    below_candidates.extend(point_ids[pos + 1..].iter().copied());
-                }
+            if let Some(point_ids) = edge_points_v.get(edge_id)
+                && let Ok(pos) = point_ids.binary_search_by(|pid| points[*pid].1.cmp(&point.1))
+            {
+                below_candidates.extend(point_ids[pos + 1..].iter().copied());
             }
         }
         below_candidates.sort_by(|a, b| points[*a].1.cmp(&points[*b].1));
@@ -135,10 +135,10 @@ pub(crate) fn intersections_to_cells(
 
         let mut right_candidates: Vec<usize> = Vec::new();
         for edge_id in &point_h_edges[idx] {
-            if let Some(point_ids) = edge_points_h.get(edge_id) {
-                if let Ok(pos) = point_ids.binary_search_by(|pid| points[*pid].0.cmp(&point.0)) {
-                    right_candidates.extend(point_ids[pos + 1..].iter().copied());
-                }
+            if let Some(point_ids) = edge_points_h.get(edge_id)
+                && let Ok(pos) = point_ids.binary_search_by(|pid| points[*pid].0.cmp(&point.0))
+            {
+                right_candidates.extend(point_ids[pos + 1..].iter().copied());
             }
         }
         right_candidates.sort_by(|a, b| points[*a].0.cmp(&points[*b].0));
@@ -153,16 +153,17 @@ pub(crate) fn intersections_to_cells(
                     continue;
                 }
                 let bottom_right = (points[*right_id].0, points[below_id].1);
-                if let Some(&br_id) = point_index.get(&bottom_right) {
-                    if edge_connects(br_id, *right_id) && edge_connects(br_id, below_id) {
-                        cells.push(BBox {
-                            x0: point.0.into_inner(),
-                            top: point.1.into_inner(),
-                            x1: points[*right_id].0.into_inner(),
-                            bottom: points[below_id].1.into_inner(),
-                        });
-                        break 'below;
-                    }
+                if let Some(&br_id) = point_index.get(&bottom_right)
+                    && edge_connects(br_id, *right_id)
+                    && edge_connects(br_id, below_id)
+                {
+                    cells.push(BBox {
+                        x0: point.0.into_inner(),
+                        top: point.1.into_inner(),
+                        x1: points[*right_id].0.into_inner(),
+                        bottom: points[below_id].1.into_inner(),
+                    });
+                    break 'below;
                 }
             }
         }
@@ -171,8 +172,8 @@ pub(crate) fn intersections_to_cells(
 }
 
 /// Group cells into connected tables using corner-sharing.
-pub(crate) fn cells_to_tables_graph(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
-    fn bbox_corners(b: &BBox) -> [KeyPoint; 4] {
+pub fn cells_to_tables_graph(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
+    const fn bbox_corners(b: &BBox) -> [KeyPoint; 4] {
         [
             key_point(b.x0, b.top),
             key_point(b.x0, b.bottom),
@@ -219,7 +220,7 @@ pub(crate) fn cells_to_tables_graph(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
         }
         let mut group = Vec::with_capacity(group_indices.len());
         for idx in group_indices {
-            group.push(cells[idx].clone());
+            group.push(cells[idx]);
         }
         tables.push(group);
     }
@@ -244,12 +245,12 @@ pub(crate) fn cells_to_tables_graph(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
 }
 
 /// Convert cells to tables (wrapper for graph-based algorithm).
-pub(crate) fn cells_to_tables(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
+pub fn cells_to_tables(cells: Vec<BBox>) -> Vec<Vec<BBox>> {
     cells_to_tables_graph(cells)
 }
 
 /// A detected table with its cells.
-pub(crate) struct Table {
+pub struct Table {
     pub cells: Vec<BBox>,
 }
 
@@ -329,7 +330,7 @@ impl Table {
             let mut map: HashMap<KeyF64, BBox> = HashMap::new();
             for cell in &group {
                 let key = if axis == 0 { cell.x0 } else { cell.top };
-                map.insert(key_f64(key), cell.clone());
+                map.insert(key_f64(key), *cell);
             }
             let cells: Vec<Option<BBox>> =
                 xs.iter().map(|x| map.get(&key_f64(*x)).cloned()).collect();
@@ -496,7 +497,7 @@ impl Table {
 }
 
 /// A group of cells in a row or column.
-pub(crate) struct CellGroup {
+pub struct CellGroup {
     pub cells: Vec<Option<BBox>>,
 }
 

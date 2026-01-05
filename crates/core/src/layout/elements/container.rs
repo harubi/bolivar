@@ -17,7 +17,7 @@ pub struct LTLayoutContainer {
 }
 
 impl LTLayoutContainer {
-    pub fn new(bbox: Rect) -> Self {
+    pub const fn new(bbox: Rect) -> Self {
         Self {
             component: LTComponent::new(bbox),
             items: Vec::new(),
@@ -25,7 +25,7 @@ impl LTLayoutContainer {
         }
     }
 
-    pub fn bbox(&self) -> Rect {
+    pub const fn bbox(&self) -> Rect {
         self.component.bbox()
     }
 
@@ -118,7 +118,7 @@ impl LTPage {
     }
 
     /// Returns the text groups after analysis (if boxes_flow was enabled).
-    pub fn groups(&self) -> Option<&Vec<LTTextGroup>> {
+    pub const fn groups(&self) -> Option<&Vec<LTTextGroup>> {
         self.container.groups.as_ref()
     }
 }

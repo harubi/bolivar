@@ -13,7 +13,7 @@ pub type Color = Option<Vec<f64>>;
 ///
 /// Unlike LTChar, LTAnno has no bounding box as it represents a character
 /// inferred from the relationship between real characters.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LTAnno {
     text: String,
 }
@@ -79,25 +79,25 @@ impl LTCharBuilder {
     }
 
     /// Sets whether the character is upright (default: true).
-    pub fn upright(mut self, upright: bool) -> Self {
+    pub const fn upright(mut self, upright: bool) -> Self {
         self.upright = upright;
         self
     }
 
     /// Sets the advance width (default: 0.0).
-    pub fn adv(mut self, adv: f64) -> Self {
+    pub const fn adv(mut self, adv: f64) -> Self {
         self.adv = adv;
         self
     }
 
     /// Sets the text rendering matrix (default: identity matrix).
-    pub fn matrix(mut self, matrix: Matrix) -> Self {
+    pub const fn matrix(mut self, matrix: Matrix) -> Self {
         self.matrix = matrix;
         self
     }
 
     /// Sets the Marked Content ID for tagged PDF accessibility.
-    pub fn mcid(mut self, mcid: Option<i32>) -> Self {
+    pub const fn mcid(mut self, mcid: Option<i32>) -> Self {
         self.mcid = mcid;
         self
     }
@@ -351,23 +351,23 @@ impl LTChar {
         &self.fontname
     }
 
-    pub fn size(&self) -> f64 {
+    pub const fn size(&self) -> f64 {
         self.size
     }
 
-    pub fn upright(&self) -> bool {
+    pub const fn upright(&self) -> bool {
         self.upright
     }
 
-    pub fn adv(&self) -> f64 {
+    pub const fn adv(&self) -> f64 {
         self.adv
     }
 
-    pub fn matrix(&self) -> Matrix {
+    pub const fn matrix(&self) -> Matrix {
         self.matrix
     }
 
-    pub fn mcid(&self) -> Option<i32> {
+    pub const fn mcid(&self) -> Option<i32> {
         self.mcid
     }
 
@@ -391,11 +391,11 @@ impl LTChar {
         self.scs = scs;
     }
 
-    pub fn non_stroking_color(&self) -> &Color {
+    pub const fn non_stroking_color(&self) -> &Color {
         &self.non_stroking_color
     }
 
-    pub fn stroking_color(&self) -> &Color {
+    pub const fn stroking_color(&self) -> &Color {
         &self.stroking_color
     }
 }

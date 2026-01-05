@@ -13,7 +13,7 @@ use super::clustering::{bbox_from_words, bbox_overlap, cluster_objects, move_edg
 use super::types::{BBox, EdgeObj, Orientation, WordObj};
 
 /// Clip an edge to a bounding box, returning None if no overlap.
-pub(crate) fn clip_edge_to_bbox(edge: EdgeObj, crop: BBox) -> Option<EdgeObj> {
+pub fn clip_edge_to_bbox(edge: EdgeObj, crop: BBox) -> Option<EdgeObj> {
     let bbox = BBox {
         x0: edge.x0,
         top: edge.top,
@@ -34,7 +34,7 @@ pub(crate) fn clip_edge_to_bbox(edge: EdgeObj, crop: BBox) -> Option<EdgeObj> {
 }
 
 /// Snap edges to align with nearby edges of the same orientation.
-pub(crate) fn snap_edges(edges: &[EdgeObj], x_tolerance: f64, y_tolerance: f64) -> Vec<EdgeObj> {
+pub fn snap_edges(edges: &[EdgeObj], x_tolerance: f64, y_tolerance: f64) -> Vec<EdgeObj> {
     let mut v_edges: Vec<EdgeObj> = edges
         .iter()
         .filter(|e| e.orientation == Some(Orientation::Vertical))
@@ -70,11 +70,11 @@ pub(crate) fn snap_edges(edges: &[EdgeObj], x_tolerance: f64, y_tolerance: f64) 
         h_edges = snapped;
     }
 
-    v_edges.into_iter().chain(h_edges.into_iter()).collect()
+    v_edges.into_iter().chain(h_edges).collect()
 }
 
 /// Join collinear edges that are within tolerance of each other.
-pub(crate) fn join_edge_group(
+pub fn join_edge_group(
     edges: &[EdgeObj],
     orientation: Orientation,
     tolerance: f64,
@@ -135,7 +135,7 @@ pub(crate) fn join_edge_group(
 }
 
 /// Merge edges by snapping and joining.
-pub(crate) fn merge_edges(
+pub fn merge_edges(
     edges: Vec<EdgeObj>,
     snap_x_tolerance: f64,
     snap_y_tolerance: f64,
@@ -176,7 +176,7 @@ pub(crate) fn merge_edges(
 }
 
 /// Filter edges by orientation, type, and minimum length.
-pub(crate) fn filter_edges(
+pub fn filter_edges(
     edges: Vec<EdgeObj>,
     orientation: Option<Orientation>,
     edge_type: Option<&str>,
@@ -204,7 +204,7 @@ pub(crate) fn filter_edges(
 }
 
 /// Convert a line object to an edge with orientation.
-pub(crate) fn line_to_edge(line: &EdgeObj) -> EdgeObj {
+pub fn line_to_edge(line: &EdgeObj) -> EdgeObj {
     let orientation = if (line.top - line.bottom).abs() < f64::EPSILON {
         Some(Orientation::Horizontal)
     } else {
@@ -217,7 +217,7 @@ pub(crate) fn line_to_edge(line: &EdgeObj) -> EdgeObj {
 }
 
 /// Convert a rectangle to four edges.
-pub(crate) fn rect_to_edges(rect: BBox) -> Vec<EdgeObj> {
+pub fn rect_to_edges(rect: BBox) -> Vec<EdgeObj> {
     let top = EdgeObj {
         x0: rect.x0,
         x1: rect.x1,
@@ -262,7 +262,7 @@ pub(crate) fn rect_to_edges(rect: BBox) -> Vec<EdgeObj> {
 }
 
 /// Convert a curve (series of points) to edges.
-pub(crate) fn curve_to_edges(points: &[Point], object_type: &'static str) -> Vec<EdgeObj> {
+pub fn curve_to_edges(points: &[Point], object_type: &'static str) -> Vec<EdgeObj> {
     let mut edges = Vec::new();
     for pair in points.windows(2) {
         let p0 = pair[0];
@@ -293,7 +293,7 @@ pub(crate) fn curve_to_edges(points: &[Point], object_type: &'static str) -> Vec
 }
 
 /// Generate horizontal edges from word clusters.
-pub(crate) fn words_to_edges_h(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj> {
+pub fn words_to_edges_h(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj> {
     let clusters = cluster_objects(words, |w| w.top, 1.0, false);
     let large_clusters = clusters
         .into_iter()
@@ -333,7 +333,7 @@ pub(crate) fn words_to_edges_h(words: &[WordObj], word_threshold: usize) -> Vec<
 }
 
 /// Generate vertical edges from word clusters.
-pub(crate) fn words_to_edges_v(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj> {
+pub fn words_to_edges_v(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj> {
     let by_x0 = cluster_objects(words, |w| w.x0, 1.0, false);
     let by_x1 = cluster_objects(words, |w| w.x1, 1.0, false);
     let by_center = cluster_objects(words, |w| (w.x0 + w.x1) / 2.0, 1.0, false);

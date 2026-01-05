@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use super::types::{BBox, CharObj, EdgeObj, KeyF64, Orientation, WordObj, key_f64};
 
 /// Cluster a list of f64 values based on tolerance.
-pub(crate) fn cluster_list(mut xs: Vec<f64>, tolerance: f64) -> Vec<Vec<f64>> {
+pub fn cluster_list(mut xs: Vec<f64>, tolerance: f64) -> Vec<Vec<f64>> {
     xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     if tolerance == 0.0 || xs.len() < 2 {
         return xs.into_iter().map(|x| vec![x]).collect();
@@ -31,7 +31,7 @@ pub(crate) fn cluster_list(mut xs: Vec<f64>, tolerance: f64) -> Vec<Vec<f64>> {
 }
 
 /// Create a mapping from values to their cluster indices.
-pub(crate) fn make_cluster_dict(values: Vec<f64>, tolerance: f64) -> HashMap<KeyF64, usize> {
+pub fn make_cluster_dict(values: Vec<f64>, tolerance: f64) -> HashMap<KeyF64, usize> {
     let mut unique: Vec<f64> = values;
     unique.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     unique.dedup_by(|a, b| (*a - *b).abs() == 0.0);
@@ -46,13 +46,13 @@ pub(crate) fn make_cluster_dict(values: Vec<f64>, tolerance: f64) -> HashMap<Key
 }
 
 /// Cluster objects based on a key function and tolerance.
-pub(crate) fn cluster_objects<T: Clone, F: Fn(&T) -> f64>(
+pub fn cluster_objects<T: Clone, F: Fn(&T) -> f64>(
     xs: &[T],
     key_fn: F,
     tolerance: f64,
     preserve_order: bool,
 ) -> Vec<Vec<T>> {
-    let values: Vec<f64> = xs.iter().map(|x| key_fn(x)).collect();
+    let values: Vec<f64> = xs.iter().map(&key_fn).collect();
     let cluster_dict = make_cluster_dict(values, tolerance);
 
     let mut cluster_tuples: Vec<(T, usize)> = if preserve_order {
@@ -97,7 +97,7 @@ pub(crate) fn cluster_objects<T: Clone, F: Fn(&T) -> f64>(
 }
 
 /// Move an edge along an axis by a given value.
-pub(crate) fn move_edge(edge: &EdgeObj, axis: Orientation, value: f64) -> EdgeObj {
+pub fn move_edge(edge: &EdgeObj, axis: Orientation, value: f64) -> EdgeObj {
     match axis {
         Orientation::Horizontal => EdgeObj {
             x0: edge.x0 + value,
@@ -113,7 +113,7 @@ pub(crate) fn move_edge(edge: &EdgeObj, axis: Orientation, value: f64) -> EdgeOb
 }
 
 /// Compute a bounding box from a slice of character references.
-pub(crate) fn bbox_from_chars(chars: &[&CharObj]) -> BBox {
+pub fn bbox_from_chars(chars: &[&CharObj]) -> BBox {
     let mut x0 = f64::INFINITY;
     let mut top = f64::INFINITY;
     let mut x1 = f64::NEG_INFINITY;
@@ -133,7 +133,7 @@ pub(crate) fn bbox_from_chars(chars: &[&CharObj]) -> BBox {
 }
 
 /// Compute a bounding box from a slice of words.
-pub(crate) fn bbox_from_words(words: &[WordObj]) -> BBox {
+pub fn bbox_from_words(words: &[WordObj]) -> BBox {
     let mut x0 = f64::INFINITY;
     let mut top = f64::INFINITY;
     let mut x1 = f64::NEG_INFINITY;
@@ -153,7 +153,7 @@ pub(crate) fn bbox_from_words(words: &[WordObj]) -> BBox {
 }
 
 /// Compute the overlap between two bounding boxes.
-pub(crate) fn bbox_overlap(a: BBox, b: BBox) -> Option<BBox> {
+pub fn bbox_overlap(a: BBox, b: BBox) -> Option<BBox> {
     let o_left = a.x0.max(b.x0);
     let o_right = a.x1.min(b.x1);
     let o_top = a.top.max(b.top);
@@ -173,7 +173,7 @@ pub(crate) fn bbox_overlap(a: BBox, b: BBox) -> Option<BBox> {
 }
 
 /// Check if two bounding boxes have a strict overlap (both dimensions > 0).
-pub(crate) fn bbox_overlap_strict(a: BBox, b: BBox) -> bool {
+pub fn bbox_overlap_strict(a: BBox, b: BBox) -> bool {
     match bbox_overlap(a, b) {
         Some(overlap) => overlap.width() > 0.0 && overlap.height() > 0.0,
         None => false,

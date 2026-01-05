@@ -196,19 +196,19 @@ impl<'a> PageIterator<'a> {
         let catalog = doc.catalog();
 
         // Check if we have a Pages reference
-        if let Some(pages_ref) = catalog.get("Pages") {
-            if let Ok(pages_ref) = pages_ref.as_ref() {
-                return Self {
-                    doc,
-                    stack: vec![(pages_ref.objid, catalog.clone())],
-                    visited: HashSet::new(),
-                    labels,
-                    fallback_mode: false,
-                    fallback_objids: doc.get_objids(),
-                    fallback_idx: 0,
-                    pages_yielded: false,
-                };
-            }
+        if let Some(pages_ref) = catalog.get("Pages")
+            && let Ok(pages_ref) = pages_ref.as_ref()
+        {
+            return Self {
+                doc,
+                stack: vec![(pages_ref.objid, catalog.clone())],
+                visited: HashSet::new(),
+                labels,
+                fallback_mode: false,
+                fallback_objids: doc.get_objids(),
+                fallback_idx: 0,
+                pages_yielded: false,
+            };
         }
 
         // Fallback mode - no valid /Pages
@@ -239,20 +239,13 @@ impl<'a> Iterator for PageIterator<'a> {
                 let objid = self.fallback_objids[self.fallback_idx];
                 self.fallback_idx += 1;
 
-                if let Ok(obj) = self.doc.getobj_shared(objid) {
-                    if let Ok(dict) = obj.as_ref().as_dict() {
-                        if let Some(PDFObject::Name(type_name)) = dict.get("Type") {
-                            if type_name == "Page" {
-                                let label = self.get_next_label();
-                                return Some(PDFPage::from_attrs(
-                                    objid,
-                                    dict.clone(),
-                                    label,
-                                    self.doc,
-                                ));
-                            }
-                        }
-                    }
+                if let Ok(obj) = self.doc.getobj_shared(objid)
+                    && let Ok(dict) = obj.as_ref().as_dict()
+                    && let Some(PDFObject::Name(type_name)) = dict.get("Type")
+                    && type_name == "Page"
+                {
+                    let label = self.get_next_label();
+                    return Some(PDFPage::from_attrs(objid, dict.clone(), label, self.doc));
                 }
             }
             return None;
@@ -278,10 +271,10 @@ impl<'a> Iterator for PageIterator<'a> {
             // Merge inheritable attributes
             let mut attrs = dict.clone();
             for &key in PDFPage::INHERITABLE_ATTRS {
-                if !attrs.contains_key(key) {
-                    if let Some(val) = parent_attrs.get(key) {
-                        attrs.insert(key.to_string(), val.clone());
-                    }
+                if !attrs.contains_key(key)
+                    && let Some(val) = parent_attrs.get(key)
+                {
+                    attrs.insert(key.to_string(), val.clone());
                 }
             }
 
@@ -291,17 +284,16 @@ impl<'a> Iterator for PageIterator<'a> {
             match obj_type {
                 Some(PDFObject::Name(name)) if name == "Pages" => {
                     // Intermediate node - push kids onto stack (in reverse for correct order)
-                    if let Some(kids) = dict.get("Kids") {
-                        if let Ok(kids) = self.doc.resolve(kids) {
-                            if let Ok(kids_arr) = kids.as_array() {
-                                for kid in kids_arr.iter().rev() {
-                                    if let Ok(kid_ref) = kid.as_ref() {
-                                        self.stack.push((kid_ref.objid, attrs.clone()));
-                                    } else if let Ok(kid_int) = kid.as_int() {
-                                        // Sometimes kids are stored as integers
-                                        self.stack.push((kid_int as u32, attrs.clone()));
-                                    }
-                                }
+                    if let Some(kids) = dict.get("Kids")
+                        && let Ok(kids) = self.doc.resolve(kids)
+                        && let Ok(kids_arr) = kids.as_array()
+                    {
+                        for kid in kids_arr.iter().rev() {
+                            if let Ok(kid_ref) = kid.as_ref() {
+                                self.stack.push((kid_ref.objid, attrs.clone()));
+                            } else if let Ok(kid_int) = kid.as_int() {
+                                // Sometimes kids are stored as integers
+                                self.stack.push((kid_int as u32, attrs.clone()));
                             }
                         }
                     }

@@ -29,12 +29,12 @@ pub const FILE_HEADER_ID: &[u8] = b"\x97\x4a\x42\x32\x0d\x0a\x1a\x0a";
 const FILE_HEAD_FLAG_SEQUENTIAL: u8 = 0b0000_0001;
 
 /// Check if a specific bit is set
-fn bit_set(bit_pos: u8, value: u8) -> bool {
+const fn bit_set(bit_pos: u8, value: u8) -> bool {
     ((value >> bit_pos) & 1) != 0
 }
 
 /// Check if a flag is set using a mask
-fn check_flag(flag: u8, value: u8) -> bool {
+const fn check_flag(flag: u8, value: u8) -> bool {
     (flag & value) != 0
 }
 
@@ -138,7 +138,7 @@ pub struct Jbig2StreamReader<'a, R: Read + Seek> {
 }
 
 impl<'a, R: Read + Seek> Jbig2StreamReader<'a, R> {
-    pub fn new(stream: &'a mut R) -> Self {
+    pub const fn new(stream: &'a mut R) -> Self {
         Self { stream }
     }
 
@@ -320,7 +320,7 @@ pub struct Jbig2StreamWriter<'a, W: Write> {
 }
 
 impl<'a, W: Write> Jbig2StreamWriter<'a, W> {
-    pub fn new(stream: &'a mut W) -> Self {
+    pub const fn new(stream: &'a mut W) -> Self {
         Self { stream }
     }
 
@@ -350,13 +350,11 @@ impl<'a, W: Write> Jbig2StreamWriter<'a, W> {
         }
 
         // Add end-of-page if needed
-        if fix_last_page {
-            if let (Some(page), Some(seg_num)) = (current_page, last_seg_num) {
-                let eop = Jbig2Segment::new_eop(seg_num + 1, page);
-                let data = self.encode_segment(&eop);
-                self.stream.write_all(&data)?;
-                data_len += data.len();
-            }
+        if fix_last_page && let (Some(page), Some(seg_num)) = (current_page, last_seg_num) {
+            let eop = Jbig2Segment::new_eop(seg_num + 1, page);
+            let data = self.encode_segment(&eop);
+            self.stream.write_all(&data)?;
+            data_len += data.len();
         }
 
         Ok(data_len)

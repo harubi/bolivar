@@ -178,7 +178,7 @@ struct Args {
     table_format: TableFormat,
 }
 
-/// Parse boxes_flow value - either a float or "disabled".
+/// Parse `boxes_flow` value - either a float or "disabled".
 fn parse_boxes_flow(s: &str) -> std::result::Result<Option<f64>, String> {
     let s = s.trim().to_lowercase();
     if s == "disabled" {
@@ -191,12 +191,11 @@ fn parse_boxes_flow(s: &str) -> std::result::Result<Option<f64>, String> {
                 Ok(Some(v))
             } else {
                 Err(format!(
-                    "boxes_flow must be between -1.0 and 1.0, got {}",
-                    v
+                    "boxes_flow must be between -1.0 and 1.0, got {v}"
                 ))
             }
         }
-        Err(_) => Err(format!("invalid float value: {}", s)),
+        Err(_) => Err(format!("invalid float value: {s}")),
     }
 }
 
@@ -214,7 +213,7 @@ fn infer_output_type(path: &str) -> Option<OutputType> {
     }
 }
 
-/// Build LAParams from command line arguments.
+/// Build `LAParams` from command line arguments.
 fn build_laparams(args: &Args) -> Result<Option<LAParams>> {
     if args.no_laparams {
         return Ok(None);
@@ -268,7 +267,7 @@ fn parse_page_numbers(args: &Args) -> Option<Vec<usize>> {
     None
 }
 
-/// Build PageGeometry from an LTPage for table extraction.
+/// Build `PageGeometry` from an `LTPage` for table extraction.
 fn page_geometry_from_ltpage(page: &LTPage) -> PageGeometry {
     let bbox = page.bbox();
     PageGeometry {
@@ -302,10 +301,10 @@ where
 
     let mut page_count = 0;
     for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-        if let Some(ref nums) = options.page_numbers {
-            if !nums.contains(&page_idx) {
-                continue;
-            }
+        if let Some(ref nums) = options.page_numbers
+            && !nums.contains(&page_idx)
+        {
+            continue;
         }
 
         if options.maxpages > 0 && page_count >= options.maxpages {
@@ -338,12 +337,8 @@ fn process_file<W: Write>(
 ) -> Result<()> {
     // Read PDF file via mmap
     let file = File::open(path)?;
-    let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
-        PdfError::Io(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Failed to mmap PDF: {}", e),
-        ))
-    })?;
+    let mmap = unsafe { Mmap::map(&file) }
+        .map_err(|e| PdfError::Io(io::Error::other(format!("Failed to mmap PDF: {e}"))))?;
 
     // Build options
     let options = ExtractOptions {
@@ -352,7 +347,7 @@ fn process_file<W: Write>(
         maxpages: args.maxpages,
         caching: !args.disable_caching,
         laparams: build_laparams(args)?,
-        threads: std::thread::available_parallelism().ok().map(|n| n.get()),
+        threads: std::thread::available_parallelism().ok().map(std::num::NonZero::get),
     };
 
     // Create PDFDocument from mmap
@@ -364,7 +359,7 @@ fn process_file<W: Write>(
         let mut page_num = 0;
         let mut all_pages_data: Vec<serde_json::Value> = Vec::new();
 
-        for page in extract_pages_with_document(&doc, options.clone())? {
+        for page in extract_pages_with_document(&doc, options)? {
             page_num += 1;
             let geom = page_geometry_from_ltpage(&page);
             let tables = extract_tables_from_ltpage(&page, &geom, &settings);
@@ -416,7 +411,7 @@ fn process_file<W: Write>(
             let output = serde_json::json!({ "pages": all_pages_data });
             let json_str =
                 serde_json::to_string_pretty(&output).expect("Failed to serialize tables to JSON");
-            writeln!(writer, "{}", json_str)?;
+            writeln!(writer, "{json_str}")?;
         }
 
         return Ok(());
@@ -486,7 +481,7 @@ fn process_file<W: Write>(
         OutputType::Text => {
             let laparams = build_laparams(args)?;
             let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
-            for page in extract_pages_with_document(&doc, options.clone())? {
+            for page in extract_pages_with_document(&doc, options)? {
                 converter.receive_layout(page);
             }
         }
@@ -500,7 +495,7 @@ fn process_file<W: Write>(
                 args.scale,
                 1.0, // fontscale
             );
-            for page in extract_pages_with_document(&doc, options.clone())? {
+            for page in extract_pages_with_document(&doc, options)? {
                 converter.receive_layout(page);
             }
             converter.close();
@@ -509,7 +504,7 @@ fn process_file<W: Write>(
             let laparams = build_laparams(args)?;
             let mut converter =
                 XMLConverter::with_options(writer, &args.codec, 1, laparams, args.strip_control);
-            for page in extract_pages_with_document(&doc, options.clone())? {
+            for page in extract_pages_with_document(&doc, options)? {
                 converter.receive_layout(page);
             }
             converter.close();
@@ -518,7 +513,7 @@ fn process_file<W: Write>(
             // Tag output - fall back to text for now
             let laparams = build_laparams(args)?;
             let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
-            for page in extract_pages_with_document(&doc, options.clone())? {
+            for page in extract_pages_with_document(&doc, options)? {
                 converter.receive_layout(page);
             }
         }
@@ -526,7 +521,7 @@ fn process_file<W: Write>(
             let laparams = build_laparams(args)?;
             let mut converter =
                 HOCRConverter::with_options(writer, &args.codec, 1, laparams, args.strip_control);
-            for page in extract_pages_with_document(&doc, options.clone())? {
+            for page in extract_pages_with_document(&doc, options)? {
                 converter.receive_layout(page);
             }
             converter.close();
@@ -546,7 +541,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Err(e) = build_laparams(&args) {
-        eprintln!("{}", e);
+        eprintln!("{e}");
         std::process::exit(1);
     }
 

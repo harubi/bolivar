@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use super::types::{EdgeObj, HEdgeId, KeyF64, KeyPoint, Orientation, VEdgeId, key_f64, key_point};
 
 /// Storage for sorted vertical and horizontal edges.
-pub(crate) struct EdgeStore {
+pub struct EdgeStore {
     pub v: Vec<EdgeObj>,
     pub h: Vec<EdgeObj>,
 }
@@ -26,7 +26,7 @@ impl EdgeStore {
 
 /// Index of edges meeting at an intersection point.
 #[derive(Clone, Debug)]
-pub(crate) struct IntersectionIdx {
+pub struct IntersectionIdx {
     pub v: Vec<VEdgeId>,
     pub h: Vec<HEdgeId>,
 }
@@ -35,7 +35,7 @@ pub(crate) struct IntersectionIdx {
 ///
 /// Returns the edge store and a map from intersection points to the
 /// edges that meet at each point.
-pub(crate) fn edges_to_intersections(
+pub fn edges_to_intersections(
     edges: &[EdgeObj],
     x_tol: f64,
     y_tol: f64,

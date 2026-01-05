@@ -44,12 +44,12 @@ impl<W: Write> TextConverter<W> {
     }
 
     /// Set whether to show page numbers.
-    pub fn set_showpageno(&mut self, showpageno: bool) {
+    pub const fn set_showpageno(&mut self, showpageno: bool) {
         self.showpageno = showpageno;
     }
 
     /// Check if page numbers are shown.
-    pub fn show_pageno(&self) -> bool {
+    pub const fn show_pageno(&self) -> bool {
         self.showpageno
     }
 

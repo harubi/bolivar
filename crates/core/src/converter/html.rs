@@ -137,12 +137,12 @@ impl<W: Write> HTMLConverter<W> {
     }
 
     /// Get scale factor.
-    pub fn scale(&self) -> f64 {
+    pub const fn scale(&self) -> f64 {
         self.scale
     }
 
     /// Get rectangle colors.
-    pub fn rect_colors(&self) -> &HashMap<String, String> {
+    pub const fn rect_colors(&self) -> &HashMap<String, String> {
         &self.rect_colors
     }
 
@@ -152,22 +152,22 @@ impl<W: Write> HTMLConverter<W> {
     }
 
     /// Set whether to show page numbers.
-    pub fn set_showpageno(&mut self, showpageno: bool) {
+    pub const fn set_showpageno(&mut self, showpageno: bool) {
         self.showpageno = showpageno;
     }
 
     /// Set page margin.
-    pub fn set_pagemargin(&mut self, pagemargin: i32) {
+    pub const fn set_pagemargin(&mut self, pagemargin: i32) {
         self.pagemargin = pagemargin;
     }
 
     /// Set scale factor.
-    pub fn set_scale(&mut self, scale: f64) {
+    pub const fn set_scale(&mut self, scale: f64) {
         self.scale = scale;
     }
 
     /// Set font scale factor.
-    pub fn set_fontscale(&mut self, fontscale: f64) {
+    pub const fn set_fontscale(&mut self, fontscale: f64) {
         self.fontscale = fontscale;
     }
 
@@ -662,10 +662,10 @@ impl<W: Write> HOCRConverter<W> {
     /// Render an item.
     fn render_item(&mut self, item: &LTItem) {
         // Check if we need to write accumulated word before processing annotations
-        if self.within_chars {
-            if let LTItem::Anno(_) = item {
-                self.write_word();
-            }
+        if self.within_chars
+            && let LTItem::Anno(_) = item
+        {
+            self.write_word();
         }
 
         match item {

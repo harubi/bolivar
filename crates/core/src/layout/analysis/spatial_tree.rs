@@ -141,10 +141,10 @@ pub enum BestEntry {
 }
 
 impl BestEntry {
-    fn key_parts(&self) -> (bool, DistKey, PyId, PyId, u8) {
+    const fn key_parts(&self) -> (bool, DistKey, PyId, PyId, u8) {
         match self {
-            BestEntry::Frontier(entry) => (false, entry.lb_dist, entry.lb_id1, entry.lb_id2, 0),
-            BestEntry::Pair(entry) => (entry.skip_isany, entry.dist, entry.id1, entry.id2, 1),
+            Self::Frontier(entry) => (false, entry.lb_dist, entry.lb_id1, entry.lb_id2, 0),
+            Self::Pair(entry) => (entry.skip_isany, entry.dist, entry.id1, entry.id2, 1),
         }
     }
 }
@@ -189,7 +189,7 @@ pub struct NodeStats {
 }
 
 #[inline(always)]
-pub fn f64_total_key(x: f64) -> DistKey {
+pub const fn f64_total_key(x: f64) -> DistKey {
     let mut bits = x.to_bits() as i64;
     bits ^= (((bits >> 63) as u64) >> 1) as i64;
     bits
@@ -201,7 +201,7 @@ pub fn dist_key_from_geom(a: Rect, area_a: f64, b: Rect, area_b: f64) -> DistKey
     let y0 = a.1.min(b.1);
     let x1 = a.2.max(b.2);
     let y1 = a.3.max(b.3);
-    f64_total_key((x1 - x0) * (y1 - y0) - area_a - area_b)
+    f64_total_key((x1 - x0).mul_add(y1 - y0, -area_a) - area_b)
 }
 
 impl NodeStats {
@@ -262,14 +262,14 @@ const LEAF_THRESHOLD: usize = 8;
 
 impl SpatialNode {
     /// Build a tree from bboxes and py_ids, returning root index
-    pub fn build(elements: &[(Rect, PyId)], arena: &mut Vec<SpatialNode>) -> usize {
+    pub fn build(elements: &[(Rect, PyId)], arena: &mut Vec<Self>) -> usize {
         Self::build_range(elements, (0..elements.len()).collect(), arena)
     }
 
     fn build_range(
         elements: &[(Rect, PyId)],
         indices: Vec<usize>,
-        arena: &mut Vec<SpatialNode>,
+        arena: &mut Vec<Self>,
     ) -> usize {
         let count = indices.len();
         let stats = indices
@@ -280,7 +280,7 @@ impl SpatialNode {
 
         let node_idx = arena.len();
         if count <= LEAF_THRESHOLD {
-            arena.push(SpatialNode {
+            arena.push(Self {
                 stats,
                 count,
                 element_indices: indices,
@@ -290,7 +290,7 @@ impl SpatialNode {
             return node_idx;
         }
 
-        arena.push(SpatialNode {
+        arena.push(Self {
             stats,
             count,
             element_indices: Vec::new(),
@@ -335,11 +335,11 @@ impl SpatialNode {
         node_idx
     }
 
-    pub fn is_leaf(&self) -> bool {
+    pub const fn is_leaf(&self) -> bool {
         self.left_child.is_none()
     }
 
-    pub fn element_count(&self) -> usize {
+    pub const fn element_count(&self) -> usize {
         self.count
     }
 }
@@ -656,7 +656,7 @@ fn bbox_area(bbox: Rect) -> f64 {
     w * h
 }
 
-fn bbox_union(a: Rect, b: Rect) -> Rect {
+const fn bbox_union(a: Rect, b: Rect) -> Rect {
     (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3))
 }
 
@@ -688,7 +688,7 @@ pub fn calc_dist_lower_bound(a: &NodeStats, b: &NodeStats) -> DistKey {
 
 impl FrontierEntry {
     /// Create frontier entry for InitialIJ mode (self-pair or cross-pair)
-    pub fn new_initial(
+    pub const fn new_initial(
         lb_dist: DistKey,
         stats_a: &NodeStats,
         stats_b: &NodeStats,
@@ -729,7 +729,7 @@ impl FrontierEntry {
     }
 
     /// Create frontier entry for GroupOther mode
-    pub fn new_group_other(
+    pub const fn new_group_other(
         lb_dist: DistKey,
         group_id: PyId,
         group_idx: usize,

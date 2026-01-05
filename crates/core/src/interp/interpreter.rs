@@ -64,7 +64,7 @@ impl SegmentedCursor {
         }
     }
 
-    fn total_len(&self) -> usize {
+    const fn total_len(&self) -> usize {
         self.total_len
     }
 
@@ -175,7 +175,7 @@ impl SegmentedContentLexer {
         }
     }
 
-    fn total_len(&self) -> usize {
+    const fn total_len(&self) -> usize {
         self.cursor.total_len()
     }
 
@@ -544,7 +544,7 @@ impl SegmentedContentLexer {
         while !self.cursor.at_end() {
             if self.cursor.match_bytes(target) {
                 let after = self.cursor.peek_at(target.len());
-                if after.map_or(true, is_whitespace) {
+                if after.is_none_or(is_whitespace) {
                     self.cursor.advance(target.len());
                     if matches!(self.cursor.peek(), Some(b) if is_whitespace(b)) {
                         self.cursor.advance(1);
@@ -788,10 +788,10 @@ impl PDFContentParser {
         let mut dict = HashMap::new();
         let mut iter = items.into_iter();
         while let Some(key) = iter.next() {
-            if let PSToken::Literal(name) = key {
-                if let Some(value) = iter.next() {
-                    dict.insert(name, value);
-                }
+            if let PSToken::Literal(name) = key
+                && let Some(value) = iter.next()
+            {
+                dict.insert(name, value);
             }
         }
         dict
@@ -802,10 +802,10 @@ impl PDFContentParser {
         let mut dict = HashMap::new();
         let mut iter = self.operand_stack.iter();
         while let Some((_, key)) = iter.next() {
-            if let PSToken::Literal(name) = key {
-                if let Some((_, value)) = iter.next() {
-                    dict.insert(name.clone(), value.clone());
-                }
+            if let PSToken::Literal(name) = key
+                && let Some((_, value)) = iter.next()
+            {
+                dict.insert(name.clone(), value.clone());
             }
         }
         dict
@@ -815,18 +815,17 @@ impl PDFContentParser {
     fn get_inline_eos(&self, dict: &HashMap<String, PSToken>) -> Vec<u8> {
         let filter = dict.get("F").or_else(|| dict.get("Filter"));
 
-        if let Some(PSToken::Literal(name)) = filter {
-            if name == "A85" || name == "ASCII85Decode" {
-                return b"~>".to_vec();
-            }
+        if let Some(PSToken::Literal(name)) = filter
+            && (name == "A85" || name == "ASCII85Decode")
+        {
+            return b"~>".to_vec();
         }
 
-        if let Some(PSToken::Array(filters)) = filter {
-            if let Some(PSToken::Literal(name)) = filters.first() {
-                if name == "A85" || name == "ASCII85Decode" {
-                    return b"~>".to_vec();
-                }
-            }
+        if let Some(PSToken::Array(filters)) = filter
+            && let Some(PSToken::Literal(name)) = filters.first()
+            && (name == "A85" || name == "ASCII85Decode")
+        {
+            return b"~>".to_vec();
         }
 
         b"EI".to_vec()
@@ -847,22 +846,22 @@ impl Iterator for PDFContentParser {
 }
 
 /// Check if byte is PDF whitespace.
-fn is_whitespace(b: u8) -> bool {
+const fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x00' | b'\x0c')
 }
 
-fn is_delimiter(b: u8) -> bool {
+const fn is_delimiter(b: u8) -> bool {
     matches!(
         b,
         b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
     )
 }
 
-fn is_keyword_end(b: u8) -> bool {
+const fn is_keyword_end(b: u8) -> bool {
     is_whitespace(b) || is_delimiter(b)
 }
 
-fn hex_value(c: u8) -> Option<u8> {
+const fn hex_value(c: u8) -> Option<u8> {
     match c {
         b'0'..=b'9' => Some(c - b'0'),
         b'a'..=b'f' => Some(c - b'a' + 10),
@@ -909,7 +908,7 @@ impl PDFResourceManager {
     }
 
     /// Check if caching is enabled.
-    pub fn caching_enabled(&self) -> bool {
+    pub const fn caching_enabled(&self) -> bool {
         self.caching
     }
 
@@ -917,7 +916,7 @@ impl PDFResourceManager {
     ///
     /// In PDF, ProcSet defines which procedure sets are needed.
     /// This is largely obsolete and we just log/ignore like Python does.
-    pub fn get_procset(&self, _procs: &[&str]) {
+    pub const fn get_procset(&self, _procs: &[&str]) {
         // Matches Python behavior: essentially a no-op
         // Python iterates procs and checks for LITERAL_PDF/LITERAL_TEXT
         // but doesn't do anything meaningful with them
@@ -938,12 +937,11 @@ impl PDFResourceManager {
     /// Returns a FontId that can be used to reference the font.
     pub fn get_font(&mut self, objid: Option<u64>, _spec: &HashMap<String, PDFObject>) -> FontId {
         // Check cache if objid provided and caching enabled
-        if let Some(id) = objid {
-            if self.caching {
-                if let Some(&font_id) = self.cached_fonts.get(&id) {
-                    return font_id;
-                }
-            }
+        if let Some(id) = objid
+            && self.caching
+            && let Some(&font_id) = self.cached_fonts.get(&id)
+        {
+            return font_id;
         }
 
         // Create new font entry
@@ -951,10 +949,10 @@ impl PDFResourceManager {
         self.next_font_id += 1;
 
         // Cache if objid provided and caching enabled
-        if let Some(id) = objid {
-            if self.caching {
-                self.cached_fonts.insert(id, font_id);
-            }
+        if let Some(id) = objid
+            && self.caching
+        {
+            self.cached_fonts.insert(id, font_id);
         }
 
         font_id
@@ -1082,22 +1080,22 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     /// Get current transformation matrix.
-    pub fn ctm(&self) -> Matrix {
+    pub const fn ctm(&self) -> Matrix {
         self.ctm
     }
 
     /// Get current graphics state (read-only).
-    pub fn graphicstate(&self) -> &PDFGraphicState {
+    pub const fn graphicstate(&self) -> &PDFGraphicState {
         &self.graphicstate
     }
 
     /// Get current text state (read-only).
-    pub fn textstate(&self) -> &PDFTextState {
+    pub const fn textstate(&self) -> &PDFTextState {
         &self.textstate
     }
 
     /// Get current text state (mutable).
-    pub fn textstate_mut(&mut self) -> &mut PDFTextState {
+    pub const fn textstate_mut(&mut self) -> &mut PDFTextState {
         &mut self.textstate
     }
 
@@ -1194,40 +1192,35 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
                 // Resolve Encoding reference if present (needed for Type1 fonts with custom encodings)
                 let mut final_spec = final_spec;
-                if let Some(PDFObject::Ref(r)) = final_spec.get("Encoding").cloned() {
-                    if let Some(doc) = doc {
-                        if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r)) {
-                            final_spec.insert("Encoding".to_string(), resolved.as_ref().clone());
-                        }
-                    }
+                if let Some(PDFObject::Ref(r)) = final_spec.get("Encoding").cloned()
+                    && let Some(doc) = doc
+                    && let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r))
+                {
+                    final_spec.insert("Encoding".to_string(), resolved.as_ref().clone());
                 }
 
                 // Resolve Widths reference if present (needed for simple fonts)
-                if let Some(PDFObject::Ref(r)) = final_spec.get("Widths").cloned() {
-                    if let Some(doc) = doc {
-                        if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r)) {
-                            final_spec.insert("Widths".to_string(), resolved.as_ref().clone());
-                        }
-                    }
+                if let Some(PDFObject::Ref(r)) = final_spec.get("Widths").cloned()
+                    && let Some(doc) = doc
+                    && let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r))
+                {
+                    final_spec.insert("Widths".to_string(), resolved.as_ref().clone());
                 }
 
                 // Resolve W (CID font widths) reference if present
-                if let Some(PDFObject::Ref(r)) = final_spec.get("W").cloned() {
-                    if let Some(doc) = doc {
-                        if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r)) {
-                            final_spec.insert("W".to_string(), resolved.as_ref().clone());
-                        }
-                    }
+                if let Some(PDFObject::Ref(r)) = final_spec.get("W").cloned()
+                    && let Some(doc) = doc
+                    && let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r))
+                {
+                    final_spec.insert("W".to_string(), resolved.as_ref().clone());
                 }
 
                 // Resolve FontDescriptor reference if present (needed for accurate ascent/descent)
-                if let Some(PDFObject::Ref(r)) = final_spec.get("FontDescriptor").cloned() {
-                    if let Some(doc) = doc {
-                        if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r)) {
-                            final_spec
-                                .insert("FontDescriptor".to_string(), resolved.as_ref().clone());
-                        }
-                    }
+                if let Some(PDFObject::Ref(r)) = final_spec.get("FontDescriptor").cloned()
+                    && let Some(doc) = doc
+                    && let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r))
+                {
+                    final_spec.insert("FontDescriptor".to_string(), resolved.as_ref().clone());
                 }
 
                 // Extract FontFile2 (TrueType font data) if available
@@ -1481,22 +1474,22 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
     /// w - Set line width.
     pub fn do_w(&mut self, linewidth: f64) {
-        let scale = (self.ctm.0.powi(2) + self.ctm.1.powi(2)).sqrt();
+        let scale = self.ctm.0.hypot(self.ctm.1);
         self.graphicstate.linewidth = linewidth * scale;
     }
 
     /// J - Set line cap style.
-    pub fn do_J(&mut self, linecap: i32) {
+    pub const fn do_J(&mut self, linecap: i32) {
         self.graphicstate.linecap = Some(linecap);
     }
 
     /// j - Set line join style.
-    pub fn do_j(&mut self, linejoin: i32) {
+    pub const fn do_j(&mut self, linejoin: i32) {
         self.graphicstate.linejoin = Some(linejoin);
     }
 
     /// M - Set miter limit.
-    pub fn do_M(&mut self, miterlimit: f64) {
+    pub const fn do_M(&mut self, miterlimit: f64) {
         self.graphicstate.miterlimit = Some(miterlimit);
     }
 
@@ -1511,14 +1504,14 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     /// i - Set flatness tolerance.
-    pub fn do_i(&mut self, flatness: f64) {
+    pub const fn do_i(&mut self, flatness: f64) {
         self.graphicstate.flatness = Some(flatness);
     }
 
     /// gs - Set parameters from graphics state parameter dictionary.
     ///
     /// TODO: Implement ExtGState parameter lookup from resources.
-    pub fn do_gs(&mut self, _name: &str) {
+    pub const fn do_gs(&mut self, _name: &str) {
         // TODO: Look up ExtGState from resources and apply parameters
     }
 
@@ -1833,13 +1826,13 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     ///
     /// Note: In PDF, clipping is applied to subsequent operations.
     /// The path is not cleared - it can still be painted.
-    pub fn do_W(&mut self) {
+    pub const fn do_W(&mut self) {
         // TODO: Implement actual clipping path handling
         // For now, this is a no-op that preserves the path
     }
 
     /// W* - Set clipping path using even-odd rule.
-    pub fn do_W_star(&mut self) {
+    pub const fn do_W_star(&mut self) {
         // TODO: Implement actual clipping path handling
         // For now, this is a no-op that preserves the path
     }
@@ -1852,12 +1845,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     ///
     /// Initializes the text matrix (Tm) and text line matrix (Tlm) to identity.
     /// Text objects cannot be nested.
-    pub fn do_BT(&mut self) {
+    pub const fn do_BT(&mut self) {
         self.textstate.reset();
     }
 
     /// ET - End text object.
-    pub fn do_ET(&mut self) {
+    pub const fn do_ET(&mut self) {
         // No action needed - text state persists for subsequent text objects
     }
 
@@ -1868,21 +1861,21 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Tc - Set character spacing.
     ///
     /// Character spacing is used by Tj, TJ, and ' operators.
-    pub fn do_Tc(&mut self, charspace: f64) {
+    pub const fn do_Tc(&mut self, charspace: f64) {
         self.textstate.charspace = charspace;
     }
 
     /// Tw - Set word spacing.
     ///
     /// Word spacing is used by Tj, TJ, and ' operators.
-    pub fn do_Tw(&mut self, wordspace: f64) {
+    pub const fn do_Tw(&mut self, wordspace: f64) {
         self.textstate.wordspace = wordspace;
     }
 
     /// Tz - Set horizontal scaling.
     ///
     /// Scaling is a percentage (100 = normal width).
-    pub fn do_Tz(&mut self, scaling: f64) {
+    pub const fn do_Tz(&mut self, scaling: f64) {
         self.textstate.scaling = scaling;
     }
 
@@ -1911,12 +1904,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     ///
     /// Rendering modes: 0=fill, 1=stroke, 2=fill+stroke, 3=invisible,
     /// 4-7 add clipping to modes 0-3.
-    pub fn do_Tr(&mut self, render: i32) {
+    pub const fn do_Tr(&mut self, render: i32) {
         self.textstate.render = render;
     }
 
     /// Ts - Set text rise (superscript/subscript offset).
-    pub fn do_Ts(&mut self, rise: f64) {
+    pub const fn do_Ts(&mut self, rise: f64) {
         self.textstate.rise = rise;
     }
 
@@ -1930,8 +1923,8 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Updates text matrix: e_new = tx*a + ty*c + e, f_new = tx*b + ty*d + f
     pub fn do_Td(&mut self, tx: f64, ty: f64) {
         let (a, b, c, d, e, f) = self.textstate.matrix;
-        let e_new = tx * a + ty * c + e;
-        let f_new = tx * b + ty * d + f;
+        let e_new = tx.mul_add(a, ty * c) + e;
+        let f_new = tx.mul_add(b, ty * d) + f;
         self.textstate.matrix = (a, b, c, d, e_new, f_new);
         self.textstate.linematrix = (0.0, 0.0);
     }
@@ -1941,8 +1934,8 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Same as Td but also sets text leading to ty.
     pub fn do_TD(&mut self, tx: f64, ty: f64) {
         let (a, b, c, d, e, f) = self.textstate.matrix;
-        let e_new = tx * a + ty * c + e;
-        let f_new = tx * b + ty * d + f;
+        let e_new = tx.mul_add(a, ty * c) + e;
+        let f_new = tx.mul_add(b, ty * d) + f;
         self.textstate.matrix = (a, b, c, d, e_new, f_new);
         self.textstate.leading = ty;
         self.textstate.linematrix = (0.0, 0.0);
@@ -1951,7 +1944,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Tm - Set text matrix and text line matrix.
     ///
     /// Directly sets the text matrix to the specified values.
-    pub fn do_Tm(&mut self, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) {
+    pub const fn do_Tm(&mut self, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) {
         self.textstate.matrix = (a, b, c, d, e, f);
         self.textstate.linematrix = (0.0, 0.0);
     }
@@ -1959,11 +1952,11 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// T* - Move to start of next text line.
     ///
     /// Uses current leading value. Equivalent to: 0 -leading Td
-    pub fn do_T_star(&mut self) {
+    pub const fn do_T_star(&mut self) {
         let (a, b, c, d, e, f) = self.textstate.matrix;
         let leading = self.textstate.leading;
         // T* equivalent to Td(0, leading), but note leading already stores -TL
-        self.textstate.matrix = (a, b, c, d, leading * c + e, leading * d + f);
+        self.textstate.matrix = (a, b, c, d, leading.mul_add(c, e), leading.mul_add(d, f));
         self.textstate.linematrix = (0.0, 0.0);
     }
 
@@ -2270,7 +2263,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     let mut attrs = HashMap::new();
                     for (key, value) in dict {
                         let obj = match value {
-                            PSToken::Int(n) => PDFObject::Int(n as i64),
+                            PSToken::Int(n) => PDFObject::Int(n),
                             PSToken::Real(n) => PDFObject::Real(n),
                             PSToken::Bool(b) => PDFObject::Bool(b),
                             PSToken::Literal(name) => PDFObject::Name(name),
@@ -2279,7 +2272,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                                 let mut vals = Vec::new();
                                 for item in arr {
                                     match item {
-                                        PSToken::Int(n) => vals.push(PDFObject::Int(n as i64)),
+                                        PSToken::Int(n) => vals.push(PDFObject::Int(n)),
                                         PSToken::Real(n) => vals.push(PDFObject::Real(n)),
                                         PSToken::Bool(b) => vals.push(PDFObject::Bool(b)),
                                         PSToken::Literal(name) => vals.push(PDFObject::Name(name)),
@@ -2293,7 +2286,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                                 let mut map = HashMap::new();
                                 for (k, v) in d {
                                     let vobj = match v {
-                                        PSToken::Int(n) => PDFObject::Int(n as i64),
+                                        PSToken::Int(n) => PDFObject::Int(n),
                                         PSToken::Real(n) => PDFObject::Real(n),
                                         PSToken::Bool(b) => PDFObject::Bool(b),
                                         PSToken::Literal(name) => PDFObject::Name(name),
@@ -2380,10 +2373,10 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 Some(PDFStackValue::Dict(values))
             }
             PDFObject::Ref(r) => {
-                if let Some(doc) = self.doc {
-                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
-                        return self.pdfobject_to_stackvalue(resolved.as_ref());
-                    }
+                if let Some(doc) = self.doc
+                    && let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone()))
+                {
+                    return self.pdfobject_to_stackvalue(resolved.as_ref());
                 }
                 None
             }
@@ -2422,12 +2415,11 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 }
             }
             Some(PSToken::Literal(name)) => {
-                if let Some(dict) = self.properties_dict() {
-                    if let Some(obj) = dict.get(&name) {
-                        if let Some(PDFStackValue::Dict(map)) = self.pdfobject_to_stackvalue(obj) {
-                            props = map;
-                        }
-                    }
+                if let Some(dict) = self.properties_dict()
+                    && let Some(obj) = dict.get(&name)
+                    && let Some(PDFStackValue::Dict(map)) = self.pdfobject_to_stackvalue(obj)
+                {
+                    props = map;
                 }
             }
             _ => {}

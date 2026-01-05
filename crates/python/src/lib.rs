@@ -221,13 +221,11 @@ fn pdf_object_to_py(
 }
 
 fn ps_exception(py: Python<'_>, class_name: &str, msg: &str) -> PyErr {
-    if let Ok(module) = py.import("pdfminer.psexceptions") {
-        if let Ok(cls) = module.getattr(class_name) {
-            if let Ok(err) = cls.call1((msg,)) {
+    if let Ok(module) = py.import("pdfminer.psexceptions")
+        && let Ok(cls) = module.getattr(class_name)
+            && let Ok(err) = cls.call1((msg,)) {
                 return PyErr::from_value(err);
             }
-        }
-    }
     PyValueError::new_err(msg.to_string())
 }
 
@@ -340,20 +338,16 @@ fn read_bytes_and_path(
         return Ok((buf.to_vec(py)?, None));
     }
 
-    if let Ok(os) = py.import("os") {
-        if let Ok(fspath) = os.getattr("fspath") {
-            if let Ok(path_obj) = fspath.call1((fp,)) {
-                if let Ok(path_str) = path_obj.extract::<String>() {
-                    if std::path::Path::new(&path_str).is_file() {
+    if let Ok(os) = py.import("os")
+        && let Ok(fspath) = os.getattr("fspath")
+            && let Ok(path_obj) = fspath.call1((fp,))
+                && let Ok(path_str) = path_obj.extract::<String>()
+                    && std::path::Path::new(&path_str).is_file() {
                         let data = std::fs::read(&path_str).map_err(|e| {
                             PyValueError::new_err(format!("failed to read {path_str}: {e}"))
                         })?;
                         return Ok((data, Some(path_str)));
                     }
-                }
-            }
-        }
-    }
 
     if fp.hasattr("read")? {
         let start_pos = fp
@@ -411,7 +405,7 @@ fn resolve_pdf_obj(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>
     let mut current = obj.clone().into_any().unbind();
     loop {
         let bound = current.bind(py);
-        if !is_pdf_obj_ref(&bound)? {
+        if !is_pdf_obj_ref(bound)? {
             return Ok(current);
         }
         let resolved = match bound.call_method0("resolve") {
@@ -428,14 +422,13 @@ fn parse_number_tree(
     visited: &mut HashSet<i64>,
     out: &mut Vec<(i64, Py<PyAny>)>,
 ) -> PyResult<()> {
-    if is_pdf_obj_ref(obj)? {
-        if let Ok(objid) = obj.getattr("objid")?.extract::<i64>() {
+    if is_pdf_obj_ref(obj)?
+        && let Ok(objid) = obj.getattr("objid")?.extract::<i64>() {
             if visited.contains(&objid) {
                 return Ok(());
             }
             visited.insert(objid);
         }
-    }
 
     let resolved = resolve_pdf_obj(py, obj)?;
     let resolved = resolved.bind(py);
@@ -534,13 +527,13 @@ impl PyNumberTree {
         let mut visited = HashSet::new();
         let mut out = Vec::new();
         let obj = self.obj.bind(py);
-        parse_number_tree(py, &obj, &mut visited, &mut out)?;
+        parse_number_tree(py, obj, &mut visited, &mut out)?;
         Ok(out)
     }
 }
 
 fn page_objects_to_chars_edges(
-    py: Python<'_>,
+    _py: Python<'_>,
     page: &Bound<'_, PyAny>,
 ) -> PyResult<(Vec<CharObj>, Vec<EdgeObj>, PageGeometry)> {
     let bbox: (f64, f64, f64, f64) = page.getattr("bbox")?.extract()?;
@@ -774,8 +767,8 @@ fn page_objects_to_chars_edges(
             .downcast::<PyDict>()
             .map_err(|_| PyValueError::new_err("curve must be a dict"))?;
         let pts_obj = dict.get_item("pts")?;
-        if let Some(pts_obj) = pts_obj {
-            if let Ok(pts) = pts_obj.extract::<Vec<(f64, f64)>>() {
+        if let Some(pts_obj) = pts_obj
+            && let Ok(pts) = pts_obj.extract::<Vec<(f64, f64)>>() {
                 for pair in pts.windows(2) {
                     let p0 = pair[0];
                     let p1 = pair[1];
@@ -802,7 +795,6 @@ fn page_objects_to_chars_edges(
                     });
                 }
             }
-        }
     }
 
     Ok((chars, edges, geom))
@@ -912,7 +904,7 @@ fn parse_table_settings(
 
     let mut text_settings = settings.text_settings.clone();
 
-    fn parse_explicit_lines(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Vec<ExplicitLine>> {
+    fn parse_explicit_lines(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Vec<ExplicitLine>> {
         if obj.is_none() {
             return Ok(Vec::new());
         }
@@ -1174,15 +1166,12 @@ impl PyPDFResourceManager {
 
     fn get_font(&mut self, objid: Option<u64>, spec: &Bound<'_, PyAny>) -> PyResult<u64> {
         let mut objid_opt = objid.filter(|id| *id > 0);
-        if objid_opt.is_none() {
-            if let Ok(attr) = spec.getattr("objid") {
-                if let Ok(val) = attr.extract::<u64>() {
-                    if val > 0 {
+        if objid_opt.is_none()
+            && let Ok(attr) = spec.getattr("objid")
+                && let Ok(val) = attr.extract::<u64>()
+                    && val > 0 {
                         objid_opt = Some(val);
                     }
-                }
-            }
-        }
         let spec_dict: HashMap<String, PDFObject> = HashMap::new();
         Ok(self.inner.get_font(objid_opt, &spec_dict))
     }
@@ -1580,11 +1569,10 @@ impl PyPDFDocument {
 
     /// Resolve an indirect object by ID.
     fn getobj(slf: PyRef<'_, Self>, py: Python<'_>, objid: u32) -> PyResult<Py<PyAny>> {
-        if let Ok(cache) = slf.resolved_cache.lock() {
-            if let Some(obj) = cache.get(&objid) {
+        if let Ok(cache) = slf.resolved_cache.lock()
+            && let Some(obj) = cache.get(&objid) {
                 return Ok(obj.clone_ref(py));
             }
-        }
         let obj = slf
             .inner
             .getobj(objid)
@@ -2660,7 +2648,7 @@ impl Write for PyWriter {
             let out = self.outfp.bind(py);
             let bytes = PyBytes::new(py, buf);
             out.call_method1("write", (bytes,))
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
             Ok(buf.len())
         })
     }
@@ -2668,13 +2656,12 @@ impl Write for PyWriter {
     fn flush(&mut self) -> std::io::Result<()> {
         Python::with_gil(|py| {
             let out = self.outfp.bind(py);
-            if let Ok(has_flush) = out.hasattr("flush") {
-                if has_flush {
+            if let Ok(has_flush) = out.hasattr("flush")
+                && has_flush {
                     out.call_method0("flush").map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        std::io::Error::other(e.to_string())
                     })?;
                 }
-            }
             Ok(())
         })
     }
@@ -2933,7 +2920,7 @@ impl PyTextConverter {
     }
 
     fn close(&mut self) {
-        let _ = self.converter.flush();
+        self.converter.flush();
     }
 }
 
@@ -3009,7 +2996,7 @@ impl PyHTMLConverter {
 
     fn close(&mut self) {
         self.converter.close();
-        let _ = self.converter.flush();
+        self.converter.flush();
     }
 }
 
@@ -3052,7 +3039,7 @@ impl PyXMLConverter {
 
     fn close(&mut self) {
         self.converter.close();
-        let _ = self.converter.flush();
+        self.converter.flush();
     }
 }
 

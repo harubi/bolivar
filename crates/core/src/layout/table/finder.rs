@@ -320,7 +320,7 @@ impl TableFinder {
         }
     }
 
-    fn from_objects(
+    const fn from_objects(
         chars: Vec<CharObj>,
         edges: Vec<EdgeObj>,
         geom: &PageGeometry,

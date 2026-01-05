@@ -51,12 +51,12 @@ pub fn mult_matrix(m1: Matrix, m0: Matrix) -> Matrix {
     let (a1, b1, c1, d1, e1, f1) = m1;
     let (a0, b0, c0, d0, e0, f0) = m0;
     (
-        a0 * a1 + c0 * b1,
-        b0 * a1 + d0 * b1,
-        a0 * c1 + c0 * d1,
-        b0 * c1 + d0 * d1,
-        a0 * e1 + c0 * f1 + e0,
-        b0 * e1 + d0 * f1 + f0,
+        a0.mul_add(a1, c0 * b1),
+        b0.mul_add(a1, d0 * b1),
+        a0.mul_add(c1, c0 * d1),
+        b0.mul_add(c1, d0 * d1),
+        a0.mul_add(e1, c0 * f1) + e0,
+        b0.mul_add(e1, d0 * f1) + f0,
     )
 }
 
@@ -68,14 +68,14 @@ pub fn mult_matrix(m1: Matrix, m0: Matrix) -> Matrix {
 pub fn translate_matrix(m: Matrix, v: Point) -> Matrix {
     let (a, b, c, d, e, f) = m;
     let (x, y) = v;
-    (a, b, c, d, x * a + y * c + e, x * b + y * d + f)
+    (a, b, c, d, x.mul_add(a, y * c) + e, x.mul_add(b, y * d) + f)
 }
 
 /// Applies a matrix to a point.
 pub fn apply_matrix_pt(m: Matrix, v: Point) -> Point {
     let (a, b, c, d, e, f) = m;
     let (x, y) = v;
-    (a * x + c * y + e, b * x + d * y + f)
+    (a.mul_add(x, c * y) + e, b.mul_add(x, d * y) + f)
 }
 
 /// Applies a matrix to a rectangle.
@@ -107,7 +107,7 @@ pub fn apply_matrix_rect(m: Matrix, rect: Rect) -> Rect {
 pub fn apply_matrix_norm(m: Matrix, v: Point) -> Point {
     let (a, b, c, d, _e, _f) = m;
     let (p, q) = v;
-    (a * p + c * q, b * p + d * q)
+    (a.mul_add(p, c * q), b.mul_add(p, d * q))
 }
 
 /// Trait for objects that have a bounding box.
@@ -159,7 +159,7 @@ impl PointDistance for PlaneNode {
     fn distance_2(&self, point: &[f64; 2]) -> f64 {
         let cx = (self.bbox.0 + self.bbox.2) / 2.0;
         let cy = (self.bbox.1 + self.bbox.3) / 2.0;
-        (point[0] - cx).powi(2) + (point[1] - cy).powi(2)
+        (point[1] - cy).mul_add(point[1] - cy, (point[0] - cx).powi(2))
     }
 }
 
@@ -169,7 +169,7 @@ impl SimpleDistanceMetric<f64> for CenterDistance {
     fn distance(&self, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
         let dx = x1 - x2;
         let dy = y1 - y2;
-        dx * dx + dy * dy
+        dx.mul_add(dx, dy * dy)
     }
 
     fn distance_to_bbox(
@@ -403,7 +403,7 @@ impl<T: HasBBox> Plane<T> {
                         if node_index >= leaf_limit {
                             self.static_search_stack.push(index);
                         } else {
-                            let id = index as usize;
+                            let id = index;
                             if id >= self.static_count || !self.alive[id] {
                                 continue;
                             }
@@ -486,12 +486,12 @@ impl<T: HasBBox> Plane<T> {
     }
 
     /// Returns the number of active objects in the plane.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.alive_count
     }
 
     /// Returns true if the plane is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.alive_count == 0
     }
 

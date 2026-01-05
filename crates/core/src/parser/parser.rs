@@ -18,7 +18,7 @@ pub struct PDFParser<'a> {
 }
 
 impl<'a> PDFParser<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
+    pub const fn new(data: &'a [u8]) -> Self {
         Self {
             base: PSBaseParser::new(data),
             lookahead: Vec::new(),
@@ -31,7 +31,7 @@ impl<'a> PDFParser<'a> {
     }
 
     /// Get current parser position.
-    pub fn tell(&self) -> usize {
+    pub const fn tell(&self) -> usize {
         self.base.tell()
     }
 
@@ -66,7 +66,7 @@ impl<'a> PDFParser<'a> {
                 if let Ok(Some(tok2)) = self.next_token() {
                     if let PSToken::Int(m) = tok2 {
                         if let Ok(Some(tok3)) = self.next_token() {
-                            if let PSToken::Keyword(Keyword::R) = tok3 {
+                            if tok3 == PSToken::Keyword(Keyword::R) {
                                 return Ok(PDFObject::Ref(PDFObjRef::new(n as u32, m as u32)));
                             }
                             // Not R, push back both
@@ -115,7 +115,7 @@ impl<'a> PDFParser<'a> {
         loop {
             let token = self.next_token()?.ok_or(PdfError::UnexpectedEof)?;
 
-            if let PSToken::Keyword(Keyword::ArrayEnd) = token {
+            if token == PSToken::Keyword(Keyword::ArrayEnd) {
                 break;
             }
 
@@ -133,7 +133,7 @@ impl<'a> PDFParser<'a> {
             let token = self.next_token()?.ok_or(PdfError::UnexpectedEof)?;
 
             // Check for end of dict
-            if let PSToken::Keyword(Keyword::DictEnd) = token {
+            if token == PSToken::Keyword(Keyword::DictEnd) {
                 break;
             }
 
@@ -218,10 +218,10 @@ impl PDFContentParser {
                             let mut dict = HashMap::new();
                             let mut iter = dict_contents.into_iter();
                             while let Some(key) = iter.next() {
-                                if let PDFObject::Name(name) = key {
-                                    if let Some(value) = iter.next() {
-                                        dict.insert(name, value);
-                                    }
+                                if let PDFObject::Name(name) = key
+                                    && let Some(value) = iter.next()
+                                {
+                                    dict.insert(name, value);
                                 }
                             }
                             operands.push(PDFObject::Dict(dict));
@@ -232,7 +232,7 @@ impl PDFContentParser {
                             // Collect until ID
                             let mut img_params = Vec::new();
                             while let Some(Ok((_, tok))) = parser.next_token() {
-                                if let PSToken::Keyword(Keyword::ID) = &tok {
+                                if matches!(&tok, PSToken::Keyword(Keyword::ID)) {
                                     break;
                                 }
                                 if let Ok(obj) = Self::ps_to_pdf(tok) {
@@ -243,10 +243,10 @@ impl PDFContentParser {
                             let mut dict = HashMap::new();
                             let mut iter = img_params.into_iter();
                             while let Some(key) = iter.next() {
-                                if let PDFObject::Name(name) = key {
-                                    if let Some(value) = iter.next() {
-                                        dict.insert(name, value);
-                                    }
+                                if let PDFObject::Name(name) = key
+                                    && let Some(value) = iter.next()
+                                {
+                                    dict.insert(name, value);
                                 }
                             }
                             ops.push(Operation {
@@ -255,7 +255,7 @@ impl PDFContentParser {
                             });
                             // Skip until EI (simplified - in real impl would need to read raw bytes)
                             while let Some(Ok((_, tok))) = parser.next_token() {
-                                if let PSToken::Keyword(Keyword::EI) = &tok {
+                                if matches!(&tok, PSToken::Keyword(Keyword::EI)) {
                                     ops.push(Operation {
                                         operator: Keyword::EI,
                                         operands: vec![],

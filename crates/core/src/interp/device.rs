@@ -37,8 +37,8 @@ pub enum PDFStackValue {
     Bool(bool),
     Name(String),
     String(Vec<u8>),
-    Array(Vec<PDFStackValue>),
-    Dict(HashMap<String, PDFStackValue>),
+    Array(Vec<Self>),
+    Dict(HashMap<String, Self>),
 }
 
 /// Path segment for graphics operations.
@@ -366,7 +366,7 @@ pub struct TagExtractor<'a, W: Write> {
 
 impl<'a, W: Write> TagExtractor<'a, W> {
     /// Create a new TagExtractor.
-    pub fn new(outfp: &'a mut W, codec: &'a str) -> Self {
+    pub const fn new(outfp: &'a mut W, codec: &'a str) -> Self {
         Self {
             outfp,
             codec,
@@ -377,12 +377,12 @@ impl<'a, W: Write> TagExtractor<'a, W> {
     }
 
     /// Get current page number.
-    pub fn pageno(&self) -> u32 {
+    pub const fn pageno(&self) -> u32 {
         self.pageno
     }
 
     /// Increment page number.
-    pub fn increment_pageno(&mut self) {
+    pub const fn increment_pageno(&mut self) {
         self.pageno += 1;
     }
 

@@ -26,12 +26,12 @@ pub enum Color {
     /// Colored tiling pattern (PaintType=1) - just the pattern name
     PatternColored(String),
     /// Uncolored tiling pattern (PaintType=2) - base color + pattern name
-    PatternUncolored(Box<Color>, String),
+    PatternUncolored(Box<Self>, String),
 }
 
 impl Default for Color {
     fn default() -> Self {
-        Color::Gray(0.0)
+        Self::Gray(0.0)
     }
 }
 
@@ -43,11 +43,11 @@ impl Color {
     /// - PatternUncolored: returns the base color's components
     pub fn to_vec(&self) -> Vec<f64> {
         match self {
-            Color::Gray(g) => vec![*g],
-            Color::Rgb(r, g, b) => vec![*r, *g, *b],
-            Color::Cmyk(c, m, y, k) => vec![*c, *m, *y, *k],
-            Color::PatternColored(_) => vec![], // No numeric components
-            Color::PatternUncolored(base, _) => base.to_vec(),
+            Self::Gray(g) => vec![*g],
+            Self::Rgb(r, g, b) => vec![*r, *g, *b],
+            Self::Cmyk(c, m, y, k) => vec![*c, *m, *y, *k],
+            Self::PatternColored(_) => vec![], // No numeric components
+            Self::PatternUncolored(base, _) => base.to_vec(),
         }
     }
 
@@ -57,17 +57,17 @@ impl Color {
     /// `None` for standard colors.
     pub fn pattern_name(&self) -> Option<&str> {
         match self {
-            Color::PatternColored(name) => Some(name),
-            Color::PatternUncolored(_, name) => Some(name),
+            Self::PatternColored(name) => Some(name),
+            Self::PatternUncolored(_, name) => Some(name),
             _ => None,
         }
     }
 
     /// Check if this color is a pattern color.
-    pub fn is_pattern(&self) -> bool {
+    pub const fn is_pattern(&self) -> bool {
         matches!(
             self,
-            Color::PatternColored(_) | Color::PatternUncolored(_, _)
+            Self::PatternColored(_) | Self::PatternUncolored(_, _)
         )
     }
 }
@@ -103,7 +103,7 @@ pub struct PDFTextState {
 
 impl PDFTextState {
     /// Create a new text state with default values.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         let mut state = Self {
             font: None,
             fontname: None,
@@ -141,7 +141,7 @@ impl PDFTextState {
     /// Reset text matrix and line matrix to defaults.
     ///
     /// Called at the start of each text object (BT operator).
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.matrix = MATRIX_IDENTITY;
         self.linematrix = (0.0, 0.0);
     }

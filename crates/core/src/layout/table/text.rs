@@ -12,7 +12,7 @@ const DEFAULT_X_DENSITY: f64 = 7.25;
 const DEFAULT_Y_DENSITY: f64 = 13.0;
 
 /// Get the line cluster key for a word based on text direction.
-pub(crate) fn get_line_cluster_key(dir: TextDir, obj: &WordObj) -> f64 {
+pub fn get_line_cluster_key(dir: TextDir, obj: &WordObj) -> f64 {
     match dir {
         TextDir::Ttb => obj.top,
         TextDir::Btt => -obj.bottom,
@@ -47,7 +47,7 @@ fn get_char_dir(upright: bool, settings: &TextSettings) -> TextDir {
 }
 
 /// Merge characters into a word.
-pub(crate) fn merge_chars(ordered: &[&CharObj], settings: &TextSettings) -> WordObj {
+pub fn merge_chars(ordered: &[&CharObj], settings: &TextSettings) -> WordObj {
     let bbox = bbox_from_chars(ordered);
     let doctop_adj = ordered[0].doctop - ordered[0].top;
     let upright = ordered[0].upright;
@@ -140,7 +140,7 @@ fn char_begins_new_word(
 }
 
 /// Group characters into words.
-pub(crate) fn iter_chars_to_words<'a>(
+pub fn iter_chars_to_words<'a>(
     ordered: &[&'a CharObj],
     direction: TextDir,
     settings: &TextSettings,
@@ -229,7 +229,7 @@ fn iter_chars_to_lines<'a>(
 }
 
 /// Extract words from characters.
-pub(crate) fn extract_words(chars: &[CharObj], settings: &TextSettings) -> Vec<WordObj> {
+pub fn extract_words(chars: &[CharObj], settings: &TextSettings) -> Vec<WordObj> {
     if chars.is_empty() {
         return Vec::new();
     }
@@ -294,7 +294,7 @@ fn extract_word_map<'a>(
     words
 }
 
-fn bbox_origin(bbox: &super::types::BBox, dir: TextDir) -> f64 {
+const fn bbox_origin(bbox: &super::types::BBox, dir: TextDir) -> f64 {
     match dir {
         TextDir::Ttb => bbox.top,
         TextDir::Btt => bbox.bottom,
@@ -303,7 +303,7 @@ fn bbox_origin(bbox: &super::types::BBox, dir: TextDir) -> f64 {
     }
 }
 
-fn word_position(word: &WordObj, dir: TextDir) -> f64 {
+const fn word_position(word: &WordObj, dir: TextDir) -> f64 {
     match dir {
         TextDir::Ttb => word.top,
         TextDir::Btt => word.bottom,
@@ -372,10 +372,8 @@ fn extract_text_layout_refs(
         );
 
         for _ in 0..num_newlines_prepend {
-            if out.is_empty() || out.ends_with('\n') {
-                if layout_width_chars > 0 {
-                    out.push_str(&" ".repeat(layout_width_chars as usize));
-                }
+            if (out.is_empty() || out.ends_with('\n')) && layout_width_chars > 0 {
+                out.push_str(&" ".repeat(layout_width_chars as usize));
             }
             out.push('\n');
         }
@@ -493,7 +491,7 @@ fn textmap_to_string(lines: Vec<String>, line_dir: TextDir, char_dir: TextDir) -
 }
 
 /// Extract text from characters.
-pub(crate) fn extract_text(chars: &[CharObj], settings: &TextSettings) -> String {
+pub fn extract_text(chars: &[CharObj], settings: &TextSettings) -> String {
     if chars.is_empty() {
         return String::new();
     }
@@ -552,7 +550,7 @@ fn extract_text_refs(chars: &[&CharObj], settings: &TextSettings) -> String {
 }
 
 /// Extract text from specific character indices.
-pub(crate) fn extract_text_from_char_ids(
+pub fn extract_text_from_char_ids(
     chars: &[CharObj],
     ids: &[CharId],
     settings: &TextSettings,
@@ -568,7 +566,7 @@ pub(crate) fn extract_text_from_char_ids(
 }
 
 /// Extract text from specific character indices with layout spacing.
-pub(crate) fn extract_text_from_char_ids_layout(
+pub fn extract_text_from_char_ids_layout(
     chars: &[CharObj],
     ids: &[CharId],
     settings: &TextSettings,

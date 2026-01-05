@@ -27,17 +27,17 @@ fn escape(s: &[u8]) -> String {
             b'\'' => result.push_str("&#39;"),
             b'\\' => result.push_str("&#92;"),
             0..=31 | 127..=255 => {
-                result.push_str(&format!("&#{};", byte));
+                result.push_str(&format!("&#{byte};"));
             }
             _ => result.push(byte as char),
         }
     }
-    result
+    return result
 }
 
 /// Escape a string for XML output.
 fn escape_str(s: &str) -> String {
-    escape(s.as_bytes())
+    return escape(s.as_bytes())
 }
 
 /// Stream codec for output.
@@ -63,10 +63,10 @@ fn dumpxml<W: Write>(out: &mut W, obj: &PDFObject, codec: StreamCodec) -> Result
             )?;
         }
         PDFObject::Int(n) => {
-            write!(out, "<number>{}</number>", n)?;
+            write!(out, "<number>{n}</number>")?;
         }
         PDFObject::Real(n) => {
-            write!(out, "<number>{}</number>", n)?;
+            write!(out, "<number>{n}</number>")?;
         }
         PDFObject::String(s) => {
             write!(out, r#"<string size="{}">{}</string>"#, s.len(), escape(s))?;
@@ -84,7 +84,7 @@ fn dumpxml<W: Write>(out: &mut W, obj: &PDFObject, codec: StreamCodec) -> Result
         }
         PDFObject::Dict(dict) => {
             writeln!(out, r#"<dict size="{}">"#, dict.len())?;
-            for (k, v) in dict.iter() {
+            for (k, v) in dict {
                 writeln!(out, "<key>{}</key>", escape_str(k))?;
                 write!(out, "<value>")?;
                 dumpxml(out, v, codec)?;
@@ -125,7 +125,7 @@ fn dumpxml<W: Write>(out: &mut W, obj: &PDFObject, codec: StreamCodec) -> Result
             write!(out, r#"<ref id="{}" />"#, objref.objid)?;
         }
     }
-    Ok(())
+    return Ok(())
 }
 
 /// Dump all trailers from the document.
@@ -155,7 +155,7 @@ fn dumptrailers<W: Write>(out: &mut W, doc: &PDFDocument, show_fallback_xref: bo
         );
     }
 
-    Ok(())
+    return Ok(())
 }
 
 /// Dump all objects from the document.
@@ -180,14 +180,14 @@ fn dumpallobjs<W: Write>(
 
         match doc.getobj(objid) {
             Ok(obj) => {
-                writeln!(out, r#"<object id="{}">"#, objid)?;
+                writeln!(out, r#"<object id="{objid}">"#)?;
                 dumpxml(out, &obj, codec)?;
                 writeln!(out)?;
                 writeln!(out, "</object>")?;
                 writeln!(out)?;
             }
             Err(e) => {
-                eprintln!("not found: object {} - {:?}", objid, e);
+                eprintln!("not found: object {objid} - {e:?}");
             }
         }
     }
@@ -196,7 +196,7 @@ fn dumpallobjs<W: Write>(
     dumptrailers(out, doc, show_fallback_xref)?;
 
     write!(out, "</pdf>")?;
-    Ok(())
+    return Ok(())
 }
 
 /// Dump outline/table of contents.
@@ -212,19 +212,18 @@ fn dumpoutline<W: Write>(out: &mut W, doc: &PDFDocument) -> Result<()> {
     writeln!(out, "<outlines>")?;
 
     // Check for Outlines in catalog
-    if let Some(outlines_ref) = doc.catalog().get("Outlines") {
-        if let Ok(outlines) = doc.resolve(outlines_ref) {
-            if let Ok(dict) = outlines.as_dict() {
-                // Traverse outline tree
-                if let Some(first_ref) = dict.get("First") {
-                    dump_outline_item(out, doc, first_ref, &pages, 0)?;
-                }
-            }
+    if let Some(outlines_ref) = doc.catalog().get("Outlines")
+        && let Ok(outlines) = doc.resolve(outlines_ref)
+        && let Ok(dict) = outlines.as_dict()
+    {
+        // Traverse outline tree
+        if let Some(first_ref) = dict.get("First") {
+            dump_outline_item(out, doc, first_ref, &pages, 0)?;
         }
     }
 
     writeln!(out, "</outlines>")?;
-    Ok(())
+    return Ok(())
 }
 
 /// Dump a single outline item and its siblings.
@@ -260,18 +259,14 @@ fn dump_outline_item<W: Write>(
     let mut pageno = None;
     if let Some(dest) = dict.get("Dest") {
         pageno = resolve_dest_to_pageno(doc, dest, pages);
-    } else if let Some(action) = dict.get("A") {
-        if let Ok(a) = doc.resolve(action) {
-            if let Ok(action_dict) = a.as_dict() {
-                if let Some(PDFObject::Name(subtype)) = action_dict.get("S") {
-                    if subtype == "GoTo" {
-                        if let Some(d) = action_dict.get("D") {
-                            pageno = resolve_dest_to_pageno(doc, d, pages);
-                        }
-                    }
-                }
-            }
-        }
+    } else if let Some(action) = dict.get("A")
+        && let Ok(a) = doc.resolve(action)
+        && let Ok(action_dict) = a.as_dict()
+        && let Some(PDFObject::Name(subtype)) = action_dict.get("S")
+        && subtype == "GoTo"
+        && let Some(d) = action_dict.get("D")
+    {
+        pageno = resolve_dest_to_pageno(doc, d, pages);
     }
 
     writeln!(
@@ -290,7 +285,7 @@ fn dump_outline_item<W: Write>(
     }
 
     if let Some(pn) = pageno {
-        writeln!(out, "<pageno>{}</pageno>", pn)?;
+        writeln!(out, "<pageno>{pn}</pageno>")?;
     }
 
     writeln!(out, "</outline>")?;
@@ -305,33 +300,33 @@ fn dump_outline_item<W: Write>(
         dump_outline_item(out, doc, next, pages, level)?;
     }
 
-    Ok(())
+    return Ok(())
 }
 
 /// Resolve a destination to its full form.
 ///
-/// Handles named destinations (strings/names) via doc.get_dest() lookup.
+/// Handles named destinations (strings/names) via `doc.get_dest()` lookup.
 fn resolve_dest(doc: &PDFDocument, dest: &PDFObject) -> Option<PDFObject> {
     let resolved = doc.resolve(dest).ok()?;
 
     match &resolved {
         PDFObject::String(s) => {
             // Named destination - look up via Names/Dests
-            doc.get_dest(s).ok()
+            return doc.get_dest(s).ok()
         }
         PDFObject::Name(name) => {
             // Named destination as name literal
-            doc.get_dest(name.as_bytes()).ok()
+            return doc.get_dest(name.as_bytes()).ok()
         }
         PDFObject::Dict(dict) => {
             // Destination dict with "D" key
             if let Some(d) = dict.get("D") {
-                doc.resolve(d).ok()
+                return doc.resolve(d).ok()
             } else {
-                Some(resolved)
+                return Some(resolved)
             }
         }
-        _ => Some(resolved),
+        _ => return Some(resolved),
     }
 }
 
@@ -351,9 +346,9 @@ fn resolve_dest_to_pageno(
             if let PDFObject::Ref(objref) = &arr[0] {
                 return pages.get(&objref.objid).copied();
             }
-            None
+            return None
         }
-        _ => None,
+        _ => return None,
     }
 }
 
@@ -362,19 +357,16 @@ fn extractembedded(doc: &PDFDocument, extractdir: &str) -> Result<()> {
     std::fs::create_dir_all(extractdir)?;
 
     // Look for embedded files in Names/EmbeddedFiles
-    if let Some(names_ref) = doc.catalog().get("Names") {
-        if let Ok(names) = doc.resolve(names_ref) {
-            if let Ok(names_dict) = names.as_dict() {
-                if let Some(ef_ref) = names_dict.get("EmbeddedFiles") {
-                    if let Ok(ef) = doc.resolve(ef_ref) {
-                        extract_embedded_files_from_tree(doc, &ef, extractdir)?;
-                    }
-                }
-            }
-        }
+    if let Some(names_ref) = doc.catalog().get("Names")
+        && let Ok(names) = doc.resolve(names_ref)
+        && let Ok(names_dict) = names.as_dict()
+        && let Some(ef_ref) = names_dict.get("EmbeddedFiles")
+        && let Ok(ef) = doc.resolve(ef_ref)
+    {
+        extract_embedded_files_from_tree(doc, &ef, extractdir)?;
     }
 
-    Ok(())
+    return Ok(())
 }
 
 /// Extract embedded files from a name tree.
@@ -389,39 +381,39 @@ fn extract_embedded_files_from_tree(
     };
 
     // Check Names array (leaf node)
-    if let Some(names_arr) = dict.get("Names") {
-        if let Ok(arr) = doc.resolve(names_arr)?.as_array() {
-            // Names array is pairs: [name1, filespec1, name2, filespec2, ...]
-            let mut i = 0;
-            while i + 1 < arr.len() {
-                let name = &arr[i];
-                let filespec_ref = &arr[i + 1];
+    if let Some(names_arr) = dict.get("Names")
+        && let Ok(arr) = doc.resolve(names_arr)?.as_array()
+    {
+        // Names array is pairs: [name1, filespec1, name2, filespec2, ...]
+        let mut i = 0;
+        while i + 1 < arr.len() {
+            let name = &arr[i];
+            let filespec_ref = &arr[i + 1];
 
-                if let Ok(name_bytes) = name.as_string() {
-                    let filename = String::from_utf8_lossy(name_bytes).to_string();
-                    if let Ok(filespec) = doc.resolve(filespec_ref) {
-                        if let Ok(fs_dict) = filespec.as_dict() {
-                            extract_single_embedded(doc, &filename, fs_dict, extractdir)?;
-                        }
-                    }
+            if let Ok(name_bytes) = name.as_string() {
+                let filename = String::from_utf8_lossy(name_bytes).to_string();
+                if let Ok(filespec) = doc.resolve(filespec_ref)
+                    && let Ok(fs_dict) = filespec.as_dict()
+                {
+                    extract_single_embedded(doc, &filename, fs_dict, extractdir)?;
                 }
-                i += 2;
             }
+            i += 2;
         }
     }
 
     // Check Kids array (intermediate node)
-    if let Some(kids) = dict.get("Kids") {
-        if let Ok(kids_arr) = doc.resolve(kids)?.as_array() {
-            for kid in kids_arr {
-                if let Ok(kid_tree) = doc.resolve(kid) {
-                    extract_embedded_files_from_tree(doc, &kid_tree, extractdir)?;
-                }
+    if let Some(kids) = dict.get("Kids")
+        && let Ok(kids_arr) = doc.resolve(kids)?.as_array()
+    {
+        for kid in kids_arr {
+            if let Ok(kid_tree) = doc.resolve(kid) {
+                extract_embedded_files_from_tree(doc, &kid_tree, extractdir)?;
             }
         }
     }
 
-    Ok(())
+    return Ok(())
 }
 
 /// Extract a single embedded file.
@@ -437,13 +429,11 @@ fn extract_single_embedded(
     } else if let Some(PDFObject::String(f)) = filespec.get("F") {
         String::from_utf8_lossy(f).to_string()
     } else {
-        filename.to_string()
+        filename.to_owned()
     };
 
     let basename = std::path::Path::new(&basename)
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| basename.clone());
+        .file_name().map_or_else(|| return basename.clone(), |s| return s.to_string_lossy().to_string());
 
     // Get EF dictionary
     let ef = match filespec.get("EF") {
@@ -457,30 +447,27 @@ fn extract_single_embedded(
     };
 
     // Get file stream reference
-    let file_ref = ef_dict.get("UF").or_else(|| ef_dict.get("F"));
+    let file_ref = ef_dict.get("UF").or_else(|| return ef_dict.get("F"));
     let file_ref = match file_ref {
         Some(r) => r,
         None => return Ok(()),
     };
 
     let file_obj = doc.resolve(file_ref)?;
-    let stream = match file_obj.as_stream() {
-        Ok(s) => s,
-        Err(_) => {
-            eprintln!("Warning: reference for {} is not a stream", basename);
-            return Ok(());
-        }
+    let stream = if let Ok(s) = file_obj.as_stream() { s } else {
+        eprintln!("Warning: reference for {basename} is not a stream");
+        return Ok(());
     };
 
     // Build output path
-    let path = format!("{}/{}", extractdir, basename);
+    let path = format!("{extractdir}/{basename}");
 
     if std::path::Path::new(&path).exists() {
-        eprintln!("Warning: file exists: {}", path);
+        eprintln!("Warning: file exists: {path}");
         return Ok(());
     }
 
-    eprintln!("extracting: {}", path);
+    eprintln!("extracting: {path}");
 
     // Create parent directories if needed
     if let Some(parent) = std::path::Path::new(&path).parent() {
@@ -491,7 +478,7 @@ fn extract_single_embedded(
     let data = stream.get_data();
     std::fs::write(&path, data)?;
 
-    Ok(())
+    return Ok(())
 }
 
 /// Main PDF dump function.
@@ -515,18 +502,18 @@ fn dumppdf<W: Write>(
     // Dump specific pages
     if !pagenos.is_empty() {
         for (pageno, page_result) in PDFPage::create_pages(doc).enumerate() {
-            if pagenos.contains(&pageno) {
-                if let Ok(page) = page_result {
-                    if codec != StreamCodec::None {
-                        // Dump page contents as stream
-                        if let Some(contents) = page.attrs.get("Contents") {
-                            if let Ok(resolved) = doc.resolve(contents) {
-                                dumpxml(out, &resolved, codec)?;
-                            }
-                        }
-                    } else {
-                        // Dump page attributes
-                        dumpxml(out, &PDFObject::Dict(page.attrs.clone()), codec)?;
+            if pagenos.contains(&pageno)
+                && let Ok(page) = page_result
+            {
+                if codec == StreamCodec::None {
+                    // Dump page attributes
+                    dumpxml(out, &PDFObject::Dict(page.attrs.clone()), codec)?;
+                } else {
+                    // Dump page contents as stream
+                    if let Some(contents) = page.attrs.get("Contents")
+                        && let Ok(resolved) = doc.resolve(contents)
+                    {
+                        dumpxml(out, &resolved, codec)?;
                     }
                 }
             }
@@ -542,7 +529,7 @@ fn dumppdf<W: Write>(
         writeln!(out)?;
     }
 
-    Ok(())
+    return Ok(())
 }
 
 /// A command line tool for dumping PDF internal structure as XML.
@@ -623,7 +610,7 @@ struct Args {
     text_stream: bool,
 }
 
-fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn main() -> core::result::Result<(), Box<dyn core::error::Error>> {
     let args = Args::parse();
 
     if args.debug {
@@ -644,7 +631,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Parse object IDs
     let objids: Vec<u32> = if let Some(ref objs) = args.objects {
         objs.split(',')
-            .filter_map(|s| s.trim().parse().ok())
+            .filter_map(|s| return s.trim().parse().ok())
             .collect()
     } else {
         Vec::new()
@@ -652,11 +639,11 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Parse page numbers
     let pagenos: HashSet<usize> = if let Some(ref nums) = args.page_numbers {
-        nums.iter().map(|n| n.saturating_sub(1)).collect()
+        nums.iter().map(|n| return n.saturating_sub(1)).collect()
     } else if let Some(ref p) = args.pagenos {
         p.split(',')
-            .filter_map(|s| s.trim().parse::<usize>().ok())
-            .map(|n| n.saturating_sub(1))
+            .filter_map(|s| return s.trim().parse::<usize>().ok())
+            .map(|n| return n.saturating_sub(1))
             .collect()
     } else {
         HashSet::new()
@@ -701,5 +688,5 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     output.flush()?;
-    Ok(())
+    return Ok(())
 }

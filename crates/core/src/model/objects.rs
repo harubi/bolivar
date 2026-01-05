@@ -22,9 +22,9 @@ pub enum PDFObject {
     /// String (byte array)
     String(Vec<u8>),
     /// Array of objects
-    Array(Vec<PDFObject>),
+    Array(Vec<Self>),
     /// Dictionary (name -> object mapping)
-    Dict(HashMap<String, PDFObject>),
+    Dict(HashMap<String, Self>),
     /// Stream (dictionary + binary data)
     Stream(Box<PDFStream>),
     /// Indirect object reference
@@ -33,14 +33,14 @@ pub enum PDFObject {
 
 impl PDFObject {
     /// Check if this is a null object
-    pub fn is_null(&self) -> bool {
-        matches!(self, PDFObject::Null)
+    pub const fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
     }
 
     /// Get as boolean
-    pub fn as_bool(&self) -> Result<bool> {
+    pub const fn as_bool(&self) -> Result<bool> {
         match self {
-            PDFObject::Bool(b) => Ok(*b),
+            Self::Bool(b) => Ok(*b),
             _ => Err(PdfError::TypeError {
                 expected: "bool",
                 got: self.type_name(),
@@ -49,9 +49,9 @@ impl PDFObject {
     }
 
     /// Get as integer
-    pub fn as_int(&self) -> Result<i64> {
+    pub const fn as_int(&self) -> Result<i64> {
         match self {
-            PDFObject::Int(n) => Ok(*n),
+            Self::Int(n) => Ok(*n),
             _ => Err(PdfError::TypeError {
                 expected: "int",
                 got: self.type_name(),
@@ -60,9 +60,9 @@ impl PDFObject {
     }
 
     /// Get as real (float)
-    pub fn as_real(&self) -> Result<f64> {
+    pub const fn as_real(&self) -> Result<f64> {
         match self {
-            PDFObject::Real(n) => Ok(*n),
+            Self::Real(n) => Ok(*n),
             _ => Err(PdfError::TypeError {
                 expected: "real",
                 got: self.type_name(),
@@ -71,10 +71,10 @@ impl PDFObject {
     }
 
     /// Get numeric value (int or real coerced to f64)
-    pub fn as_num(&self) -> Result<f64> {
+    pub const fn as_num(&self) -> Result<f64> {
         match self {
-            PDFObject::Int(n) => Ok(*n as f64),
-            PDFObject::Real(n) => Ok(*n),
+            Self::Int(n) => Ok(*n as f64),
+            Self::Real(n) => Ok(*n),
             _ => Err(PdfError::TypeError {
                 expected: "number",
                 got: self.type_name(),
@@ -85,7 +85,7 @@ impl PDFObject {
     /// Get as name string
     pub fn as_name(&self) -> Result<&str> {
         match self {
-            PDFObject::Name(s) => Ok(s),
+            Self::Name(s) => Ok(s),
             _ => Err(PdfError::TypeError {
                 expected: "name",
                 got: self.type_name(),
@@ -96,7 +96,7 @@ impl PDFObject {
     /// Get as byte string
     pub fn as_string(&self) -> Result<&[u8]> {
         match self {
-            PDFObject::String(s) => Ok(s),
+            Self::String(s) => Ok(s),
             _ => Err(PdfError::TypeError {
                 expected: "string",
                 got: self.type_name(),
@@ -105,9 +105,9 @@ impl PDFObject {
     }
 
     /// Get as array
-    pub fn as_array(&self) -> Result<&Vec<PDFObject>> {
+    pub const fn as_array(&self) -> Result<&Vec<Self>> {
         match self {
-            PDFObject::Array(arr) => Ok(arr),
+            Self::Array(arr) => Ok(arr),
             _ => Err(PdfError::TypeError {
                 expected: "array",
                 got: self.type_name(),
@@ -116,9 +116,9 @@ impl PDFObject {
     }
 
     /// Get as dictionary
-    pub fn as_dict(&self) -> Result<&HashMap<String, PDFObject>> {
+    pub const fn as_dict(&self) -> Result<&HashMap<String, Self>> {
         match self {
-            PDFObject::Dict(d) => Ok(d),
+            Self::Dict(d) => Ok(d),
             _ => Err(PdfError::TypeError {
                 expected: "dict",
                 got: self.type_name(),
@@ -129,7 +129,7 @@ impl PDFObject {
     /// Get as stream
     pub fn as_stream(&self) -> Result<&PDFStream> {
         match self {
-            PDFObject::Stream(s) => Ok(s),
+            Self::Stream(s) => Ok(s),
             _ => Err(PdfError::TypeError {
                 expected: "stream",
                 got: self.type_name(),
@@ -138,9 +138,9 @@ impl PDFObject {
     }
 
     /// Get as object reference
-    pub fn as_ref(&self) -> Result<&PDFObjRef> {
+    pub const fn as_ref(&self) -> Result<&PDFObjRef> {
         match self {
-            PDFObject::Ref(r) => Ok(r),
+            Self::Ref(r) => Ok(r),
             _ => Err(PdfError::TypeError {
                 expected: "ref",
                 got: self.type_name(),
@@ -149,24 +149,24 @@ impl PDFObject {
     }
 
     /// Get type name for error messages
-    fn type_name(&self) -> &'static str {
+    const fn type_name(&self) -> &'static str {
         match self {
-            PDFObject::Null => "null",
-            PDFObject::Bool(_) => "bool",
-            PDFObject::Int(_) => "int",
-            PDFObject::Real(_) => "real",
-            PDFObject::Name(_) => "name",
-            PDFObject::String(_) => "string",
-            PDFObject::Array(_) => "array",
-            PDFObject::Dict(_) => "dict",
-            PDFObject::Stream(_) => "stream",
-            PDFObject::Ref(_) => "ref",
+            Self::Null => "null",
+            Self::Bool(_) => "bool",
+            Self::Int(_) => "int",
+            Self::Real(_) => "real",
+            Self::Name(_) => "name",
+            Self::String(_) => "string",
+            Self::Array(_) => "array",
+            Self::Dict(_) => "dict",
+            Self::Stream(_) => "stream",
+            Self::Ref(_) => "ref",
         }
     }
 }
 
 /// PDF indirect object reference.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PDFObjRef {
     /// Object ID
     pub objid: u32,
@@ -176,7 +176,7 @@ pub struct PDFObjRef {
 
 impl PDFObjRef {
     /// Create a new object reference.
-    pub fn new(objid: u32, genno: u32) -> Self {
+    pub const fn new(objid: u32, genno: u32) -> Self {
         Self { objid, genno }
     }
 }
@@ -212,7 +212,7 @@ impl PDFStream {
     }
 
     /// Set object ID and generation number.
-    pub fn set_objid(&mut self, objid: u32, genno: u32) {
+    pub const fn set_objid(&mut self, objid: u32, genno: u32) {
         self.objid = Some(objid);
         self.genno = Some(genno);
     }
@@ -228,7 +228,7 @@ impl PDFStream {
     }
 
     /// Check if rawdata has been decrypted already.
-    pub fn rawdata_is_decrypted(&self) -> bool {
+    pub const fn rawdata_is_decrypted(&self) -> bool {
         self.rawdata_decrypted
     }
 

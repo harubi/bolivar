@@ -232,10 +232,10 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
         let mut selected_pages: Vec<(usize, PDFPage)> = Vec::new();
         let mut page_count = 0;
         for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-            if let Some(nums) = page_numbers {
-                if !nums.contains(&page_idx) {
-                    continue;
-                }
+            if let Some(nums) = page_numbers
+                && !nums.contains(&page_idx)
+            {
+                continue;
             }
 
             if maxpages > 0 && page_count >= maxpages {
@@ -273,10 +273,10 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
         let mut page_count = 0;
         for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
             // Check page number filter
-            if let Some(nums) = page_numbers {
-                if !nums.contains(&page_idx) {
-                    continue;
-                }
+            if let Some(nums) = page_numbers
+                && !nums.contains(&page_idx)
+            {
+                continue;
             }
 
             // Check maxpages limit
@@ -432,10 +432,10 @@ fn extract_pages_from_doc(
         let mut errors: Vec<(usize, Result<LTPage>)> = Vec::new();
 
         for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-            if let Some(ref nums) = options.page_numbers {
-                if !nums.contains(&page_idx) {
-                    continue;
-                }
+            if let Some(ref nums) = options.page_numbers
+                && !nums.contains(&page_idx)
+            {
+                continue;
             }
 
             if options.maxpages > 0 && page_count >= options.maxpages {
@@ -475,10 +475,10 @@ fn extract_pages_from_doc(
 
         for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
             // Check page number filter
-            if let Some(ref nums) = options.page_numbers {
-                if !nums.contains(&page_idx) {
-                    continue;
-                }
+            if let Some(ref nums) = options.page_numbers
+                && !nums.contains(&page_idx)
+            {
+                continue;
             }
 
             // Check maxpages limit

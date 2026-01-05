@@ -36,11 +36,12 @@ fn fix_box(data: &mut [u8], key: &[u8]) -> bool {
             }
             let content_end = j;
             let content = &data[content_start..content_end];
-            if let Some(new_content) = reorder_box_content(content) {
-                if new_content.len() == content.len() && new_content != content {
-                    data[content_start..content_end].copy_from_slice(&new_content);
-                    changed = true;
-                }
+            if let Some(new_content) = reorder_box_content(content)
+                && new_content.len() == content.len()
+                && new_content != content
+            {
+                data[content_start..content_end].copy_from_slice(&new_content);
+                changed = true;
             }
             i = content_end + 1;
             continue;

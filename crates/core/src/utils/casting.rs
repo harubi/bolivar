@@ -19,7 +19,7 @@ pub type Rect = FloatQuadruple;
 /// Safely convert a PDFObject to an integer.
 ///
 /// Returns `Some(i64)` if the object is an Int, `None` otherwise.
-pub fn safe_int(obj: &PDFObject) -> Option<i64> {
+pub const fn safe_int(obj: &PDFObject) -> Option<i64> {
     match obj {
         PDFObject::Int(n) => Some(*n),
         _ => None,

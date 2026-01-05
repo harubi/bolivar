@@ -5,23 +5,23 @@ use ordered_float::OrderedFloat;
 use crate::utils::{Point, Rect};
 
 // Default constants
-pub(crate) const DEFAULT_SNAP_TOLERANCE: f64 = 3.0;
-pub(crate) const DEFAULT_JOIN_TOLERANCE: f64 = 3.0;
-pub(crate) const DEFAULT_MIN_WORDS_VERTICAL: usize = 3;
-pub(crate) const DEFAULT_MIN_WORDS_HORIZONTAL: usize = 1;
+pub const DEFAULT_SNAP_TOLERANCE: f64 = 3.0;
+pub const DEFAULT_JOIN_TOLERANCE: f64 = 3.0;
+pub const DEFAULT_MIN_WORDS_VERTICAL: usize = 3;
+pub const DEFAULT_MIN_WORDS_HORIZONTAL: usize = 1;
 
-pub(crate) const DEFAULT_X_TOLERANCE: f64 = 3.0;
-pub(crate) const DEFAULT_Y_TOLERANCE: f64 = 3.0;
+pub const DEFAULT_X_TOLERANCE: f64 = 3.0;
+pub const DEFAULT_Y_TOLERANCE: f64 = 3.0;
 
 // Key types for ordered float maps
-pub(crate) type KeyF64 = OrderedFloat<f64>;
-pub(crate) type KeyPoint = (KeyF64, KeyF64);
+pub type KeyF64 = OrderedFloat<f64>;
+pub type KeyPoint = (KeyF64, KeyF64);
 
-pub(crate) fn key_f64(v: f64) -> KeyF64 {
+pub const fn key_f64(v: f64) -> KeyF64 {
     OrderedFloat(v)
 }
 
-pub(crate) fn key_point(x: f64, y: f64) -> KeyPoint {
+pub const fn key_point(x: f64, y: f64) -> KeyPoint {
     (OrderedFloat(x), OrderedFloat(y))
 }
 
@@ -42,10 +42,10 @@ pub enum TextDir {
 impl TextDir {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "ttb" => Some(TextDir::Ttb),
-            "btt" => Some(TextDir::Btt),
-            "ltr" => Some(TextDir::Ltr),
-            "rtl" => Some(TextDir::Rtl),
+            "ttb" => Some(Self::Ttb),
+            "btt" => Some(Self::Btt),
+            "ltr" => Some(Self::Ltr),
+            "rtl" => Some(Self::Rtl),
             _ => None,
         }
     }
@@ -208,19 +208,19 @@ pub struct PageGeometry {
 
 // Internal ID types for efficient indexing
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub(crate) struct VEdgeId(pub usize);
+pub struct VEdgeId(pub usize);
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub(crate) struct HEdgeId(pub usize);
+pub struct HEdgeId(pub usize);
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub(crate) struct CharId(pub usize);
+pub struct CharId(pub usize);
 
 // BBox key for hashing
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
-pub(crate) struct BBoxKey(pub u64, pub u64, pub u64, pub u64);
+pub struct BBoxKey(pub u64, pub u64, pub u64, pub u64);
 
-pub(crate) fn bbox_key(b: &BBox) -> BBoxKey {
+pub const fn bbox_key(b: &BBox) -> BBoxKey {
     BBoxKey(
         b.x0.to_bits(),
         b.top.to_bits(),

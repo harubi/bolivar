@@ -576,12 +576,11 @@ impl PDFStandardSecurityHandlerV4 {
     }
 
     fn is_metadata_stream(&self, attrs: Option<&HashMap<String, PDFObject>>) -> bool {
-        if let Some(attrs) = attrs {
-            if let Some(t) = attrs.get("Type") {
-                if let Ok(name) = t.as_name() {
-                    return name == "Metadata";
-                }
-            }
+        if let Some(attrs) = attrs
+            && let Some(t) = attrs.get("Type")
+            && let Ok(name) = t.as_name()
+        {
+            return name == "Metadata";
         }
         false
     }
@@ -928,12 +927,11 @@ impl PDFStandardSecurityHandlerV5 {
     }
 
     fn is_metadata_stream(&self, attrs: Option<&HashMap<String, PDFObject>>) -> bool {
-        if let Some(attrs) = attrs {
-            if let Some(t) = attrs.get("Type") {
-                if let Ok(name) = t.as_name() {
-                    return name == "Metadata";
-                }
-            }
+        if let Some(attrs) = attrs
+            && let Some(t) = attrs.get("Type")
+            && let Ok(name) = t.as_name()
+        {
+            return name == "Metadata";
         }
         false
     }

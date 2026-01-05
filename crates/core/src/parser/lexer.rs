@@ -258,392 +258,392 @@ impl Keyword {
     pub fn from_bytes(b: &[u8]) -> Self {
         match b {
             // Structural
-            b"[" => Keyword::ArrayStart,
-            b"]" => Keyword::ArrayEnd,
-            b"<<" => Keyword::DictStart,
-            b">>" => Keyword::DictEnd,
-            b"{" => Keyword::BraceOpen,
-            b"}" => Keyword::BraceClose,
+            b"[" => Self::ArrayStart,
+            b"]" => Self::ArrayEnd,
+            b"<<" => Self::DictStart,
+            b">>" => Self::DictEnd,
+            b"{" => Self::BraceOpen,
+            b"}" => Self::BraceClose,
 
             // Primitives
-            b"true" => Keyword::True,
-            b"false" => Keyword::False,
-            b"null" => Keyword::Null,
+            b"true" => Self::True,
+            b"false" => Self::False,
+            b"null" => Self::Null,
 
             // Object structure
-            b"obj" => Keyword::Obj,
-            b"endobj" => Keyword::EndObj,
-            b"R" => Keyword::R,
-            b"stream" => Keyword::Stream,
-            b"endstream" => Keyword::EndStream,
-            b"xref" => Keyword::Xref,
-            b"trailer" => Keyword::Trailer,
-            b"startxref" => Keyword::StartXref,
+            b"obj" => Self::Obj,
+            b"endobj" => Self::EndObj,
+            b"R" => Self::R,
+            b"stream" => Self::Stream,
+            b"endstream" => Self::EndStream,
+            b"xref" => Self::Xref,
+            b"trailer" => Self::Trailer,
+            b"startxref" => Self::StartXref,
 
             // Graphics state
-            b"Q" => Keyword::Q,
-            b"q" => Keyword::Qq,
-            b"cm" => Keyword::Cm,
-            b"w" => Keyword::Ww,
-            b"J" => Keyword::J,
-            b"j" => Keyword::Jj,
-            b"M" => Keyword::M,
-            b"d" => Keyword::D,
-            b"ri" => Keyword::Ri,
-            b"i" => Keyword::I,
-            b"gs" => Keyword::Gs,
+            b"Q" => Self::Q,
+            b"q" => Self::Qq,
+            b"cm" => Self::Cm,
+            b"w" => Self::Ww,
+            b"J" => Self::J,
+            b"j" => Self::Jj,
+            b"M" => Self::M,
+            b"d" => Self::D,
+            b"ri" => Self::Ri,
+            b"i" => Self::I,
+            b"gs" => Self::Gs,
 
             // Path construction
-            b"m" => Keyword::Mm,
-            b"l" => Keyword::L,
-            b"c" => Keyword::C,
-            b"v" => Keyword::V,
-            b"y" => Keyword::Y,
-            b"h" => Keyword::H,
-            b"re" => Keyword::Re,
+            b"m" => Self::Mm,
+            b"l" => Self::L,
+            b"c" => Self::C,
+            b"v" => Self::V,
+            b"y" => Self::Y,
+            b"h" => Self::H,
+            b"re" => Self::Re,
 
             // Path painting
-            b"S" => Keyword::S,
-            b"s" => Keyword::Ss,
-            b"F" => Keyword::F,
-            b"f" => Keyword::Ff,
-            b"f*" => Keyword::FStar,
-            b"B" => Keyword::B,
-            b"B*" => Keyword::BStar,
-            b"b" => Keyword::Bb,
-            b"b*" => Keyword::BbStar,
-            b"n" => Keyword::N,
+            b"S" => Self::S,
+            b"s" => Self::Ss,
+            b"F" => Self::F,
+            b"f" => Self::Ff,
+            b"f*" => Self::FStar,
+            b"B" => Self::B,
+            b"B*" => Self::BStar,
+            b"b" => Self::Bb,
+            b"b*" => Self::BbStar,
+            b"n" => Self::N,
 
             // Clipping (uppercase W)
-            b"W" => Keyword::WClip,
-            b"W*" => Keyword::WStar,
+            b"W" => Self::WClip,
+            b"W*" => Self::WStar,
 
             // Text object
-            b"BT" => Keyword::BT,
-            b"ET" => Keyword::ET,
+            b"BT" => Self::BT,
+            b"ET" => Self::ET,
 
             // Text state
-            b"Tc" => Keyword::Tc,
-            b"Tw" => Keyword::Tw,
-            b"Tz" => Keyword::Tz,
-            b"TL" => Keyword::TL,
-            b"Tf" => Keyword::Tf,
-            b"Tr" => Keyword::Tr,
-            b"Ts" => Keyword::Ts,
+            b"Tc" => Self::Tc,
+            b"Tw" => Self::Tw,
+            b"Tz" => Self::Tz,
+            b"TL" => Self::TL,
+            b"Tf" => Self::Tf,
+            b"Tr" => Self::Tr,
+            b"Ts" => Self::Ts,
 
             // Text positioning
-            b"Td" => Keyword::Td,
-            b"TD" => Keyword::TD,
-            b"Tm" => Keyword::Tm,
-            b"T*" => Keyword::TStar,
+            b"Td" => Self::Td,
+            b"TD" => Self::TD,
+            b"Tm" => Self::Tm,
+            b"T*" => Self::TStar,
 
             // Text showing
-            b"Tj" => Keyword::Tj,
-            b"TJ" => Keyword::TJ,
-            b"'" => Keyword::Quote,
-            b"\"" => Keyword::DoubleQuote,
+            b"Tj" => Self::Tj,
+            b"TJ" => Self::TJ,
+            b"'" => Self::Quote,
+            b"\"" => Self::DoubleQuote,
 
             // Color
-            b"CS" => Keyword::CS,
-            b"cs" => Keyword::Cs,
-            b"SC" => Keyword::SC,
-            b"SCN" => Keyword::SCN,
-            b"sc" => Keyword::Sc,
-            b"scn" => Keyword::Scn,
-            b"G" => Keyword::G,
-            b"g" => Keyword::Gg,
-            b"RG" => Keyword::RG,
-            b"rg" => Keyword::Rg,
-            b"K" => Keyword::K,
-            b"k" => Keyword::Kk,
+            b"CS" => Self::CS,
+            b"cs" => Self::Cs,
+            b"SC" => Self::SC,
+            b"SCN" => Self::SCN,
+            b"sc" => Self::Sc,
+            b"scn" => Self::Scn,
+            b"G" => Self::G,
+            b"g" => Self::Gg,
+            b"RG" => Self::RG,
+            b"rg" => Self::Rg,
+            b"K" => Self::K,
+            b"k" => Self::Kk,
 
             // XObject
-            b"Do" => Keyword::Do,
+            b"Do" => Self::Do,
 
             // Inline image
-            b"BI" => Keyword::BI,
-            b"ID" => Keyword::ID,
-            b"EI" => Keyword::EI,
+            b"BI" => Self::BI,
+            b"ID" => Self::ID,
+            b"EI" => Self::EI,
 
             // Marked content
-            b"MP" => Keyword::MP,
-            b"DP" => Keyword::DP,
-            b"BMC" => Keyword::BMC,
-            b"BDC" => Keyword::BDC,
-            b"EMC" => Keyword::EMC,
+            b"MP" => Self::MP,
+            b"DP" => Self::DP,
+            b"BMC" => Self::BMC,
+            b"BDC" => Self::BDC,
+            b"EMC" => Self::EMC,
 
             // Missing PDF operators
-            b"sh" => Keyword::Sh,
-            b"d0" => Keyword::D0,
-            b"d1" => Keyword::D1,
-            b"BX" => Keyword::BX,
-            b"EX" => Keyword::EX,
+            b"sh" => Self::Sh,
+            b"d0" => Self::D0,
+            b"d1" => Self::D1,
+            b"BX" => Self::BX,
+            b"EX" => Self::EX,
 
             // CMap structure
-            b"begincmap" => Keyword::BeginCMap,
-            b"endcmap" => Keyword::EndCMap,
-            b"usecmap" => Keyword::UseCMap,
-            b"begincodespacerange" => Keyword::BeginCodeSpaceRange,
-            b"endcodespacerange" => Keyword::EndCodeSpaceRange,
-            b"beginbfchar" => Keyword::BeginBfChar,
-            b"endbfchar" => Keyword::EndBfChar,
-            b"beginbfrange" => Keyword::BeginBfRange,
-            b"endbfrange" => Keyword::EndBfRange,
-            b"begincidchar" => Keyword::BeginCidChar,
-            b"endcidchar" => Keyword::EndCidChar,
-            b"begincidrange" => Keyword::BeginCidRange,
-            b"endcidrange" => Keyword::EndCidRange,
-            b"beginnotdefchar" => Keyword::BeginNotDefChar,
-            b"endnotdefchar" => Keyword::EndNotDefChar,
-            b"beginnotdefrange" => Keyword::BeginNotDefRange,
-            b"endnotdefrange" => Keyword::EndNotDefRange,
+            b"begincmap" => Self::BeginCMap,
+            b"endcmap" => Self::EndCMap,
+            b"usecmap" => Self::UseCMap,
+            b"begincodespacerange" => Self::BeginCodeSpaceRange,
+            b"endcodespacerange" => Self::EndCodeSpaceRange,
+            b"beginbfchar" => Self::BeginBfChar,
+            b"endbfchar" => Self::EndBfChar,
+            b"beginbfrange" => Self::BeginBfRange,
+            b"endbfrange" => Self::EndBfRange,
+            b"begincidchar" => Self::BeginCidChar,
+            b"endcidchar" => Self::EndCidChar,
+            b"begincidrange" => Self::BeginCidRange,
+            b"endcidrange" => Self::EndCidRange,
+            b"beginnotdefchar" => Self::BeginNotDefChar,
+            b"endnotdefchar" => Self::EndNotDefChar,
+            b"beginnotdefrange" => Self::BeginNotDefRange,
+            b"endnotdefrange" => Self::EndNotDefRange,
 
             // PostScript core
-            b"begin" => Keyword::Begin,
-            b"end" => Keyword::End,
-            b"def" => Keyword::Def,
-            b"bind" => Keyword::Bind,
+            b"begin" => Self::Begin,
+            b"end" => Self::End,
+            b"def" => Self::Def,
+            b"bind" => Self::Bind,
 
             // PostScript stack
-            b"dup" => Keyword::Dup,
-            b"exch" => Keyword::Exch,
-            b"pop" => Keyword::Pop,
-            b"index" => Keyword::Index,
-            b"roll" => Keyword::Roll,
-            b"copy" => Keyword::Copy,
-            b"clear" => Keyword::Clear,
-            b"count" => Keyword::Count,
+            b"dup" => Self::Dup,
+            b"exch" => Self::Exch,
+            b"pop" => Self::Pop,
+            b"index" => Self::Index,
+            b"roll" => Self::Roll,
+            b"copy" => Self::Copy,
+            b"clear" => Self::Clear,
+            b"count" => Self::Count,
 
             // PostScript dictionary
-            b"dict" => Keyword::Dict,
-            b"get" => Keyword::Get,
-            b"put" => Keyword::Put,
-            b"known" => Keyword::Known,
-            b"where" => Keyword::Where,
-            b"currentdict" => Keyword::CurrentDict,
+            b"dict" => Self::Dict,
+            b"get" => Self::Get,
+            b"put" => Self::Put,
+            b"known" => Self::Known,
+            b"where" => Self::Where,
+            b"currentdict" => Self::CurrentDict,
 
             // PostScript control
-            b"if" => Keyword::If,
-            b"ifelse" => Keyword::IfElse,
-            b"for" => Keyword::For,
-            b"loop" => Keyword::Loop,
-            b"repeat" => Keyword::Repeat,
-            b"exit" => Keyword::Exit,
-            b"exec" => Keyword::Exec,
+            b"if" => Self::If,
+            b"ifelse" => Self::IfElse,
+            b"for" => Self::For,
+            b"loop" => Self::Loop,
+            b"repeat" => Self::Repeat,
+            b"exit" => Self::Exit,
+            b"exec" => Self::Exec,
 
             // PostScript array/string
-            b"array" => Keyword::Array,
-            b"string" => Keyword::PsString,
-            b"length" => Keyword::Length,
-            b"getinterval" => Keyword::GetInterval,
-            b"putinterval" => Keyword::PutInterval,
-            b"aload" => Keyword::Aload,
-            b"astore" => Keyword::Astore,
+            b"array" => Self::Array,
+            b"string" => Self::PsString,
+            b"length" => Self::Length,
+            b"getinterval" => Self::GetInterval,
+            b"putinterval" => Self::PutInterval,
+            b"aload" => Self::Aload,
+            b"astore" => Self::Astore,
 
             // PostScript font
-            b"definefont" => Keyword::DefineFont,
-            b"findfont" => Keyword::FindFont,
-            b"makefont" => Keyword::MakeFont,
-            b"scalefont" => Keyword::ScaleFont,
-            b"setfont" => Keyword::SetFont,
-            b"currentfont" => Keyword::CurrentFont,
-            b"FontDirectory" => Keyword::FontDirectory,
+            b"definefont" => Self::DefineFont,
+            b"findfont" => Self::FindFont,
+            b"makefont" => Self::MakeFont,
+            b"scalefont" => Self::ScaleFont,
+            b"setfont" => Self::SetFont,
+            b"currentfont" => Self::CurrentFont,
+            b"FontDirectory" => Self::FontDirectory,
 
             // PostScript Type1
-            b"eexec" => Keyword::Eexec,
-            b"currentfile" => Keyword::CurrentFile,
-            b"closefile" => Keyword::CloseFile,
-            b"readonly" => Keyword::ReadOnly,
-            b"executeonly" => Keyword::ExecuteOnly,
-            b"noaccess" => Keyword::NoAccess,
+            b"eexec" => Self::Eexec,
+            b"currentfile" => Self::CurrentFile,
+            b"closefile" => Self::CloseFile,
+            b"readonly" => Self::ReadOnly,
+            b"executeonly" => Self::ExecuteOnly,
+            b"noaccess" => Self::NoAccess,
 
             // PostScript misc
-            b"mark" => Keyword::Mark,
-            b"counttomark" => Keyword::CountToMark,
-            b"cleartomark" => Keyword::ClearToMark,
-            b"load" => Keyword::Load,
-            b"store" => Keyword::Store,
-            b"save" => Keyword::Save,
-            b"restore" => Keyword::Restore,
-            b"setglobal" => Keyword::SetGlobal,
+            b"mark" => Self::Mark,
+            b"counttomark" => Self::CountToMark,
+            b"cleartomark" => Self::ClearToMark,
+            b"load" => Self::Load,
+            b"store" => Self::Store,
+            b"save" => Self::Save,
+            b"restore" => Self::Restore,
+            b"setglobal" => Self::SetGlobal,
 
-            _ => Keyword::Unknown(b.to_vec()),
+            _ => Self::Unknown(b.to_vec()),
         }
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         match self {
-            Keyword::ArrayStart => b"[",
-            Keyword::ArrayEnd => b"]",
-            Keyword::DictStart => b"<<",
-            Keyword::DictEnd => b">>",
-            Keyword::BraceOpen => b"{",
-            Keyword::BraceClose => b"}",
-            Keyword::True => b"true",
-            Keyword::False => b"false",
-            Keyword::Null => b"null",
-            Keyword::Obj => b"obj",
-            Keyword::EndObj => b"endobj",
-            Keyword::R => b"R",
-            Keyword::Stream => b"stream",
-            Keyword::EndStream => b"endstream",
-            Keyword::Xref => b"xref",
-            Keyword::Trailer => b"trailer",
-            Keyword::StartXref => b"startxref",
-            Keyword::Q => b"Q",
-            Keyword::Qq => b"q",
-            Keyword::Cm => b"cm",
-            Keyword::WClip => b"W",
-            Keyword::Ww => b"w",
-            Keyword::J => b"J",
-            Keyword::Jj => b"j",
-            Keyword::M => b"M",
-            Keyword::D => b"d",
-            Keyword::Ri => b"ri",
-            Keyword::I => b"i",
-            Keyword::Gs => b"gs",
-            Keyword::Mm => b"m",
-            Keyword::L => b"l",
-            Keyword::C => b"c",
-            Keyword::V => b"v",
-            Keyword::Y => b"y",
-            Keyword::H => b"h",
-            Keyword::Re => b"re",
-            Keyword::S => b"S",
-            Keyword::Ss => b"s",
-            Keyword::F => b"F",
-            Keyword::Ff => b"f",
-            Keyword::FStar => b"f*",
-            Keyword::B => b"B",
-            Keyword::BStar => b"B*",
-            Keyword::Bb => b"b",
-            Keyword::BbStar => b"b*",
-            Keyword::N => b"n",
-            Keyword::WStar => b"W*",
-            Keyword::BT => b"BT",
-            Keyword::ET => b"ET",
-            Keyword::Tc => b"Tc",
-            Keyword::Tw => b"Tw",
-            Keyword::Tz => b"Tz",
-            Keyword::TL => b"TL",
-            Keyword::Tf => b"Tf",
-            Keyword::Tr => b"Tr",
-            Keyword::Ts => b"Ts",
-            Keyword::Td => b"Td",
-            Keyword::TD => b"TD",
-            Keyword::Tm => b"Tm",
-            Keyword::TStar => b"T*",
-            Keyword::Tj => b"Tj",
-            Keyword::TJ => b"TJ",
-            Keyword::Quote => b"'",
-            Keyword::DoubleQuote => b"\"",
-            Keyword::CS => b"CS",
-            Keyword::Cs => b"cs",
-            Keyword::SC => b"SC",
-            Keyword::SCN => b"SCN",
-            Keyword::Sc => b"sc",
-            Keyword::Scn => b"scn",
-            Keyword::G => b"G",
-            Keyword::Gg => b"g",
-            Keyword::RG => b"RG",
-            Keyword::Rg => b"rg",
-            Keyword::K => b"K",
-            Keyword::Kk => b"k",
-            Keyword::Do => b"Do",
-            Keyword::BI => b"BI",
-            Keyword::ID => b"ID",
-            Keyword::EI => b"EI",
-            Keyword::MP => b"MP",
-            Keyword::DP => b"DP",
-            Keyword::BMC => b"BMC",
-            Keyword::BDC => b"BDC",
-            Keyword::EMC => b"EMC",
+            Self::ArrayStart => b"[",
+            Self::ArrayEnd => b"]",
+            Self::DictStart => b"<<",
+            Self::DictEnd => b">>",
+            Self::BraceOpen => b"{",
+            Self::BraceClose => b"}",
+            Self::True => b"true",
+            Self::False => b"false",
+            Self::Null => b"null",
+            Self::Obj => b"obj",
+            Self::EndObj => b"endobj",
+            Self::R => b"R",
+            Self::Stream => b"stream",
+            Self::EndStream => b"endstream",
+            Self::Xref => b"xref",
+            Self::Trailer => b"trailer",
+            Self::StartXref => b"startxref",
+            Self::Q => b"Q",
+            Self::Qq => b"q",
+            Self::Cm => b"cm",
+            Self::WClip => b"W",
+            Self::Ww => b"w",
+            Self::J => b"J",
+            Self::Jj => b"j",
+            Self::M => b"M",
+            Self::D => b"d",
+            Self::Ri => b"ri",
+            Self::I => b"i",
+            Self::Gs => b"gs",
+            Self::Mm => b"m",
+            Self::L => b"l",
+            Self::C => b"c",
+            Self::V => b"v",
+            Self::Y => b"y",
+            Self::H => b"h",
+            Self::Re => b"re",
+            Self::S => b"S",
+            Self::Ss => b"s",
+            Self::F => b"F",
+            Self::Ff => b"f",
+            Self::FStar => b"f*",
+            Self::B => b"B",
+            Self::BStar => b"B*",
+            Self::Bb => b"b",
+            Self::BbStar => b"b*",
+            Self::N => b"n",
+            Self::WStar => b"W*",
+            Self::BT => b"BT",
+            Self::ET => b"ET",
+            Self::Tc => b"Tc",
+            Self::Tw => b"Tw",
+            Self::Tz => b"Tz",
+            Self::TL => b"TL",
+            Self::Tf => b"Tf",
+            Self::Tr => b"Tr",
+            Self::Ts => b"Ts",
+            Self::Td => b"Td",
+            Self::TD => b"TD",
+            Self::Tm => b"Tm",
+            Self::TStar => b"T*",
+            Self::Tj => b"Tj",
+            Self::TJ => b"TJ",
+            Self::Quote => b"'",
+            Self::DoubleQuote => b"\"",
+            Self::CS => b"CS",
+            Self::Cs => b"cs",
+            Self::SC => b"SC",
+            Self::SCN => b"SCN",
+            Self::Sc => b"sc",
+            Self::Scn => b"scn",
+            Self::G => b"G",
+            Self::Gg => b"g",
+            Self::RG => b"RG",
+            Self::Rg => b"rg",
+            Self::K => b"K",
+            Self::Kk => b"k",
+            Self::Do => b"Do",
+            Self::BI => b"BI",
+            Self::ID => b"ID",
+            Self::EI => b"EI",
+            Self::MP => b"MP",
+            Self::DP => b"DP",
+            Self::BMC => b"BMC",
+            Self::BDC => b"BDC",
+            Self::EMC => b"EMC",
             // Missing PDF operators
-            Keyword::Sh => b"sh",
-            Keyword::D0 => b"d0",
-            Keyword::D1 => b"d1",
-            Keyword::BX => b"BX",
-            Keyword::EX => b"EX",
+            Self::Sh => b"sh",
+            Self::D0 => b"d0",
+            Self::D1 => b"d1",
+            Self::BX => b"BX",
+            Self::EX => b"EX",
             // CMap structure
-            Keyword::BeginCMap => b"begincmap",
-            Keyword::EndCMap => b"endcmap",
-            Keyword::UseCMap => b"usecmap",
-            Keyword::BeginCodeSpaceRange => b"begincodespacerange",
-            Keyword::EndCodeSpaceRange => b"endcodespacerange",
-            Keyword::BeginBfChar => b"beginbfchar",
-            Keyword::EndBfChar => b"endbfchar",
-            Keyword::BeginBfRange => b"beginbfrange",
-            Keyword::EndBfRange => b"endbfrange",
-            Keyword::BeginCidChar => b"begincidchar",
-            Keyword::EndCidChar => b"endcidchar",
-            Keyword::BeginCidRange => b"begincidrange",
-            Keyword::EndCidRange => b"endcidrange",
-            Keyword::BeginNotDefChar => b"beginnotdefchar",
-            Keyword::EndNotDefChar => b"endnotdefchar",
-            Keyword::BeginNotDefRange => b"beginnotdefrange",
-            Keyword::EndNotDefRange => b"endnotdefrange",
+            Self::BeginCMap => b"begincmap",
+            Self::EndCMap => b"endcmap",
+            Self::UseCMap => b"usecmap",
+            Self::BeginCodeSpaceRange => b"begincodespacerange",
+            Self::EndCodeSpaceRange => b"endcodespacerange",
+            Self::BeginBfChar => b"beginbfchar",
+            Self::EndBfChar => b"endbfchar",
+            Self::BeginBfRange => b"beginbfrange",
+            Self::EndBfRange => b"endbfrange",
+            Self::BeginCidChar => b"begincidchar",
+            Self::EndCidChar => b"endcidchar",
+            Self::BeginCidRange => b"begincidrange",
+            Self::EndCidRange => b"endcidrange",
+            Self::BeginNotDefChar => b"beginnotdefchar",
+            Self::EndNotDefChar => b"endnotdefchar",
+            Self::BeginNotDefRange => b"beginnotdefrange",
+            Self::EndNotDefRange => b"endnotdefrange",
             // PostScript core
-            Keyword::Begin => b"begin",
-            Keyword::End => b"end",
-            Keyword::Def => b"def",
-            Keyword::Bind => b"bind",
+            Self::Begin => b"begin",
+            Self::End => b"end",
+            Self::Def => b"def",
+            Self::Bind => b"bind",
             // PostScript stack
-            Keyword::Dup => b"dup",
-            Keyword::Exch => b"exch",
-            Keyword::Pop => b"pop",
-            Keyword::Index => b"index",
-            Keyword::Roll => b"roll",
-            Keyword::Copy => b"copy",
-            Keyword::Clear => b"clear",
-            Keyword::Count => b"count",
+            Self::Dup => b"dup",
+            Self::Exch => b"exch",
+            Self::Pop => b"pop",
+            Self::Index => b"index",
+            Self::Roll => b"roll",
+            Self::Copy => b"copy",
+            Self::Clear => b"clear",
+            Self::Count => b"count",
             // PostScript dictionary
-            Keyword::Dict => b"dict",
-            Keyword::Get => b"get",
-            Keyword::Put => b"put",
-            Keyword::Known => b"known",
-            Keyword::Where => b"where",
-            Keyword::CurrentDict => b"currentdict",
+            Self::Dict => b"dict",
+            Self::Get => b"get",
+            Self::Put => b"put",
+            Self::Known => b"known",
+            Self::Where => b"where",
+            Self::CurrentDict => b"currentdict",
             // PostScript control
-            Keyword::If => b"if",
-            Keyword::IfElse => b"ifelse",
-            Keyword::For => b"for",
-            Keyword::Loop => b"loop",
-            Keyword::Repeat => b"repeat",
-            Keyword::Exit => b"exit",
-            Keyword::Exec => b"exec",
+            Self::If => b"if",
+            Self::IfElse => b"ifelse",
+            Self::For => b"for",
+            Self::Loop => b"loop",
+            Self::Repeat => b"repeat",
+            Self::Exit => b"exit",
+            Self::Exec => b"exec",
             // PostScript array/string
-            Keyword::Array => b"array",
-            Keyword::PsString => b"string",
-            Keyword::Length => b"length",
-            Keyword::GetInterval => b"getinterval",
-            Keyword::PutInterval => b"putinterval",
-            Keyword::Aload => b"aload",
-            Keyword::Astore => b"astore",
+            Self::Array => b"array",
+            Self::PsString => b"string",
+            Self::Length => b"length",
+            Self::GetInterval => b"getinterval",
+            Self::PutInterval => b"putinterval",
+            Self::Aload => b"aload",
+            Self::Astore => b"astore",
             // PostScript font
-            Keyword::DefineFont => b"definefont",
-            Keyword::FindFont => b"findfont",
-            Keyword::MakeFont => b"makefont",
-            Keyword::ScaleFont => b"scalefont",
-            Keyword::SetFont => b"setfont",
-            Keyword::CurrentFont => b"currentfont",
-            Keyword::FontDirectory => b"FontDirectory",
+            Self::DefineFont => b"definefont",
+            Self::FindFont => b"findfont",
+            Self::MakeFont => b"makefont",
+            Self::ScaleFont => b"scalefont",
+            Self::SetFont => b"setfont",
+            Self::CurrentFont => b"currentfont",
+            Self::FontDirectory => b"FontDirectory",
             // PostScript Type1
-            Keyword::Eexec => b"eexec",
-            Keyword::CurrentFile => b"currentfile",
-            Keyword::CloseFile => b"closefile",
-            Keyword::ReadOnly => b"readonly",
-            Keyword::ExecuteOnly => b"executeonly",
-            Keyword::NoAccess => b"noaccess",
+            Self::Eexec => b"eexec",
+            Self::CurrentFile => b"currentfile",
+            Self::CloseFile => b"closefile",
+            Self::ReadOnly => b"readonly",
+            Self::ExecuteOnly => b"executeonly",
+            Self::NoAccess => b"noaccess",
             // PostScript misc
-            Keyword::Mark => b"mark",
-            Keyword::CountToMark => b"counttomark",
-            Keyword::ClearToMark => b"cleartomark",
-            Keyword::Load => b"load",
-            Keyword::Store => b"store",
-            Keyword::Save => b"save",
-            Keyword::Restore => b"restore",
-            Keyword::SetGlobal => b"setglobal",
-            Keyword::Unknown(bytes) => bytes.as_slice(),
+            Self::Mark => b"mark",
+            Self::CountToMark => b"counttomark",
+            Self::ClearToMark => b"cleartomark",
+            Self::Load => b"load",
+            Self::Store => b"store",
+            Self::Save => b"save",
+            Self::Restore => b"restore",
+            Self::SetGlobal => b"setglobal",
+            Self::Unknown(bytes) => bytes.as_slice(),
         }
     }
 }
@@ -664,9 +664,9 @@ pub enum PSToken {
     /// String (literal or hex)
     String(Vec<u8>),
     /// Array
-    Array(Vec<PSToken>),
+    Array(Vec<Self>),
     /// Dictionary
-    Dict(HashMap<String, PSToken>),
+    Dict(HashMap<String, Self>),
 }
 
 /// Buffer size for reading (matches pdfminer.six)
@@ -702,7 +702,7 @@ pub struct ContentLexer<'a> {
 }
 
 impl<'a> PSBaseParser<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
+    pub const fn new(data: &'a [u8]) -> Self {
         Self {
             data: PSData::Borrowed(data),
             pos: 0,
@@ -716,12 +716,12 @@ impl<'a> PSBaseParser<'a> {
     }
 
     /// Current position in stream
-    pub fn tell(&self) -> usize {
+    pub const fn tell(&self) -> usize {
         self.pos
     }
 
     /// Set current position in stream.
-    pub fn set_pos(&mut self, pos: usize) {
+    pub const fn set_pos(&mut self, pos: usize) {
         self.pos = pos;
         self.token_pos = pos;
     }
@@ -754,12 +754,12 @@ impl<'a> PSBaseParser<'a> {
     }
 
     /// Check if byte is whitespace
-    fn is_whitespace(b: u8) -> bool {
+    const fn is_whitespace(b: u8) -> bool {
         matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x00' | b'\x0c')
     }
 
     /// Check if byte is delimiter
-    fn is_delimiter(b: u8) -> bool {
+    const fn is_delimiter(b: u8) -> bool {
         matches!(
             b,
             b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
@@ -767,7 +767,7 @@ impl<'a> PSBaseParser<'a> {
     }
 
     /// Check if byte ends a keyword
-    fn is_keyword_end(b: u8) -> bool {
+    const fn is_keyword_end(b: u8) -> bool {
         Self::is_whitespace(b) || Self::is_delimiter(b)
     }
 
@@ -806,18 +806,19 @@ impl<'a> PSBaseParser<'a> {
                 let h1 = self.peek_at(1);
                 let h2 = self.peek_at(2);
 
-                if let (Some(c1), Some(c2)) = (h1, h2) {
-                    if c1.is_ascii_hexdigit() && c2.is_ascii_hexdigit() {
-                        // Valid 2-digit hex escape
-                        self.advance(); // consume #
-                        self.advance(); // consume first hex digit
-                        self.advance(); // consume second hex digit
-                        let hex_str = format!("{}{}", c1 as char, c2 as char);
-                        if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
-                            name.push(byte);
-                        }
-                        continue;
+                if let (Some(c1), Some(c2)) = (h1, h2)
+                    && c1.is_ascii_hexdigit()
+                    && c2.is_ascii_hexdigit()
+                {
+                    // Valid 2-digit hex escape
+                    self.advance(); // consume #
+                    self.advance(); // consume first hex digit
+                    self.advance(); // consume second hex digit
+                    let hex_str = format!("{}{}", c1 as char, c2 as char);
+                    if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
+                        name.push(byte);
                     }
+                    continue;
                 }
                 // Invalid hex escape - skip # and continue
                 // (per pdfminer.six behavior: # is dropped, following chars kept)
@@ -1100,7 +1101,7 @@ impl<'a> ContentLexer<'a> {
     const SIMD_LANES: usize = 16;
     const SIMD_FULL_MASK: u64 = (1u64 << Self::SIMD_LANES) - 1;
 
-    pub fn new(data: &'a [u8]) -> Self {
+    pub const fn new(data: &'a [u8]) -> Self {
         Self {
             data: PSData::Borrowed(data),
             pos: 0,
@@ -1108,7 +1109,7 @@ impl<'a> ContentLexer<'a> {
     }
 
     /// Create a lexer from a shared byte slice.
-    pub fn new_shared(data: Rc<[u8]>) -> ContentLexer<'static> {
+    pub const fn new_shared(data: Rc<[u8]>) -> ContentLexer<'static> {
         ContentLexer {
             data: PSData::Shared(data),
             pos: 0,
@@ -1116,12 +1117,12 @@ impl<'a> ContentLexer<'a> {
     }
 
     /// Set current position in stream.
-    pub fn set_pos(&mut self, pos: usize) {
+    pub const fn set_pos(&mut self, pos: usize) {
         self.pos = pos;
     }
 
     /// Current position in stream.
-    pub fn tell(&self) -> usize {
+    pub const fn tell(&self) -> usize {
         self.pos
     }
 
@@ -1129,18 +1130,18 @@ impl<'a> ContentLexer<'a> {
         self.data.as_slice()
     }
 
-    fn is_whitespace(b: u8) -> bool {
+    const fn is_whitespace(b: u8) -> bool {
         matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x00' | b'\x0c')
     }
 
-    fn is_delimiter(b: u8) -> bool {
+    const fn is_delimiter(b: u8) -> bool {
         matches!(
             b,
             b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
         )
     }
 
-    fn is_keyword_end(b: u8) -> bool {
+    const fn is_keyword_end(b: u8) -> bool {
         Self::is_whitespace(b) || Self::is_delimiter(b)
     }
 
@@ -1647,7 +1648,7 @@ impl<'a> ContentLexer<'a> {
     }
 }
 
-fn hex_value(c: u8) -> Option<u8> {
+const fn hex_value(c: u8) -> Option<u8> {
     match c {
         b'0'..=b'9' => Some(c - b'0'),
         b'a'..=b'f' => Some(c - b'a' + 10),
@@ -1675,7 +1676,7 @@ pub(crate) fn name_from_bytes(bytes: &[u8]) -> String {
 
 impl PSBaseParser<'static> {
     /// Create a parser backed by shared storage.
-    pub fn new_shared(data: Rc<[u8]>) -> Self {
+    pub const fn new_shared(data: Rc<[u8]>) -> Self {
         Self {
             data: PSData::Shared(data),
             pos: 0,
@@ -1699,7 +1700,7 @@ pub struct PSStackParser<'a> {
 }
 
 impl<'a> PSStackParser<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
+    pub const fn new(data: &'a [u8]) -> Self {
         Self {
             base: PSBaseParser::new(data),
             stack: Vec::new(),
@@ -1709,7 +1710,7 @@ impl<'a> PSStackParser<'a> {
     }
 
     /// Current position in stream
-    pub fn tell(&self) -> usize {
+    pub const fn tell(&self) -> usize {
         self.base.tell()
     }
 
@@ -1764,10 +1765,10 @@ impl<'a> PSStackParser<'a> {
                         let mut dict = HashMap::new();
                         let mut iter = objs.into_iter();
                         while let Some(key) = iter.next() {
-                            if let PSToken::Literal(name) = key {
-                                if let Some(value) = iter.next() {
-                                    dict.insert(name, value);
-                                }
+                            if let PSToken::Literal(name) = key
+                                && let Some(value) = iter.next()
+                            {
+                                dict.insert(name, value);
                             }
                         }
                         self.push(dict_pos, PSToken::Dict(dict));

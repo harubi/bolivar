@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 const MAX_IMAGE_DECODED_BYTES: usize = 256 * 1024 * 1024;
 
 /// Align a value to a 4-byte boundary (32-bit alignment for BMP rows).
-pub fn align32(x: i32) -> i32 {
+pub const fn align32(x: i32) -> i32 {
     ((x + 3) / 4) * 4
 }
 
@@ -83,19 +83,18 @@ impl ImageWriter {
         let last_filter = filters.last().map(|(f, _)| f.as_str());
         let mut too_large = false;
         let mut max_len = Some(MAX_IMAGE_DECODED_BYTES);
-        if let (Some(w), Some(h)) = srcsize {
-            if let Some(len) = expected_image_len_uncapped(w, h, bits, colorspace) {
-                if len > MAX_IMAGE_DECODED_BYTES {
-                    too_large = true;
-                }
-                let extra = predictor_overhead(&filters, h);
-                max_len = Some(len.saturating_add(extra).min(MAX_IMAGE_DECODED_BYTES));
+        if let (Some(w), Some(h)) = srcsize
+            && let Some(len) = expected_image_len_uncapped(w, h, bits, colorspace)
+        {
+            if len > MAX_IMAGE_DECODED_BYTES {
+                too_large = true;
             }
+            let extra = predictor_overhead(&filters, h);
+            max_len = Some(len.saturating_add(extra).min(MAX_IMAGE_DECODED_BYTES));
         }
 
-        let is_encoded_image = last_filter.map_or(false, |f| {
-            is_dct_decode(f) || is_jpx_decode(f) || is_jbig2_decode(f)
-        });
+        let is_encoded_image =
+            last_filter.is_some_and(|f| is_dct_decode(f) || is_jpx_decode(f) || is_jbig2_decode(f));
 
         if too_large && !is_encoded_image {
             return self.write_and_return_filename(name, ".bin", stream.get_rawdata());
@@ -103,15 +102,15 @@ impl ImageWriter {
 
         let data = decode_stream_data_limited(stream, &filters, max_len)?;
 
-        if last_filter.map_or(false, |f| is_dct_decode(f)) {
+        if last_filter.is_some_and(is_dct_decode) {
             return self.write_and_return_filename(name, ".jpg", &data);
         }
 
-        if last_filter.map_or(false, |f| is_jpx_decode(f)) {
+        if last_filter.is_some_and(is_jpx_decode) {
             return self.write_and_return_filename(name, ".jp2", &data);
         }
 
-        if last_filter.map_or(false, |f| is_jbig2_decode(f)) {
+        if last_filter.is_some_and(is_jbig2_decode) {
             return self.write_and_return_filename(name, ".jb2", &data);
         }
 
@@ -169,15 +168,15 @@ impl ImageWriter {
     }
 }
 
-fn is_dct_decode(name: &str) -> bool {
+const fn is_dct_decode(name: &str) -> bool {
     name.eq_ignore_ascii_case("DCTDecode") || name.eq_ignore_ascii_case("DCT")
 }
 
-fn is_jpx_decode(name: &str) -> bool {
+const fn is_jpx_decode(name: &str) -> bool {
     name.eq_ignore_ascii_case("JPXDecode") || name.eq_ignore_ascii_case("JPX")
 }
 
-fn is_jbig2_decode(name: &str) -> bool {
+const fn is_jbig2_decode(name: &str) -> bool {
     name.eq_ignore_ascii_case("JBIG2Decode")
 }
 
@@ -210,7 +209,7 @@ fn expected_image_len_uncapped(
     let w = width as usize;
     let h = height as usize;
     if bits == 1 {
-        let row = (w + 7) / 8;
+        let row = w.div_ceil(8);
         return row.checked_mul(h);
     }
     if bits != 8 {
@@ -388,13 +387,13 @@ fn decode_stream_data_limited(
 }
 
 fn enforce_max_len(len: usize, max_len: Option<usize>) -> Result<()> {
-    if let Some(max) = max_len {
-        if len > max {
-            return Err(PdfError::DecodeError(format!(
-                "decoded data exceeds expected size ({} > {})",
-                len, max
-            )));
-        }
+    if let Some(max) = max_len
+        && len > max
+    {
+        return Err(PdfError::DecodeError(format!(
+            "decoded data exceeds expected size ({} > {})",
+            len, max
+        )));
     }
     Ok(())
 }
@@ -410,14 +409,14 @@ fn flate_decode_limited(data: &[u8], max_len: Option<usize>) -> Result<Vec<u8>> 
         if n == 0 {
             break;
         }
-        if let Some(max) = max_len {
-            if out.len().saturating_add(n) > max {
-                return Err(PdfError::DecodeError(format!(
-                    "decoded data exceeds expected size ({} > {})",
-                    out.len() + n,
-                    max
-                )));
-            }
+        if let Some(max) = max_len
+            && out.len().saturating_add(n) > max
+        {
+            return Err(PdfError::DecodeError(format!(
+                "decoded data exceeds expected size ({} > {})",
+                out.len() + n,
+                max
+            )));
         }
         out.extend_from_slice(&buf[..n]);
     }
@@ -515,7 +514,7 @@ fn apply_png_predictor(
     Ok(result)
 }
 
-fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
+const fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
     let p = a as i32 + b as i32 - c as i32;
     let pa = (p - a as i32).abs();
     let pb = (p - b as i32).abs();
@@ -648,7 +647,7 @@ impl BmpWriter {
         let pos0 = fp.stream_position()?;
         let pos1 = pos0 + datasize as u64;
 
-        Ok(BmpWriter {
+        Ok(Self {
             linesize,
             pos0,
             pos1,

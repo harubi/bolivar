@@ -29,7 +29,7 @@ pub fn group_textboxes(_laparams: &LAParams, boxes: &[TextBoxType]) -> Vec<LTTex
         let y0 = obj1.y0().min(obj2.y0());
         let x1 = obj1.x1().max(obj2.x1());
         let y1 = obj1.y1().max(obj2.y1());
-        (x1 - x0) * (y1 - y0) - obj1.width() * obj1.height() - obj2.width() * obj2.height()
+        obj2.width().mul_add(-obj2.height(), (x1 - x0).mul_add(y1 - y0, -(obj1.width() * obj1.height())))
     }
 
     // Heap entry: (distance, skip_isany, id1, id2, elements)
@@ -427,6 +427,7 @@ pub fn group_textboxes_exact_single_heap(
 }
 
 /// Exact pdfminer-compatible grouping using a certified lazy all-pairs algorithm.
+///
 /// Uses existing Plane.find() for isany queries. Two-heap approach: main heap
 /// holds exact (dist, id) pairs; frontier heap holds spatial node-pairs with
 /// lower-bound keys for lazy pair generation.

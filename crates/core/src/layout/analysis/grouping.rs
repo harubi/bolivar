@@ -259,10 +259,10 @@ pub fn group_textlines(laparams: &LAParams, lines: Vec<TextLineType>) -> Vec<Tex
                 members.push(j);
                 // CRITICAL: If neighbor is already in a box, merge ALL lines from that box
                 // This matches Python's: members.extend(boxes.pop(obj1))
-                if let Some(&existing_box_id) = line_to_box_id.get(&j) {
-                    if let Some(existing_members) = box_contents.remove(&existing_box_id) {
-                        members.extend(existing_members);
-                    }
+                if let Some(&existing_box_id) = line_to_box_id.get(&j)
+                    && let Some(existing_members) = box_contents.remove(&existing_box_id)
+                {
+                    members.extend(existing_members);
                 }
             }
         }
