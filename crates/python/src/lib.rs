@@ -4,8 +4,9 @@
 //! functionality to Python, with a pdfminer.six-compatible API.
 
 use bolivar_core::high_level::{
-    ExtractOptions, extract_pages as core_extract_pages,
+    ExtractOptions, LayoutCache, extract_pages as core_extract_pages,
     extract_pages_with_document as core_extract_pages_with_document,
+    extract_tables_with_document_geometries as core_extract_tables_with_document_geometries,
     extract_text as core_extract_text,
     extract_text_with_document as core_extract_text_with_document,
 };
@@ -33,6 +34,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::slice;
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 /// Convert a PDFObject to a string representation for Python.
@@ -223,14 +226,17 @@ fn pdf_object_to_py(
 fn ps_exception(py: Python<'_>, class_name: &str, msg: &str) -> PyErr {
     if let Ok(module) = py.import("pdfminer.psexceptions")
         && let Ok(cls) = module.getattr(class_name)
-            && let Ok(err) = cls.call1((msg,)) {
-                return PyErr::from_value(err);
-            }
+        && let Ok(err) = cls.call1((msg,))
+    {
+        return PyErr::from_value(err);
+    }
     PyValueError::new_err(msg.to_string())
 }
 
 static PSLITERAL_TABLE: OnceLock<Mutex<HashMap<Vec<u8>, Py<PyAny>>>> = OnceLock::new();
 static PSKEYWORD_TABLE: OnceLock<Mutex<HashMap<Vec<u8>, Py<PyAny>>>> = OnceLock::new();
+#[cfg(test)]
+static LAYOUT_CACHE_RELEASED: AtomicBool = AtomicBool::new(false);
 
 fn ps_name_to_bytes(name: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     if let Ok(bytes) = name.extract::<Vec<u8>>() {
@@ -340,14 +346,14 @@ fn read_bytes_and_path(
 
     if let Ok(os) = py.import("os")
         && let Ok(fspath) = os.getattr("fspath")
-            && let Ok(path_obj) = fspath.call1((fp,))
-                && let Ok(path_str) = path_obj.extract::<String>()
-                    && std::path::Path::new(&path_str).is_file() {
-                        let data = std::fs::read(&path_str).map_err(|e| {
-                            PyValueError::new_err(format!("failed to read {path_str}: {e}"))
-                        })?;
-                        return Ok((data, Some(path_str)));
-                    }
+        && let Ok(path_obj) = fspath.call1((fp,))
+        && let Ok(path_str) = path_obj.extract::<String>()
+        && std::path::Path::new(&path_str).is_file()
+    {
+        let data = std::fs::read(&path_str)
+            .map_err(|e| PyValueError::new_err(format!("failed to read {path_str}: {e}")))?;
+        return Ok((data, Some(path_str)));
+    }
 
     if fp.hasattr("read")? {
         let start_pos = fp
@@ -386,7 +392,7 @@ fn decode_text(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<String> {
     let buf = PyBuffer::<u8>::get(data)
         .map_err(|_| PyTypeError::new_err("decode_text expects bytes-like object"))?;
     let bytes = buf.to_vec(py)?;
-    Ok(bolivar_core::utils::decode_text(&bytes))
+    Ok(py.detach(|| bolivar_core::utils::decode_text(&bytes)))
 }
 
 #[pyfunction]
@@ -423,12 +429,13 @@ fn parse_number_tree(
     out: &mut Vec<(i64, Py<PyAny>)>,
 ) -> PyResult<()> {
     if is_pdf_obj_ref(obj)?
-        && let Ok(objid) = obj.getattr("objid")?.extract::<i64>() {
-            if visited.contains(&objid) {
-                return Ok(());
-            }
-            visited.insert(objid);
+        && let Ok(objid) = obj.getattr("objid")?.extract::<i64>()
+    {
+        if visited.contains(&objid) {
+            return Ok(());
         }
+        visited.insert(objid);
+    }
 
     let resolved = resolve_pdf_obj(py, obj)?;
     let resolved = resolved.bind(py);
@@ -536,12 +543,29 @@ fn page_objects_to_chars_edges(
     _py: Python<'_>,
     page: &Bound<'_, PyAny>,
 ) -> PyResult<(Vec<CharObj>, Vec<EdgeObj>, PageGeometry)> {
-    let bbox: (f64, f64, f64, f64) = page.getattr("bbox")?.extract()?;
-    let mediabox: (f64, f64, f64, f64) = page
-        .getattr("mediabox")
-        .ok()
-        .and_then(|v| v.extract().ok())
-        .unwrap_or(bbox);
+    fn extract_bbox(obj: &Bound<'_, PyAny>, name: &str) -> PyResult<(f64, f64, f64, f64)> {
+        if let Ok(bbox) = obj.extract::<(f64, f64, f64, f64)>() {
+            return Ok(bbox);
+        }
+        let seq = obj
+            .downcast::<PySequence>()
+            .map_err(|_| PyValueError::new_err(format!("{name} must be a 4-item sequence")))?;
+        if seq.len().unwrap_or(0) != 4 {
+            return Err(PyValueError::new_err(format!("{name} must have 4 items")));
+        }
+        let mut vals = [0.0; 4];
+        for i in 0..4 {
+            vals[i] = seq.get_item(i)?.extract::<f64>()?;
+        }
+        Ok((vals[0], vals[1], vals[2], vals[3]))
+    }
+
+    let bbox_obj = page.getattr("bbox")?;
+    let bbox = extract_bbox(&bbox_obj, "bbox")?;
+    let mediabox = match page.getattr("mediabox") {
+        Ok(v) => extract_bbox(&v, "mediabox").unwrap_or(bbox),
+        Err(_) => bbox,
+    };
     let initial_doctop: f64 = page
         .getattr("initial_doctop")
         .ok()
@@ -768,33 +792,34 @@ fn page_objects_to_chars_edges(
             .map_err(|_| PyValueError::new_err("curve must be a dict"))?;
         let pts_obj = dict.get_item("pts")?;
         if let Some(pts_obj) = pts_obj
-            && let Ok(pts) = pts_obj.extract::<Vec<(f64, f64)>>() {
-                for pair in pts.windows(2) {
-                    let p0 = pair[0];
-                    let p1 = pair[1];
-                    let x0 = p0.0.min(p1.0);
-                    let x1 = p0.0.max(p1.0);
-                    let top = p0.1.min(p1.1);
-                    let bottom = p0.1.max(p1.1);
-                    let orientation = if (p0.0 - p1.0).abs() < f64::EPSILON {
-                        Some(Orientation::Vertical)
-                    } else if (p0.1 - p1.1).abs() < f64::EPSILON {
-                        Some(Orientation::Horizontal)
-                    } else {
-                        None
-                    };
-                    edges.push(EdgeObj {
-                        x0,
-                        x1,
-                        top,
-                        bottom,
-                        width: (x1 - x0).abs(),
-                        height: (bottom - top).abs(),
-                        orientation,
-                        object_type: "curve_edge",
-                    });
-                }
+            && let Ok(pts) = pts_obj.extract::<Vec<(f64, f64)>>()
+        {
+            for pair in pts.windows(2) {
+                let p0 = pair[0];
+                let p1 = pair[1];
+                let x0 = p0.0.min(p1.0);
+                let x1 = p0.0.max(p1.0);
+                let top = p0.1.min(p1.1);
+                let bottom = p0.1.max(p1.1);
+                let orientation = if (p0.0 - p1.0).abs() < f64::EPSILON {
+                    Some(Orientation::Vertical)
+                } else if (p0.1 - p1.1).abs() < f64::EPSILON {
+                    Some(Orientation::Horizontal)
+                } else {
+                    None
+                };
+                edges.push(EdgeObj {
+                    x0,
+                    x1,
+                    top,
+                    bottom,
+                    width: (x1 - x0).abs(),
+                    height: (bottom - top).abs(),
+                    orientation,
+                    object_type: "curve_edge",
+                });
             }
+        }
     }
 
     Ok((chars, edges, geom))
@@ -904,7 +929,10 @@ fn parse_table_settings(
 
     let mut text_settings = settings.text_settings.clone();
 
-    fn parse_explicit_lines(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Vec<ExplicitLine>> {
+    fn parse_explicit_lines(
+        _py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+    ) -> PyResult<Vec<ExplicitLine>> {
         if obj.is_none() {
             return Ok(Vec::new());
         }
@@ -1047,6 +1075,78 @@ fn parse_table_settings(
     Ok(settings)
 }
 
+fn parse_bbox(obj: &Bound<'_, PyAny>, label: &str) -> PyResult<(f64, f64, f64, f64)> {
+    if let Ok(val) = obj.extract::<(f64, f64, f64, f64)>() {
+        return Ok(val);
+    }
+    if let Ok(vals) = obj.extract::<Vec<f64>>() {
+        if vals.len() == 4 {
+            return Ok((vals[0], vals[1], vals[2], vals[3]));
+        }
+    }
+    Err(PyValueError::new_err(format!(
+        "{label} must be a 4-tuple/list of floats"
+    )))
+}
+
+fn parse_page_geometry(obj: &Bound<'_, PyAny>) -> PyResult<PageGeometry> {
+    if let Ok(dict) = obj.downcast::<PyDict>() {
+        let page_bbox_obj = dict
+            .get_item("page_bbox")?
+            .ok_or_else(|| PyValueError::new_err("geometry missing page_bbox"))?;
+        let mediabox_obj = dict
+            .get_item("mediabox")?
+            .ok_or_else(|| PyValueError::new_err("geometry missing mediabox"))?;
+        let initial_doctop = match dict.get_item("initial_doctop")? {
+            Some(val) => val.extract::<f64>()?,
+            None => 0.0,
+        };
+        let force_crop = match dict.get_item("force_crop")? {
+            Some(val) => val.extract::<bool>()?,
+            None => false,
+        };
+
+        return Ok(PageGeometry {
+            page_bbox: parse_bbox(&page_bbox_obj, "page_bbox")?,
+            mediabox: parse_bbox(&mediabox_obj, "mediabox")?,
+            initial_doctop,
+            force_crop,
+        });
+    }
+
+    let seq = obj
+        .downcast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("geometry must be a dict or 4-item sequence"))?;
+    let len = seq.len().unwrap_or(0);
+    if len != 4 {
+        return Err(PyValueError::new_err("geometry must be a 4-item sequence"));
+    }
+    let page_bbox_obj = seq.get_item(0)?;
+    let mediabox_obj = seq.get_item(1)?;
+    let initial_doctop = seq.get_item(2)?.extract::<f64>()?;
+    let force_crop = seq.get_item(3)?.extract::<bool>()?;
+
+    Ok(PageGeometry {
+        page_bbox: parse_bbox(&page_bbox_obj, "page_bbox")?,
+        mediabox: parse_bbox(&mediabox_obj, "mediabox")?,
+        initial_doctop,
+        force_crop,
+    })
+}
+
+fn parse_page_geometries(geometries: &Bound<'_, PyAny>) -> PyResult<Vec<PageGeometry>> {
+    let seq = geometries
+        .downcast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("geometries must be a list/tuple"))?;
+    let len = seq.len().unwrap_or(0);
+    let mut out = Vec::with_capacity(len as usize);
+    for idx in 0..len {
+        let item = seq.get_item(idx)?;
+        out.push(parse_page_geometry(&item)?);
+    }
+    Ok(out)
+}
+
 /// Layout analysis parameters.
 ///
 /// Controls how characters are grouped into lines, words, and text boxes.
@@ -1168,10 +1268,11 @@ impl PyPDFResourceManager {
         let mut objid_opt = objid.filter(|id| *id > 0);
         if objid_opt.is_none()
             && let Ok(attr) = spec.getattr("objid")
-                && let Ok(val) = attr.extract::<u64>()
-                    && val > 0 {
-                        objid_opt = Some(val);
-                    }
+            && let Ok(val) = attr.extract::<u64>()
+            && val > 0
+        {
+            objid_opt = Some(val);
+        }
         let spec_dict: HashMap<String, PDFObject> = HashMap::new();
         Ok(self.inner.get_font(objid_opt, &spec_dict))
     }
@@ -1420,6 +1521,8 @@ pub struct PyPDFDocument {
     inner: PDFDocument,
     /// Cache resolved objects for faster PDFObjRef resolution
     resolved_cache: Mutex<HashMap<u32, Py<PyAny>>>,
+    /// Cache extracted layout pages for reuse across table extraction calls
+    layout_cache: Mutex<LayoutCache>,
 }
 
 #[pymethods]
@@ -1446,6 +1549,7 @@ impl PyPDFDocument {
         Ok(Self {
             inner: doc,
             resolved_cache: Mutex::new(HashMap::new()),
+            layout_cache: Mutex::new(LayoutCache::new()),
         })
     }
 
@@ -1472,6 +1576,7 @@ impl PyPDFDocument {
         Ok(Self {
             inner: doc,
             resolved_cache: Mutex::new(HashMap::new()),
+            layout_cache: Mutex::new(LayoutCache::new()),
         })
     }
 
@@ -1570,9 +1675,10 @@ impl PyPDFDocument {
     /// Resolve an indirect object by ID.
     fn getobj(slf: PyRef<'_, Self>, py: Python<'_>, objid: u32) -> PyResult<Py<PyAny>> {
         if let Ok(cache) = slf.resolved_cache.lock()
-            && let Some(obj) = cache.get(&objid) {
-                return Ok(obj.clone_ref(py));
-            }
+            && let Some(obj) = cache.get(&objid)
+        {
+            return Ok(obj.clone_ref(py));
+        }
         let obj = slf
             .inner
             .getobj(objid)
@@ -2657,11 +2763,11 @@ impl Write for PyWriter {
         Python::with_gil(|py| {
             let out = self.outfp.bind(py);
             if let Ok(has_flush) = out.hasattr("flush")
-                && has_flush {
-                    out.call_method0("flush").map_err(|e| {
-                        std::io::Error::other(e.to_string())
-                    })?;
-                }
+                && has_flush
+            {
+                out.call_method0("flush")
+                    .map_err(|e| std::io::Error::other(e.to_string()))?;
+            }
             Ok(())
         })
     }
@@ -3051,6 +3157,16 @@ fn resolve_threads(threads: Option<usize>) -> Option<usize> {
     threads.or_else(|| std::thread::available_parallelism().ok().map(|n| n.get()))
 }
 
+#[cfg(test)]
+fn reset_layout_cache_release_flag() {
+    LAYOUT_CACHE_RELEASED.store(false, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn layout_cache_release_hit() -> bool {
+    LAYOUT_CACHE_RELEASED.load(Ordering::SeqCst)
+}
+
 /// Process a PDF page and return its layout.
 ///
 /// Args:
@@ -3063,43 +3179,56 @@ fn resolve_threads(threads: Option<usize>) -> Option<usize> {
 #[pyfunction]
 #[pyo3(signature = (doc, page, laparams=None))]
 fn process_page(
+    py: Python<'_>,
     doc: &PyPDFDocument,
     page: &PyPDFPage,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<PyLTPage> {
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+    let pageid = page.pageid;
+    let label = page.label.clone();
+    let mediabox = page.mediabox.map(|b| [b.0, b.1, b.2, b.3]);
+    let cropbox = page.cropbox.map(|b| [b.0, b.1, b.2, b.3]);
+    let bleedbox = page.bleedbox.map(|b| [b.0, b.1, b.2, b.3]);
+    let trimbox = page.trimbox.map(|b| [b.0, b.1, b.2, b.3]);
+    let artbox = page.artbox.map(|b| [b.0, b.1, b.2, b.3]);
+    let rotate = page.rotate;
+    let resources = page.resources.clone();
+    let contents = page.contents.clone();
 
-    // Create resource manager
-    let mut rsrcmgr = bolivar_core::pdfinterp::PDFResourceManager::with_caching(true);
+    let ltpage = py.detach(|| {
+        // Create resource manager
+        let mut rsrcmgr = bolivar_core::pdfinterp::PDFResourceManager::with_caching(true);
 
-    // Create aggregator for this page
-    let mut aggregator = bolivar_core::converter::PDFPageAggregator::new(la, page.pageid as i32);
+        // Create aggregator for this page
+        let mut aggregator = bolivar_core::converter::PDFPageAggregator::new(la, pageid as i32);
 
-    // Recreate the core PDFPage with contents
-    // This is a workaround since we can't store references across Python calls
-    let core_page = bolivar_core::pdfpage::PDFPage {
-        pageid: page.pageid,
-        attrs: std::collections::HashMap::new(),
-        label: page.label.clone(),
-        mediabox: page.mediabox.map(|b| [b.0, b.1, b.2, b.3]),
-        cropbox: page.cropbox.map(|b| [b.0, b.1, b.2, b.3]),
-        bleedbox: page.bleedbox.map(|b| [b.0, b.1, b.2, b.3]),
-        trimbox: page.trimbox.map(|b| [b.0, b.1, b.2, b.3]),
-        artbox: page.artbox.map(|b| [b.0, b.1, b.2, b.3]),
-        rotate: page.rotate,
-        annots: None,
-        resources: page.resources.clone(),
-        contents: page.contents.clone(),
-        user_unit: 1.0,
-    };
+        // Recreate the core PDFPage with contents
+        // This is a workaround since we can't store references across Python calls
+        let core_page = bolivar_core::pdfpage::PDFPage {
+            pageid,
+            attrs: std::collections::HashMap::new(),
+            label,
+            mediabox,
+            cropbox,
+            bleedbox,
+            trimbox,
+            artbox,
+            rotate,
+            annots: None,
+            resources,
+            contents,
+            user_unit: 1.0,
+        };
 
-    // Create interpreter and process page
-    let mut interpreter =
-        bolivar_core::pdfinterp::PDFPageInterpreter::new(&mut rsrcmgr, &mut aggregator);
-    interpreter.process_page(&core_page, Some(&doc.inner));
+        // Create interpreter and process page
+        let mut interpreter =
+            bolivar_core::pdfinterp::PDFPageInterpreter::new(&mut rsrcmgr, &mut aggregator);
+        interpreter.process_page(&core_page, Some(&doc.inner));
 
-    // Get the result
-    let ltpage = aggregator.get_result();
+        // Get the result as an owned LTPage
+        aggregator.get_result().clone()
+    });
 
     // Convert to Python types (preserve layout tree)
     let items: Vec<PyLTItem> = ltpage.iter().map(ltitem_to_py).collect();
@@ -3140,10 +3269,41 @@ fn process_pages(
     };
 
     let pages = py
-        .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
+        .detach(|| core_extract_pages_with_document(&doc.inner, options))
         .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
 
     Ok(pages.iter().map(ltpage_to_py).collect())
+}
+
+/// Extract tables from a document using per-page geometry.
+#[pyfunction]
+#[pyo3(signature = (doc, geometries, table_settings = None, laparams = None, threads = None))]
+fn extract_tables_from_document(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    geometries: &Bound<'_, PyAny>,
+    table_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    threads: Option<usize>,
+) -> PyResult<Vec<Vec<Vec<Vec<Option<String>>>>>> {
+    let settings = parse_table_settings(py, table_settings)?;
+    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching: true,
+        laparams: la,
+        threads: resolve_threads(threads),
+    };
+    let geoms = parse_page_geometries(geometries)?;
+    let tables = py
+        .detach(|| {
+            core_extract_tables_with_document_geometries(&doc.inner, options, &settings, &geoms)
+        })
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {}", e)))?;
+
+    Ok(tables)
 }
 
 /// Extract tables from a page using Rust table extraction.
@@ -3171,19 +3331,28 @@ fn extract_tables_from_page(
         laparams: la,
         threads: resolve_threads(threads),
     };
-    let pages = py
-        .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
-        .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
-    let ltpage = pages
-        .get(page_index)
-        .ok_or_else(|| PyValueError::new_err("page_index out of range"))?;
     let geom = PageGeometry {
         page_bbox,
         mediabox,
         initial_doctop,
         force_crop,
     };
-    Ok(extract_tables_from_ltpage(ltpage, &geom, &settings))
+    let tables: Result<_, String> = py.detach(|| {
+        let ltpage = {
+            let mut cache = doc.layout_cache.lock().unwrap();
+            let pages = cache
+                .get_or_init(&doc.inner, options)
+                .map_err(|e| format!("Failed to process pages: {}", e))?;
+            pages
+                .get(page_index)
+                .cloned()
+                .ok_or_else(|| "page_index out of range".to_string())?
+        };
+        #[cfg(test)]
+        LAYOUT_CACHE_RELEASED.store(true, Ordering::SeqCst);
+        Ok(extract_tables_from_ltpage(&ltpage, &geom, &settings))
+    });
+    tables.map_err(|e| PyValueError::new_err(e))
 }
 
 /// Extract a single table from a page using Rust table extraction.
@@ -3211,19 +3380,28 @@ fn extract_table_from_page(
         laparams: la,
         threads: resolve_threads(threads),
     };
-    let pages = py
-        .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
-        .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
-    let ltpage = pages
-        .get(page_index)
-        .ok_or_else(|| PyValueError::new_err("page_index out of range"))?;
     let geom = PageGeometry {
         page_bbox,
         mediabox,
         initial_doctop,
         force_crop,
     };
-    Ok(extract_table_from_ltpage(ltpage, &geom, &settings))
+    let table: Result<_, String> = py.detach(|| {
+        let ltpage = {
+            let mut cache = doc.layout_cache.lock().unwrap();
+            let pages = cache
+                .get_or_init(&doc.inner, options)
+                .map_err(|e| format!("Failed to process pages: {}", e))?;
+            pages
+                .get(page_index)
+                .cloned()
+                .ok_or_else(|| "page_index out of range".to_string())?
+        };
+        #[cfg(test)]
+        LAYOUT_CACHE_RELEASED.store(true, Ordering::SeqCst);
+        Ok(extract_table_from_ltpage(&ltpage, &geom, &settings))
+    });
+    table.map_err(|e| PyValueError::new_err(e))
 }
 
 /// Extract tables from a filtered/cropped pdfplumber Page using Rust table extraction.
@@ -3236,7 +3414,7 @@ fn extract_tables_from_page_filtered(
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
     let (chars, edges, geom) = page_objects_to_chars_edges(py, page)?;
-    Ok(extract_tables_from_objects(chars, edges, &geom, &settings))
+    py.detach(|| Ok(extract_tables_from_objects(chars, edges, &geom, &settings)))
 }
 
 /// Extract a single table from a filtered/cropped pdfplumber Page using Rust table extraction.
@@ -3249,14 +3427,15 @@ fn extract_table_from_page_filtered(
 ) -> PyResult<Option<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
     let (chars, edges, geom) = page_objects_to_chars_edges(py, page)?;
-    Ok(extract_table_from_objects(chars, edges, &geom, &settings))
+    py.detach(|| Ok(extract_table_from_objects(chars, edges, &geom, &settings)))
 }
 
 /// Repair a PDF and return the repaired bytes.
 #[pyfunction]
 fn repair_pdf(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let (bytes, _path) = read_bytes_and_path(py, data)?;
-    let repaired = bolivar_core::document::repair::repair_bytes(&bytes)
+    let repaired = py
+        .detach(|| bolivar_core::document::repair::repair_bytes(&bytes))
         .map_err(|e| PyValueError::new_err(format!("repair failed: {e}")))?;
     Ok(PyBytes::new(py, &repaired).into_any().unbind())
 }
@@ -3287,7 +3466,7 @@ fn extract_words_from_page(
         threads: resolve_threads(threads),
     };
     let pages = py
-        .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
+        .detach(|| core_extract_pages_with_document(&doc.inner, options))
         .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
     let ltpage = pages
         .get(page_index)
@@ -3298,7 +3477,7 @@ fn extract_words_from_page(
         initial_doctop,
         force_crop,
     };
-    let words = extract_words_from_ltpage(ltpage, &geom, settings);
+    let words = py.detach(|| extract_words_from_ltpage(ltpage, &geom, settings));
     let mut out = Vec::with_capacity(words.len());
     for w in &words {
         out.push(word_obj_to_py(py, w)?);
@@ -3332,7 +3511,7 @@ fn extract_text_from_page(
         threads: resolve_threads(threads),
     };
     let pages = py
-        .allow_threads(|| core_extract_pages_with_document(&doc.inner, options))
+        .detach(|| core_extract_pages_with_document(&doc.inner, options))
         .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
     let ltpage = pages
         .get(page_index)
@@ -3343,7 +3522,7 @@ fn extract_text_from_page(
         initial_doctop,
         force_crop,
     };
-    Ok(extract_text_from_ltpage(ltpage, &geom, settings))
+    Ok(py.detach(|| extract_text_from_ltpage(ltpage, &geom, settings)))
 }
 
 fn ltpage_to_py(ltpage: &bolivar_core::layout::LTPage) -> PyLTPage {
@@ -3404,9 +3583,9 @@ fn extract_text(
         PdfInput::Shared(bytes) => {
             let doc = PDFDocument::new_from_bytes(bytes, password)
                 .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-            py.allow_threads(|| core_extract_text_with_document(&doc, options))
+            py.detach(|| core_extract_text_with_document(&doc, options))
         }
-        PdfInput::Owned(bytes) => py.allow_threads(|| core_extract_text(&bytes, Some(options))),
+        PdfInput::Owned(bytes) => py.detach(|| core_extract_text(&bytes, Some(options))),
     };
     result.map_err(|e| PyValueError::new_err(format!("Failed to extract text: {}", e)))
 }
@@ -3440,7 +3619,7 @@ fn extract_text_from_path(
         threads: resolve_threads(threads),
     };
 
-    let result = py.allow_threads(|| core_extract_text_with_document(&doc, options));
+    let result = py.detach(|| core_extract_text_with_document(&doc, options));
     result.map_err(|e| PyValueError::new_err(format!("Failed to extract text: {}", e)))
 }
 
@@ -3469,9 +3648,9 @@ fn extract_pages(
         PdfInput::Shared(bytes) => {
             let doc = PDFDocument::new_from_bytes(bytes, password)
                 .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-            py.allow_threads(|| core_extract_pages_with_document(&doc, options))
+            py.detach(|| core_extract_pages_with_document(&doc, options))
         }
-        PdfInput::Owned(bytes) => py.allow_threads(|| {
+        PdfInput::Owned(bytes) => py.detach(|| {
             let iter = core_extract_pages(&bytes, Some(options))?;
             iter.collect::<bolivar_core::error::Result<Vec<_>>>()
         }),
@@ -3514,7 +3693,7 @@ fn extract_pages_from_path(
     }
 
     let pages = py
-        .allow_threads(|| core_extract_pages_with_document(&doc, options))
+        .detach(|| core_extract_pages_with_document(&doc, options))
         .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
     Ok(pages.iter().map(ltpage_to_py).collect())
 }
@@ -3599,6 +3778,7 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_pages_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tables_from_document, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_table_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page_filtered, m)?)?;
@@ -3609,7 +3789,7 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-#[cfg(all(test, feature = "python-tests"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -3744,5 +3924,39 @@ mod tests {
         });
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_layout_cache_lock_released_before_table_extract() {
+        let pdf_data = build_minimal_pdf_with_pages(1);
+        let doc = PDFDocument::new(&pdf_data, "").unwrap();
+        let doc = PyPDFDocument {
+            inner: doc,
+            resolved_cache: Mutex::new(HashMap::new()),
+            layout_cache: Mutex::new(LayoutCache::new()),
+        };
+
+        reset_layout_cache_release_flag();
+
+        Python::with_gil(|py| {
+            let result = extract_tables_from_page(
+                py,
+                &doc,
+                0,
+                (0.0, 0.0, 200.0, 200.0),
+                (0.0, 0.0, 200.0, 200.0),
+                0.0,
+                None,
+                None,
+                None,
+                false,
+            );
+            assert!(result.is_ok());
+        });
+
+        assert!(
+            layout_cache_release_hit(),
+            "expected layout cache to be released before table extraction"
+        );
     }
 }

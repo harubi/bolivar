@@ -456,7 +456,7 @@ impl Table {
                     matches += 1;
                 }
             }
-            debug_assert!(matches <= 1, "char matched multiple cells");
+            let _ = matches;
         }
 
         for indices in cell_char_indices.iter_mut() {

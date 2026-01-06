@@ -9,13 +9,15 @@ use bolivar_core::converter::{
     HOCRConverter, HTMLConverter, PDFPageAggregator, TextConverter, XMLConverter,
 };
 use bolivar_core::error::{PdfError, Result};
-use bolivar_core::high_level::{ExtractOptions, extract_pages_with_document};
+use bolivar_core::high_level::{
+    ExtractOptions, extract_pages_with_document, extract_tables_with_document,
+};
 use bolivar_core::image::ImageWriter;
-use bolivar_core::layout::{LAParams, LTPage};
+use bolivar_core::layout::LAParams;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use bolivar_core::pdfpage::PDFPage;
-use bolivar_core::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
+use bolivar_core::table::TableSettings;
 use clap::{ArgAction, Parser, ValueEnum};
 use memmap2::Mmap;
 use std::cell::RefCell;
@@ -265,17 +267,6 @@ fn parse_page_numbers(args: &Args) -> Option<Vec<usize>> {
     None
 }
 
-/// Build `PageGeometry` from an `LTPage` for table extraction.
-fn page_geometry_from_ltpage(page: &LTPage) -> PageGeometry {
-    let bbox = page.bbox();
-    PageGeometry {
-        page_bbox: bbox,
-        mediabox: bbox,
-        initial_doctop: 0.0,
-        force_crop: false,
-    }
-}
-
 /// Escape a string for RFC 4180 compliant CSV output.
 fn csv_escape(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
@@ -356,14 +347,11 @@ fn process_file<W: Write>(
     // Handle table extraction mode
     if args.extract_tables {
         let settings = TableSettings::default();
-        let mut page_num = 0;
         let mut all_pages_data: Vec<serde_json::Value> = Vec::new();
 
-        for page in extract_pages_with_document(&doc, options)? {
-            page_num += 1;
-            let geom = page_geometry_from_ltpage(&page);
-            let tables = extract_tables_from_ltpage(&page, &geom, &settings);
-
+        let tables_by_page = extract_tables_with_document(&doc, options, &settings)?;
+        for (page_idx, tables) in tables_by_page.into_iter().enumerate() {
+            let page_num = page_idx + 1;
             match args.table_format {
                 TableFormat::Csv => {
                     for (table_idx, table) in tables.iter().enumerate() {
