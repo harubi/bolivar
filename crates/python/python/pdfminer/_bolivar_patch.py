@@ -177,7 +177,8 @@ class _PdfplumberPatchLoader(importlib.abc.Loader):
     def exec_module(self, module):
         self.loader.exec_module(module)
         try:
-            _apply_patch(module)
+            if _should_patch():
+                _apply_patch(module)
         finally:
             _remove_hook()
 

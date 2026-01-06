@@ -154,12 +154,12 @@ class TestPDFPage:
             pages = list(PDFPage.create_pages(doc))
             assert len(pages) >= 1
 
-    def test_page_attrs_preserve_refs(self):
-        """PDFPage attrs should keep PDFObjRef values."""
+    def test_page_attrs_resolved(self):
+        """PDFPage attrs should have resolved values for pdfplumber compatibility."""
         from pdfminer.pdfparser import PDFParser
         from pdfminer.pdfdocument import PDFDocument
         from pdfminer.pdfpage import PDFPage
-        from pdfminer.pdftypes import PDFObjRef
+        from pdfminer.pdftypes import PDFStream
 
         pdf_path = FIXTURES_DIR / "simple1.pdf"
         with open(pdf_path, "rb") as f:
@@ -167,11 +167,12 @@ class TestPDFPage:
             doc = PDFDocument(parser)
             page = next(PDFPage.create_pages(doc))
             contents = page.attrs.get("Contents")
+            # Attrs are resolved for pdfplumber compatibility (e.g., Rotate % 360)
             if isinstance(contents, list):
                 assert contents, "Expected non-empty Contents list"
-                assert isinstance(contents[0], PDFObjRef)
+                assert isinstance(contents[0], PDFStream)
             else:
-                assert isinstance(contents, PDFObjRef)
+                assert isinstance(contents, PDFStream)
 
     def test_page_has_pageid(self):
         """PDFPage has pageid attribute"""
