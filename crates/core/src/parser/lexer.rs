@@ -951,48 +951,9 @@ impl<'a> PSBaseParser<'a> {
 
     /// Parse a hex string <...>
     fn parse_hex_string(&mut self) -> Result<PSToken> {
-        self.advance(); // Skip '<'
-        let mut result = Vec::new();
-        let data = self.data.as_slice();
-        let mut pending: Option<u8> = None;
-
-        loop {
-            match data.get(self.pos).copied() {
-                Some(b'>') => {
-                    self.pos += 1;
-                    break;
-                }
-                Some(c) if c.is_ascii_hexdigit() => {
-                    self.pos += 1;
-                    let nibble = match c {
-                        b'0'..=b'9' => c - b'0',
-                        b'a'..=b'f' => c - b'a' + 10,
-                        b'A'..=b'F' => c - b'A' + 10,
-                        _ => 0,
-                    };
-                    if let Some(high) = pending {
-                        result.push((high << 4) | nibble);
-                        pending = None;
-                    } else {
-                        pending = Some(nibble);
-                    }
-                }
-                Some(c) if Self::is_whitespace(c) => {
-                    self.pos += 1;
-                }
-                Some(_) => {
-                    // Invalid character in hex string, stop here
-                    break;
-                }
-                None => return Err(PdfError::UnexpectedEof),
-            }
-        }
-
-        if let Some(nibble) = pending {
-            result.push(nibble);
-        }
-
-        Ok(PSToken::String(result))
+        let (decoded, pos) = decode_hex_string(self.data.as_slice(), self.pos)?;
+        self.pos = pos;
+        Ok(PSToken::String(decoded))
     }
 
     /// Parse a keyword
@@ -1355,54 +1316,9 @@ impl<'a> ContentLexer<'a> {
     }
 
     fn parse_hex_string(&mut self) -> Result<PSToken> {
-        let data = self.data();
-        let len = data.len();
-        let mut pos = self.pos + 1; // skip '<'
-        let mut result = Vec::with_capacity(32);
-        let mut pending: Option<u8> = None;
-        let mut closed = false;
-
-        while pos < len {
-            let c = data[pos];
-            if c == b'>' {
-                pos += 1;
-                closed = true;
-                break;
-            }
-            if c.is_ascii_hexdigit() {
-                let nibble = match c {
-                    b'0'..=b'9' => c - b'0',
-                    b'a'..=b'f' => c - b'a' + 10,
-                    b'A'..=b'F' => c - b'A' + 10,
-                    _ => 0,
-                };
-                if let Some(high) = pending {
-                    result.push((high << 4) | nibble);
-                    pending = None;
-                } else {
-                    pending = Some(nibble);
-                }
-                pos += 1;
-                continue;
-            }
-            if Self::is_whitespace(c) {
-                pos += 1;
-                continue;
-            }
-            break;
-        }
-
-        if !closed && pos >= len {
-            self.pos = pos;
-            return Err(PdfError::UnexpectedEof);
-        }
-
-        if let Some(nibble) = pending {
-            result.push(nibble);
-        }
-
+        let (decoded, pos) = decode_hex_string(self.data(), self.pos)?;
         self.pos = pos;
-        Ok(PSToken::String(result))
+        Ok(PSToken::String(decoded))
     }
 
     fn parse_keyword(&mut self) -> Result<PSToken> {
@@ -1648,6 +1564,128 @@ impl<'a> ContentLexer<'a> {
     }
 }
 
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+const HEX_SIMD_LANES: usize = 32;
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+const HEX_SIMD_LANES: usize = 16;
+
+const fn is_ws_byte(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x00' | b'\x0c')
+}
+
+fn push_hex_nibble(pending: &mut Option<u8>, out: &mut Vec<u8>, nibble: u8) {
+    if let Some(high) = pending.take() {
+        out.push((high << 4) | nibble);
+    } else {
+        *pending = Some(nibble);
+    }
+}
+
+fn decode_hex_string(data: &[u8], start: usize) -> Result<(Vec<u8>, usize)> {
+    let len = data.len();
+    if start >= len {
+        return Err(PdfError::UnexpectedEof);
+    }
+
+    let mut pos = start + 1;
+    let mut result = Vec::with_capacity(32);
+    let mut pending: Option<u8> = None;
+    let mut closed = false;
+
+    while pos < len {
+        if len - pos >= HEX_SIMD_LANES {
+            type V = Simd<u8, { HEX_SIMD_LANES }>;
+            let chunk = V::from_slice(&data[pos..pos + HEX_SIMD_LANES]);
+
+            let d0 = V::splat(b'0');
+            let d9 = V::splat(b'9');
+            let ua = V::splat(b'A');
+            let uf = V::splat(b'F');
+            let la = V::splat(b'a');
+            let lf = V::splat(b'f');
+
+            let is_digit = chunk.simd_ge(d0) & chunk.simd_le(d9);
+            let is_upper = chunk.simd_ge(ua) & chunk.simd_le(uf);
+            let is_lower = chunk.simd_ge(la) & chunk.simd_le(lf);
+            let is_hex = is_digit | is_upper | is_lower;
+
+            let ws_space = V::splat(b' ');
+            let ws_tab = V::splat(b'\t');
+            let ws_lf = V::splat(b'\n');
+            let ws_cr = V::splat(b'\r');
+            let ws_ff = V::splat(0x0c);
+            let ws_nul = V::splat(0x00);
+            let is_ws = chunk.simd_eq(ws_space)
+                | chunk.simd_eq(ws_tab)
+                | chunk.simd_eq(ws_lf)
+                | chunk.simd_eq(ws_cr)
+                | chunk.simd_eq(ws_ff)
+                | chunk.simd_eq(ws_nul);
+
+            let gt = V::splat(b'>');
+            let is_gt = chunk.simd_eq(gt);
+
+            let allowed = is_hex | is_ws | is_gt;
+            let invalid = !allowed;
+            let stop = invalid | is_gt;
+            let stop_mask = stop.to_bitmask();
+
+            if stop_mask == 0 {
+                let lanes = chunk.to_array();
+                for c in lanes {
+                    if let Some(nibble) = hex_value(c) {
+                        push_hex_nibble(&mut pending, &mut result, nibble);
+                    }
+                }
+                pos += HEX_SIMD_LANES;
+                continue;
+            }
+
+            let stop_index = stop_mask.trailing_zeros() as usize;
+            let lanes = chunk.to_array();
+            for i in 0..stop_index {
+                if let Some(nibble) = hex_value(lanes[i]) {
+                    push_hex_nibble(&mut pending, &mut result, nibble);
+                }
+            }
+            pos += stop_index;
+            let stop_byte = lanes[stop_index];
+            if stop_byte == b'>' {
+                pos += 1;
+                closed = true;
+            }
+            break;
+        }
+
+        let c = data[pos];
+        if c == b'>' {
+            pos += 1;
+            closed = true;
+            break;
+        }
+        if let Some(nibble) = hex_value(c) {
+            push_hex_nibble(&mut pending, &mut result, nibble);
+            pos += 1;
+            continue;
+        }
+        if is_ws_byte(c) {
+            pos += 1;
+            continue;
+        }
+        break;
+    }
+
+    if !closed && pos >= len {
+        return Err(PdfError::UnexpectedEof);
+    }
+
+    if let Some(nibble) = pending {
+        result.push(nibble);
+    }
+
+    Ok((result, pos))
+}
+
 const fn hex_value(c: u8) -> Option<u8> {
     match c {
         b'0'..=b'9' => Some(c - b'0'),
@@ -1852,5 +1890,13 @@ mod tests {
         assert_eq!(Keyword::ArrayStart.as_bytes(), b"[");
         assert_eq!(Keyword::DictEnd.as_bytes(), b">>");
         assert_eq!(Keyword::BT.as_bytes(), b"BT");
+    }
+
+    #[test]
+    fn decode_hex_string_matches_expected() {
+        let data = b"<48656c6c6f 20776f726c64>";
+        let (decoded, pos) = decode_hex_string(data, 0).unwrap();
+        assert_eq!(decoded, b"Hello world");
+        assert_eq!(pos, data.len());
     }
 }

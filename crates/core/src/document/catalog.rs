@@ -17,7 +17,13 @@ use memmap2::Mmap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::simd::prelude::*;
 use std::sync::{Arc, RwLock};
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+const PNG_SIMD_LANES: usize = 32;
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+const PNG_SIMD_LANES: usize = 16;
 
 /// XRef entry - location of an object in the PDF file.
 #[derive(Debug, Clone)]
@@ -807,11 +813,12 @@ impl PDFDocument {
     ///
     /// PNG prediction adds a filter byte at the start of each row.
     /// This reverses the prediction to get the original data.
-    fn apply_png_predictor(
+    fn apply_png_predictor_impl(
         data: &[u8],
         columns: usize,
         colors: usize,
         bits_per_component: usize,
+        use_simd: bool,
     ) -> Result<Vec<u8>> {
         let row_bytes = colors * columns * bits_per_component / 8;
         let bpp = std::cmp::max(1, colors * bits_per_component / 8); // bytes per pixel
@@ -843,8 +850,29 @@ impl PDFDocument {
                 }
                 2 => {
                     // Up - each byte depends on byte above
-                    for i in 0..row_bytes {
-                        current_row[i] = row_data[i].wrapping_add(prev_row[i]);
+                    if use_simd && row_bytes >= PNG_SIMD_LANES {
+                        type V = Simd<u8, { PNG_SIMD_LANES }>;
+                        let (prefix, middle, suffix) = row_data.as_simd::<{ PNG_SIMD_LANES }>();
+                        let mut offset = 0;
+                        for &b in prefix {
+                            current_row[offset] = b.wrapping_add(prev_row[offset]);
+                            offset += 1;
+                        }
+                        for chunk in middle {
+                            let prev = V::from_slice(&prev_row[offset..offset + PNG_SIMD_LANES]);
+                            let sum = *chunk + prev;
+                            let lanes = sum.to_array();
+                            current_row[offset..offset + PNG_SIMD_LANES].copy_from_slice(&lanes);
+                            offset += PNG_SIMD_LANES;
+                        }
+                        for &b in suffix {
+                            current_row[offset] = b.wrapping_add(prev_row[offset]);
+                            offset += 1;
+                        }
+                    } else {
+                        for i in 0..row_bytes {
+                            current_row[i] = row_data[i].wrapping_add(prev_row[i]);
+                        }
                     }
                 }
                 3 => {
@@ -880,6 +908,25 @@ impl PDFDocument {
         }
 
         Ok(result)
+    }
+
+    fn apply_png_predictor(
+        data: &[u8],
+        columns: usize,
+        colors: usize,
+        bits_per_component: usize,
+    ) -> Result<Vec<u8>> {
+        Self::apply_png_predictor_impl(data, columns, colors, bits_per_component, true)
+    }
+
+    #[cfg(test)]
+    fn apply_png_predictor_scalar(
+        data: &[u8],
+        columns: usize,
+        colors: usize,
+        bits_per_component: usize,
+    ) -> Result<Vec<u8>> {
+        Self::apply_png_predictor_impl(data, columns, colors, bits_per_component, false)
     }
 
     /// Paeth predictor function used in PNG filtering.
@@ -1961,5 +2008,16 @@ mod tests {
         assert_eq!(format_alpha(26), "z");
         assert_eq!(format_alpha(27), "aa");
         assert_eq!(format_alpha(28), "ab");
+    }
+
+    #[test]
+    fn png_predictor_up_simd_matches_scalar() {
+        let data = [
+            2, 1, 2, 3, 4, // row1 (Up)
+            2, 4, 3, 2, 1, // row2 (Up)
+        ];
+        let scalar = PDFDocument::apply_png_predictor_scalar(&data, 4, 1, 8).unwrap();
+        let simd = PDFDocument::apply_png_predictor(&data, 4, 1, 8).unwrap();
+        assert_eq!(scalar, simd);
     }
 }

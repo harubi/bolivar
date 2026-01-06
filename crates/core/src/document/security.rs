@@ -166,7 +166,7 @@ impl PDFStandardSecurityHandlerV2 {
         context.consume(&self.docid);
 
         // Get result
-        let mut result = context.compute().0.to_vec();
+        let mut result = context.finalize().0.to_vec();
 
         // Key length in bytes
         let n = if self.r >= 3 {
@@ -197,7 +197,7 @@ impl PDFStandardSecurityHandlerV2 {
             let mut context = md5::Context::new();
             context.consume(PASSWORD_PADDING);
             context.consume(&self.docid);
-            let hash = context.compute();
+            let hash = context.finalize();
 
             let mut result = Arcfour::new(key).process(&hash.0);
 
@@ -452,7 +452,7 @@ impl PDFStandardSecurityHandlerV4 {
             context.consume([0xFF, 0xFF, 0xFF, 0xFF]);
         }
 
-        let mut result = context.compute().0.to_vec();
+        let mut result = context.finalize().0.to_vec();
 
         // Hash 50 more times for R >= 3
         for _ in 0..50 {
@@ -468,7 +468,7 @@ impl PDFStandardSecurityHandlerV4 {
         let mut context = md5::Context::new();
         context.consume(PASSWORD_PADDING);
         context.consume(&self.docid);
-        let hash = context.compute();
+        let hash = context.finalize();
 
         let mut result = Arcfour::new(key).process(&hash.0);
 

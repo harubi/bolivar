@@ -12,8 +12,14 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::simd::prelude::*;
 
 const MAX_IMAGE_DECODED_BYTES: usize = 256 * 1024 * 1024;
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+const PNG_SIMD_LANES: usize = 32;
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+const PNG_SIMD_LANES: usize = 16;
 
 /// Align a value to a 4-byte boundary (32-bit alignment for BMP rows).
 pub const fn align32(x: i32) -> i32 {
@@ -257,7 +263,10 @@ fn expected_image_len(width: i32, height: i32, bits: i32, colorspace: &[String])
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_IMAGE_DECODED_BYTES, expected_image_len};
+    use super::{
+        MAX_IMAGE_DECODED_BYTES, apply_png_predictor, apply_png_predictor_scalar,
+        expected_image_len,
+    };
 
     #[test]
     fn expected_image_len_caps_large_images() {
@@ -271,6 +280,17 @@ mod tests {
         let colorspace = vec!["DeviceRGB".to_string()];
         let len = expected_image_len(100, 100, 8, &colorspace).unwrap();
         assert_eq!(len, 100 * 100 * 3);
+    }
+
+    #[test]
+    fn png_predictor_up_simd_matches_scalar() {
+        let data = [
+            2, 1, 2, 3, 4, // row1 (Up)
+            2, 4, 3, 2, 1, // row2 (Up)
+        ];
+        let scalar = apply_png_predictor_scalar(&data, 4, 1, 8).unwrap();
+        let simd = apply_png_predictor(&data, 4, 1, 8).unwrap();
+        assert_eq!(scalar, simd);
     }
 }
 
@@ -449,11 +469,12 @@ fn apply_tiff_predictor(
     Ok(out)
 }
 
-fn apply_png_predictor(
+fn apply_png_predictor_impl(
     data: &[u8],
     columns: usize,
     colors: usize,
     bits_per_component: usize,
+    use_simd: bool,
 ) -> Result<Vec<u8>> {
     let row_bytes = colors * columns * bits_per_component / 8;
     let bpp = std::cmp::max(1, colors * bits_per_component / 8);
@@ -480,8 +501,29 @@ fn apply_png_predictor(
                 }
             }
             2 => {
-                for i in 0..row_bytes {
-                    current_row[i] = row_data[i].wrapping_add(prev_row[i]);
+                if use_simd && row_bytes >= PNG_SIMD_LANES {
+                    type V = Simd<u8, { PNG_SIMD_LANES }>;
+                    let (prefix, middle, suffix) = row_data.as_simd::<{ PNG_SIMD_LANES }>();
+                    let mut offset = 0;
+                    for &b in prefix {
+                        current_row[offset] = b.wrapping_add(prev_row[offset]);
+                        offset += 1;
+                    }
+                    for chunk in middle {
+                        let prev = V::from_slice(&prev_row[offset..offset + PNG_SIMD_LANES]);
+                        let sum = *chunk + prev;
+                        let lanes = sum.to_array();
+                        current_row[offset..offset + PNG_SIMD_LANES].copy_from_slice(&lanes);
+                        offset += PNG_SIMD_LANES;
+                    }
+                    for &b in suffix {
+                        current_row[offset] = b.wrapping_add(prev_row[offset]);
+                        offset += 1;
+                    }
+                } else {
+                    for i in 0..row_bytes {
+                        current_row[i] = row_data[i].wrapping_add(prev_row[i]);
+                    }
                 }
             }
             3 => {
@@ -512,6 +554,25 @@ fn apply_png_predictor(
     }
 
     Ok(result)
+}
+
+fn apply_png_predictor(
+    data: &[u8],
+    columns: usize,
+    colors: usize,
+    bits_per_component: usize,
+) -> Result<Vec<u8>> {
+    apply_png_predictor_impl(data, columns, colors, bits_per_component, true)
+}
+
+#[cfg(test)]
+fn apply_png_predictor_scalar(
+    data: &[u8],
+    columns: usize,
+    colors: usize,
+    bits_per_component: usize,
+) -> Result<Vec<u8>> {
+    apply_png_predictor_impl(data, columns, colors, bits_per_component, false)
 }
 
 const fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
