@@ -3,7 +3,8 @@
 //! This module provides the main entry points for extracting tables,
 //! words, and text from PDF pages.
 
-use crate::utils::Rect;
+use crate::layout::types::LTChar;
+use crate::utils::{HasBBox, Rect};
 
 use super::clustering::{bbox_overlap, bbox_overlap_strict};
 use super::edges::{
@@ -29,6 +30,28 @@ fn rects_equal(a: Rect, b: Rect) -> bool {
         && (a.3 - b.3).abs() < EPS
 }
 
+/// Convert an LTChar to CharObj, applying crop and coordinate transform.
+fn char_to_charobj(c: &LTChar, geom: &PageGeometry, crop_bbox: Option<BBox>) -> Option<CharObj> {
+    let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
+    let bbox = if let Some(crop) = crop_bbox {
+        bbox_overlap(bbox, crop)?
+    } else {
+        bbox
+    };
+    Some(CharObj {
+        text: c.get_text().to_string(),
+        x0: bbox.x0,
+        x1: bbox.x1,
+        top: bbox.top,
+        bottom: bbox.bottom,
+        doctop: geom.initial_doctop + bbox.top,
+        width: bbox.width(),
+        height: bbox.height(),
+        size: c.size(),
+        upright: c.upright(),
+    })
+}
+
 /// Collect all characters and edges from a page.
 fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Vec<EdgeObj>) {
     let mut chars: Vec<CharObj> = Vec::new();
@@ -43,33 +66,9 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
     ) {
         match item {
             LTItem::Char(c) => {
-                let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
-                let bbox = if let Some(crop) = crop_bbox {
-                    let Some(bbox) = bbox_overlap(bbox, crop) else {
-                        return;
-                    };
-                    bbox
-                } else {
-                    bbox
-                };
-                let text = c.get_text().to_string();
-                let size = c.size();
-                let upright = c.upright();
-                let width = bbox.width();
-                let height = bbox.height();
-                let doctop = geom.initial_doctop + bbox.top;
-                chars.push(CharObj {
-                    text,
-                    x0: bbox.x0,
-                    x1: bbox.x1,
-                    top: bbox.top,
-                    bottom: bbox.bottom,
-                    doctop,
-                    width,
-                    height,
-                    size,
-                    upright,
-                });
+                if let Some(obj) = char_to_charobj(c, geom, crop_bbox) {
+                    chars.push(obj);
+                }
             }
             LTItem::Line(l) => {
                 let bbox = to_top_left_bbox(l.x0(), l.y0(), l.x1(), l.y1(), geom);
@@ -123,146 +122,44 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
                     }
                 }
             }
-            LTItem::TextLine(line) => match line {
-                TextLineType::Horizontal(l) => {
-                    for el in l.iter() {
+            LTItem::TextLine(line) => {
+                let mut push_chars = |elements: &mut dyn Iterator<Item = &TextLineElement>| {
+                    for el in elements {
                         if let TextLineElement::Char(c) = el {
-                            let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
-                            let bbox = if let Some(crop) = crop_bbox {
-                                let Some(bbox) = bbox_overlap(bbox, crop) else {
-                                    continue;
-                                };
-                                bbox
-                            } else {
-                                bbox
-                            };
-                            let text = c.get_text().to_string();
-                            let size = c.size();
-                            let upright = c.upright();
-                            let width = bbox.width();
-                            let height = bbox.height();
-                            let doctop = geom.initial_doctop + bbox.top;
-                            chars.push(CharObj {
-                                text,
-                                x0: bbox.x0,
-                                x1: bbox.x1,
-                                top: bbox.top,
-                                bottom: bbox.bottom,
-                                doctop,
-                                width,
-                                height,
-                                size,
-                                upright,
-                            });
-                        }
-                    }
-                }
-                TextLineType::Vertical(l) => {
-                    for el in l.iter() {
-                        if let TextLineElement::Char(c) = el {
-                            let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
-                            let bbox = if let Some(crop) = crop_bbox {
-                                let Some(bbox) = bbox_overlap(bbox, crop) else {
-                                    continue;
-                                };
-                                bbox
-                            } else {
-                                bbox
-                            };
-                            let text = c.get_text().to_string();
-                            let size = c.size();
-                            let upright = c.upright();
-                            let width = bbox.width();
-                            let height = bbox.height();
-                            let doctop = geom.initial_doctop + bbox.top;
-                            chars.push(CharObj {
-                                text,
-                                x0: bbox.x0,
-                                x1: bbox.x1,
-                                top: bbox.top,
-                                bottom: bbox.bottom,
-                                doctop,
-                                width,
-                                height,
-                                size,
-                                upright,
-                            });
-                        }
-                    }
-                }
-            },
-            LTItem::TextBox(tb) => match tb {
-                TextBoxType::Horizontal(b) => {
-                    for line in b.iter() {
-                        for el in line.iter() {
-                            if let TextLineElement::Char(c) = el {
-                                let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
-                                let bbox = if let Some(crop) = crop_bbox {
-                                    let Some(bbox) = bbox_overlap(bbox, crop) else {
-                                        continue;
-                                    };
-                                    bbox
-                                } else {
-                                    bbox
-                                };
-                                let text = c.get_text().to_string();
-                                let size = c.size();
-                                let upright = c.upright();
-                                let width = bbox.width();
-                                let height = bbox.height();
-                                let doctop = geom.initial_doctop + bbox.top;
-                                chars.push(CharObj {
-                                    text,
-                                    x0: bbox.x0,
-                                    x1: bbox.x1,
-                                    top: bbox.top,
-                                    bottom: bbox.bottom,
-                                    doctop,
-                                    width,
-                                    height,
-                                    size,
-                                    upright,
-                                });
+                            if let Some(obj) = char_to_charobj(c, geom, crop_bbox) {
+                                chars.push(obj);
                             }
                         }
                     }
+                };
+                match line {
+                    TextLineType::Horizontal(l) => push_chars(&mut l.iter()),
+                    TextLineType::Vertical(l) => push_chars(&mut l.iter()),
                 }
-                TextBoxType::Vertical(b) => {
-                    for line in b.iter() {
-                        for el in line.iter() {
-                            if let TextLineElement::Char(c) = el {
-                                let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
-                                let bbox = if let Some(crop) = crop_bbox {
-                                    let Some(bbox) = bbox_overlap(bbox, crop) else {
-                                        continue;
-                                    };
-                                    bbox
-                                } else {
-                                    bbox
-                                };
-                                let text = c.get_text().to_string();
-                                let size = c.size();
-                                let upright = c.upright();
-                                let width = bbox.width();
-                                let height = bbox.height();
-                                let doctop = geom.initial_doctop + bbox.top;
-                                chars.push(CharObj {
-                                    text,
-                                    x0: bbox.x0,
-                                    x1: bbox.x1,
-                                    top: bbox.top,
-                                    bottom: bbox.bottom,
-                                    doctop,
-                                    width,
-                                    height,
-                                    size,
-                                    upright,
-                                });
+            }
+            LTItem::TextBox(tb) => {
+                let mut push_line_chars = |elements: &mut dyn Iterator<Item = &TextLineElement>| {
+                    for el in elements {
+                        if let TextLineElement::Char(c) = el {
+                            if let Some(obj) = char_to_charobj(c, geom, crop_bbox) {
+                                chars.push(obj);
                             }
                         }
                     }
+                };
+                match tb {
+                    TextBoxType::Horizontal(b) => {
+                        for line in b.iter() {
+                            push_line_chars(&mut line.iter());
+                        }
+                    }
+                    TextBoxType::Vertical(b) => {
+                        for line in b.iter() {
+                            push_line_chars(&mut line.iter());
+                        }
+                    }
                 }
-            },
+            }
             LTItem::Figure(fig) => {
                 for child in fig.iter() {
                     visit_item(child, geom, crop_bbox, chars, edges);
