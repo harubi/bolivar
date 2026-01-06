@@ -28,41 +28,94 @@ def _apply_patch(module) -> bool:
         return True
 
     from bolivar import (
+        extract_tables_from_document,
         extract_table_from_page,
         extract_table_from_page_filtered,
         extract_tables_from_page,
         extract_tables_from_page_filtered,
     )
 
-    def _extract_tables(self, table_settings=None):
-        if hasattr(self, "filter_fn") or not getattr(self, "is_original", True):
+    def _freeze_settings(obj):
+        if obj is None:
+            return None
+        if isinstance(obj, dict):
+            return tuple(sorted((k, _freeze_settings(v)) for k, v in obj.items()))
+        if isinstance(obj, (list, tuple)):
+            return tuple(_freeze_settings(v) for v in obj)
+        return obj
+
+    def _page_geom(page):
+        return (
+            tuple(page.bbox),
+            tuple(page.mediabox),
+            float(page.initial_doctop),
+            not getattr(page, "is_original", True),
+        )
+
+    def _build_geometries(pdf, page_index, page):
+        geoms = [_page_geom(p) for p in pdf.pages]
+        current = _page_geom(page)
+        if 0 <= page_index < len(geoms) and geoms[page_index] != current:
+            geoms[page_index] = current
+        return geoms
+
+    def _extract_tables(self, table_settings=None, threads=None):
+        if getattr(self, "filter_fn", None) is not None:
             return extract_tables_from_page_filtered(self, table_settings)
         page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
         force_crop = not getattr(self, "is_original", True)
-        return extract_tables_from_page(
-            self.page_obj.doc._rust_doc,
-            page_index,
-            self.bbox,
-            self.mediabox,
-            self.initial_doctop,
-            table_settings,
-            force_crop=force_crop,
-        )
+        pdf = getattr(self, "pdf", None)
+        if pdf is None or not hasattr(pdf, "pages"):
+            return extract_tables_from_page(
+                self.page_obj.doc._rust_doc,
+                page_index,
+                self.bbox,
+                self.mediabox,
+                self.initial_doctop,
+                table_settings,
+                threads=threads,
+                force_crop=force_crop,
+            )
+        if len(pdf.pages) <= 1:
+            rust_doc = getattr(pdf, "_rust_doc", None) or self.page_obj.doc._rust_doc
+            return extract_tables_from_page(
+                rust_doc,
+                page_index,
+                self.bbox,
+                self.mediabox,
+                self.initial_doctop,
+                table_settings,
+                threads=threads,
+                force_crop=force_crop,
+            )
+        cache = getattr(pdf, "_bolivar_tables_cache", None)
+        if cache is None:
+            cache = {}
+            pdf._bolivar_tables_cache = cache
+        geoms = _build_geometries(pdf, page_index, self)
+        cache_key = (_freeze_settings(table_settings), tuple(geoms))
+        tables_by_page = cache.get(cache_key)
+        if tables_by_page is None:
+            rust_doc = getattr(pdf, "_rust_doc", None) or self.page_obj.doc._rust_doc
+            tables_by_page = extract_tables_from_document(
+                rust_doc,
+                geoms,
+                table_settings,
+                threads=threads,
+            )
+            cache[cache_key] = tables_by_page
+        return tables_by_page[page_index]
 
-    def _extract_table(self, table_settings=None):
-        if hasattr(self, "filter_fn") or not getattr(self, "is_original", True):
+    def _table_cell_count(table):
+        return sum(len(row) for row in table)
+
+    def _extract_table(self, table_settings=None, threads=None):
+        if getattr(self, "filter_fn", None) is not None:
             return extract_table_from_page_filtered(self, table_settings)
-        page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
-        force_crop = not getattr(self, "is_original", True)
-        return extract_table_from_page(
-            self.page_obj.doc._rust_doc,
-            page_index,
-            self.bbox,
-            self.mediabox,
-            self.initial_doctop,
-            table_settings,
-            force_crop=force_crop,
-        )
+        tables = _extract_tables(self, table_settings=table_settings, threads=threads)
+        if not tables:
+            return None
+        return max(tables, key=_table_cell_count)
 
     _extract_tables._bolivar_patched = True
     page_mod.Page.extract_tables = _extract_tables

@@ -18,6 +18,8 @@ classifiers = [
 dynamic = ["version"]
 dependencies = [
     "ipykernel>=6.31.0",
+    "numpy>=2.0.2",
+    "pandas>=2.3.3",
     "pdfplumber>=0.11.8",
 ]
 
@@ -32,3 +34,4 @@ module-name = "bolivar._bolivar"
 features = ["pyo3/extension-module"]
 # Include the pdfminer compatibility shim
 python-packages = ["bolivar", "pdfminer"]
+include = ["crates/python/python/bolivar_autoload.pth"]

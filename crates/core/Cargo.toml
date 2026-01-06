@@ -35,6 +35,7 @@ perfcnt = { workspace = true, optional = true }
 
 [features]
 perf-counters = ["criterion-perf-events", "perfcnt"]
+test-utils = []
 
 [dev-dependencies]
 criterion.workspace = true
