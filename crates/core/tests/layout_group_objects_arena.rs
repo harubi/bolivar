@@ -1,7 +1,7 @@
 use bolivar_core::layout::analysis::{group_objects, group_objects_arena};
 use bolivar_core::layout::arena::LayoutArena;
-use bolivar_core::layout::elements::LTChar;
 use bolivar_core::layout::params::LAParams;
+use bolivar_core::layout::types::LTChar;
 
 #[test]
 fn arena_group_objects_parity() {

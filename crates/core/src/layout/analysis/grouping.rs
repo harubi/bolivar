@@ -9,11 +9,11 @@ use super::super::arena::{
     AnnoId, ArenaElem, ArenaTextBox, ArenaTextLine, ArenaTextLineHorizontal, ArenaTextLineVertical,
     BoxId, CharId, LayoutArena, LineId,
 };
-use super::super::elements::{
+use super::super::params::LAParams;
+use super::super::types::{
     LTAnno, LTChar, LTComponent, LTTextBox, LTTextBoxHorizontal, LTTextBoxVertical,
     LTTextLineHorizontal, LTTextLineVertical, TextBoxType, TextLineElement, TextLineType,
 };
-use super::super::params::LAParams;
 
 /// Groups character objects into text lines.
 ///

@@ -2,7 +2,7 @@ use bolivar_core::layout::LTTextLine;
 use bolivar_core::layout::arena::{
     ArenaElem, ArenaTextLine, ArenaTextLineHorizontal, CharId, LayoutArena, LineId,
 };
-use bolivar_core::layout::elements::{LTChar, LTComponent, TextLineType};
+use bolivar_core::layout::types::{LTChar, LTComponent, TextLineType};
 use bolivar_core::utils::INF_F64;
 
 #[test]

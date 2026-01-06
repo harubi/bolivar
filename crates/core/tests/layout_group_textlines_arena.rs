@@ -3,8 +3,8 @@ use bolivar_core::layout::analysis::{
     group_objects, group_objects_arena, group_textlines, group_textlines_arena,
 };
 use bolivar_core::layout::arena::LayoutArena;
-use bolivar_core::layout::elements::{LTChar, TextBoxType};
 use bolivar_core::layout::params::LAParams;
+use bolivar_core::layout::types::{LTChar, TextBoxType};
 use bolivar_core::utils::HasBBox;
 
 #[test]

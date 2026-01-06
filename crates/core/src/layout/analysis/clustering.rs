@@ -6,9 +6,9 @@ use std::collections::BinaryHeap;
 
 use crate::utils::{HasBBox, INF_F64, Plane, Rect};
 
-use super::super::elements::{LTTextGroup, TextBoxType, TextGroupElement};
 use super::super::params::LAParams;
-use super::spatial_tree::{
+use super::super::types::{LTTextGroup, TextBoxType, TextGroupElement};
+use super::spatial::{
     BestEntry, DynamicSpatialTree, FrontierEntry, PlaneElem, PyId, SpatialNode,
     calc_dist_lower_bound, expand_frontier_best,
 };

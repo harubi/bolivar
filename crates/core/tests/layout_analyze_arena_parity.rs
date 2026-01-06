@@ -3,8 +3,8 @@ use std::cell::Cell;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use bolivar_core::layout::elements::{LTChar, LTItem, LTLayoutContainer};
 use bolivar_core::layout::params::LAParams;
+use bolivar_core::layout::types::{LTChar, LTItem, LTLayoutContainer};
 
 static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 

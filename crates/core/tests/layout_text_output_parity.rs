@@ -3,7 +3,7 @@ use std::cell::Cell;
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use bolivar_core::layout::elements::{
+use bolivar_core::layout::types::{
     LTAnno, LTChar, LTTextLine, LTTextLineHorizontal, TextLineElement,
 };
 

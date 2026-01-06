@@ -1,25 +1,18 @@
 //! Layout analysis module for PDF text extraction.
 //!
-//! This module contains:
-//! - Layout analysis types (LTPage, LTChar, LTTextLine, LTTextBox, etc.)
-//! - Layout analysis parameters (LAParams)
-//! - Grouping and clustering algorithms
-//! - Table extraction functionality
+//! - `types` - Layout types (LTPage, LTChar, LTTextLine, LTTextBox, etc.)
+//! - `params` - Layout analysis parameters (LAParams)
+//! - `analysis` - Grouping and clustering algorithms
+//! - `table` - Table extraction functionality
 
 pub mod analysis;
 pub mod arena;
-pub mod elements;
 pub mod params;
 pub mod table;
+pub mod types;
 
-// Re-export params
-pub use params::*;
-
-// Re-export element types for backwards compatibility
-pub use elements::*;
-
-// Re-export analysis types and functions
+// Re-export all public types for convenience
 pub use analysis::*;
-
-// Re-export table types for backwards compatibility
+pub use params::*;
 pub use table::*;
+pub use types::*;

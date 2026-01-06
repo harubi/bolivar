@@ -1,4 +1,4 @@
-use crate::layout::elements::{
+use crate::layout::types::{
     LTAnno, LTChar, LTComponent, LTTextBoxHorizontal, LTTextBoxVertical, LTTextLineHorizontal,
     LTTextLineVertical, TextBoxType, TextLineElement, TextLineType,
 };

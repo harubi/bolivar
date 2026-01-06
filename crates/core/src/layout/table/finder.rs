@@ -18,7 +18,7 @@ use super::types::{
     BBox, CharObj, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TextSettings,
     WordObj,
 };
-use crate::layout::elements::{LTItem, LTPage, TextBoxType, TextLineElement, TextLineType};
+use crate::layout::types::{LTItem, LTPage, TextBoxType, TextLineElement, TextLineType};
 
 /// Check if two rectangles are equal within epsilon.
 fn rects_equal(a: Rect, b: Rect) -> bool {

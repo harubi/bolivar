@@ -5,11 +5,11 @@
 
 use crate::utils::HasBBox;
 
-use super::super::elements::{
+use super::super::params::LAParams;
+use super::super::types::{
     IndexAssigner, LTChar, LTFigure, LTItem, LTLayoutContainer, LTPage, LTTextBox, LTTextGroup,
     TextBoxType, TextLineType,
 };
-use super::super::params::LAParams;
 use super::clustering::group_textboxes_exact;
 use super::grouping::{group_objects, group_objects_arena, group_textlines, group_textlines_arena};
 use crate::layout::arena::LayoutArena;
