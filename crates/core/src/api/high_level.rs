@@ -64,7 +64,8 @@ pub fn take_thread_log_len() -> usize {
 
 fn normalize_threads(threads: Option<usize>) -> Option<usize> {
     match threads {
-        Some(0) | Some(1) => None,
+        Some(0) => None,
+        Some(1) => Some(1),
         Some(n) => Some(n),
         None => std::thread::available_parallelism().ok().map(|n| n.get()),
     }
@@ -672,7 +673,7 @@ fn extract_pages_from_doc(
 mod tests {
     use super::{
         ExtractOptions, extract_pages, extract_tables_with_document,
-        extract_tables_with_document_geometries,
+        extract_tables_with_document_geometries, extract_text,
     };
     use crate::pdfdocument::PDFDocument;
     use crate::table::{PageGeometry, TableSettings};
@@ -693,7 +694,7 @@ mod tests {
         out.extend_from_slice(b"%PDF-1.4\n");
 
         let mut offsets: Vec<usize> = Vec::new();
-        let mut push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
+        let push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
             offsets.push(buf.len());
             buf.extend_from_slice(obj.as_bytes());
         };
@@ -818,6 +819,31 @@ mod tests {
         let records = super::take_thread_log();
         let used_pool = records.iter().any(|record| record.in_pool);
         assert!(used_pool, "expected default threads to use rayon pool");
+    }
+
+    #[test]
+    fn test_threads_one_uses_sequential_path_for_text() {
+        let _guard = thread_log_guard();
+        let parallelism = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        if parallelism <= 1 {
+            eprintln!("skipping: available parallelism is {parallelism}");
+            return;
+        }
+
+        let pdf_data = build_minimal_pdf_with_pages(3);
+        super::clear_thread_log();
+
+        let options = ExtractOptions {
+            threads: Some(1),
+            ..Default::default()
+        };
+        let _ = extract_text(&pdf_data, Some(options)).unwrap();
+
+        let records = super::take_thread_log();
+        let used_pool = records.iter().any(|record| record.in_pool);
+        assert!(!used_pool, "expected threads=1 to stay on sequential path");
     }
 
     #[test]
