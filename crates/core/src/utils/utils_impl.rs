@@ -11,6 +11,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::ops::ControlFlow;
+use std::simd::prelude::*;
 
 use geo_index::rtree::sort::HilbertSort;
 use geo_index::rtree::{RTree as GeoRTree, RTreeBuilder, RTreeIndex, SimpleDistanceMetric};
@@ -83,22 +84,22 @@ pub fn apply_matrix_pt(m: Matrix, v: Point) -> Point {
 /// Note that the result is not a rotated rectangle, but a rectangle with the same
 /// orientation that tightly fits the outside of the rotated content.
 pub fn apply_matrix_rect(m: Matrix, rect: Rect) -> Rect {
-    let (x0, y0, x1, y1) = rect;
-    let left_bottom = (x0, y0);
-    let right_bottom = (x1, y0);
-    let right_top = (x1, y1);
-    let left_top = (x0, y1);
+    apply_matrix_rect_simd(m, rect)
+}
 
-    let (left1, bottom1) = apply_matrix_pt(m, left_bottom);
-    let (right1, bottom2) = apply_matrix_pt(m, right_bottom);
-    let (right2, top1) = apply_matrix_pt(m, right_top);
-    let (left2, top2) = apply_matrix_pt(m, left_top);
+fn apply_matrix_rect_simd(m: Matrix, rect: Rect) -> Rect {
+    let (x0, y0, x1, y1) = rect;
+    let xs = Simd::<f64, 4>::from_array([x0, x1, x1, x0]);
+    let ys = Simd::<f64, 4>::from_array([y0, y0, y1, y1]);
+    let (a, b, c, d, e, f) = m;
+    let xv = xs * Simd::splat(a) + ys * Simd::splat(c) + Simd::splat(e);
+    let yv = xs * Simd::splat(b) + ys * Simd::splat(d) + Simd::splat(f);
 
     (
-        left1.min(left2).min(right1).min(right2),
-        bottom1.min(bottom2).min(top1).min(top2),
-        left1.max(left2).max(right1).max(right2),
-        bottom1.max(bottom2).max(top1).max(top2),
+        xv.reduce_min(),
+        yv.reduce_min(),
+        xv.reduce_max(),
+        yv.reduce_max(),
     )
 }
 
@@ -799,6 +800,14 @@ mod tests {
     fn test_apply_matrix_pt_identity() {
         let identity = MATRIX_IDENTITY;
         assert_eq!(apply_matrix_pt(identity, (5.0, 10.0)), (5.0, 10.0));
+    }
+
+    #[test]
+    fn test_apply_matrix_rect_simd_rotation() {
+        let matrix: Matrix = (0.0, 1.0, -1.0, 0.0, 0.0, 0.0);
+        let rect: Rect = (0.0, 0.0, 2.0, 3.0);
+        let out = apply_matrix_rect_simd(matrix, rect);
+        assert_eq!(out, (-3.0, 0.0, 0.0, 2.0));
     }
 
     #[test]
