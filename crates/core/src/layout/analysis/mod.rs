@@ -8,6 +8,7 @@
 mod analyze;
 mod clustering;
 mod grouping;
+mod soa;
 pub mod spatial;
 
 // Re-export public types and functions

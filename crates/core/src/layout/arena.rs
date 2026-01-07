@@ -102,6 +102,74 @@ impl LayoutArena {
         id
     }
 
+    pub fn push_textline(&mut self, line: TextLineType) -> LineId {
+        match line {
+            TextLineType::Horizontal(h) => {
+                let LTTextLineHorizontal {
+                    component,
+                    word_margin,
+                    x1_tracker,
+                    elements,
+                } = h;
+                let mut arena_elems = Vec::with_capacity(elements.len());
+                for element in elements {
+                    match element {
+                        TextLineElement::Char(ch) => {
+                            let id = self.push_char(ch);
+                            arena_elems.push(ArenaElem::Char(id));
+                        }
+                        TextLineElement::Anno(anno) => {
+                            let id = self.push_anno(anno);
+                            arena_elems.push(ArenaElem::Anno(id));
+                        }
+                    }
+                }
+                let arena_line = ArenaTextLine::Horizontal(ArenaTextLineHorizontal::new(
+                    component,
+                    word_margin,
+                    x1_tracker,
+                    arena_elems,
+                ));
+                self.push_line(arena_line)
+            }
+            TextLineType::Vertical(v) => {
+                let LTTextLineVertical {
+                    component,
+                    word_margin,
+                    y0_tracker,
+                    elements,
+                } = v;
+                let mut arena_elems = Vec::with_capacity(elements.len());
+                for element in elements {
+                    match element {
+                        TextLineElement::Char(ch) => {
+                            let id = self.push_char(ch);
+                            arena_elems.push(ArenaElem::Char(id));
+                        }
+                        TextLineElement::Anno(anno) => {
+                            let id = self.push_anno(anno);
+                            arena_elems.push(ArenaElem::Anno(id));
+                        }
+                    }
+                }
+                let arena_line = ArenaTextLine::Vertical(ArenaTextLineVertical {
+                    component,
+                    word_margin,
+                    y0_tracker,
+                    elements: arena_elems,
+                });
+                self.push_line(arena_line)
+            }
+        }
+    }
+
+    pub fn extend_lines_from_textlines(&mut self, lines: Vec<TextLineType>) -> Vec<LineId> {
+        lines
+            .into_iter()
+            .map(|line| self.push_textline(line))
+            .collect()
+    }
+
     pub fn get_line(&self, id: LineId) -> &ArenaTextLine {
         &self.lines[id.0]
     }
@@ -246,6 +314,41 @@ impl LayoutArena {
                 }
                 v.component.is_empty() || (has_any && !has_non_ws)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::types::{
+        LTAnno, LTChar, LTTextLine, LTTextLineHorizontal, TextLineElement, TextLineType,
+    };
+
+    #[test]
+    fn arena_push_textline_roundtrip_preserves_text_and_bbox() {
+        let mut line = LTTextLineHorizontal::new(0.1);
+        line.set_bbox((0.0, 0.0, 10.0, 2.0));
+        line.add_element(TextLineElement::Char(LTChar::new(
+            (0.0, 0.0, 1.0, 2.0),
+            "a",
+            "F1",
+            10.0,
+            true,
+            1.0,
+        )));
+        line.add_element(TextLineElement::Anno(LTAnno::new(" ")));
+
+        let mut arena = LayoutArena::new();
+        let id = arena.push_textline(TextLineType::Horizontal(line));
+        let materialized = arena.materialize_lines(&[id]);
+        assert_eq!(materialized.len(), 1);
+        match &materialized[0] {
+            TextLineType::Horizontal(h) => {
+                assert_eq!(h.bbox(), (0.0, 0.0, 10.0, 2.0));
+                assert_eq!(h.get_text(), "a ");
+            }
+            TextLineType::Vertical(_) => panic!("expected horizontal line"),
         }
     }
 }

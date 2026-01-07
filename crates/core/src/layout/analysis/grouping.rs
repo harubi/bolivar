@@ -3,7 +3,9 @@
 //! Contains group_objects() for grouping characters into text lines,
 //! and group_textlines() for grouping text lines into text boxes.
 
-use crate::utils::{HasBBox, INF_F64, Plane, Rect, uniq};
+#[cfg(test)]
+use crate::utils::{HasBBox, Plane};
+use crate::utils::{INF_F64, Rect};
 
 use super::super::arena::{
     AnnoId, ArenaElem, ArenaTextBox, ArenaTextLine, ArenaTextLineHorizontal, ArenaTextLineVertical,
@@ -11,9 +13,10 @@ use super::super::arena::{
 };
 use super::super::params::LAParams;
 use super::super::types::{
-    LTAnno, LTChar, LTComponent, LTTextBox, LTTextBoxHorizontal, LTTextBoxVertical,
-    LTTextLineHorizontal, LTTextLineVertical, TextBoxType, TextLineElement, TextLineType,
+    LTAnno, LTChar, LTComponent, LTTextLineHorizontal, LTTextLineVertical, TextBoxType,
+    TextLineElement, TextLineType,
 };
+use super::soa::RectSoA;
 
 /// Groups character objects into text lines.
 ///
@@ -129,6 +132,53 @@ pub fn group_objects(laparams: &LAParams, objs: &[LTChar]) -> Vec<TextLineType> 
     }
 
     result
+}
+
+#[cfg(test)]
+mod arena_soa_tests {
+    use super::*;
+
+    fn hline(bbox: Rect) -> TextLineType {
+        let mut line = LTTextLineHorizontal::new(0.1);
+        line.set_bbox(bbox);
+        TextLineType::Horizontal(line)
+    }
+
+    fn box_signatures(boxes: &[TextBoxType]) -> Vec<(bool, Rect)> {
+        boxes
+            .iter()
+            .map(|b| match b {
+                TextBoxType::Horizontal(h) => (false, h.bbox()),
+                TextBoxType::Vertical(v) => (true, v.bbox()),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn arena_soa_matches_plane() {
+        let laparams = LAParams::default();
+        let lines = vec![
+            hline((0.0, 0.0, 10.0, 2.0)),
+            hline((0.0, 2.5, 10.0, 4.5)),
+            hline((20.0, 0.0, 30.0, 2.0)),
+            hline((0.0, 10.0, 10.0, 12.0)),
+        ];
+
+        let mut arena_plane = LayoutArena::new();
+        let plane_ids = arena_plane.extend_lines_from_textlines(lines.clone());
+        let plane_boxes = group_textlines_arena_plane(&laparams, &mut arena_plane, &plane_ids);
+        let plane_materialized = arena_plane.materialize_boxes(&plane_boxes);
+
+        let mut arena_soa = LayoutArena::new();
+        let soa_ids = arena_soa.extend_lines_from_textlines(lines);
+        let soa_boxes = group_textlines_arena_soa(&laparams, &mut arena_soa, &soa_ids);
+        let soa_materialized = arena_soa.materialize_boxes(&soa_boxes);
+
+        assert_eq!(
+            box_signatures(&plane_materialized),
+            box_signatures(&soa_materialized)
+        );
+    }
 }
 
 /// Arena-backed grouping of character objects into text lines.
@@ -385,176 +435,10 @@ pub fn group_textlines(laparams: &LAParams, lines: Vec<TextLineType>) -> Vec<Tex
     if lines.is_empty() {
         return Vec::new();
     }
-
-    // Compute bounding box that covers all lines (may be outside container bbox)
-    let mut min_x0 = INF_F64;
-    let mut min_y0 = INF_F64;
-    let mut max_x1 = -INF_F64;
-    let mut max_y1 = -INF_F64;
-
-    for line in &lines {
-        min_x0 = min_x0.min(line.x0());
-        min_y0 = min_y0.min(line.y0());
-        max_x1 = max_x1.max(line.x1());
-        max_y1 = max_y1.max(line.y1());
-    }
-
-    // Create plane with expanded bbox
-    let plane_bbox = (min_x0 - 1.0, min_y0 - 1.0, max_x1 + 1.0, max_y1 + 1.0);
-    let mut plane: Plane<TextLineType> = Plane::new(plane_bbox, 1);
-
-    // Add lines to plane (keep original lines with elements intact)
-    for line in &lines {
-        plane.add(line.clone());
-    }
-    let line_types = lines;
-
-    // Group lines into boxes - MUST match Python's exact logic:
-    // Python: boxes: Dict[LTTextLine, LTTextBox] = {}
-    // Each line maps to its current box. When merging, ALL lines from
-    // existing boxes are added to the new box.
-
-    // line_to_box_id: maps line_index -> box_id (which box contains this line)
-    // box_contents: maps box_id -> Vec<line_index> (lines in each box)
-    let mut line_to_box_id: std::collections::HashMap<usize, usize> =
-        std::collections::HashMap::new();
-    let mut box_contents: std::collections::HashMap<usize, Vec<usize>> =
-        std::collections::HashMap::new();
-    let mut next_box_id: usize = 0;
-
-    for (i, line) in line_types.iter().enumerate() {
-        // Use different search strategy for horizontal vs vertical text
-        let (d, search_bbox) = match line {
-            TextLineType::Horizontal(_) => {
-                let d = laparams.line_margin * line.height();
-                (d, (line.x0(), line.y0() - d, line.x1(), line.y1() + d))
-            }
-            TextLineType::Vertical(_) => {
-                let d = laparams.line_margin * line.width();
-                (d, (line.x0() - d, line.y0(), line.x1() + d, line.y1()))
-            }
-        };
-        // Use find_with_indices to get (seq_index, neighbor) pairs
-        // Since we added lines to plane in order, seq_index == line_types index
-        let neighbors = plane.find_with_indices(search_bbox);
-
-        // Start with current line
-        let mut members: Vec<usize> = vec![i];
-
-        for (j, neighbor) in neighbors {
-            // Python uses NON-STRICT comparison (<= tolerance)
-            // See layout.py:543-560 - _is_left_aligned_with, _is_same_height_as, etc.
-            let is_aligned = match (line, neighbor) {
-                (TextLineType::Horizontal(l1), TextLineType::Horizontal(l2)) => {
-                    let tolerance = d;
-                    let height_diff = (l2.height() - l1.height()).abs();
-                    let same_height = height_diff <= tolerance; // Python: <=
-                    let left_diff = (l2.x0() - l1.x0()).abs();
-                    let left_aligned = left_diff <= tolerance; // Python: <=
-                    let right_diff = (l2.x1() - l1.x1()).abs();
-                    let right_aligned = right_diff <= tolerance; // Python: <=
-                    let center1 = (l1.x0() + l1.x1()) / 2.0;
-                    let center2 = (l2.x0() + l2.x1()) / 2.0;
-                    let center_diff = (center2 - center1).abs();
-                    let centrally_aligned = center_diff <= tolerance; // Python: <=
-                    same_height && (left_aligned || right_aligned || centrally_aligned)
-                }
-                (TextLineType::Vertical(l1), TextLineType::Vertical(l2)) => {
-                    let tolerance = d;
-                    let same_width = (l2.width() - l1.width()).abs() <= tolerance; // Python: <=
-                    let lower_aligned = (l2.y0() - l1.y0()).abs() <= tolerance; // Python: <=
-                    let upper_aligned = (l2.y1() - l1.y1()).abs() <= tolerance; // Python: <=
-                    let center1 = (l1.y0() + l1.y1()) / 2.0;
-                    let center2 = (l2.y0() + l2.y1()) / 2.0;
-                    let centrally_aligned = (center2 - center1).abs() <= tolerance; // Python: <=
-                    same_width && (lower_aligned || upper_aligned || centrally_aligned)
-                }
-                _ => false,
-            };
-
-            if is_aligned {
-                // j is the direct index from plane, no need to search by bbox!
-                // Add neighbor to members
-                members.push(j);
-                // CRITICAL: If neighbor is already in a box, merge ALL lines from that box
-                // This matches Python's: members.extend(boxes.pop(obj1))
-                if let Some(&existing_box_id) = line_to_box_id.get(&j)
-                    && let Some(existing_members) = box_contents.remove(&existing_box_id)
-                {
-                    members.extend(existing_members);
-                }
-            }
-        }
-
-        // Create new box with all members (matching Python: box = LTTextBox(); for obj in uniq(members): box.add(obj); boxes[obj] = box)
-        let box_id = next_box_id;
-        next_box_id += 1;
-
-        let unique_members: Vec<usize> = uniq(members);
-        for &m in &unique_members {
-            line_to_box_id.insert(m, box_id);
-        }
-        box_contents.insert(box_id, unique_members);
-    }
-
-    // CRITICAL: Python iterates through original 'lines' in order and yields boxes
-    // as their first line is encountered. We must do the same - NOT iterate the HashMap!
-    let mut result: Vec<TextBoxType> = Vec::new();
-    let mut done: Vec<bool> = vec![false; next_box_id];
-
-    // Iterate through lines in ORIGINAL ORDER (like Python's "for line in lines:")
-    for (i, _line) in line_types.iter().enumerate() {
-        // Look up which box this line belongs to
-        let box_id = match line_to_box_id.get(&i) {
-            Some(&id) => id,
-            None => continue,
-        };
-
-        // Skip if we've already processed this box
-        if done[box_id] {
-            continue;
-        }
-        done[box_id] = true;
-
-        // Get all members of this box
-        let member_indices = match box_contents.get(&box_id) {
-            Some(members) => members,
-            None => continue,
-        };
-
-        let unique_members: Vec<usize> = uniq(member_indices.clone());
-
-        // Determine box type from first line in group
-        if unique_members.is_empty() {
-            continue;
-        }
-        let first_line = &line_types[unique_members[0]];
-        let is_vertical = matches!(first_line, TextLineType::Vertical(_));
-
-        if is_vertical {
-            let mut textbox = LTTextBoxVertical::new();
-            for idx in unique_members {
-                if let TextLineType::Vertical(line) = &line_types[idx] {
-                    textbox.add(line.clone());
-                }
-            }
-            if !textbox.is_empty() {
-                result.push(TextBoxType::Vertical(textbox));
-            }
-        } else {
-            let mut textbox = LTTextBoxHorizontal::new();
-            for idx in unique_members {
-                if let TextLineType::Horizontal(line) = &line_types[idx] {
-                    textbox.add(line.clone());
-                }
-            }
-            if !textbox.is_empty() {
-                result.push(TextBoxType::Horizontal(textbox));
-            }
-        }
-    }
-
-    result
+    let mut arena = LayoutArena::new();
+    let line_ids = arena.extend_lines_from_textlines(lines);
+    let box_ids = group_textlines_arena(laparams, &mut arena, &line_ids);
+    arena.materialize_boxes(&box_ids)
 }
 
 /// Arena-backed grouping of text lines into text boxes.
@@ -562,6 +446,165 @@ pub fn group_textlines(laparams: &LAParams, lines: Vec<TextLineType>) -> Vec<Tex
 /// Produces BoxId values that can be materialized later; preserves exact
 /// ordering and logic from group_textlines().
 pub fn group_textlines_arena(
+    laparams: &LAParams,
+    arena: &mut LayoutArena,
+    line_ids: &[LineId],
+) -> Vec<BoxId> {
+    group_textlines_arena_soa(laparams, arena, line_ids)
+}
+
+fn arena_lines_aligned(arena: &LayoutArena, lid: LineId, nlid: LineId, tolerance: f64) -> bool {
+    match (arena.line_is_vertical(lid), arena.line_is_vertical(nlid)) {
+        (false, false) => {
+            let height_diff = (arena.line_height(nlid) - arena.line_height(lid)).abs();
+            let same_height = height_diff <= tolerance;
+            let bbox1 = arena.line_bbox(lid);
+            let bbox2 = arena.line_bbox(nlid);
+            let left_diff = (bbox2.0 - bbox1.0).abs();
+            let right_diff = (bbox2.2 - bbox1.2).abs();
+            let center1 = (bbox1.0 + bbox1.2) / 2.0;
+            let center2 = (bbox2.0 + bbox2.2) / 2.0;
+            let center_diff = (center2 - center1).abs();
+            same_height
+                && (left_diff <= tolerance || right_diff <= tolerance || center_diff <= tolerance)
+        }
+        (true, true) => {
+            let width_diff = (arena.line_width(nlid) - arena.line_width(lid)).abs();
+            let same_width = width_diff <= tolerance;
+            let bbox1 = arena.line_bbox(lid);
+            let bbox2 = arena.line_bbox(nlid);
+            let lower_diff = (bbox2.1 - bbox1.1).abs();
+            let upper_diff = (bbox2.3 - bbox1.3).abs();
+            let center1 = (bbox1.1 + bbox1.3) / 2.0;
+            let center2 = (bbox2.1 + bbox2.3) / 2.0;
+            let center_diff = (center2 - center1).abs();
+            same_width
+                && (lower_diff <= tolerance || upper_diff <= tolerance || center_diff <= tolerance)
+        }
+        _ => false,
+    }
+}
+
+fn group_textlines_arena_soa(
+    laparams: &LAParams,
+    arena: &mut LayoutArena,
+    line_ids: &[LineId],
+) -> Vec<BoxId> {
+    if line_ids.is_empty() {
+        return Vec::new();
+    }
+
+    let mut bboxes: Vec<Rect> = Vec::with_capacity(line_ids.len());
+    for &lid in line_ids {
+        bboxes.push(arena.line_bbox(lid));
+    }
+    let soa = RectSoA::from_bboxes(&bboxes);
+
+    let mut line_to_box_id: Vec<Option<usize>> = vec![None; line_ids.len()];
+    let mut box_contents: Vec<Option<Vec<usize>>> = Vec::new();
+    let mut next_box_id: usize = 0;
+
+    for (i, &lid) in line_ids.iter().enumerate() {
+        let bbox = bboxes[i];
+        let (d, search_bbox) = if arena.line_is_vertical(lid) {
+            let d = laparams.line_margin * arena.line_width(lid);
+            (d, (bbox.0 - d, bbox.1, bbox.2 + d, bbox.3))
+        } else {
+            let d = laparams.line_margin * arena.line_height(lid);
+            (d, (bbox.0, bbox.1 - d, bbox.2, bbox.3 + d))
+        };
+
+        let mut neighbors = soa.overlap_simd(search_bbox);
+        neighbors.sort_unstable();
+        let mut members: Vec<usize> = vec![i];
+
+        for j in neighbors {
+            let nlid = line_ids[j];
+            if arena_lines_aligned(arena, lid, nlid, d) {
+                members.push(j);
+                if let Some(existing_box_id) = line_to_box_id[j] {
+                    if let Some(existing_members) =
+                        box_contents.get_mut(existing_box_id).and_then(|m| m.take())
+                    {
+                        members.extend(existing_members);
+                    }
+                }
+            }
+        }
+
+        let mut seen = vec![false; line_ids.len()];
+        let mut unique_members: Vec<usize> = Vec::new();
+        for m in members {
+            if !seen[m] {
+                seen[m] = true;
+                unique_members.push(m);
+            }
+        }
+
+        let box_id = next_box_id;
+        next_box_id += 1;
+        for &m in &unique_members {
+            line_to_box_id[m] = Some(box_id);
+        }
+        if box_id == box_contents.len() {
+            box_contents.push(Some(unique_members));
+        } else {
+            box_contents[box_id] = Some(unique_members);
+        }
+    }
+
+    let mut result: Vec<BoxId> = Vec::new();
+    let mut done: Vec<bool> = vec![false; next_box_id];
+
+    for i in 0..line_ids.len() {
+        let box_id = match line_to_box_id[i] {
+            Some(id) => id,
+            None => continue,
+        };
+
+        if done[box_id] {
+            continue;
+        }
+        done[box_id] = true;
+
+        let members = match box_contents.get(box_id).and_then(|m| m.as_ref()) {
+            Some(m) => m,
+            None => continue,
+        };
+
+        let mut seen = vec![false; line_ids.len()];
+        let mut unique_members: Vec<usize> = Vec::new();
+        for &m in members {
+            if !seen[m] {
+                seen[m] = true;
+                unique_members.push(m);
+            }
+        }
+
+        if unique_members.is_empty() {
+            continue;
+        }
+
+        let is_vertical = arena.line_is_vertical(line_ids[unique_members[0]]);
+        let mut member_ids: Vec<LineId> = Vec::with_capacity(unique_members.len());
+        for idx in unique_members {
+            member_ids.push(line_ids[idx]);
+        }
+
+        let arena_box = if is_vertical {
+            ArenaTextBox::Vertical(member_ids)
+        } else {
+            ArenaTextBox::Horizontal(member_ids)
+        };
+        let id = arena.push_box(arena_box);
+        result.push(id);
+    }
+
+    result
+}
+
+#[cfg(test)]
+fn group_textlines_arena_plane(
     laparams: &LAParams,
     arena: &mut LayoutArena,
     line_ids: &[LineId],
@@ -590,7 +633,6 @@ pub fn group_textlines_arena(
         }
     }
 
-    // Compute bounding box that covers all lines
     let mut min_x0 = INF_F64;
     let mut min_y0 = INF_F64;
     let mut max_x1 = -INF_F64;
@@ -606,13 +648,10 @@ pub fn group_textlines_arena(
         refs.push(LineRef { bbox });
     }
 
-    // Create plane with expanded bbox
     let plane_bbox = (min_x0 - 1.0, min_y0 - 1.0, max_x1 + 1.0, max_y1 + 1.0);
     let mut plane: Plane<LineRef> = Plane::new(plane_bbox, 1);
     plane.extend(refs.iter().cloned());
 
-    // line_to_box_id: maps line_index -> box_id (which box contains this line)
-    // box_contents: maps box_id -> Vec<line_index> (lines in each box)
     let mut line_to_box_id: Vec<Option<usize>> = vec![None; line_ids.len()];
     let mut box_contents: Vec<Option<Vec<usize>>> = Vec::new();
     let mut next_box_id: usize = 0;
@@ -648,43 +687,7 @@ pub fn group_textlines_arena(
 
         for (j, _neighbor) in neighbors {
             let nlid = line_ids[j];
-            let is_aligned = match (arena.line_is_vertical(lid), arena.line_is_vertical(nlid)) {
-                (false, false) => {
-                    let tolerance = d;
-                    let height_diff = (arena.line_height(nlid) - arena.line_height(lid)).abs();
-                    let same_height = height_diff <= tolerance;
-                    let bbox1 = arena.line_bbox(lid);
-                    let bbox2 = arena.line_bbox(nlid);
-                    let left_diff = (bbox2.0 - bbox1.0).abs();
-                    let right_diff = (bbox2.2 - bbox1.2).abs();
-                    let center1 = (bbox1.0 + bbox1.2) / 2.0;
-                    let center2 = (bbox2.0 + bbox2.2) / 2.0;
-                    let center_diff = (center2 - center1).abs();
-                    same_height
-                        && (left_diff <= tolerance
-                            || right_diff <= tolerance
-                            || center_diff <= tolerance)
-                }
-                (true, true) => {
-                    let tolerance = d;
-                    let width_diff = (arena.line_width(nlid) - arena.line_width(lid)).abs();
-                    let same_width = width_diff <= tolerance;
-                    let bbox1 = arena.line_bbox(lid);
-                    let bbox2 = arena.line_bbox(nlid);
-                    let lower_diff = (bbox2.1 - bbox1.1).abs();
-                    let upper_diff = (bbox2.3 - bbox1.3).abs();
-                    let center1 = (bbox1.1 + bbox1.3) / 2.0;
-                    let center2 = (bbox2.1 + bbox2.3) / 2.0;
-                    let center_diff = (center2 - center1).abs();
-                    same_width
-                        && (lower_diff <= tolerance
-                            || upper_diff <= tolerance
-                            || center_diff <= tolerance)
-                }
-                _ => false,
-            };
-
-            if is_aligned {
+            if arena_lines_aligned(arena, lid, nlid, d) {
                 members.push(j);
                 if let Some(existing_box_id) = line_to_box_id[j] {
                     if let Some(existing_members) =
@@ -696,7 +699,6 @@ pub fn group_textlines_arena(
             }
         }
 
-        // Deduplicate members while preserving order
         let mut seen = vec![false; line_ids.len()];
         let mut unique_members: Vec<usize> = Vec::new();
         for m in members {
@@ -718,7 +720,6 @@ pub fn group_textlines_arena(
         }
     }
 
-    // Iterate through lines in ORIGINAL ORDER (like Python's "for line in lines:")
     let mut result: Vec<BoxId> = Vec::new();
     let mut done: Vec<bool> = vec![false; next_box_id];
 
@@ -738,7 +739,6 @@ pub fn group_textlines_arena(
             None => continue,
         };
 
-        // Deduplicate members while preserving order
         let mut seen = vec![false; line_ids.len()];
         let mut unique_members: Vec<usize> = Vec::new();
         for &m in members {
