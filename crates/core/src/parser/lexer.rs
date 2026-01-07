@@ -672,6 +672,11 @@ pub enum PSToken {
 /// Buffer size for reading (matches pdfminer.six)
 #[allow(dead_code)]
 const BUFSIZ: usize = 4096;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+const PS_SIMD_LANES: usize = 32;
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+const PS_SIMD_LANES: usize = 16;
+const PS_SIMD_FULL_MASK: u64 = (1u64 << PS_SIMD_LANES) - 1;
 
 /// PostScript base parser - performs tokenization
 enum PSData<'a> {
@@ -771,6 +776,72 @@ impl<'a> PSBaseParser<'a> {
         Self::is_whitespace(b) || Self::is_delimiter(b)
     }
 
+    fn find_first_non_ws_simd(data: &[u8]) -> usize {
+        if data.is_empty() {
+            return 0;
+        }
+
+        let mut i = 0;
+        let prefix_len = data.len().min(8);
+        while i < prefix_len {
+            if !Self::is_whitespace(data[i]) {
+                return i;
+            }
+            i += 1;
+        }
+
+        if data.len() - i < PS_SIMD_LANES {
+            while i < data.len() {
+                if !Self::is_whitespace(data[i]) {
+                    return i;
+                }
+                i += 1;
+            }
+            return data.len();
+        }
+
+        type V = Simd<u8, { PS_SIMD_LANES }>;
+        let (prefix, middle, suffix) = data[i..].as_simd::<{ PS_SIMD_LANES }>();
+
+        let mut offset = i;
+        for (idx, &b) in prefix.iter().enumerate() {
+            if !Self::is_whitespace(b) {
+                return offset + idx;
+            }
+        }
+        offset += prefix.len();
+
+        let ws_space = V::splat(b' ');
+        let ws_tab = V::splat(b'\t');
+        let ws_lf = V::splat(b'\n');
+        let ws_cr = V::splat(b'\r');
+        let ws_ff = V::splat(0x0c);
+        let ws_nul = V::splat(0x00);
+
+        for chunk in middle.iter() {
+            let is_ws = chunk.simd_eq(ws_space)
+                | chunk.simd_eq(ws_tab)
+                | chunk.simd_eq(ws_lf)
+                | chunk.simd_eq(ws_cr)
+                | chunk.simd_eq(ws_ff)
+                | chunk.simd_eq(ws_nul);
+            let mask = is_ws.to_bitmask();
+            if mask != PS_SIMD_FULL_MASK {
+                let non = (!mask) & PS_SIMD_FULL_MASK;
+                return offset + non.trailing_zeros() as usize;
+            }
+            offset += PS_SIMD_LANES;
+        }
+
+        for (idx, &b) in suffix.iter().enumerate() {
+            if !Self::is_whitespace(b) {
+                return offset + idx;
+            }
+        }
+
+        data.len()
+    }
+
     /// Skip whitespace and comments
     fn skip_whitespace(&mut self) {
         let data = self.data.as_slice();
@@ -788,7 +859,8 @@ impl<'a> PSBaseParser<'a> {
             if !Self::is_whitespace(b) {
                 return;
             }
-            self.pos += 1;
+            let offset = Self::find_first_non_ws_simd(&data[self.pos..]);
+            self.pos += offset.max(1);
         }
     }
 
@@ -1898,5 +1970,12 @@ mod tests {
         let (decoded, pos) = decode_hex_string(data, 0).unwrap();
         assert_eq!(decoded, b"Hello world");
         assert_eq!(pos, data.len());
+    }
+
+    #[test]
+    fn find_first_non_ws_simd_skips_whitespace() {
+        let data = b" \t\r\n\x00\x0cA";
+        let offset = PSBaseParser::find_first_non_ws_simd(data);
+        assert_eq!(offset, 6);
     }
 }
