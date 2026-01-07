@@ -29,18 +29,13 @@ def extract_text(
     maxpages: int = 0,
     caching: bool = True,
     laparams=None,
-    threads: Optional[int] = None,
 ):
-    if threads is None:
-        threads = os.cpu_count() or 1
     kind, value = _read_input(pdf_file)
     if kind == "path":
         return _extract_text_from_path(
-            value, password, page_numbers, maxpages, caching, laparams, threads
+            value, password, page_numbers, maxpages, caching, laparams
         )
-    return _extract_text(
-        value, password, page_numbers, maxpages, caching, laparams, threads
-    )
+    return _extract_text(value, password, page_numbers, maxpages, caching, laparams)
 
 
 def extract_pages(
@@ -50,17 +45,14 @@ def extract_pages(
     maxpages: int = 0,
     caching: bool = True,
     laparams=None,
-    threads: Optional[int] = None,
 ):
-    if threads is None:
-        threads = os.cpu_count() or 1
     kind, value = _read_input(pdf_file)
     if kind == "path":
         pages = _extract_pages_from_path(
-            value, password, page_numbers, maxpages, caching, laparams, threads
+            value, password, page_numbers, maxpages, caching, laparams
         )
     else:
         pages = _extract_pages(
-            value, password, page_numbers, maxpages, caching, laparams, threads
+            value, password, page_numbers, maxpages, caching, laparams
         )
     return iter(pages)

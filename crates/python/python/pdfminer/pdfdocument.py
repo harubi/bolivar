@@ -62,6 +62,21 @@ class PDFDocument:
         """Resolve an indirect object by object id."""
         return self._rust_doc.getobj(objid)
 
+    def page_count(self):
+        """Return total number of pages."""
+        return self._rust_doc.page_count()
+
+    def page_mediaboxes(self):
+        """Return list of mediaboxes for all pages."""
+        return [list(box) for box in self._rust_doc.page_mediaboxes()]
+
+    def get_page(self, index):
+        """Return a single PDFPage by index."""
+        from .pdfpage import PDFPage
+
+        rust_page = self._rust_doc.get_page(index)
+        return PDFPage(rust_page, self, page_index=index)
+
 
 class PDFNoOutlines(Exception):
     pass

@@ -2,8 +2,6 @@
 
 from typing import Any, Dict, List, Tuple, Union
 
-import os
-
 from bolivar import (
     LAParams as _RustLAParams,
     process_page as _rust_process_page,
@@ -90,8 +88,7 @@ class PDFPageInterpreter:
 
         cached_pages = cache.get(key)
         if cached_pages is None:
-            threads = os.cpu_count() or 1
-            cached_pages = _rust_process_pages(rust_doc, rust_laparams, threads)
+            cached_pages = _rust_process_pages(rust_doc, rust_laparams)
             cache[key] = cached_pages
 
         page_index = getattr(page, "_page_index", None)

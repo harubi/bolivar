@@ -1,15 +1,8 @@
-import os
 import sys
 import importlib.abc
 import importlib.machinery
 import importlib.util
-
-
-def _should_patch() -> bool:
-    val = os.getenv("BOLIVAR_PDFPLUMBER_PATCH")
-    if val is None:
-        return True
-    return val not in {"0", "false", "False", "no", "NO"}
+import threading
 
 
 def _apply_patch(module) -> bool:
@@ -20,19 +13,22 @@ def _apply_patch(module) -> bool:
         if pkg is not None and not hasattr(pkg, "page"):
             pkg.page = module
             module = pkg
+    if page_mod is None and getattr(module, "__name__", "") == "pdfplumber.pdf":
+        page_mod = sys.modules.get("pdfplumber.page")
+        pkg = sys.modules.get("pdfplumber")
+        if pkg is not None and page_mod is not None and not hasattr(pkg, "page"):
+            pkg.page = page_mod
 
     if page_mod is None:
         return False
 
-    if getattr(page_mod.Page.extract_tables, "_bolivar_patched", False):
-        return True
+    already_patched = getattr(page_mod.Page.extract_tables, "_bolivar_patched", False)
 
     from bolivar import (
         extract_tables_from_document,
-        extract_table_from_page,
-        extract_table_from_page_filtered,
-        extract_tables_from_page,
         extract_tables_from_page_filtered,
+        extract_tables_from_page,
+        extract_table_from_page_filtered,
     )
 
     def _freeze_settings(obj):
@@ -53,74 +49,230 @@ def _apply_patch(module) -> bool:
         )
 
     def _build_geometries(pdf, page_index, page):
-        geoms = [_page_geom(p) for p in pdf.pages]
+        boxes = pdf.doc.page_mediaboxes()
+        doctops = []
+        running = 0.0
+        for box in boxes:
+            doctops.append(running)
+            running += box[3] - box[1]
+        geoms = [
+            (tuple(box), tuple(box), doctop, False)
+            for box, doctop in zip(boxes, doctops)
+        ]
         current = _page_geom(page)
         if 0 <= page_index < len(geoms) and geoms[page_index] != current:
             geoms[page_index] = current
         return geoms
 
-    def _extract_tables(self, table_settings=None, threads=None):
-        if getattr(self, "filter_fn", None) is not None:
-            return extract_tables_from_page_filtered(self, table_settings)
-        page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
-        force_crop = not getattr(self, "is_original", True)
-        pdf = getattr(self, "pdf", None)
-        if pdf is None or not hasattr(pdf, "pages"):
-            return extract_tables_from_page(
-                self.page_obj.doc._rust_doc,
-                page_index,
-                self.bbox,
-                self.mediabox,
-                self.initial_doctop,
-                table_settings,
-                threads=threads,
-                force_crop=force_crop,
-            )
-        if len(pdf.pages) <= 1:
-            rust_doc = getattr(pdf, "_rust_doc", None) or self.page_obj.doc._rust_doc
-            return extract_tables_from_page(
-                rust_doc,
-                page_index,
-                self.bbox,
-                self.mediabox,
-                self.initial_doctop,
-                table_settings,
-                threads=threads,
-                force_crop=force_crop,
-            )
+    def _build_geometries_for_pdf(pdf):
+        boxes = pdf.doc.page_mediaboxes()
+        doctops = []
+        running = 0.0
+        for box in boxes:
+            doctops.append(running)
+            running += box[3] - box[1]
+        return tuple(
+            (tuple(box), tuple(box), doctop, False)
+            for box, doctop in zip(boxes, doctops)
+        )
+
+    def _extract_tables_all(self, table_settings=None):
+        pdf = self
         cache = getattr(pdf, "_bolivar_tables_cache", None)
-        if cache is None:
+        lock = getattr(pdf, "_bolivar_tables_cache_lock", None)
+        if cache is None or lock is None:
             cache = {}
+            lock = threading.Lock()
             pdf._bolivar_tables_cache = cache
-        geoms = _build_geometries(pdf, page_index, self)
-        cache_key = (_freeze_settings(table_settings), tuple(geoms))
-        tables_by_page = cache.get(cache_key)
-        if tables_by_page is None:
-            rust_doc = getattr(pdf, "_rust_doc", None) or self.page_obj.doc._rust_doc
-            tables_by_page = extract_tables_from_document(
-                rust_doc,
-                geoms,
-                table_settings,
-                threads=threads,
+            pdf._bolivar_tables_cache_lock = lock
+
+        geoms = getattr(pdf, "_bolivar_page_geometries", None)
+        if geoms is None:
+            geoms = _build_geometries_for_pdf(pdf)
+            pdf._bolivar_page_geometries = geoms
+
+        cache_key = (_freeze_settings(table_settings), geoms)
+        with lock:
+            tables_by_page = cache.get(cache_key)
+            if tables_by_page is None:
+                rust_doc = getattr(pdf, "_rust_doc", None) or pdf.doc._rust_doc
+                tables_by_page = extract_tables_from_document(
+                    rust_doc,
+                    geoms,
+                    table_settings,
+                )
+                cache[cache_key] = tables_by_page
+        return tables_by_page
+
+    if not already_patched:
+
+        def _extract_tables(self, table_settings=None):
+            if getattr(self, "filter_fn", None) is not None:
+                return extract_tables_from_page_filtered(self, table_settings)
+            page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
+            pdf = getattr(self, "pdf", None)
+            if pdf is None or not hasattr(pdf, "doc"):
+                force_crop = not getattr(self, "is_original", True)
+                return extract_tables_from_page(
+                    self.page_obj.doc._rust_doc,
+                    page_index,
+                    self.bbox,
+                    self.mediabox,
+                    self.initial_doctop,
+                    table_settings,
+                    force_crop=force_crop,
+                )
+
+            cache = getattr(pdf, "_bolivar_tables_cache", None)
+            lock = getattr(pdf, "_bolivar_tables_cache_lock", None)
+            if cache is None or lock is None:
+                cache = {}
+                lock = threading.Lock()
+                pdf._bolivar_tables_cache = cache
+                pdf._bolivar_tables_cache_lock = lock
+
+            geoms = getattr(pdf, "_bolivar_page_geometries", None)
+            if geoms is None:
+                geoms = tuple(_build_geometries(pdf, page_index, self))
+                pdf._bolivar_page_geometries = geoms
+            else:
+                current = _page_geom(self)
+                if 0 <= page_index < len(geoms) and geoms[page_index] != current:
+                    updated = list(geoms)
+                    updated[page_index] = current
+                    geoms = tuple(updated)
+                    pdf._bolivar_page_geometries = geoms
+
+            cache_key = (_freeze_settings(table_settings), geoms)
+            with lock:
+                tables_by_page = cache.get(cache_key)
+                if tables_by_page is None:
+                    rust_doc = (
+                        getattr(pdf, "_rust_doc", None) or self.page_obj.doc._rust_doc
+                    )
+                    tables_by_page = extract_tables_from_document(
+                        rust_doc,
+                        geoms,
+                        table_settings,
+                    )
+                    cache[cache_key] = tables_by_page
+
+            return tables_by_page[page_index]
+
+        def _table_cell_count(table):
+            return sum(len(row) for row in table)
+
+        def _extract_table(self, table_settings=None):
+            if getattr(self, "filter_fn", None) is not None:
+                return extract_table_from_page_filtered(self, table_settings)
+            tables = _extract_tables(self, table_settings=table_settings)
+            if not tables:
+                return None
+            return max(tables, key=_table_cell_count)
+
+        _extract_tables._bolivar_patched = True
+        page_mod.Page.extract_tables = _extract_tables
+        _extract_table._bolivar_patched = True
+        page_mod.Page.extract_table = _extract_table
+
+    pdf_mod = sys.modules.get("pdfplumber.pdf")
+    pdf_cls = getattr(pdf_mod, "PDF", None) if pdf_mod is not None else None
+    if pdf_cls is not None and not hasattr(pdf_cls, "extract_tables_all"):
+        pdf_cls.extract_tables_all = _extract_tables_all
+
+    class BolivarLazyPages:
+        def __init__(self, pdf):
+            self._pdf = pdf
+            self._doc = getattr(pdf, "doc", None)
+            if self._doc is None:
+                raise RuntimeError("pdf document missing")
+            page_count = self._doc.page_count()
+            pages_to_parse = getattr(pdf, "pages_to_parse", None)
+            if pages_to_parse is None:
+                self._page_numbers = list(range(page_count))
+            else:
+                allowed = set(pages_to_parse)
+                self._page_numbers = [
+                    idx for idx in range(page_count) if (idx + 1) in allowed
+                ]
+            self._page_number_set = set(self._page_numbers)
+            self._doctops = None
+
+        def _ensure_doctops(self):
+            if self._doctops is not None:
+                return
+            boxes = self._doc.page_mediaboxes()
+            doctops = []
+            running = 0.0
+            for page_index in self._page_numbers:
+                box = boxes[page_index]
+                height = box[3] - box[1]
+                doctops.append(running)
+                running += height
+            self._doctops = doctops
+
+        def __len__(self):
+            return len(self._page_numbers)
+
+        def __getitem__(self, idx):
+            if isinstance(idx, slice):
+                return [self[i] for i in range(*idx.indices(len(self)))]
+            if not isinstance(idx, int):
+                raise TypeError("page index must be int or slice")
+            if idx < 0:
+                idx += len(self)
+            if idx < 0 or idx >= len(self):
+                raise IndexError("page index out of range")
+            self._ensure_doctops()
+            page_index = self._page_numbers[idx]
+            doctop = self._doctops[idx]
+            page_obj = self._doc.get_page(page_index)
+            return page_mod.Page(
+                self._pdf,
+                page_obj,
+                page_number=page_index + 1,
+                initial_doctop=doctop,
             )
-            cache[cache_key] = tables_by_page
-        return tables_by_page[page_index]
 
-    def _table_cell_count(table):
-        return sum(len(row) for row in table)
+        def __iter__(self):
+            for i in range(len(self)):
+                yield self[i]
 
-    def _extract_table(self, table_settings=None, threads=None):
-        if getattr(self, "filter_fn", None) is not None:
-            return extract_table_from_page_filtered(self, table_settings)
-        tables = _extract_tables(self, table_settings=table_settings, threads=threads)
-        if not tables:
-            return None
-        return max(tables, key=_table_cell_count)
+        def __reversed__(self):
+            for i in range(len(self) - 1, -1, -1):
+                yield self[i]
 
-    _extract_tables._bolivar_patched = True
-    page_mod.Page.extract_tables = _extract_tables
-    _extract_table._bolivar_patched = True
-    page_mod.Page.extract_table = _extract_table
+        def __contains__(self, item):
+            if hasattr(item, "page_number"):
+                return (item.page_number - 1) in self._page_number_set
+            return False
+
+    pdf_mod = sys.modules.get("pdfplumber.pdf")
+    if pdf_mod is None:
+        try:
+            import pdfplumber.pdf as pdf_mod
+        except Exception:
+            pdf_mod = None
+
+    if pdf_mod is not None and hasattr(pdf_mod, "PDF"):
+        pdf_cls = pdf_mod.PDF
+        current_pages = getattr(pdf_cls, "pages", None)
+        current_getter = (
+            current_pages.fget if isinstance(current_pages, property) else None
+        )
+        if current_getter is None or not getattr(
+            current_getter, "_bolivar_patched", False
+        ):
+
+            def _bolivar_pages(self):
+                if hasattr(self, "_pages"):
+                    return self._pages
+                pages = BolivarLazyPages(self)
+                self._pages = pages
+                return pages
+
+            _bolivar_pages._bolivar_patched = True
+            pdf_cls.pages = property(_bolivar_pages)
 
     # Patch pdfplumber.repair to use Rust repair
     try:
@@ -177,8 +329,7 @@ class _PdfplumberPatchLoader(importlib.abc.Loader):
     def exec_module(self, module):
         self.loader.exec_module(module)
         try:
-            if _should_patch():
-                _apply_patch(module)
+            _apply_patch(module)
         finally:
             _remove_hook()
 
@@ -199,10 +350,13 @@ class _PdfplumberPatchFinder(importlib.abc.MetaPathFinder):
 
 def _install_hook(names=None):
     global _HOOK_INSTALLED
-    if _HOOK_INSTALLED:
-        return
     if names is None:
-        names = {"pdfplumber", "pdfplumber.page"}
+        names = {"pdfplumber", "pdfplumber.page", "pdfplumber.pdf"}
+    if _HOOK_INSTALLED:
+        for finder in sys.meta_path:
+            if isinstance(finder, _PdfplumberPatchFinder):
+                finder.names.update(names)
+        return
     sys.meta_path.insert(0, _PdfplumberPatchFinder(names))
     _HOOK_INSTALLED = True
 
@@ -218,14 +372,12 @@ def _remove_hook():
 
 
 def patch_pdfplumber() -> bool:
-    if not _should_patch():
-        return False
     module = sys.modules.get("pdfplumber")
     if module is not None and hasattr(module, "page"):
         return _apply_patch(module)
 
     if module is not None:
-        _install_hook({"pdfplumber.page"})
+        _install_hook({"pdfplumber.page", "pdfplumber.pdf"})
         return False
 
     _install_hook()

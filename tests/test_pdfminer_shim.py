@@ -103,6 +103,19 @@ class TestPDFDocument:
             doc = PDFDocument(parser)
             assert getattr(doc, "_rust_pages", None) is None
 
+    def test_document_page_mediaboxes_and_count(self):
+        """PDFDocument exposes page_count and page_mediaboxes."""
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+
+        pdf_path = FIXTURES_DIR / "pdfplumber" / "pdffill-demo.pdf"
+        with open(pdf_path, "rb") as f:
+            doc = PDFDocument(PDFParser(f))
+            boxes = doc.page_mediaboxes()
+            assert isinstance(boxes, list)
+            assert len(boxes) == doc.page_count()
+            assert len(boxes[0]) == 4
+
     def test_getobj_preserves_refs(self):
         """PDFDocument.getobj should return PDFObjRef values."""
         from pdfminer.pdfparser import PDFParser

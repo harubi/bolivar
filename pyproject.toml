@@ -4,11 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "bolivar"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -20,6 +19,7 @@ dependencies = [
     "ipykernel>=6.31.0",
     "numpy>=2.0.2",
     "pandas>=2.3.3",
+    "pandas-stubs~=2.3.3",
     "pdfplumber>=0.11.8",
 ]
 
@@ -34,4 +34,4 @@ module-name = "bolivar._bolivar"
 features = ["pyo3/extension-module"]
 # Include the pdfminer compatibility shim
 python-packages = ["bolivar", "pdfminer"]
-include = ["crates/python/python/bolivar_autoload.pth"]
+include = ["crates/python/python/bolivar_autoload.pth", "rust-toolchain.toml"]

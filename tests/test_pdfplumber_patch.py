@@ -2,11 +2,13 @@ import importlib
 import os
 import sys
 
+import pytest
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 PYTHON_SHIM = os.path.join(ROOT, "crates", "python", "python")
 
 
-def _reload_pdfplumber(monkeypatch, env_value):
+def _reload_pdfplumber(monkeypatch):
     # Ensure clean import state so pdfminer/__init__.py runs
     for name in list(sys.modules.keys()):
         if name.startswith("pdfplumber") or name.startswith("pdfminer"):
@@ -22,11 +24,6 @@ def _reload_pdfplumber(monkeypatch, env_value):
     except Exception:
         pass
 
-    if env_value is None:
-        monkeypatch.delenv("BOLIVAR_PDFPLUMBER_PATCH", raising=False)
-    else:
-        monkeypatch.setenv("BOLIVAR_PDFPLUMBER_PATCH", env_value)
-
     import pdfplumber
 
     importlib.reload(pdfplumber)
@@ -34,7 +31,7 @@ def _reload_pdfplumber(monkeypatch, env_value):
 
 
 def test_pdfplumber_patch_default_on(monkeypatch):
-    pdfplumber = _reload_pdfplumber(monkeypatch, None)
+    pdfplumber = _reload_pdfplumber(monkeypatch)
     assert (
         getattr(pdfplumber.page.Page.extract_tables, "_bolivar_patched", False) is True
     )
@@ -55,15 +52,142 @@ def test_pdfplumber_patch_default_on_without_reload(monkeypatch):
     )
 
 
-def test_pdfplumber_patch_env_opt_out(monkeypatch):
-    pdfplumber = _reload_pdfplumber(monkeypatch, "0")
+def test_pdfplumber_patch_ignores_env_opt_out(monkeypatch):
+    monkeypatch.setenv("BOLIVAR_PDFPLUMBER_PATCH", "0")
+    pdfplumber = _reload_pdfplumber(monkeypatch)
     assert (
-        getattr(pdfplumber.page.Page.extract_tables, "_bolivar_patched", False) is False
+        getattr(pdfplumber.page.Page.extract_tables, "_bolivar_patched", False) is True
     )
 
 
+def test_pdfplumber_pages_is_lazy_and_supports_slices(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        pages = pdf.pages
+        assert not isinstance(pages, list)
+        assert len(pages) >= 2
+        assert pages[-1].page_number == len(pages)
+        assert len(pages[1:3]) == 2
+
+
+def test_extract_tables_all_returns_full_document(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        assert hasattr(pdf, "extract_tables_all")
+        tables_by_page = pdf.extract_tables_all()
+        assert len(tables_by_page) == len(pdf.pages)
+        assert tables_by_page[0] == pdf.pages[0].extract_tables()
+
+
+def test_extract_tables_all_does_not_instantiate_pages(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    import pdfplumber.page as page_mod
+
+    calls = {"count": 0}
+    original_init = page_mod.Page.__init__
+
+    def _counting_init(self, *args, **kwargs):
+        calls["count"] += 1
+        return original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(page_mod.Page, "__init__", _counting_init)
+
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        calls["count"] = 0
+        _ = pdf.extract_tables_all()
+        assert calls["count"] == 0
+
+
+def test_extract_tables_caches_full_document(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        page0 = pdf.pages[0]
+        _ = page0.extract_tables()
+        assert hasattr(pdf, "_bolivar_tables_cache")
+        assert len(pdf._bolivar_tables_cache) == 1
+        tables_by_page = next(iter(pdf._bolivar_tables_cache.values()))
+        assert len(tables_by_page) == len(pdf.pages)
+        page1 = pdf.pages[1]
+        _ = page1.extract_tables()
+        assert len(pdf._bolivar_tables_cache) == 1
+
+
+def test_cache_key_includes_settings_and_geometry(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        page0 = pdf.pages[0]
+        _ = page0.extract_tables(table_settings={"vertical_strategy": "lines"})
+        before = len(pdf._bolivar_tables_cache)
+        _ = page0.extract_tables(table_settings={"vertical_strategy": "text"})
+        after = len(pdf._bolivar_tables_cache)
+        assert after > before
+
+
+def test_extract_tables_does_not_instantiate_all_pages(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    import pdfplumber.page as page_mod
+
+    calls = {"count": 0}
+    original_init = page_mod.Page.__init__
+
+    def _counting_init(self, *args, **kwargs):
+        calls["count"] += 1
+        return original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(page_mod.Page, "__init__", _counting_init)
+
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        page0 = pdf.pages[0]
+        calls["count"] = 0
+        _ = page0.extract_tables()
+        assert calls["count"] == 0
+
+
+def test_extract_tables_rejects_threads_kw(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "references/pdfplumber/tests/pdfs/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        with pytest.raises(TypeError):
+            page.extract_tables(threads=1)
+
+
 def test_extract_tables_uses_bolivar(monkeypatch):
-    pdfplumber = _reload_pdfplumber(monkeypatch, None)
+    pdfplumber = _reload_pdfplumber(monkeypatch)
     from bolivar import extract_tables_from_page
 
     pdf_path = os.path.join(
@@ -86,33 +210,8 @@ def test_extract_tables_uses_bolivar(monkeypatch):
     assert got == expected
 
 
-def test_extract_tables_accepts_threads(monkeypatch):
-    pdfplumber = _reload_pdfplumber(monkeypatch, None)
-    from bolivar import extract_tables_from_page
-
-    pdf_path = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "references/pdfplumber/tests/pdfs/pdffill-demo.pdf",
-    )
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[0]
-        page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
-        expected = extract_tables_from_page(
-            page.page_obj.doc._rust_doc,
-            page_index,
-            page.bbox,
-            page.mediabox,
-            page.initial_doctop,
-            threads=1,
-        )
-        got = page.extract_tables(threads=1)
-
-    assert got == expected
-
-
 def test_extract_tables_sets_doc_cache(monkeypatch):
-    pdfplumber = _reload_pdfplumber(monkeypatch, None)
+    pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
         os.path.dirname(__file__),
         "..",

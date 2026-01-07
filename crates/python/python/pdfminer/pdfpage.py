@@ -89,23 +89,31 @@ class PDFPage:
         Yields:
             PDFPage instances for each page in the document
         """
-        # Lazily fetch pages from the Rust document stored in PDFDocument
-        if document._rust_pages is None:
+        try:
+            page_count = document._rust_doc.page_count()
+        except Exception as e:
             try:
-                document._rust_pages = document._rust_doc.get_pages()
+                from pdfplumber.utils.exceptions import PdfminerException
+            except Exception:
+                raise e
+            raise PdfminerException(e)
+
+        if page_count <= 0:
+            try:
+                from pdfplumber.utils.exceptions import PdfminerException
+            except Exception:
+                raise RuntimeError("No pages found in PDF")
+            raise PdfminerException("No pages found in PDF")
+
+        for idx in range(page_count):
+            try:
+                rust_page = document._rust_doc.get_page(idx)
             except Exception as e:
                 try:
                     from pdfplumber.utils.exceptions import PdfminerException
                 except Exception:
                     raise e
                 raise PdfminerException(e)
-            if not document._rust_pages:
-                try:
-                    from pdfplumber.utils.exceptions import PdfminerException
-                except Exception:
-                    raise RuntimeError("No pages found in PDF")
-                raise PdfminerException("No pages found in PDF")
-        for idx, rust_page in enumerate(document._rust_pages):
             yield cls(rust_page, document, page_index=idx)
 
     @classmethod

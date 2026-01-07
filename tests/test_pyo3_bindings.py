@@ -149,6 +149,55 @@ def test_extract_tables_binding_exists():
     assert hasattr(bolivar, "extract_text_from_page")
 
 
+def test_extract_tables_from_document_pages_preserves_order():
+    import bolivar
+
+    pdf_path = FIXTURES_DIR / "pdfplumber" / "pdffill-demo.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    doc = bolivar.PDFDocument(pdf_bytes)
+
+    pages = list(doc.get_pages())
+    page_numbers = [2, 0]
+    geoms = [
+        (pages[2].mediabox, pages[2].mediabox, pages[2].mediabox[3] * 2, False),
+        (pages[0].mediabox, pages[0].mediabox, 0.0, False),
+    ]
+
+    tables = bolivar.extract_tables_from_document_pages(doc, page_numbers, geoms)
+    assert len(tables) == 2
+
+
+def test_threads_kw_rejected_in_python_bindings():
+    import bolivar
+
+    pdf_path = FIXTURES_DIR / "pdfplumber" / "pdffill-demo.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    doc = bolivar.PDFDocument(pdf_bytes)
+    page = list(doc.get_pages())[0]
+    page_index = 0
+    bbox = page.mediabox
+    assert bbox is not None
+
+    with pytest.raises(TypeError):
+        bolivar.extract_tables_from_page(
+            doc,
+            page_index,
+            bbox,
+            bbox,
+            0.0,
+            threads=1,
+        )
+
+    with pytest.raises(TypeError):
+        bolivar.extract_text(pdf_bytes, threads=1)
+
+    with pytest.raises(TypeError):
+        bolivar.extract_pages(pdf_bytes, threads=1)
+
+    with pytest.raises(TypeError):
+        bolivar.process_pages(doc, threads=1)
+
+
 def test_extract_text_memoryview():
     import bolivar
 
