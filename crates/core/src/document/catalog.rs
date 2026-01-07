@@ -1571,6 +1571,11 @@ impl PDFDocument {
         0
     }
 
+    /// Get the total number of pages in the document.
+    pub fn page_count(&self) -> usize {
+        self.get_page_count()
+    }
+
     /// Get page labels iterator.
     pub fn get_page_labels(&self) -> Result<PageLabels<'_>> {
         if let Some(page_labels_obj) = self.catalog.get("PageLabels") {

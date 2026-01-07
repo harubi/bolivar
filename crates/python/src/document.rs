@@ -569,6 +569,42 @@ impl PyPDFDocument {
         Ok(pages)
     }
 
+    /// Get the total number of pages in the document.
+    fn page_count(&self) -> usize {
+        self.inner.page_count()
+    }
+
+    /// Get mediaboxes for all pages in the document.
+    fn page_mediaboxes(&self) -> PyResult<Vec<(f64, f64, f64, f64)>> {
+        let mut boxes = Vec::new();
+        for (idx, page_result) in
+            bolivar_core::pdfpage::PDFPage::create_pages(&self.inner).enumerate()
+        {
+            let page = page_result
+                .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", idx, e)))?;
+            let mediabox = page
+                .mediabox
+                .ok_or_else(|| PyValueError::new_err(format!("Page {} missing mediabox", idx)))?;
+            boxes.push((mediabox[0], mediabox[1], mediabox[2], mediabox[3]));
+        }
+        Ok(boxes)
+    }
+
+    /// Get a single page by index.
+    fn get_page(slf: PyRef<'_, Self>, py: Python<'_>, index: usize) -> PyResult<PyPDFPage> {
+        let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
+        for (idx, page_result) in
+            bolivar_core::pdfpage::PDFPage::create_pages(&slf.inner).enumerate()
+        {
+            let page = page_result
+                .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", idx, e)))?;
+            if idx == index {
+                return PyPDFPage::from_core(py, page, &slf.inner, Some(&py_doc));
+            }
+        }
+        Err(PyValueError::new_err("page index out of range"))
+    }
+
     /// Get document info dictionaries.
     ///
     /// Returns:

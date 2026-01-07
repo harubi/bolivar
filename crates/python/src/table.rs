@@ -6,15 +6,15 @@
 use bolivar_core::high_level::{
     ExtractOptions, extract_pages as core_extract_pages,
     extract_pages_with_document as core_extract_pages_with_document,
+    extract_tables_for_pages as core_extract_tables_for_pages,
     extract_tables_with_document_geometries as core_extract_tables_with_document_geometries,
     extract_text as core_extract_text,
     extract_text_with_document as core_extract_text_with_document,
 };
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::table::{
-    BBox, CharObj, EdgeObj, Orientation, PageGeometry, WordObj, extract_table_from_ltpage,
-    extract_table_from_objects, extract_tables_from_ltpage, extract_tables_from_objects,
-    extract_text_from_ltpage, extract_words_from_ltpage,
+    BBox, CharObj, EdgeObj, Orientation, PageGeometry, WordObj, extract_table_from_objects,
+    extract_tables_from_objects, extract_text_from_ltpage, extract_words_from_ltpage,
 };
 use bolivar_core::utils::HasBBox;
 use memmap2::Mmap;
@@ -330,10 +330,6 @@ pub fn page_objects_to_chars_edges(
     Ok((chars, edges, geom))
 }
 
-fn resolve_threads(threads: Option<usize>) -> Option<usize> {
-    threads.or_else(|| std::thread::available_parallelism().ok().map(|n| n.get()))
-}
-
 fn word_obj_to_py(py: Python<'_>, w: &WordObj) -> PyResult<Py<PyAny>> {
     let d = PyDict::new(py);
     d.set_item("text", &w.text)?;
@@ -436,17 +432,14 @@ pub fn process_page(
 /// Args:
 ///     doc: PDFDocument instance
 ///     laparams: Layout analysis parameters
-///     threads: Optional thread count (defaults to no parallelism when None)
-///
 /// Returns:
 ///     List of LTPage objects
 #[pyfunction]
-#[pyo3(signature = (doc, laparams=None, threads=None))]
+#[pyo3(signature = (doc, laparams=None))]
 pub fn process_pages(
     py: Python<'_>,
     doc: &PyPDFDocument,
     laparams: Option<&PyLAParams>,
-    threads: Option<usize>,
 ) -> PyResult<Vec<PyLTPage>> {
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
     let options = ExtractOptions {
@@ -455,7 +448,6 @@ pub fn process_pages(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads: resolve_threads(threads),
     };
 
     let pages = py
@@ -467,14 +459,13 @@ pub fn process_pages(
 
 /// Extract tables from a document using per-page geometry.
 #[pyfunction]
-#[pyo3(signature = (doc, geometries, table_settings = None, laparams = None, threads = None))]
+#[pyo3(signature = (doc, geometries, table_settings = None, laparams = None))]
 pub fn extract_tables_from_document(
     py: Python<'_>,
     doc: &PyPDFDocument,
     geometries: &Bound<'_, PyAny>,
     table_settings: Option<Py<PyAny>>,
     laparams: Option<&PyLAParams>,
-    threads: Option<usize>,
 ) -> PyResult<Vec<Vec<Vec<Vec<Option<String>>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
@@ -484,7 +475,6 @@ pub fn extract_tables_from_document(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads: resolve_threads(threads),
     };
     let geoms = parse_page_geometries(geometries)?;
     let tables = py
@@ -496,9 +486,45 @@ pub fn extract_tables_from_document(
     Ok(tables)
 }
 
+/// Extract tables from specific pages using per-page geometry.
+#[pyfunction]
+#[pyo3(signature = (doc, page_numbers, geometries, table_settings = None, laparams = None))]
+pub fn extract_tables_from_document_pages(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    page_numbers: &Bound<'_, PyAny>,
+    geometries: &Bound<'_, PyAny>,
+    table_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+) -> PyResult<Vec<Vec<Vec<Vec<Option<String>>>>>> {
+    let settings = parse_table_settings(py, table_settings)?;
+    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching: true,
+        laparams: la,
+    };
+    let seq = page_numbers
+        .downcast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("page_numbers must be a list/tuple"))?;
+    let len = seq.len().unwrap_or(0);
+    let mut pages = Vec::with_capacity(len as usize);
+    for idx in 0..len {
+        pages.push(seq.get_item(idx)?.extract::<usize>()?);
+    }
+    let geoms = parse_page_geometries(geometries)?;
+    let tables = py
+        .detach(|| core_extract_tables_for_pages(&doc.inner, &pages, &geoms, options, &settings))
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {}", e)))?;
+
+    Ok(tables)
+}
+
 /// Extract tables from a page using Rust table extraction.
 #[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, threads = None, force_crop = false))]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, force_crop = false))]
 pub fn extract_tables_from_page(
     py: Python<'_>,
     doc: &PyPDFDocument,
@@ -508,7 +534,6 @@ pub fn extract_tables_from_page(
     initial_doctop: f64,
     table_settings: Option<Py<PyAny>>,
     laparams: Option<&PyLAParams>,
-    threads: Option<usize>,
     force_crop: bool,
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
@@ -519,7 +544,6 @@ pub fn extract_tables_from_page(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads: resolve_threads(threads),
     };
     let geom = PageGeometry {
         page_bbox,
@@ -527,27 +551,23 @@ pub fn extract_tables_from_page(
         initial_doctop,
         force_crop,
     };
+    let page_numbers = vec![page_index];
+    let geoms = vec![geom];
     let tables: Result<_, String> = py.detach(|| {
-        let ltpage = {
-            let mut cache = doc.layout_cache.lock().unwrap();
-            let pages = cache
-                .get_or_init(&doc.inner, options)
-                .map_err(|e| format!("Failed to process pages: {}", e))?;
-            pages
-                .get(page_index)
-                .cloned()
-                .ok_or_else(|| "page_index out of range".to_string())?
-        };
-        #[cfg(test)]
-        LAYOUT_CACHE_RELEASED.store(true, Ordering::SeqCst);
-        Ok(extract_tables_from_ltpage(&ltpage, &geom, &settings))
+        let tables =
+            core_extract_tables_for_pages(&doc.inner, &page_numbers, &geoms, options, &settings)
+                .map_err(|e| format!("Failed to extract tables: {}", e))?;
+        tables
+            .get(0)
+            .cloned()
+            .ok_or_else(|| "page_index out of range".to_string())
     });
     tables.map_err(|e| PyValueError::new_err(e))
 }
 
 /// Extract a single table from a page using Rust table extraction.
 #[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, threads = None, force_crop = false))]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, force_crop = false))]
 pub fn extract_table_from_page(
     py: Python<'_>,
     doc: &PyPDFDocument,
@@ -557,7 +577,6 @@ pub fn extract_table_from_page(
     initial_doctop: f64,
     table_settings: Option<Py<PyAny>>,
     laparams: Option<&PyLAParams>,
-    threads: Option<usize>,
     force_crop: bool,
 ) -> PyResult<Option<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
@@ -568,7 +587,6 @@ pub fn extract_table_from_page(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads: resolve_threads(threads),
     };
     let geom = PageGeometry {
         page_bbox,
@@ -576,20 +594,28 @@ pub fn extract_table_from_page(
         initial_doctop,
         force_crop,
     };
+    let page_numbers = vec![page_index];
+    let geoms = vec![geom];
     let table: Result<_, String> = py.detach(|| {
-        let ltpage = {
-            let mut cache = doc.layout_cache.lock().unwrap();
-            let pages = cache
-                .get_or_init(&doc.inner, options)
-                .map_err(|e| format!("Failed to process pages: {}", e))?;
-            pages
-                .get(page_index)
-                .cloned()
-                .ok_or_else(|| "page_index out of range".to_string())?
-        };
-        #[cfg(test)]
-        LAYOUT_CACHE_RELEASED.store(true, Ordering::SeqCst);
-        Ok(extract_table_from_ltpage(&ltpage, &geom, &settings))
+        let tables =
+            core_extract_tables_for_pages(&doc.inner, &page_numbers, &geoms, options, &settings)
+                .map_err(|e| format!("Failed to extract tables: {}", e))?;
+        let page_tables = tables
+            .get(0)
+            .cloned()
+            .ok_or_else(|| "page_index out of range".to_string())?;
+        if page_tables.is_empty() {
+            return Ok(None);
+        }
+        let mut best = 0usize;
+        for (idx, table) in page_tables.iter().enumerate().skip(1) {
+            if table.iter().map(|row| row.len()).sum::<usize>()
+                > page_tables[best].iter().map(|row| row.len()).sum::<usize>()
+            {
+                best = idx;
+            }
+        }
+        Ok(Some(page_tables[best].clone()))
     });
     table.map_err(|e| PyValueError::new_err(e))
 }
@@ -632,7 +658,7 @@ pub fn repair_pdf(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>
 
 /// Extract words from a page using Rust text extraction.
 #[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, threads = None, force_crop = false))]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, force_crop = false))]
 pub fn extract_words_from_page(
     py: Python<'_>,
     doc: &PyPDFDocument,
@@ -642,7 +668,6 @@ pub fn extract_words_from_page(
     initial_doctop: f64,
     text_settings: Option<Py<PyAny>>,
     laparams: Option<&PyLAParams>,
-    threads: Option<usize>,
     force_crop: bool,
 ) -> PyResult<Vec<Py<PyAny>>> {
     let settings = parse_text_settings(py, text_settings)?;
@@ -653,7 +678,6 @@ pub fn extract_words_from_page(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads: resolve_threads(threads),
     };
     let pages = py
         .detach(|| core_extract_pages_with_document(&doc.inner, options))
@@ -677,7 +701,7 @@ pub fn extract_words_from_page(
 
 /// Extract text from a page using Rust text extraction.
 #[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, threads = None, force_crop = false))]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, force_crop = false))]
 pub fn extract_text_from_page(
     py: Python<'_>,
     doc: &PyPDFDocument,
@@ -687,7 +711,6 @@ pub fn extract_text_from_page(
     initial_doctop: f64,
     text_settings: Option<Py<PyAny>>,
     laparams: Option<&PyLAParams>,
-    threads: Option<usize>,
     force_crop: bool,
 ) -> PyResult<String> {
     let settings = parse_text_settings(py, text_settings)?;
@@ -698,7 +721,6 @@ pub fn extract_text_from_page(
         maxpages: 0,
         caching: true,
         laparams: la,
-        threads: resolve_threads(threads),
     };
     let pages = py
         .detach(|| core_extract_pages_with_document(&doc.inner, options))
@@ -717,7 +739,7 @@ pub fn extract_text_from_page(
 
 /// Extract text from PDF bytes.
 #[pyfunction]
-#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, threads = None))]
+#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
 pub fn extract_text(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
@@ -726,7 +748,6 @@ pub fn extract_text(
     maxpages: usize,
     caching: bool,
     laparams: Option<&PyLAParams>,
-    threads: Option<usize>,
 ) -> PyResult<String> {
     let options = ExtractOptions {
         password: password.to_string(),
@@ -734,7 +755,6 @@ pub fn extract_text(
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
-        threads: resolve_threads(threads),
     };
     let result = match pdf_input_from_py(data)? {
         PdfInput::Shared(bytes) => {
@@ -749,7 +769,7 @@ pub fn extract_text(
 
 /// Extract text from a PDF file path using memory-mapped I/O.
 #[pyfunction]
-#[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, threads = None))]
+#[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
 pub fn extract_text_from_path(
     py: Python<'_>,
     path: &str,
@@ -758,7 +778,6 @@ pub fn extract_text_from_path(
     maxpages: usize,
     caching: bool,
     laparams: Option<&PyLAParams>,
-    threads: Option<usize>,
 ) -> PyResult<String> {
     let file = File::open(path)
         .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
@@ -773,7 +792,6 @@ pub fn extract_text_from_path(
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
-        threads: resolve_threads(threads),
     };
 
     let result = py.detach(|| core_extract_text_with_document(&doc, options));
@@ -782,7 +800,7 @@ pub fn extract_text_from_path(
 
 /// Extract pages (layout) from PDF bytes.
 #[pyfunction]
-#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, threads = None))]
+#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
 pub fn extract_pages(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
@@ -791,7 +809,6 @@ pub fn extract_pages(
     maxpages: usize,
     caching: bool,
     laparams: Option<&PyLAParams>,
-    threads: Option<usize>,
 ) -> PyResult<Vec<PyLTPage>> {
     let options = ExtractOptions {
         password: password.to_string(),
@@ -799,7 +816,6 @@ pub fn extract_pages(
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
-        threads: resolve_threads(threads),
     };
     let pages = match pdf_input_from_py(data)? {
         PdfInput::Shared(bytes) => {
@@ -818,7 +834,7 @@ pub fn extract_pages(
 
 /// Extract pages (layout) from a PDF file path using memory-mapped I/O.
 #[pyfunction]
-#[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, threads = None))]
+#[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
 pub fn extract_pages_from_path(
     py: Python<'_>,
     path: &str,
@@ -827,7 +843,6 @@ pub fn extract_pages_from_path(
     maxpages: usize,
     caching: bool,
     laparams: Option<&PyLAParams>,
-    threads: Option<usize>,
 ) -> PyResult<Vec<PyLTPage>> {
     let file = File::open(path)
         .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
@@ -842,7 +857,6 @@ pub fn extract_pages_from_path(
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
-        threads: resolve_threads(threads),
     };
     // Match pdfminer.high_level.extract_pages default behavior.
     if options.laparams.is_none() {
@@ -864,6 +878,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_document, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tables_from_document_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_table_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page_filtered, m)?)?;
