@@ -30,12 +30,12 @@ ordered-float.workspace = true
 geo-index.workspace = true
 rayon.workspace = true
 memmap2.workspace = true
-criterion-perf-events = { workspace = true, optional = true }
-perfcnt = { workspace = true, optional = true }
 
 [features]
-perf-counters = ["criterion-perf-events", "perfcnt"]
-test-utils = []
+
+[target.'cfg(target_os = "linux")'.dependencies]
+criterion-perf-events = { workspace = true }
+perfcnt = { workspace = true }
 
 [dev-dependencies]
 criterion.workspace = true

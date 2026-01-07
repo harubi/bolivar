@@ -18,20 +18,16 @@ use crate::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use crate::pdfpage::PDFPage;
 use crate::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
 
-#[cfg(any(test, feature = "test-utils"))]
 use std::sync::{Mutex, OnceLock};
 
-#[cfg(any(test, feature = "test-utils"))]
 #[derive(Clone, Copy)]
 struct ThreadRecord {
     id: std::thread::ThreadId,
     in_pool: bool,
 }
 
-#[cfg(any(test, feature = "test-utils"))]
 static THREAD_LOG: OnceLock<Mutex<Vec<ThreadRecord>>> = OnceLock::new();
 
-#[cfg(any(test, feature = "test-utils"))]
 fn record_thread() {
     let log = THREAD_LOG.get_or_init(|| Mutex::new(Vec::new()));
     if let Ok(mut guard) = log.lock() {
@@ -43,21 +39,18 @@ fn record_thread() {
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
 fn take_thread_log() -> Vec<ThreadRecord> {
     let log = THREAD_LOG.get_or_init(|| Mutex::new(Vec::new()));
     let mut guard = log.lock().unwrap();
     std::mem::take(&mut *guard)
 }
 
-#[cfg(any(test, feature = "test-utils"))]
 pub fn clear_thread_log() {
     let log = THREAD_LOG.get_or_init(|| Mutex::new(Vec::new()));
     let mut guard = log.lock().unwrap();
     guard.clear();
 }
 
-#[cfg(any(test, feature = "test-utils"))]
 pub fn take_thread_log_len() -> usize {
     take_thread_log().len()
 }
@@ -306,7 +299,6 @@ fn process_page(
     rsrcmgr: &mut PDFResourceManager,
     doc: &PDFDocument,
 ) -> Result<LTPage> {
-    #[cfg(any(test, feature = "test-utils"))]
     record_thread();
 
     // Create interpreter with resource manager and aggregator as device
@@ -622,7 +614,7 @@ fn extract_pages_from_doc(
 mod tests {
     use super::{
         ExtractOptions, extract_pages, extract_tables_for_pages, extract_tables_with_document,
-        extract_tables_with_document_geometries, extract_text,
+        extract_tables_with_document_geometries,
     };
     use crate::pdfdocument::PDFDocument;
     use crate::table::{PageGeometry, TableSettings};

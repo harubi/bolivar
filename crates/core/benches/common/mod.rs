@@ -7,9 +7,9 @@ use criterion::measurement::Measurement;
 use criterion::{BenchmarkGroup, Criterion, Throughput};
 use serde::Deserialize;
 
-#[cfg(all(feature = "perf-counters", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 use criterion_perf_events::Perf;
-#[cfg(all(feature = "perf-counters", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 use perfcnt::linux::{HardwareEventType as Hardware, PerfCounterBuilderLinux as Builder};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,10 +81,10 @@ pub struct LoadedFixture {
     pub bytes: Vec<u8>,
 }
 
-#[cfg(all(feature = "perf-counters", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 pub type BenchCriterion = Criterion<Perf>;
 
-#[cfg(not(all(feature = "perf-counters", target_os = "linux")))]
+#[cfg(not(target_os = "linux"))]
 pub type BenchCriterion = Criterion;
 
 pub fn bench_config() -> BenchConfig {
@@ -170,7 +170,7 @@ pub fn load_fixtures(tag: Option<&str>) -> Vec<LoadedFixture> {
         .collect()
 }
 
-#[cfg(all(feature = "perf-counters", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 pub fn bench_criterion() -> BenchCriterion {
     let perf = Perf::new(Builder::from_hardware_event(Hardware::CpuCycles));
     Criterion::default()
@@ -178,7 +178,7 @@ pub fn bench_criterion() -> BenchCriterion {
         .configure_from_args()
 }
 
-#[cfg(not(all(feature = "perf-counters", target_os = "linux")))]
+#[cfg(not(target_os = "linux"))]
 pub fn bench_criterion() -> BenchCriterion {
     Criterion::default().configure_from_args()
 }

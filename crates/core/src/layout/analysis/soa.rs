@@ -80,65 +80,22 @@ impl RectSoA {
 }
 
 #[cfg(test)]
-impl RectSoA {
-    pub fn to_bboxes(&self) -> Vec<Rect> {
-        let mut out = Vec::with_capacity(self.len);
-        let mut idx = 0;
-        for chunk in 0..self.x0.len() {
-            for lane in 0..LANES {
-                if idx >= self.len {
-                    return out;
-                }
-                out.push((
-                    self.x0[chunk][lane],
-                    self.y0[chunk][lane],
-                    self.x1[chunk][lane],
-                    self.y1[chunk][lane],
-                ));
-                idx += 1;
-            }
-        }
-        out
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn overlap_scalar(&self, q: Rect) -> Vec<usize> {
-        let (qx0, qy0, qx1, qy1) = q;
-        let mut out = Vec::new();
-        let mut idx = 0;
-        for chunk in 0..self.x0.len() {
-            for lane in 0..LANES {
-                if idx >= self.len {
-                    return out;
-                }
-                if self.x0[chunk][lane] < qx1
-                    && self.x1[chunk][lane] > qx0
-                    && self.y0[chunk][lane] < qy1
-                    && self.y1[chunk][lane] > qy0
-                {
-                    out.push(idx);
-                }
-                idx += 1;
-            }
-        }
-        out
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn soa_roundtrip_preserves_bboxes() {
+    fn soa_storage_preserves_bboxes() {
         let bboxes = vec![(0.0, 1.0, 2.0, 3.0), (-1.0, 0.0, 5.0, 7.0)];
         let soa = RectSoA::from_bboxes(&bboxes);
-        let roundtrip = soa.to_bboxes();
-        assert_eq!(roundtrip, bboxes);
-        assert_eq!(soa.len(), bboxes.len());
+        assert_eq!(soa.x0.len(), 1);
+        assert_eq!(soa.x0[0][0], 0.0);
+        assert_eq!(soa.y0[0][0], 1.0);
+        assert_eq!(soa.x1[0][0], 2.0);
+        assert_eq!(soa.y1[0][0], 3.0);
+        assert_eq!(soa.x0[0][1], -1.0);
+        assert_eq!(soa.y0[0][1], 0.0);
+        assert_eq!(soa.x1[0][1], 5.0);
+        assert_eq!(soa.y1[0][1], 7.0);
     }
 
     #[test]
@@ -160,7 +117,7 @@ mod overlap_tests {
     use super::*;
 
     #[test]
-    fn simd_overlap_matches_scalar() {
+    fn simd_overlap_expected_indices() {
         let bboxes = vec![
             (0.0, 0.0, 2.0, 2.0),
             (3.0, 0.0, 5.0, 2.0),
@@ -169,8 +126,7 @@ mod overlap_tests {
         ];
         let soa = RectSoA::from_bboxes(&bboxes);
         let q = (0.0, 0.0, 3.0, 3.0);
-        let scalar = soa.overlap_scalar(q);
         let simd = soa.overlap_simd(q);
-        assert_eq!(scalar, simd);
+        assert_eq!(simd, vec![0, 2, 3]);
     }
 }
