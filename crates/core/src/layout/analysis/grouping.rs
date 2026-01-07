@@ -32,44 +32,15 @@ pub fn group_objects(laparams: &LAParams, objs: &[LTChar]) -> Vec<TextLineType> 
         return result;
     }
 
-    let mut obj_iter = objs.iter().peekable();
+    let (halign_flags, valign_flags) = group_objects_pair_flags_simd(laparams, objs);
     let mut current_line: Option<TextLineType> = None;
+    let mut obj0_idx = 0usize;
 
-    // Get first object
-    let mut obj0 = match obj_iter.next() {
-        Some(o) => o,
-        None => return result,
-    };
-
-    for obj1 in obj_iter {
-        // Check horizontal alignment:
-        //   +------+ - - -
-        //   | obj0 | - - +------+   -
-        //   |      |     | obj1 |   | (line_overlap)
-        //   +------+ - - |      |   -
-        //          - - - +------+
-        //          |<--->|
-        //        (char_margin)
-        let halign = obj0.is_voverlap(obj1)
-            && obj0.height().min(obj1.height()) * laparams.line_overlap < obj0.voverlap(obj1)
-            && obj0.hdistance(obj1) < obj0.width().max(obj1.width()) * laparams.char_margin;
-
-        // Check vertical alignment:
-        //   +------+
-        //   | obj0 |
-        //   |      |
-        //   +------+ - - -
-        //     |    |     | (char_margin)
-        //     +------+ - -
-        //     | obj1 |
-        //     |      |
-        //     +------+
-        //     |<-->|
-        //   (line_overlap)
-        let valign = laparams.detect_vertical
-            && obj0.is_hoverlap(obj1)
-            && obj0.width().min(obj1.width()) * laparams.line_overlap < obj0.hoverlap(obj1)
-            && obj0.vdistance(obj1) < obj0.height().max(obj1.height()) * laparams.char_margin;
+    for obj1_idx in 1..objs.len() {
+        let obj0 = &objs[obj0_idx];
+        let obj1 = &objs[obj1_idx];
+        let halign = halign_flags.get(obj0_idx).copied().unwrap_or(false);
+        let valign = valign_flags.get(obj0_idx).copied().unwrap_or(false);
 
         match &mut current_line {
             Some(TextLineType::Horizontal(line)) if halign => {
@@ -111,7 +82,7 @@ pub fn group_objects(laparams: &LAParams, objs: &[LTChar]) -> Vec<TextLineType> 
             }
         }
 
-        obj0 = obj1;
+        obj0_idx = obj1_idx;
     }
 
     // Handle remaining line or last character
@@ -123,13 +94,156 @@ pub fn group_objects(laparams: &LAParams, objs: &[LTChar]) -> Vec<TextLineType> 
         None => {
             // Last character wasn't part of a line
             let mut line = LTTextLineHorizontal::new(laparams.word_margin);
-            add_char_to_horizontal_line(&mut line, obj0.clone(), laparams.word_margin);
+            add_char_to_horizontal_line(&mut line, objs[obj0_idx].clone(), laparams.word_margin);
             line.analyze();
             result.push(TextLineType::Horizontal(line));
         }
     }
 
     result
+}
+
+fn group_objects_pair_flags_simd(laparams: &LAParams, objs: &[LTChar]) -> (Vec<bool>, Vec<bool>) {
+    let len = objs.len();
+    if len < 2 {
+        return (Vec::new(), Vec::new());
+    }
+
+    let mut x0 = Vec::with_capacity(len);
+    let mut y0 = Vec::with_capacity(len);
+    let mut x1 = Vec::with_capacity(len);
+    let mut y1 = Vec::with_capacity(len);
+    let mut width = Vec::with_capacity(len);
+    let mut height = Vec::with_capacity(len);
+
+    for ch in objs {
+        let bx0 = ch.x0();
+        let by0 = ch.y0();
+        let bx1 = ch.x1();
+        let by1 = ch.y1();
+        x0.push(bx0);
+        y0.push(by0);
+        x1.push(bx1);
+        y1.push(by1);
+        width.push(bx1 - bx0);
+        height.push(by1 - by0);
+    }
+
+    let mut halign_flags = vec![false; len - 1];
+    let mut valign_flags = vec![false; len - 1];
+
+    const LANES: usize = 4;
+    let mut i = 0usize;
+
+    use std::simd::prelude::*;
+    let line_overlap = Simd::<f64, LANES>::splat(laparams.line_overlap);
+    let char_margin = Simd::<f64, LANES>::splat(laparams.char_margin);
+
+    while i + LANES < len {
+        let x0a = Simd::<f64, LANES>::from_slice(&x0[i..i + LANES]);
+        let y0a = Simd::<f64, LANES>::from_slice(&y0[i..i + LANES]);
+        let x1a = Simd::<f64, LANES>::from_slice(&x1[i..i + LANES]);
+        let y1a = Simd::<f64, LANES>::from_slice(&y1[i..i + LANES]);
+        let x0b = Simd::<f64, LANES>::from_slice(&x0[i + 1..i + 1 + LANES]);
+        let y0b = Simd::<f64, LANES>::from_slice(&y0[i + 1..i + 1 + LANES]);
+        let x1b = Simd::<f64, LANES>::from_slice(&x1[i + 1..i + 1 + LANES]);
+        let y1b = Simd::<f64, LANES>::from_slice(&y1[i + 1..i + 1 + LANES]);
+        let w0 = Simd::<f64, LANES>::from_slice(&width[i..i + LANES]);
+        let w1 = Simd::<f64, LANES>::from_slice(&width[i + 1..i + 1 + LANES]);
+        let h0 = Simd::<f64, LANES>::from_slice(&height[i..i + LANES]);
+        let h1 = Simd::<f64, LANES>::from_slice(&height[i + 1..i + 1 + LANES]);
+
+        let is_voverlap = y0b.simd_le(y1a) & y0a.simd_le(y1b);
+        let is_hoverlap = x0b.simd_le(x1a) & x0a.simd_le(x1b);
+
+        let vdiff1 = (y0a - y1b).abs();
+        let vdiff2 = (y1a - y0b).abs();
+        let vmin = vdiff1.simd_min(vdiff2);
+        let voverlap = is_voverlap.select(vmin, Simd::splat(0.0));
+        let vdistance = is_voverlap.select(Simd::splat(0.0), vmin);
+
+        let hdiff1 = (x0a - x1b).abs();
+        let hdiff2 = (x1a - x0b).abs();
+        let hmin = hdiff1.simd_min(hdiff2);
+        let hoverlap = is_hoverlap.select(hmin, Simd::splat(0.0));
+        let hdistance = is_hoverlap.select(Simd::splat(0.0), hmin);
+
+        let min_height = h0.simd_min(h1);
+        let max_width = w0.simd_max(w1);
+        let halign_mask = is_voverlap
+            & (min_height * line_overlap).simd_lt(voverlap)
+            & hdistance.simd_lt(max_width * char_margin);
+
+        let min_width = w0.simd_min(w1);
+        let max_height = h0.simd_max(h1);
+        let false_mask = is_voverlap & !is_voverlap;
+        let valign_mask = if laparams.detect_vertical {
+            is_hoverlap
+                & (min_width * line_overlap).simd_lt(hoverlap)
+                & vdistance.simd_lt(max_height * char_margin)
+        } else {
+            false_mask
+        };
+
+        let halign_arr = halign_mask.to_array();
+        let valign_arr = valign_mask.to_array();
+        for lane in 0..LANES {
+            let idx = i + lane;
+            if idx >= len - 1 {
+                break;
+            }
+            halign_flags[idx] = halign_arr[lane];
+            valign_flags[idx] = valign_arr[lane];
+        }
+
+        i += LANES;
+    }
+
+    for idx in i..(len - 1) {
+        let obj0 = &objs[idx];
+        let obj1 = &objs[idx + 1];
+        let halign = obj0.is_voverlap(obj1)
+            && obj0.height().min(obj1.height()) * laparams.line_overlap < obj0.voverlap(obj1)
+            && obj0.hdistance(obj1) < obj0.width().max(obj1.width()) * laparams.char_margin;
+        let valign = laparams.detect_vertical
+            && obj0.is_hoverlap(obj1)
+            && obj0.width().min(obj1.width()) * laparams.line_overlap < obj0.hoverlap(obj1)
+            && obj0.vdistance(obj1) < obj0.height().max(obj1.height()) * laparams.char_margin;
+        halign_flags[idx] = halign;
+        valign_flags[idx] = valign;
+    }
+
+    (halign_flags, valign_flags)
+}
+
+#[cfg(test)]
+mod group_objects_simd_tests {
+    use super::*;
+
+    #[test]
+    fn group_objects_expected_lines() {
+        let laparams = LAParams::default();
+        let objs = vec![
+            LTChar::new((0.0, 0.0, 5.0, 5.0), "A", "F", 10.0, true, 5.0),
+            LTChar::new((6.0, 0.0, 10.0, 5.0), "B", "F", 10.0, true, 4.0),
+            LTChar::new((0.0, 10.0, 5.0, 15.0), "C", "F", 10.0, true, 5.0),
+        ];
+        let lines = group_objects(&laparams, &objs);
+        assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn group_objects_simd_halign_matches_scalar() {
+        let laparams = LAParams::default();
+        let objs = vec![
+            LTChar::new((0.0, 0.0, 5.0, 5.0), "A", "F", 10.0, true, 5.0),
+            LTChar::new((6.0, 0.0, 10.0, 5.0), "B", "F", 10.0, true, 4.0),
+            LTChar::new((0.0, 10.0, 5.0, 15.0), "C", "F", 10.0, true, 5.0),
+        ];
+        let (halign_flags, valign_flags) = group_objects_pair_flags_simd(&laparams, &objs);
+        assert!(halign_flags[0]);
+        assert!(!valign_flags[0]);
+    }
 }
 
 #[cfg(test)]
