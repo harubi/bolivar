@@ -62,13 +62,10 @@ pub fn take_thread_log_len() -> usize {
     take_thread_log().len()
 }
 
-fn normalize_threads(threads: Option<usize>) -> Option<usize> {
-    match threads {
-        Some(0) => None,
-        Some(1) => Some(1),
-        Some(n) => Some(n),
-        None => std::thread::available_parallelism().ok().map(|n| n.get()),
-    }
+fn default_thread_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 /// Options for text extraction.
@@ -90,11 +87,12 @@ pub struct ExtractOptions {
 
     /// Layout analysis parameters. None uses default LAParams.
     pub laparams: Option<LAParams>,
-
-    /// Optional thread count for parallel page processing.
-    /// None or Some(1) uses the sequential path.
-    pub threads: Option<usize>,
 }
+
+pub type Cell = Option<String>;
+pub type Row = Vec<Cell>;
+pub type Table = Vec<Row>;
+pub type PageTables = Vec<Table>;
 
 /// Cache for layout pages extracted from a document.
 #[derive(Debug, Default)]
@@ -130,7 +128,6 @@ impl Default for ExtractOptions {
             maxpages: 0,
             caching: true,
             laparams: None,
-            threads: None,
         }
     }
 }
@@ -162,8 +159,7 @@ pub fn extract_text(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result<
 
 /// Extract text from an already-parsed PDFDocument.
 pub fn extract_text_with_document(doc: &PDFDocument, options: ExtractOptions) -> Result<String> {
-    let mut options = options;
-    options.threads = normalize_threads(options.threads);
+    let options = options;
 
     // Use LAParams or create default
     let laparams = options.laparams.clone().unwrap_or_default();
@@ -178,7 +174,6 @@ pub fn extract_text_with_document(doc: &PDFDocument, options: ExtractOptions) ->
         options.maxpages,
         options.caching,
         Some(&laparams),
-        options.threads,
     )?;
 
     String::from_utf8(output).map_err(|e| PdfError::DecodeError(e.to_string()))
@@ -217,7 +212,6 @@ pub fn extract_text_to_fp<W: Write>(
         options.maxpages,
         options.caching,
         laparams,
-        options.threads,
     )
 }
 
@@ -230,9 +224,7 @@ fn extract_text_to_fp_inner<W: Write>(
     maxpages: usize,
     caching: bool,
     laparams: Option<&LAParams>,
-    threads: Option<usize>,
 ) -> Result<()> {
-    let threads = normalize_threads(threads);
     // Validate PDF header
     if pdf_data.len() < 8 || !pdf_data.starts_with(b"%PDF-") {
         return Err(PdfError::SyntaxError("Invalid PDF header".to_string()));
@@ -240,15 +232,7 @@ fn extract_text_to_fp_inner<W: Write>(
 
     // Parse PDF document
     let doc = PDFDocument::new(pdf_data, password)?;
-    extract_text_to_fp_from_doc_inner(
-        &doc,
-        writer,
-        page_numbers,
-        maxpages,
-        caching,
-        laparams,
-        threads,
-    )
+    extract_text_to_fp_from_doc_inner(&doc, writer, page_numbers, maxpages, caching, laparams)
 }
 
 fn extract_text_to_fp_from_doc_inner<W: Write>(
@@ -258,9 +242,7 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
     maxpages: usize,
     caching: bool,
     laparams: Option<&LAParams>,
-    threads: Option<usize>,
 ) -> Result<()> {
-    let threads = normalize_threads(threads);
     // Get LAParams (use default if not provided)
     let default_laparams = LAParams::default();
     let laparams = laparams.unwrap_or(&default_laparams);
@@ -268,82 +250,47 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
     // Create text converter
     let mut converter = TextConverter::new(writer, "utf-8", 1, Some(laparams.clone()), false);
 
-    let thread_count = threads.filter(|count| *count > 1);
-    if let Some(count) = thread_count {
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(count)
-            .build()
-            .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+    let thread_count = default_thread_count();
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()
+        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
 
-        let mut selected_pages: Vec<(usize, PDFPage)> = Vec::new();
-        let mut page_count = 0;
-        for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-            if let Some(nums) = page_numbers
-                && !nums.contains(&page_idx)
-            {
-                continue;
-            }
-
-            if maxpages > 0 && page_count >= maxpages {
-                break;
-            }
-
-            let page = page_result?;
-            selected_pages.push((page_idx, page));
-            page_count += 1;
+    let mut selected_pages: Vec<(usize, PDFPage)> = Vec::new();
+    let mut page_count = 0;
+    for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
+        if let Some(nums) = page_numbers
+            && !nums.contains(&page_idx)
+        {
+            continue;
         }
 
-        let mut results: Vec<(usize, Result<LTPage>)> = pool.install(|| {
-            selected_pages
-                .into_par_iter()
-                .map(|(page_idx, page)| {
-                    let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-                    let mut aggregator =
-                        PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
-                    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc);
-                    (page_idx, ltpage)
-                })
-                .collect()
-        });
-
-        results.sort_by_key(|(page_idx, _)| *page_idx);
-        for (_, result) in results {
-            let ltpage = result?;
-            converter.receive_layout(ltpage);
+        if maxpages > 0 && page_count >= maxpages {
+            break;
         }
-    } else {
-        // Create resource manager
-        let mut rsrcmgr = PDFResourceManager::with_caching(caching);
 
-        // Process pages
-        let mut page_count = 0;
-        for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-            // Check page number filter
-            if let Some(nums) = page_numbers
-                && !nums.contains(&page_idx)
-            {
-                continue;
-            }
+        let page = page_result?;
+        selected_pages.push((page_idx, page));
+        page_count += 1;
+    }
 
-            // Check maxpages limit
-            if maxpages > 0 && page_count >= maxpages {
-                break;
-            }
+    let mut results: Vec<(usize, Result<LTPage>)> = pool.install(|| {
+        selected_pages
+            .into_par_iter()
+            .map(|(page_idx, page)| {
+                let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+                let mut aggregator =
+                    PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
+                let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc);
+                (page_idx, ltpage)
+            })
+            .collect()
+    });
 
-            let page = page_result?;
-
-            // Create aggregator for this page
-            let mut aggregator =
-                PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
-
-            // Process page content and get layout
-            let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
-
-            // Render to text
-            converter.receive_layout(ltpage);
-
-            page_count += 1;
-        }
+    results.sort_by_key(|(page_idx, _)| *page_idx);
+    for (_, result) in results {
+        let ltpage = result?;
+        converter.receive_layout(ltpage);
     }
 
     Ok(())
@@ -441,7 +388,6 @@ pub fn extract_pages(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
-    options.threads = normalize_threads(options.threads);
 
     // Validate PDF header
     if pdf_data.len() < 8 || !pdf_data.starts_with(b"%PDF-") {
@@ -463,8 +409,6 @@ pub fn extract_pages_with_document(
     doc: &PDFDocument,
     options: ExtractOptions,
 ) -> Result<Vec<LTPage>> {
-    let mut options = options;
-    options.threads = normalize_threads(options.threads);
     extract_pages_from_doc(doc, &options)?.into_iter().collect()
 }
 
@@ -478,38 +422,26 @@ pub fn extract_tables_with_document(
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
-    options.threads = normalize_threads(options.threads);
-
     let pages = extract_pages_with_document(doc, options.clone())?;
-    let thread_count = options.threads.filter(|count| *count > 1);
+    let thread_count = default_thread_count();
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()
+        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
 
-    if let Some(count) = thread_count {
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(count)
-            .build()
-            .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+    let mut results: Vec<(usize, Vec<Vec<Vec<Option<String>>>>)> = pool.install(|| {
+        pages
+            .into_par_iter()
+            .enumerate()
+            .map(|(idx, page)| {
+                let geom = page_geometry_from_ltpage(&page);
+                (idx, extract_tables_from_ltpage(&page, &geom, settings))
+            })
+            .collect()
+    });
 
-        let mut results: Vec<(usize, Vec<Vec<Vec<Option<String>>>>)> = pool.install(|| {
-            pages
-                .into_par_iter()
-                .enumerate()
-                .map(|(idx, page)| {
-                    let geom = page_geometry_from_ltpage(&page);
-                    (idx, extract_tables_from_ltpage(&page, &geom, settings))
-                })
-                .collect()
-        });
-
-        results.sort_by_key(|(idx, _)| *idx);
-        Ok(results.into_iter().map(|(_, tables)| tables).collect())
-    } else {
-        let mut results = Vec::with_capacity(pages.len());
-        for page in pages {
-            let geom = page_geometry_from_ltpage(&page);
-            results.push(extract_tables_from_ltpage(&page, &geom, settings));
-        }
-        Ok(results)
-    }
+    results.sort_by_key(|(idx, _)| *idx);
+    Ok(results.into_iter().map(|(_, tables)| tables).collect())
 }
 
 /// Extract tables from an already-parsed PDFDocument using per-page geometry.
@@ -523,8 +455,6 @@ pub fn extract_tables_with_document_geometries(
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
-    options.threads = normalize_threads(options.threads);
-
     let pages = extract_pages_with_document(doc, options.clone())?;
     if geometries.len() != pages.len() {
         return Err(PdfError::DecodeError(format!(
@@ -533,36 +463,97 @@ pub fn extract_tables_with_document_geometries(
             geometries.len()
         )));
     }
+    let thread_count = default_thread_count();
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()
+        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
 
-    let thread_count = options.threads.filter(|count| *count > 1);
+    let mut results: Vec<(usize, Vec<Vec<Vec<Option<String>>>>)> = pool.install(|| {
+        pages
+            .into_par_iter()
+            .enumerate()
+            .map(|(idx, page)| {
+                let geom = &geometries[idx];
+                (idx, extract_tables_from_ltpage(&page, geom, settings))
+            })
+            .collect()
+    });
 
-    if let Some(count) = thread_count {
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(count)
-            .build()
-            .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+    results.sort_by_key(|(idx, _)| *idx);
+    Ok(results.into_iter().map(|(_, tables)| tables).collect())
+}
 
-        let mut results: Vec<(usize, Vec<Vec<Vec<Option<String>>>>)> = pool.install(|| {
-            pages
-                .into_par_iter()
-                .enumerate()
-                .map(|(idx, page)| {
-                    let geom = &geometries[idx];
-                    (idx, extract_tables_from_ltpage(&page, geom, settings))
-                })
-                .collect()
-        });
-
-        results.sort_by_key(|(idx, _)| *idx);
-        Ok(results.into_iter().map(|(_, tables)| tables).collect())
-    } else {
-        let mut results = Vec::with_capacity(pages.len());
-        for (idx, page) in pages.into_iter().enumerate() {
-            let geom = &geometries[idx];
-            results.push(extract_tables_from_ltpage(&page, geom, settings));
-        }
-        Ok(results)
+/// Extract tables for specific pages with per-page geometry in input order.
+pub fn extract_tables_for_pages(
+    doc: &PDFDocument,
+    page_numbers: &[usize],
+    geometries: &[PageGeometry],
+    options: ExtractOptions,
+    settings: &TableSettings,
+) -> Result<Vec<PageTables>> {
+    if page_numbers.len() != geometries.len() {
+        return Err(PdfError::InvalidArgument(format!(
+            "geometry count mismatch: expected {}, got {}",
+            page_numbers.len(),
+            geometries.len()
+        )));
     }
+
+    let mut options = options;
+    if options.laparams.is_none() {
+        options.laparams = Some(LAParams::default());
+    }
+    let laparams = options.laparams.clone();
+
+    let mut wanted: std::collections::HashMap<usize, (usize, PageGeometry)> =
+        std::collections::HashMap::new();
+    for (pos, page_idx) in page_numbers.iter().enumerate() {
+        wanted.insert(*page_idx, (pos, geometries[pos].clone()));
+    }
+
+    let mut pending: Vec<(usize, usize, PDFPage, PageGeometry)> = Vec::new();
+    for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
+        let Some((requested_pos, geom)) = wanted.get(&page_idx) else {
+            continue;
+        };
+        let page = page_result?;
+        pending.push((*requested_pos, page_idx, page, geom.clone()));
+    }
+
+    if pending.len() != page_numbers.len() {
+        return Err(PdfError::InvalidArgument(
+            "page number out of range".to_string(),
+        ));
+    }
+
+    let thread_count = default_thread_count();
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()
+        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+
+    let mut results: Vec<Result<(usize, PageTables)>> = pool.install(|| {
+        pending
+            .into_par_iter()
+            .map(|(requested_pos, page_idx, page, geom)| {
+                let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
+                let mut aggregator = PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1);
+                let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
+                Ok((
+                    requested_pos,
+                    extract_tables_from_ltpage(&ltpage, &geom, settings),
+                ))
+            })
+            .collect()
+    });
+
+    let mut ordered = Vec::with_capacity(results.len());
+    for result in results.drain(..) {
+        ordered.push(result?);
+    }
+    ordered.sort_by_key(|(pos, _)| *pos);
+    Ok(ordered.into_iter().map(|(_, tables)| tables).collect())
 }
 
 fn extract_pages_from_doc(
@@ -572,99 +563,57 @@ fn extract_pages_from_doc(
     // Use LAParams as provided (None disables layout analysis).
     let laparams = options.laparams.clone();
 
-    let thread_count = options.threads.filter(|count| *count > 1);
     // Collect pages into a vector
     // This is necessary because PDFPage borrows from PDFDocument
     let mut pages: Vec<Result<LTPage>> = Vec::new();
     let mut page_count = 0;
 
-    if let Some(count) = thread_count {
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(count)
-            .build()
-            .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+    let thread_count = default_thread_count();
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()
+        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
 
-        let mut pending: Vec<(usize, PDFPage)> = Vec::new();
-        let mut errors: Vec<(usize, Result<LTPage>)> = Vec::new();
+    let mut pending: Vec<(usize, PDFPage)> = Vec::new();
+    let mut errors: Vec<(usize, Result<LTPage>)> = Vec::new();
 
-        for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-            if let Some(ref nums) = options.page_numbers
-                && !nums.contains(&page_idx)
-            {
-                continue;
-            }
-
-            if options.maxpages > 0 && page_count >= options.maxpages {
-                break;
-            }
-
-            match page_result {
-                Ok(page) => {
-                    pending.push((page_idx, page));
-                    page_count += 1;
-                }
-                Err(e) => {
-                    errors.push((page_idx, Err(e)));
-                }
-            }
+    for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
+        if let Some(ref nums) = options.page_numbers
+            && !nums.contains(&page_idx)
+        {
+            continue;
         }
 
-        let mut processed: Vec<(usize, Result<LTPage>)> = pool.install(|| {
-            pending
-                .into_par_iter()
-                .map(|(page_idx, page)| {
-                    let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
-                    let mut aggregator =
-                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1);
-                    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc);
-                    (page_idx, ltpage)
-                })
-                .collect()
-        });
+        if options.maxpages > 0 && page_count >= options.maxpages {
+            break;
+        }
 
-        processed.extend(errors);
-        processed.sort_by_key(|(page_idx, _)| *page_idx);
-        pages.extend(processed.into_iter().map(|(_, result)| result));
-    } else {
-        // Create resource manager
-        let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
-
-        for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-            // Check page number filter
-            if let Some(ref nums) = options.page_numbers
-                && !nums.contains(&page_idx)
-            {
-                continue;
+        match page_result {
+            Ok(page) => {
+                pending.push((page_idx, page));
+                page_count += 1;
             }
-
-            // Check maxpages limit
-            if options.maxpages > 0 && page_count >= options.maxpages {
-                break;
-            }
-
-            match page_result {
-                Ok(page) => {
-                    // Create aggregator for this page
-                    let mut aggregator =
-                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1);
-
-                    // Process page content using interpreter
-                    match process_page(&page, &mut aggregator, &mut rsrcmgr, doc) {
-                        Ok(ltpage) => {
-                            pages.push(Ok(ltpage));
-                            page_count += 1;
-                        }
-                        Err(e) => {
-                            pages.push(Err(e));
-                        }
-                    }
-                }
-                Err(e) => {
-                    pages.push(Err(e));
-                }
+            Err(e) => {
+                errors.push((page_idx, Err(e)));
             }
         }
     }
+
+    let mut processed: Vec<(usize, Result<LTPage>)> = pool.install(|| {
+        pending
+            .into_par_iter()
+            .map(|(page_idx, page)| {
+                let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
+                let mut aggregator = PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1);
+                let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc);
+                (page_idx, ltpage)
+            })
+            .collect()
+    });
+
+    processed.extend(errors);
+    processed.sort_by_key(|(page_idx, _)| *page_idx);
+    pages.extend(processed.into_iter().map(|(_, result)| result));
 
     Ok(pages)
 }
@@ -672,7 +621,7 @@ fn extract_pages_from_doc(
 #[cfg(test)]
 mod tests {
     use super::{
-        ExtractOptions, extract_pages, extract_tables_with_document,
+        ExtractOptions, extract_pages, extract_tables_for_pages, extract_tables_with_document,
         extract_tables_with_document_geometries, extract_text,
     };
     use crate::pdfdocument::PDFDocument;
@@ -764,48 +713,10 @@ mod tests {
     }
 
     #[test]
-    fn test_parallel_extract_pages_uses_multiple_threads() {
+    fn test_extract_pages_uses_rayon_pool() {
         let _guard = thread_log_guard();
         let pdf_data = build_minimal_pdf_with_pages(4);
 
-        super::clear_thread_log();
-
-        let options = ExtractOptions {
-            password: String::new(),
-            page_numbers: None,
-            maxpages: 0,
-            caching: true,
-            laparams: None,
-            threads: Some(2),
-        };
-
-        let pages: Vec<_> = extract_pages(&pdf_data, Some(options))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-
-        assert_eq!(pages.len(), 4);
-
-        let records = super::take_thread_log();
-        let used_pool = records.iter().any(|record| record.in_pool);
-        assert!(used_pool, "expected parallel processing to use rayon pool");
-
-        let unique: HashSet<_> = records.iter().map(|record| record.id).collect();
-        assert!(!unique.is_empty(), "expected at least one recorded thread");
-    }
-
-    #[test]
-    fn test_default_threads_uses_parallelism_when_available() {
-        let _guard = thread_log_guard();
-        let parallelism = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
-        if parallelism <= 1 {
-            eprintln!("skipping: available parallelism is {parallelism}");
-            return;
-        }
-
-        let pdf_data = build_minimal_pdf_with_pages(4);
         super::clear_thread_log();
 
         let options = ExtractOptions::default();
@@ -818,32 +729,10 @@ mod tests {
 
         let records = super::take_thread_log();
         let used_pool = records.iter().any(|record| record.in_pool);
-        assert!(used_pool, "expected default threads to use rayon pool");
-    }
+        assert!(used_pool, "expected rayon pool to be used");
 
-    #[test]
-    fn test_threads_one_uses_sequential_path_for_text() {
-        let _guard = thread_log_guard();
-        let parallelism = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1);
-        if parallelism <= 1 {
-            eprintln!("skipping: available parallelism is {parallelism}");
-            return;
-        }
-
-        let pdf_data = build_minimal_pdf_with_pages(3);
-        super::clear_thread_log();
-
-        let options = ExtractOptions {
-            threads: Some(1),
-            ..Default::default()
-        };
-        let _ = extract_text(&pdf_data, Some(options)).unwrap();
-
-        let records = super::take_thread_log();
-        let used_pool = records.iter().any(|record| record.in_pool);
-        assert!(!used_pool, "expected threads=1 to stay on sequential path");
+        let unique: HashSet<_> = records.iter().map(|record| record.id).collect();
+        assert!(!unique.is_empty(), "expected at least one recorded thread");
     }
 
     #[test]
@@ -854,14 +743,7 @@ mod tests {
 
         super::clear_thread_log();
         let mut cache = super::LayoutCache::new();
-        let options = ExtractOptions {
-            password: String::new(),
-            page_numbers: None,
-            maxpages: 0,
-            caching: true,
-            laparams: None,
-            threads: Some(2),
-        };
+        let options = ExtractOptions::default();
 
         let _ = cache.get_or_init(&doc, options.clone()).unwrap();
         assert!(super::take_thread_log_len() > 0);
@@ -880,6 +762,35 @@ mod tests {
 
         let tables = extract_tables_with_document(&doc, options, &settings).unwrap();
         assert_eq!(tables.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_tables_with_document_geometries_for_pages_preserves_order() {
+        let pdf_data = build_minimal_pdf_with_pages(3);
+        let doc = PDFDocument::new(&pdf_data, "").unwrap();
+        let settings = TableSettings::default();
+        let options = ExtractOptions::default();
+
+        let geom0 = PageGeometry {
+            page_bbox: (0.0, 0.0, 200.0, 200.0),
+            mediabox: (0.0, 0.0, 200.0, 200.0),
+            initial_doctop: 0.0,
+            force_crop: false,
+        };
+        let geom2 = PageGeometry {
+            page_bbox: (0.0, 0.0, 200.0, 200.0),
+            mediabox: (0.0, 0.0, 200.0, 200.0),
+            initial_doctop: 400.0,
+            force_crop: false,
+        };
+
+        let page_numbers = vec![2, 0];
+        let geoms = vec![geom2, geom0];
+
+        let tables =
+            extract_tables_for_pages(&doc, &page_numbers, &geoms, options, &settings).unwrap();
+
+        assert_eq!(tables.len(), 2);
     }
 
     #[test]

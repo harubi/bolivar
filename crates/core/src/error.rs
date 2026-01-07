@@ -47,6 +47,9 @@ pub enum PdfError {
     #[error("decode error: {0}")]
     DecodeError(String),
 
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+
     #[error("SASLprep: {0}")]
     SaslPrepError(String),
 

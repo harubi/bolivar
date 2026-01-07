@@ -54,7 +54,6 @@ fn bench_extract_text(c: &mut BenchCriterion) {
     for fx in fixtures {
         let options = ExtractOptions {
             laparams: Some(LAParams::default()),
-            threads: Some(1),
             ..Default::default()
         };
         group.throughput(bytes_throughput(fx.bytes.len()));
@@ -84,7 +83,6 @@ fn bench_extract_pages_doc_reuse(c: &mut BenchCriterion) {
         let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
         let options = ExtractOptions {
             laparams: Some(LAParams::default()),
-            threads: Some(1),
             ..Default::default()
         };
         group.throughput(bytes_throughput(fx.bytes.len()));
@@ -112,7 +110,6 @@ fn bench_extract_tables_e2e(c: &mut BenchCriterion) {
         let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
         let options = ExtractOptions {
             laparams: Some(LAParams::default()),
-            threads: Some(1),
             ..Default::default()
         };
         let pages = extract_pages_with_document(&doc, options.clone()).expect("extract pages");
@@ -149,40 +146,9 @@ fn bench_extract_tables_e2e(c: &mut BenchCriterion) {
     group.finish();
 }
 
-fn bench_extract_text_threads(c: &mut BenchCriterion) {
-    let cfg = bench_config();
-    let fixtures = load_fixtures(Some("text"));
-
-    let mut group = c.benchmark_group("e2e_extract_text_threads");
-    configure_group(&mut group, &cfg, GroupWeight::Heavy);
-
-    for fx in fixtures {
-        for &threads in &cfg.threads {
-            let options = ExtractOptions {
-                laparams: Some(LAParams::default()),
-                threads: Some(threads),
-                ..Default::default()
-            };
-            group.throughput(bytes_throughput(fx.bytes.len()));
-            group.bench_with_input(
-                BenchmarkId::new(format!("text_t{threads}"), &fx.meta.id),
-                &fx.bytes,
-                |b, data| {
-                    b.iter(|| {
-                        let text = extract_text(data, Some(options.clone())).expect("extract text");
-                        black_box(text.len());
-                    })
-                },
-            );
-        }
-    }
-
-    group.finish();
-}
-
 criterion_group!(
     name = e2e_benches;
     config = bench_criterion();
-    targets = bench_parse_only, bench_extract_text, bench_extract_pages_doc_reuse, bench_extract_tables_e2e, bench_extract_text_threads
+    targets = bench_parse_only, bench_extract_text, bench_extract_pages_doc_reuse, bench_extract_tables_e2e
 );
 criterion_main!(e2e_benches);

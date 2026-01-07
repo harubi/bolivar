@@ -37,7 +37,6 @@ fn test_extract_text_with_options() {
         maxpages: 0,
         caching: true,
         laparams: Some(LAParams::default()),
-        threads: None,
     };
 
     let result = extract_text(b"", Some(options));
@@ -54,7 +53,6 @@ fn test_extract_text_page_numbers_filter() {
         maxpages: 0,
         caching: true,
         laparams: None,
-        threads: None,
     };
 
     // With empty input this errors, but proves the API accepts the option
@@ -71,7 +69,6 @@ fn test_extract_text_maxpages_limit() {
         maxpages: 1, // Only one page
         caching: true,
         laparams: None,
-        threads: None,
     };
 
     let result = extract_text(b"", Some(options));
@@ -96,7 +93,6 @@ fn test_extract_text_laparams_applied() {
         maxpages: 0,
         caching: true,
         laparams: Some(laparams),
-        threads: None,
     };
 
     let result = extract_text(b"", Some(options));
@@ -128,7 +124,6 @@ fn test_extract_text_to_fp_with_options() {
         maxpages: 0,
         caching: true,
         laparams: Some(LAParams::default()),
-        threads: None,
     };
 
     let result = extract_text_to_fp(b"", &mut output, Some(options));
@@ -173,7 +168,6 @@ fn test_extract_pages_with_options() {
         maxpages: 0,
         caching: true,
         laparams: Some(LAParams::default()),
-        threads: None,
     };
 
     let result = extract_pages(b"", Some(options));
@@ -211,7 +205,6 @@ fn test_extract_pages_page_numbers_filter() {
         maxpages: 0,
         caching: true,
         laparams: None,
-        threads: None,
     };
 
     let result = extract_pages(b"", Some(options));
@@ -226,7 +219,6 @@ fn test_extract_pages_maxpages_limit() {
         maxpages: 2, // At most 2 pages
         caching: true,
         laparams: None,
-        threads: None,
     };
 
     let result = extract_pages(b"", Some(options));
@@ -246,7 +238,6 @@ fn test_extract_options_default() {
     assert_eq!(options.maxpages, 0);
     assert!(options.caching);
     assert!(options.laparams.is_none());
-    assert!(options.threads.is_none());
 }
 
 #[test]
@@ -377,8 +368,8 @@ fn test_extract_text_minimal_pdf() {
 }
 
 #[test]
-fn test_extract_text_parallel_matches_sequential() {
-    let seq = extract_text(MINIMAL_PDF, None).unwrap();
+fn test_extract_text_default_matches_options() {
+    let base = extract_text(MINIMAL_PDF, None).unwrap();
 
     let options = ExtractOptions {
         password: String::new(),
@@ -386,18 +377,17 @@ fn test_extract_text_parallel_matches_sequential() {
         maxpages: 0,
         caching: true,
         laparams: None,
-        threads: Some(2),
     };
 
-    let par = extract_text(MINIMAL_PDF, Some(options)).unwrap();
-    assert_eq!(seq, par);
+    let configured = extract_text(MINIMAL_PDF, Some(options)).unwrap();
+    assert_eq!(base, configured);
 }
 
 #[test]
-fn test_extract_pages_parallel_order_is_stable() {
+fn test_extract_pages_order_is_stable() {
     let pdf_data = build_minimal_pdf_with_pages(2);
 
-    let seq_pages: Vec<_> = extract_pages(&pdf_data, None)
+    let first_pages: Vec<_> = extract_pages(&pdf_data, None)
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
@@ -408,16 +398,15 @@ fn test_extract_pages_parallel_order_is_stable() {
         maxpages: 0,
         caching: true,
         laparams: None,
-        threads: Some(2),
     };
 
-    let par_pages: Vec<_> = extract_pages(&pdf_data, Some(options))
+    let second_pages: Vec<_> = extract_pages(&pdf_data, Some(options))
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    assert_eq!(seq_pages.len(), par_pages.len());
-    for (a, b) in seq_pages.iter().zip(par_pages.iter()) {
+    assert_eq!(first_pages.len(), second_pages.len());
+    for (a, b) in first_pages.iter().zip(second_pages.iter()) {
         assert_eq!(a.bbox(), b.bbox());
     }
 }

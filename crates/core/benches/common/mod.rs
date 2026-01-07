@@ -44,7 +44,6 @@ pub enum GroupWeight {
 pub struct BenchConfig {
     pub tier: BenchTier,
     pub seed: u64,
-    pub threads: Vec<usize>,
     pub sample_size_light: usize,
     pub sample_size_heavy: usize,
     pub measurement_light: Duration,
@@ -94,17 +93,6 @@ pub fn bench_config() -> BenchConfig {
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0xC0FFEE);
-    let threads = env::var("BOLIVAR_BENCH_THREADS")
-        .ok()
-        .map(|v| {
-            v.split(',')
-                .filter_map(|s| s.trim().parse::<usize>().ok())
-                .filter(|n| *n > 0)
-                .collect::<Vec<_>>()
-        })
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| vec![1, 2, 4, 8]);
-
     let (sample_size_light, sample_size_heavy, measurement_light, measurement_heavy) = match tier {
         BenchTier::Quick => (20, 12, Duration::from_secs(3), Duration::from_secs(5)),
         BenchTier::Full => (30, 20, Duration::from_secs(5), Duration::from_secs(10)),
@@ -113,7 +101,6 @@ pub fn bench_config() -> BenchConfig {
     BenchConfig {
         tier,
         seed,
-        threads,
         sample_size_light,
         sample_size_heavy,
         measurement_light,

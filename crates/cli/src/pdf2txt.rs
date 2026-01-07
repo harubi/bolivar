@@ -336,9 +336,6 @@ fn process_file<W: Write>(
         maxpages: args.maxpages,
         caching: !args.disable_caching,
         laparams: build_laparams(args)?,
-        threads: std::thread::available_parallelism()
-            .ok()
-            .map(std::num::NonZero::get),
     };
 
     // Create PDFDocument from mmap

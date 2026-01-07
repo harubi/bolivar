@@ -48,7 +48,6 @@ fn bench_alloc_extract_text(c: &mut BenchCriterion) {
         let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
         let options = ExtractOptions {
             laparams: Some(LAParams::default()),
-            threads: Some(1),
             ..Default::default()
         };
         let iters = 10u64;
