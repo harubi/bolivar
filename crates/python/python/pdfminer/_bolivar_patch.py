@@ -87,31 +87,13 @@ def _apply_patch(module) -> bool:
 
     def _extract_tables_all(self, table_settings=None):
         pdf = self
-        cache = getattr(pdf, "_bolivar_tables_cache", None)
-        lock = getattr(pdf, "_bolivar_tables_cache_lock", None)
-        if cache is None or lock is None:
-            cache = {}
-            lock = threading.Lock()
-            pdf._bolivar_tables_cache = cache
-            pdf._bolivar_tables_cache_lock = lock
-
-        geoms = getattr(pdf, "_bolivar_page_geometries", None)
-        if geoms is None:
-            geoms = _build_geometries_for_pdf(pdf)
-            pdf._bolivar_page_geometries = geoms
-
-        cache_key = (_freeze_settings(table_settings), geoms)
-        with lock:
-            tables_by_page = cache.get(cache_key)
-            if tables_by_page is None:
-                rust_doc = getattr(pdf, "_rust_doc", None) or pdf.doc._rust_doc
-                tables_by_page = extract_tables_from_document(
-                    rust_doc,
-                    geoms,
-                    table_settings,
-                )
-                cache[cache_key] = tables_by_page
-        return tables_by_page
+        geoms = _build_geometries_for_pdf(pdf)
+        rust_doc = getattr(pdf, "_rust_doc", None) or pdf.doc._rust_doc
+        return extract_tables_from_document(
+            rust_doc,
+            geoms,
+            table_settings,
+        )
 
     if not already_patched:
 
@@ -132,40 +114,13 @@ def _apply_patch(module) -> bool:
                     force_crop=force_crop,
                 )
 
-            cache = getattr(pdf, "_bolivar_tables_cache", None)
-            lock = getattr(pdf, "_bolivar_tables_cache_lock", None)
-            if cache is None or lock is None:
-                cache = {}
-                lock = threading.Lock()
-                pdf._bolivar_tables_cache = cache
-                pdf._bolivar_tables_cache_lock = lock
-
-            geoms = getattr(pdf, "_bolivar_page_geometries", None)
-            if geoms is None:
-                geoms = tuple(_build_geometries(pdf, page_index, self))
-                pdf._bolivar_page_geometries = geoms
-            else:
-                current = _page_geom(self)
-                if 0 <= page_index < len(geoms) and geoms[page_index] != current:
-                    updated = list(geoms)
-                    updated[page_index] = current
-                    geoms = tuple(updated)
-                    pdf._bolivar_page_geometries = geoms
-
-            cache_key = (_freeze_settings(table_settings), geoms)
-            with lock:
-                tables_by_page = cache.get(cache_key)
-                if tables_by_page is None:
-                    rust_doc = (
-                        getattr(pdf, "_rust_doc", None) or self.page_obj.doc._rust_doc
-                    )
-                    tables_by_page = extract_tables_from_document(
-                        rust_doc,
-                        geoms,
-                        table_settings,
-                    )
-                    cache[cache_key] = tables_by_page
-
+            geoms = tuple(_build_geometries(pdf, page_index, self))
+            rust_doc = getattr(pdf, "_rust_doc", None) or self.page_obj.doc._rust_doc
+            tables_by_page = extract_tables_from_document(
+                rust_doc,
+                geoms,
+                table_settings,
+            )
             return tables_by_page[page_index]
 
         def _table_cell_count(table):
@@ -208,7 +163,6 @@ def _apply_patch(module) -> bool:
                 ]
             self._page_number_set = set(self._page_numbers)
             self._doctops = None
-            self._page_cache = {}
 
         def _ensure_doctops(self):
             if self._doctops is not None:
@@ -241,9 +195,6 @@ def _apply_patch(module) -> bool:
             self._ensure_doctops()
             page_index = self._page_numbers[idx]
             doctop = self._doctops[idx]
-            cached = self._page_cache.get(page_index)
-            if cached is not None:
-                return cached
             try:
                 page_obj = self._doc.get_page(page_index)
             except PdfminerException:
@@ -256,7 +207,6 @@ def _apply_patch(module) -> bool:
                 page_number=page_index + 1,
                 initial_doctop=doctop,
             )
-            self._page_cache[page_index] = page
             return page
 
         def __iter__(self):
