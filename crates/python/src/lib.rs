@@ -28,6 +28,7 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     params::register(m)?;
     document::register(m)?;
     layout::register(m)?;
+    stream::register(m)?;
     table::register(m)?;
 
     Ok(())
@@ -129,7 +130,7 @@ mod tests {
         let pdf_data = build_minimal_pdf_with_pages(1);
         let path = write_temp_pdf(&pdf_data);
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_bytes = PyBytes::new(py, &pdf_data);
             let text_bytes =
                 extract_text(py, py_bytes.as_any(), "", None, 0, true, None).unwrap();
@@ -154,7 +155,7 @@ mod tests {
         let pdf_data = build_minimal_pdf_with_pages(2);
         let path = write_temp_pdf(&pdf_data);
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let pages = extract_pages_from_path(
                 py,
                 path.to_string_lossy().as_ref(),

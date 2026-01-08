@@ -28,7 +28,6 @@ use crate::convert::py_text_to_string;
 use crate::document::{PdfInput, PyPDFDocument, PyPDFPage, pdf_input_from_py};
 use crate::layout::{PyLTItem, PyLTPage, ltitem_to_py, ltpage_to_py};
 use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings, parse_text_settings};
-use crate::stream::{async_runtime_poc, extract_pages_async};
 
 /// Convert page objects (chars, lines, rects, curves) to CharObj and EdgeObj.
 pub fn page_objects_to_chars_edges(
@@ -864,8 +863,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_text_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages_from_path, m)?)?;
-    m.add_function(wrap_pyfunction!(async_runtime_poc, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_pages_async, m)?)?;
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_document, m)?)?;

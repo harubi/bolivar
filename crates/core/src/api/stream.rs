@@ -123,7 +123,7 @@ impl Drop for PageStream {
     }
 }
 
-pub(crate) fn extract_pages_stream_from_doc(
+pub fn extract_pages_stream_from_doc(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
 ) -> Result<PageStream> {

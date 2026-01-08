@@ -31,6 +31,8 @@ def _apply_patch(module) -> bool:
         extract_tables_from_page,
         extract_table_from_page_filtered,
     )
+    from bolivar._bolivar import extract_pages_async_from_document
+    from pdfminer.layout import LTPage
     from pdfplumber.utils.exceptions import PdfminerException
 
     def _page_geom(page):
@@ -191,6 +193,26 @@ def _apply_patch(module) -> bool:
                 return (item.page_number - 1) in self._page_number_set
             return False
 
+        def __aiter__(self):
+            async def gen():
+                rust_doc = getattr(self._pdf, "_rust_doc", None) or self._doc._rust_doc
+                stream = extract_pages_async_from_document(
+                    rust_doc,
+                    page_numbers=list(self._page_numbers),
+                    maxpages=0,
+                    caching=getattr(self._doc, "caching", True),
+                    laparams=getattr(self._pdf, "laparams", None),
+                )
+                idx = 0
+                async for ltpage in stream:
+                    if idx >= len(self._page_numbers):
+                        break
+                    page = self[idx]
+                    page._layout = LTPage(ltpage)
+                    yield page
+                    idx += 1
+            return gen()
+
     # Always import to ensure module is fully initialized (not just in sys.modules)
     try:
         import pdfplumber.pdf as pdf_mod
@@ -216,6 +238,17 @@ def _apply_patch(module) -> bool:
 
             _bolivar_pages._bolivar_patched = True
             pdf_cls.pages = property(_bolivar_pages)
+
+        if not hasattr(pdf_cls, "__aenter__"):
+            async def _aenter(self):
+                return self
+
+            async def _aexit(self, exc_type, exc, tb):
+                self.close()
+                return False
+
+            pdf_cls.__aenter__ = _aenter
+            pdf_cls.__aexit__ = _aexit
 
     # Check if PDF.pages was successfully patched
     pdf_pages_patched = False

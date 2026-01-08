@@ -17,7 +17,7 @@ use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PyTuple, PyType};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::slice;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::convert::{
     intern_pskeyword, intern_psliteral, pdf_object_to_py, pdf_object_to_py_internal,
@@ -489,7 +489,7 @@ impl PyPDFStream {
 #[pyclass(name = "PDFDocument")]
 pub struct PyPDFDocument {
     /// The underlying Rust PDFDocument (owns the data via Bytes)
-    pub inner: PDFDocument,
+    pub inner: Arc<PDFDocument>,
     /// Cache resolved objects for faster PDFObjRef resolution
     pub resolved_cache: Mutex<HashMap<u32, Py<PyAny>>>,
 }
@@ -516,7 +516,7 @@ impl PyPDFDocument {
         }
         .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
         Ok(Self {
-            inner: doc,
+            inner: Arc::new(doc),
             resolved_cache: Mutex::new(HashMap::new()),
         })
     }
@@ -542,7 +542,7 @@ impl PyPDFDocument {
         let doc = PDFDocument::new_from_mmap(mmap, password)
             .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
         Ok(Self {
-            inner: doc,
+            inner: Arc::new(doc),
             resolved_cache: Mutex::new(HashMap::new()),
         })
     }

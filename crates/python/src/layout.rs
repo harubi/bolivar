@@ -925,7 +925,7 @@ impl PyWriter {
 impl Write for PyWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         use pyo3::types::PyBytes;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let out = self.outfp.bind(py);
             let bytes = PyBytes::new(py, buf);
             out.call_method1("write", (bytes,))
@@ -935,7 +935,7 @@ impl Write for PyWriter {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let out = self.outfp.bind(py);
             if let Ok(has_flush) = out.hasattr("flush")
                 && has_flush
