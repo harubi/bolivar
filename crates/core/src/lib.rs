@@ -2,6 +2,7 @@
 //! bolivar - A Rust port of pdfminer.six for PDF text extraction.
 
 pub mod api;
+pub mod arena;
 pub mod codec;
 pub mod converter;
 pub mod document;
