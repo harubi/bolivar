@@ -206,11 +206,31 @@ def _apply_patch(module) -> bool:
                     caching=getattr(self._doc, "caching", True),
                     laparams=getattr(self._pdf, "laparams", None),
                 )
+                self._ensure_doctops()
+                page_numbers = list(self._page_numbers)
+                doctops = list(self._doctops or [])
                 idx = 0
                 async for ltpage in stream:
-                    if idx >= len(self._page_numbers):
+                    if idx >= len(page_numbers):
                         break
-                    page = self[idx]
+                    page_index = page_numbers[idx]
+                    cached = self._page_cache.get(page_index)
+                    if cached is not None:
+                        page = cached
+                    else:
+                        try:
+                            page_obj = self._doc.get_page(page_index)
+                        except PdfminerException:
+                            raise
+                        except Exception as e:
+                            raise PdfminerException(str(e))
+                        doctop = doctops[idx] if idx < len(doctops) else 0.0
+                        page = page_mod.Page(
+                            self._pdf,
+                            page_obj,
+                            page_number=page_index + 1,
+                            initial_doctop=doctop,
+                        )
                     page._layout = LTPage(ltpage)
                     yield page
                     idx += 1

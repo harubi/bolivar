@@ -30,3 +30,17 @@ def test_pdfplumber_pages_async_without_context():
         pdf.close()
 
     asyncio.run(run())
+
+
+def test_pdfplumber_pages_async_does_not_fill_cache():
+    path = "references/pdfplumber/tests/pdfs/nics-background-checks-2015-11.pdf"
+
+    async def run():
+        async with pdfplumber.open(path) as pdf:
+            pages = pdf.pages
+            async for _page in pages:
+                pass
+            assert hasattr(pages, "_page_cache")
+            assert len(pages._page_cache) == 0
+
+    asyncio.run(run())
