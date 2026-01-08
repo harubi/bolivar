@@ -12,8 +12,14 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
+use lasso::Spur;
+
+use crate::arena::PageArena;
+use crate::arena::types::{
+    ArenaChar, ArenaCurve, ArenaFigure, ArenaImage, ArenaItem, ArenaLine, ArenaPage, ArenaRect,
+};
 use crate::image::ImageWriter;
-use crate::layout::{LAParams, LTChar, LTCurve, LTFigure, LTImage, LTItem, LTLine, LTPage, LTRect};
+use crate::layout::{LAParams, LTItem, LTPage};
 use crate::pdfcolor::PDFColorSpace;
 use crate::pdfdevice::{PDFDevice, PDFTextSeq, PDFTextSeqItem, PathSegment};
 use crate::pdffont::{CharDisp, PDFFont};
@@ -66,6 +72,33 @@ impl LTContainer {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ArenaContainer {
+    bbox: Rect,
+    items: Vec<ArenaItem>,
+}
+
+impl ArenaContainer {
+    pub const fn new(bbox: Rect) -> Self {
+        Self {
+            bbox,
+            items: Vec::new(),
+        }
+    }
+
+    pub fn add(&mut self, item: ArenaItem) {
+        self.items.push(item);
+    }
+
+    pub const fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub const fn bbox(&self) -> Rect {
+        self.bbox
+    }
+}
+
 /// PDF Layout Analyzer - creates layout objects from PDF page content.
 ///
 /// Port of PDFLayoutAnalyzer from pdfminer.six converter.py
@@ -77,14 +110,14 @@ impl LTContainer {
 #[derive(Debug, Clone)]
 struct MarkedContentState {
     /// Tag name (e.g., "P", "Span", "H1")
-    tag: String,
+    tag: Spur,
     /// Marked Content ID from properties dict
     mcid: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
 struct FigureState {
-    name: String,
+    name: Spur,
     bbox: Rect,
     matrix: Matrix,
 }
@@ -95,15 +128,17 @@ pub struct PDFLayoutAnalyzer {
     /// Layout analysis parameters
     laparams: Option<LAParams>,
     /// Stack of layout containers (for nested figures)
-    stack: Vec<LTContainer>,
+    stack: Vec<ArenaContainer>,
     /// Stack of figure metadata (for nested figures)
     figure_stack: Vec<FigureState>,
     /// Current layout container
-    pub(crate) cur_item: Option<LTContainer>,
+    cur_item: Option<ArenaContainer>,
     /// Current transformation matrix
     pub(crate) ctm: Matrix,
     /// Optional image writer for exporting images
     image_writer: Option<Rc<RefCell<ImageWriter>>>,
+    /// Page-scoped arena for typed layout items
+    arena: PageArena,
     /// Stack of marked content states (for BMC/BDC/EMC operators)
     marked_content_stack: Vec<MarkedContentState>,
 }
@@ -114,12 +149,12 @@ impl PDFLayoutAnalyzer {
     /// # Arguments
     /// * `laparams` - Layout analysis parameters (None to disable analysis)
     /// * `pageno` - Starting page number (1-indexed)
-    pub const fn new(laparams: Option<LAParams>, pageno: i32) -> Self {
+    pub fn new(laparams: Option<LAParams>, pageno: i32) -> Self {
         Self::new_with_imagewriter(laparams, pageno, None)
     }
 
     /// Create a new layout analyzer with an optional image writer.
-    pub const fn new_with_imagewriter(
+    pub fn new_with_imagewriter(
         laparams: Option<LAParams>,
         pageno: i32,
         image_writer: Option<Rc<RefCell<ImageWriter>>>,
@@ -132,6 +167,7 @@ impl PDFLayoutAnalyzer {
             cur_item: None,
             ctm: (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
             image_writer,
+            arena: PageArena::new(),
             marked_content_stack: Vec::new(),
         }
     }
@@ -146,9 +182,9 @@ impl PDFLayoutAnalyzer {
         self.ctm = ctm;
     }
 
-    /// Set the current layout container (for testing).
-    pub fn set_cur_item(&mut self, container: LTContainer) {
-        self.cur_item = Some(container);
+    /// Set the current layout container bbox (for testing).
+    pub fn set_cur_item(&mut self, bbox: Rect) {
+        self.cur_item = Some(ArenaContainer::new(bbox));
     }
 
     /// Get the number of items in current container.
@@ -161,7 +197,7 @@ impl PDFLayoutAnalyzer {
         self.cur_item
             .as_ref()
             .and_then(|c| c.items.first())
-            .map(|item| matches!(item, LTItem::Rect(_)))
+            .map(|item| matches!(item, ArenaItem::Rect(_)))
             .unwrap_or(false)
     }
 
@@ -170,7 +206,7 @@ impl PDFLayoutAnalyzer {
         self.cur_item
             .as_ref()
             .and_then(|c| c.items.first())
-            .map(|item| matches!(item, LTItem::Curve(_)))
+            .map(|item| matches!(item, ArenaItem::Curve(_)))
             .unwrap_or(false)
     }
 
@@ -178,7 +214,11 @@ impl PDFLayoutAnalyzer {
     pub fn all_cur_items_are_lines(&self) -> bool {
         self.cur_item
             .as_ref()
-            .map(|c| c.items.iter().all(|item| matches!(item, LTItem::Line(_))))
+            .map(|c| {
+                c.items
+                    .iter()
+                    .all(|item| matches!(item, ArenaItem::Line(_)))
+            })
             .unwrap_or(false)
     }
 
@@ -188,8 +228,8 @@ impl PDFLayoutAnalyzer {
             .as_ref()
             .and_then(|c| c.items.first())
             .and_then(|item| match item {
-                LTItem::Curve(c) => Some(c.pts.clone()),
-                LTItem::Line(l) => Some(l.pts.clone()),
+                ArenaItem::Curve(c) => Some(c.pts.clone()),
+                ArenaItem::Line(l) => Some(vec![l.p0, l.p1]),
                 _ => None,
             })
             .unwrap_or_default()
@@ -201,8 +241,8 @@ impl PDFLayoutAnalyzer {
             .as_ref()
             .and_then(|c| c.items.first())
             .and_then(|item| match item {
-                LTItem::Curve(c) => c.dashing_style.clone(),
-                LTItem::Line(l) => l.dashing_style.clone(),
+                ArenaItem::Curve(c) => c.dashing_style.clone(),
+                ArenaItem::Line(l) => l.dashing_style.clone(),
                 _ => None,
             })
     }
@@ -213,8 +253,8 @@ impl PDFLayoutAnalyzer {
             .as_ref()
             .and_then(|c| c.items.first())
             .and_then(|item| match item {
-                LTItem::Curve(c) => c.original_path.clone(),
-                LTItem::Line(l) => l.original_path.clone(),
+                ArenaItem::Curve(c) => c.original_path.clone(),
+                ArenaItem::Line(l) => l.original_path.clone(),
                 _ => None,
             })
     }
@@ -228,22 +268,23 @@ impl PDFLayoutAnalyzer {
     pub fn begin_page(&mut self, mediabox: Rect, ctm: Matrix) {
         let (x0, y0, x1, y1) = apply_matrix_rect(ctm, mediabox);
         let bbox = (0.0, 0.0, (x0 - x1).abs(), (y0 - y1).abs());
-        self.cur_item = Some(LTContainer::new(bbox));
+        self.arena.reset();
+        self.marked_content_stack.clear();
+        self.cur_item = Some(ArenaContainer::new(bbox));
     }
 
     /// End processing a page and return the analyzed page.
     pub fn end_page(&mut self) -> Option<LTPage> {
         assert!(self.stack.is_empty(), "stack not empty");
         if let Some(container) = self.cur_item.take() {
-            let mut page = LTPage::new(self.pageno, container.bbox, 0.0);
-            for item in container.items {
-                page.add(item);
-            }
+            let mut page = ArenaPage::new(self.pageno, container.bbox);
+            page.items = container.items;
+            let mut ltpage = page.materialize(&self.arena);
             if let Some(ref laparams) = self.laparams {
-                page.analyze(laparams);
+                ltpage.analyze(laparams);
             }
             self.pageno += 1;
-            Some(page)
+            Some(ltpage)
         } else {
             None
         }
@@ -257,12 +298,13 @@ impl PDFLayoutAnalyzer {
         let combined_matrix = mult_matrix(matrix, self.ctm);
         let rect = (bbox.0, bbox.1, bbox.0 + bbox.2, bbox.1 + bbox.3);
         let fig_bbox = apply_matrix_rect(combined_matrix, rect);
+        let name_key = self.arena.intern(name);
         self.figure_stack.push(FigureState {
-            name: name.to_string(),
+            name: name_key,
             bbox,
             matrix: combined_matrix,
         });
-        let fig_container = LTContainer::new(fig_bbox);
+        let fig_container = ArenaContainer::new(fig_bbox);
         self.cur_item = Some(fig_container);
     }
 
@@ -274,12 +316,14 @@ impl PDFLayoutAnalyzer {
         let Some(fig_state) = self.figure_stack.pop() else {
             return;
         };
-        let mut fig = LTFigure::new(&fig_state.name, fig_state.bbox, fig_state.matrix);
-        for item in fig_container.items {
-            fig.add(item);
-        }
+        let fig = ArenaFigure {
+            name: fig_state.name,
+            bbox: fig_state.bbox,
+            matrix: fig_state.matrix,
+            items: fig_container.items,
+        };
         if let Some(mut parent) = self.stack.pop() {
-            parent.add(LTItem::Figure(Box::new(fig)));
+            parent.add(ArenaItem::Figure(fig));
             self.cur_item = Some(parent);
         }
     }
@@ -373,25 +417,27 @@ impl PDFLayoutAnalyzer {
         let dashing_style = gstate.dash.clone();
 
         // Get colors from graphic state
-        let scolor = Some(gstate.scolor.to_vec());
-        let ncolor = Some(gstate.ncolor.to_vec());
+        let scolor = self.arena.intern_color(&gstate.scolor.to_vec());
+        let ncolor = self.arena.intern_color(&gstate.ncolor.to_vec());
 
         // Create appropriate layout object
         let mut item = match shape.as_str() {
             "mlh" | "ml" => {
                 // Single line segment
-                LTItem::Line(LTLine::new_with_dashing(
-                    gstate.linewidth,
-                    pts[0],
-                    pts[1],
+                ArenaItem::Line(ArenaLine {
+                    linewidth: gstate.linewidth,
+                    p0: pts[0],
+                    p1: pts[1],
                     stroke,
                     fill,
                     evenodd,
-                    scolor,
-                    ncolor,
+                    stroking_color: scolor,
+                    non_stroking_color: ncolor,
                     original_path,
                     dashing_style,
-                ))
+                    mcid: None,
+                    tag: None,
+                })
             }
             "mlllh" | "mllll" => {
                 // Potential rectangle
@@ -412,66 +458,83 @@ impl PDFLayoutAnalyzer {
                             && approx_eq(x3, x0));
 
                     if is_closed_loop && has_square_coordinates {
-                        LTItem::Rect(LTRect::new_with_dashing(
-                            gstate.linewidth,
-                            (pts[0].0, pts[0].1, pts[2].0, pts[2].1),
+                        ArenaItem::Rect(ArenaRect {
+                            linewidth: gstate.linewidth,
+                            bbox: (pts[0].0, pts[0].1, pts[2].0, pts[2].1),
                             stroke,
                             fill,
                             evenodd,
-                            scolor,
-                            ncolor,
+                            stroking_color: scolor,
+                            non_stroking_color: ncolor,
                             original_path,
                             dashing_style,
-                        ))
+                            mcid: None,
+                            tag: None,
+                        })
                     } else {
-                        LTItem::Curve(LTCurve::new_with_dashing(
-                            gstate.linewidth,
+                        ArenaItem::Curve(ArenaCurve {
+                            linewidth: gstate.linewidth,
                             pts,
                             stroke,
                             fill,
                             evenodd,
-                            scolor,
-                            ncolor,
+                            stroking_color: scolor,
+                            non_stroking_color: ncolor,
                             original_path,
                             dashing_style,
-                        ))
+                            mcid: None,
+                            tag: None,
+                        })
                     }
                 } else {
-                    LTItem::Curve(LTCurve::new_with_dashing(
-                        gstate.linewidth,
+                    ArenaItem::Curve(ArenaCurve {
+                        linewidth: gstate.linewidth,
                         pts,
                         stroke,
                         fill,
                         evenodd,
-                        scolor,
-                        ncolor,
+                        stroking_color: scolor,
+                        non_stroking_color: ncolor,
                         original_path,
                         dashing_style,
-                    ))
+                        mcid: None,
+                        tag: None,
+                    })
                 }
             }
             _ => {
                 // Generic curve
-                LTItem::Curve(LTCurve::new_with_dashing(
-                    gstate.linewidth,
+                ArenaItem::Curve(ArenaCurve {
+                    linewidth: gstate.linewidth,
                     pts,
                     stroke,
                     fill,
                     evenodd,
-                    scolor,
-                    ncolor,
+                    stroking_color: scolor,
+                    non_stroking_color: ncolor,
                     original_path,
                     dashing_style,
-                ))
+                    mcid: None,
+                    tag: None,
+                })
             }
         };
 
         let mcid = self.current_mcid();
-        let tag = self.current_tag().map(|s| s.to_string());
+        let tag = self.current_tag_key();
         match &mut item {
-            LTItem::Line(l) => l.set_marked_content(mcid, tag),
-            LTItem::Rect(r) => r.set_marked_content(mcid, tag),
-            LTItem::Curve(c) => c.set_marked_content(mcid, tag),
+            ArenaItem::Line(l) => {
+                l.mcid = mcid;
+                l.tag = tag;
+            }
+            ArenaItem::Rect(r) => {
+                r.mcid = mcid;
+                r.tag = tag;
+            }
+            ArenaItem::Curve(c) => {
+                c.mcid = mcid;
+                c.tag = tag;
+            }
             _ => {}
         }
 
@@ -509,7 +572,7 @@ impl PDFLayoutAnalyzer {
         rise: f64,
         cid: u32,
         _ncs: &PDFColorSpace,
-        _graphicstate: &PDFGraphicState,
+        graphicstate: &PDFGraphicState,
     ) -> f64 {
         // Try to get Unicode text
         let text = match font.to_unichr(cid) {
@@ -574,11 +637,31 @@ impl PDFLayoutAnalyzer {
         };
 
         let fontname = font.fontname().unwrap_or("unknown");
-        let item = LTChar::new_with_matrix(bbox, &text, fontname, size, upright, adv, matrix);
+        let text_key = self.arena.intern(&text);
+        let fontname_key = self.arena.intern(fontname);
+        let ncolor = self.arena.intern_color(&graphicstate.ncolor.to_vec());
+        let scolor = self.arena.intern_color(&graphicstate.scolor.to_vec());
+        let tag = self.current_tag_key();
+        let ncs_name = Some(self.arena.intern(&graphicstate.ncs.name));
+        let scs_name = Some(self.arena.intern(&graphicstate.scs.name));
+        let item = ArenaChar {
+            bbox,
+            text: text_key,
+            fontname: fontname_key,
+            size,
+            upright,
+            adv,
+            matrix,
+            mcid: self.current_mcid(),
+            tag,
+            ncs_name,
+            scs_name,
+            ncolor,
+            scolor,
+        };
 
-        // Add to current container
         if let Some(ref mut container) = self.cur_item {
-            container.add(LTItem::Char(item));
+            container.add(ArenaItem::Char(item));
         }
 
         adv
@@ -610,8 +693,17 @@ impl PDFLayoutAnalyzer {
         let bits = self.get_image_bits(stream);
         let colorspace = self.get_image_colorspace(stream);
 
-        // Create image layout item
-        let item = LTImage::new(name, bbox, srcsize, imagemask, bits, colorspace.clone());
+        let name_key = self.arena.intern(name);
+        let colorspace_keys: Vec<Spur> =
+            colorspace.iter().map(|cs| self.arena.intern(cs)).collect();
+        let item = ArenaImage {
+            name: name_key,
+            bbox,
+            srcsize,
+            imagemask,
+            bits,
+            colorspace: colorspace_keys,
+        };
 
         // Export image if writer is configured
         if let Some(ref writer) = self.image_writer {
@@ -622,7 +714,7 @@ impl PDFLayoutAnalyzer {
 
         // Add to current container
         if let Some(ref mut container) = self.cur_item {
-            container.add(LTItem::Image(item));
+            container.add(ArenaItem::Image(item));
         }
     }
 
@@ -698,7 +790,13 @@ impl PDFLayoutAnalyzer {
 
     /// Get the current marked content tag if inside marked content.
     pub fn current_tag(&self) -> Option<&str> {
-        self.marked_content_stack.last().map(|mc| mc.tag.as_str())
+        self.marked_content_stack
+            .last()
+            .map(|mc| self.arena.resolve(mc.tag))
+    }
+
+    fn current_tag_key(&self) -> Option<Spur> {
+        self.marked_content_stack.last().map(|mc| mc.tag)
     }
 
     /// Begin a marked content section.
@@ -715,10 +813,9 @@ impl PDFLayoutAnalyzer {
             })
         });
 
-        self.marked_content_stack.push(MarkedContentState {
-            tag: tag.name().to_string(),
-            mcid,
-        });
+        let tag_key = self.arena.intern(tag.name());
+        self.marked_content_stack
+            .push(MarkedContentState { tag: tag_key, mcid });
     }
 
     /// End a marked content section.
@@ -753,7 +850,7 @@ impl PDFPageAggregator {
     }
 
     /// Create a new page aggregator with an optional image writer.
-    pub const fn new_with_imagewriter(
+    pub fn new_with_imagewriter(
         laparams: Option<LAParams>,
         pageno: i32,
         image_writer: Option<Rc<RefCell<ImageWriter>>>,
@@ -996,35 +1093,43 @@ impl PDFDevice for PDFPageAggregator {
                             bbox.3 - bbox.1 // height
                         };
 
-                        // Create LTChar and add to container
-                        // Pass current MCID from marked content stack and colors from graphic state
                         let mcid = self.analyzer.current_mcid();
-                        let tag = self.analyzer.current_tag().map(|s| s.to_string());
-                        let ncolor = Some(graphicstate.ncolor.to_vec());
-                        let scolor = Some(graphicstate.scolor.to_vec());
+                        let tag = self.analyzer.current_tag_key();
+                        let ncolor = self
+                            .analyzer
+                            .arena
+                            .intern_color(&graphicstate.ncolor.to_vec());
+                        let scolor = self
+                            .analyzer
+                            .arena
+                            .intern_color(&graphicstate.scolor.to_vec());
                         let fontname = font
                             .as_ref()
                             .and_then(|f| f.fontname())
                             .or(textstate.fontname.as_deref())
                             .unwrap_or("unknown");
-                        let mut ltchar = LTChar::with_colors_matrix(
+                        let text_key = self.analyzer.arena.intern(&text);
+                        let fontname_key = self.analyzer.arena.intern(fontname);
+                        let ncs_name = Some(self.analyzer.arena.intern(&graphicstate.ncs.name));
+                        let scs_name = Some(self.analyzer.arena.intern(&graphicstate.scs.name));
+                        let item = ArenaChar {
                             bbox,
-                            &text,
-                            fontname,
+                            text: text_key,
+                            fontname: fontname_key,
                             size,
                             upright,
-                            char_width,
-                            char_matrix,
+                            adv: char_width,
+                            matrix: char_matrix,
                             mcid,
                             tag,
+                            ncs_name,
+                            scs_name,
                             ncolor,
                             scolor,
-                        );
-                        ltchar.set_ncs(Some(graphicstate.ncs.name.clone()));
-                        ltchar.set_scs(Some(graphicstate.scs.name.clone()));
+                        };
 
                         if let Some(ref mut container) = self.analyzer.cur_item {
-                            container.add(LTItem::Char(ltchar));
+                            container.add(ArenaItem::Char(item));
                         }
 
                         // Advance position

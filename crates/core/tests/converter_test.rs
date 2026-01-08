@@ -3,7 +3,7 @@
 //! Port of tests from pdfminer.six tests/test_converter.py
 
 use bolivar_core::converter::{
-    HOCRConverter, HTMLConverter, LTContainer, PDFConverter, PDFLayoutAnalyzer, PDFPageAggregator,
+    HOCRConverter, HTMLConverter, PDFConverter, PDFLayoutAnalyzer, PDFPageAggregator,
     TextConverter, XMLConverter,
 };
 use bolivar_core::layout::{LAParams, LTPage};
@@ -29,11 +29,21 @@ mod layout_analyzer_tests {
     }
 
     #[test]
+    fn test_layout_analyzer_uses_arena_items() {
+        let path = vec![('m', vec![0.0, 0.0]), ('l', vec![1.0, 0.0])];
+        let mut analyzer = get_analyzer();
+        analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
+        analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
+        assert_eq!(analyzer.cur_item_len(), 1);
+        assert!(analyzer.all_cur_items_are_lines());
+    }
+
+    #[test]
     fn test_paint_path_simple_line() {
         // Test path: m(6,7) l(7,7) - single line segment
         let path = vec![('m', vec![6.0, 7.0]), ('l', vec![7.0, 7.0])];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 100.0, 100.0)));
+        analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
     }
@@ -49,7 +59,7 @@ mod layout_analyzer_tests {
             ('h', vec![]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 100.0, 100.0)));
+        analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
     }
@@ -75,7 +85,7 @@ mod layout_analyzer_tests {
             ('h', vec![]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 100.0, 100.0)));
+        analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 3);
     }
@@ -91,7 +101,7 @@ mod layout_analyzer_tests {
             ('h', vec![]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
         assert!(analyzer.cur_item_first_is_rect());
@@ -108,7 +118,7 @@ mod layout_analyzer_tests {
             ('l', vec![10.0, 90.0]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
         assert!(analyzer.cur_item_first_is_rect());
@@ -128,7 +138,7 @@ mod layout_analyzer_tests {
             ('h', vec![]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
         assert!(analyzer.cur_item_first_is_rect());
@@ -145,7 +155,7 @@ mod layout_analyzer_tests {
             ('h', vec![]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
         assert!(analyzer.cur_item_first_is_curve());
@@ -162,7 +172,7 @@ mod layout_analyzer_tests {
             ('h', vec![]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
         assert!(analyzer.cur_item_first_is_curve());
@@ -184,7 +194,7 @@ mod layout_analyzer_tests {
             ('h', vec![]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 2);
     }
@@ -207,7 +217,7 @@ mod layout_analyzer_tests {
             ('h', vec![]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 3);
         assert!(analyzer.all_cur_items_are_lines());
@@ -228,7 +238,7 @@ mod layout_analyzer_tests {
             ('l', vec![30.0, 30.0]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 3);
         assert!(analyzer.all_cur_items_are_lines());
@@ -242,7 +252,7 @@ mod layout_analyzer_tests {
             ('c', vec![72.41, 434.45, 71.96, 434.89, 71.41, 434.89]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
         let pts = analyzer.cur_item_first_pts();
@@ -261,7 +271,7 @@ mod layout_analyzer_tests {
             ('v', vec![71.96, 434.89, 71.41, 434.89]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
         let pts = analyzer.cur_item_first_pts();
@@ -276,7 +286,7 @@ mod layout_analyzer_tests {
             ('y', vec![72.41, 434.45, 71.41, 434.89]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
         let pts = analyzer.cur_item_first_pts();
@@ -291,7 +301,7 @@ mod layout_analyzer_tests {
             ('c', vec![72.41, 434.45, 71.96, 434.89, 71.41, 434.89]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
 
         let mut graphicstate = PDFGraphicState::default();
         graphicstate.dash = Some((vec![1.0, 1.0], 0.0));
@@ -309,7 +319,7 @@ mod layout_analyzer_tests {
     fn test_paint_path_without_starting_m() {
         // Paths without starting 'm' should be ignored
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 100.0, 100.0)));
+        analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
 
         // Path starting with 'h'
         let path1 = vec![('h', vec![])];
@@ -1155,7 +1165,7 @@ mod pdf_path_tests {
     /// ```
     #[test]
     fn test_paint_path_beziers_check_raw() {
-        use bolivar_core::converter::{LTContainer, PDFLayoutAnalyzer};
+        use bolivar_core::converter::PDFLayoutAnalyzer;
         use bolivar_core::pdfstate::PDFGraphicState;
         use bolivar_core::utils::MATRIX_IDENTITY;
 
@@ -1171,7 +1181,7 @@ mod pdf_path_tests {
             ('c', vec![72.41, 434.45, 71.96, 434.89, 71.41, 434.89]),
         ];
         let mut analyzer = get_analyzer();
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
 
         let original_path = analyzer.cur_item_first_original_path();
@@ -1307,13 +1317,13 @@ mod color_space_tests {
     /// on LTCurve, LTLine, and LTRect objects when paths are painted.
     #[test]
     fn test_curve_colors() {
-        use bolivar_core::converter::{LTContainer, PDFLayoutAnalyzer};
+        use bolivar_core::converter::PDFLayoutAnalyzer;
         use bolivar_core::pdfstate::PDFGraphicState;
         use bolivar_core::utils::MATRIX_IDENTITY;
 
         let mut analyzer = PDFLayoutAnalyzer::new(None, 1);
         analyzer.set_ctm(MATRIX_IDENTITY);
-        analyzer.set_cur_item(LTContainer::new((0.0, 0.0, 1000.0, 1000.0)));
+        analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
 
         // Create a graphic state with default colors
         let gstate = PDFGraphicState::default();
