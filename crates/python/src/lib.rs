@@ -7,6 +7,7 @@ mod convert;
 mod document;
 mod layout;
 mod params;
+mod stream;
 mod table;
 
 use pyo3::prelude::*;
