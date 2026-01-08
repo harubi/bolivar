@@ -264,9 +264,9 @@ impl InheritedNode {
 
 #[derive(Debug, Clone)]
 pub(crate) struct PageRef {
-    pub(crate) objid: u32,
-    pub(crate) inherited: Option<Arc<InheritedNode>>,
-    pub(crate) label: Option<String>,
+    objid: u32,
+    inherited: Option<Arc<InheritedNode>>,
+    label: Option<String>,
 }
 
 #[derive(Debug, Default)]

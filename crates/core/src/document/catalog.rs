@@ -156,7 +156,7 @@ impl PDFDocument {
     }
 
     /// Returns the cached page index for O(1) page lookup.
-    pub fn page_index(&self) -> &PageIndex {
+    pub(crate) fn page_index(&self) -> &PageIndex {
         self.page_index.get_or_init(|| PageIndex::new(self))
     }
 

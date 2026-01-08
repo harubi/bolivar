@@ -192,7 +192,7 @@ pub fn parse_text_settings(
         return Ok(settings);
     }
     let dict = obj
-        .downcast::<PyDict>()
+        .cast::<PyDict>()
         .map_err(|_| PyValueError::new_err("text_settings must be a dict when provided"))?;
     apply_text_settings_from_dict(&mut settings, dict)?;
     Ok(settings)
@@ -204,7 +204,7 @@ fn parse_explicit_lines(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Vec
         return Ok(Vec::new());
     }
     let seq = obj
-        .downcast::<PySequence>()
+        .cast::<PySequence>()
         .map_err(|_| PyValueError::new_err("explicit lines must be a list/tuple"))?;
     let mut out = Vec::new();
     let len = seq.len().unwrap_or(0);
@@ -214,7 +214,7 @@ fn parse_explicit_lines(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Vec
             out.push(ExplicitLine::Coord(val));
             continue;
         }
-        if let Ok(dict) = item.downcast::<PyDict>() {
+        if let Ok(dict) = item.cast::<PyDict>() {
             if let Some(pts_obj) = dict.get_item("pts")? {
                 let pts: Vec<(f64, f64)> = pts_obj.extract()?;
                 out.push(ExplicitLine::Curve(pts));
@@ -292,7 +292,7 @@ pub fn parse_table_settings(
         return Ok(settings);
     }
     let dict = obj
-        .downcast::<PyDict>()
+        .cast::<PyDict>()
         .map_err(|_| PyValueError::new_err("table_settings must be a dict when provided"))?;
 
     let mut text_settings = settings.text_settings.clone();
@@ -336,7 +336,7 @@ pub fn parse_table_settings(
             "intersection_y_tolerance" => settings.intersection_y_tolerance = v.extract()?,
             "text_settings" => {
                 if !v.is_none() {
-                    let ts_dict = v.downcast::<PyDict>().map_err(|_| {
+                    let ts_dict = v.cast::<PyDict>().map_err(|_| {
                         PyValueError::new_err("text_settings must be a dict when provided")
                     })?;
                     apply_text_settings_from_dict(&mut text_settings, ts_dict)?;
@@ -378,7 +378,7 @@ pub fn parse_bbox(obj: &Bound<'_, PyAny>, label: &str) -> PyResult<(f64, f64, f6
 
 /// Parse a page geometry from a Python object.
 pub fn parse_page_geometry(obj: &Bound<'_, PyAny>) -> PyResult<PageGeometry> {
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         let page_bbox_obj = dict
             .get_item("page_bbox")?
             .ok_or_else(|| PyValueError::new_err("geometry missing page_bbox"))?;
@@ -403,7 +403,7 @@ pub fn parse_page_geometry(obj: &Bound<'_, PyAny>) -> PyResult<PageGeometry> {
     }
 
     let seq = obj
-        .downcast::<PySequence>()
+        .cast::<PySequence>()
         .map_err(|_| PyValueError::new_err("geometry must be a dict or 4-item sequence"))?;
     let len = seq.len().unwrap_or(0);
     if len != 4 {
@@ -425,7 +425,7 @@ pub fn parse_page_geometry(obj: &Bound<'_, PyAny>) -> PyResult<PageGeometry> {
 /// Parse page geometries from a Python sequence.
 pub fn parse_page_geometries(geometries: &Bound<'_, PyAny>) -> PyResult<Vec<PageGeometry>> {
     let seq = geometries
-        .downcast::<PySequence>()
+        .cast::<PySequence>()
         .map_err(|_| PyValueError::new_err("geometries must be a list/tuple"))?;
     let len = seq.len().unwrap_or(0);
     let mut out = Vec::with_capacity(len as usize);

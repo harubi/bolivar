@@ -7,7 +7,7 @@ use bolivar_core::arena::PageArena;
 use bolivar_core::high_level::{
     ExtractOptions, extract_pages as core_extract_pages,
     extract_pages_with_document as core_extract_pages_with_document,
-    extract_tables_for_pages as core_extract_tables_for_pages,
+    extract_tables_for_page_indexed as core_extract_tables_for_page_indexed,
     extract_tables_with_document_geometries as core_extract_tables_with_document_geometries,
     extract_text as core_extract_text,
     extract_text_with_document as core_extract_text_with_document,
@@ -39,7 +39,7 @@ pub fn page_objects_to_chars_edges(
             return Ok(bbox);
         }
         let seq = obj
-            .downcast::<PySequence>()
+            .cast::<PySequence>()
             .map_err(|_| PyValueError::new_err(format!("{name} must be a 4-item sequence")))?;
         if seq.len().unwrap_or(0) != 4 {
             return Err(PyValueError::new_err(format!("{name} must have 4 items")));
@@ -78,13 +78,13 @@ pub fn page_objects_to_chars_edges(
     let mut chars: Vec<CharObj> = Vec::new();
     let chars_obj = page.getattr("chars")?;
     let chars_seq = chars_obj
-        .downcast::<PySequence>()
+        .cast::<PySequence>()
         .map_err(|_| PyValueError::new_err("page.chars must be a sequence"))?;
     let chars_len = chars_seq.len().unwrap_or(0);
     for i in 0..chars_len {
         let item = chars_seq.get_item(i)?;
         let dict = item
-            .downcast::<PyDict>()
+            .cast::<PyDict>()
             .map_err(|_| PyValueError::new_err("char must be a dict"))?;
         let text_obj = dict
             .get_item("text")?
@@ -144,13 +144,13 @@ pub fn page_objects_to_chars_edges(
 
     let lines_obj = page.getattr("lines")?;
     let lines_seq = lines_obj
-        .downcast::<PySequence>()
+        .cast::<PySequence>()
         .map_err(|_| PyValueError::new_err("page.lines must be a sequence"))?;
     let lines_len = lines_seq.len().unwrap_or(0);
     for i in 0..lines_len {
         let item = lines_seq.get_item(i)?;
         let dict = item
-            .downcast::<PyDict>()
+            .cast::<PyDict>()
             .map_err(|_| PyValueError::new_err("line must be a dict"))?;
         let x0: f64 = dict
             .get_item("x0")?
@@ -197,13 +197,13 @@ pub fn page_objects_to_chars_edges(
 
     let rects_obj = page.getattr("rects")?;
     let rects_seq = rects_obj
-        .downcast::<PySequence>()
+        .cast::<PySequence>()
         .map_err(|_| PyValueError::new_err("page.rects must be a sequence"))?;
     let rects_len = rects_seq.len().unwrap_or(0);
     for i in 0..rects_len {
         let item = rects_seq.get_item(i)?;
         let dict = item
-            .downcast::<PyDict>()
+            .cast::<PyDict>()
             .map_err(|_| PyValueError::new_err("rect must be a dict"))?;
         let x0: f64 = dict
             .get_item("x0")?
@@ -273,13 +273,13 @@ pub fn page_objects_to_chars_edges(
 
     let curves_obj = page.getattr("curves")?;
     let curves_seq = curves_obj
-        .downcast::<PySequence>()
+        .cast::<PySequence>()
         .map_err(|_| PyValueError::new_err("page.curves must be a sequence"))?;
     let curves_len = curves_seq.len().unwrap_or(0);
     for i in 0..curves_len {
         let item = curves_seq.get_item(i)?;
         let dict = item
-            .downcast::<PyDict>()
+            .cast::<PyDict>()
             .map_err(|_| PyValueError::new_err("curve must be a dict"))?;
         let pts_obj = dict.get_item("pts")?;
         if let Some(pts_obj) = pts_obj
@@ -495,7 +495,7 @@ pub fn extract_tables_from_document_pages(
         laparams: la,
     };
     let seq = page_numbers
-        .downcast::<PySequence>()
+        .cast::<PySequence>()
         .map_err(|_| PyValueError::new_err("page_numbers must be a list/tuple"))?;
     let len = seq.len().unwrap_or(0);
     let mut pages = Vec::with_capacity(len as usize);
@@ -504,7 +504,22 @@ pub fn extract_tables_from_document_pages(
     }
     let geoms = parse_page_geometries(geometries)?;
     let tables = py
-        .detach(|| core_extract_tables_for_pages(&doc.inner, &pages, &geoms, options, &settings))
+        .detach(|| {
+            let mut out = Vec::with_capacity(pages.len());
+            for (idx, page_index) in pages.iter().enumerate() {
+                let geom = &geoms[idx];
+                let page_tables = core_extract_tables_for_page_indexed(
+                    &doc.inner,
+                    *page_index,
+                    geom,
+                    options.clone(),
+                    &settings,
+                )
+                .map_err(|e| format!("Failed to extract tables: {}", e))?;
+                out.push(page_tables);
+            }
+            Ok(out)
+        })
         .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {}", e)))?;
 
     Ok(tables)
@@ -539,16 +554,9 @@ pub fn extract_tables_from_page(
         initial_doctop,
         force_crop,
     };
-    let page_numbers = vec![page_index];
-    let geoms = vec![geom];
     let tables: Result<_, String> = py.detach(|| {
-        let tables =
-            core_extract_tables_for_pages(&doc.inner, &page_numbers, &geoms, options, &settings)
-                .map_err(|e| format!("Failed to extract tables: {}", e))?;
-        tables
-            .get(0)
-            .cloned()
-            .ok_or_else(|| "page_index out of range".to_string())
+        core_extract_tables_for_page_indexed(&doc.inner, page_index, &geom, options, &settings)
+            .map_err(|e| format!("Failed to extract tables: {}", e))
     });
     tables.map_err(|e| PyValueError::new_err(e))
 }
@@ -582,16 +590,10 @@ pub fn extract_table_from_page(
         initial_doctop,
         force_crop,
     };
-    let page_numbers = vec![page_index];
-    let geoms = vec![geom];
     let table: Result<_, String> = py.detach(|| {
-        let tables =
-            core_extract_tables_for_pages(&doc.inner, &page_numbers, &geoms, options, &settings)
+        let page_tables =
+            core_extract_tables_for_page_indexed(&doc.inner, page_index, &geom, options, &settings)
                 .map_err(|e| format!("Failed to extract tables: {}", e))?;
-        let page_tables = tables
-            .get(0)
-            .cloned()
-            .ok_or_else(|| "page_index out of range".to_string())?;
         if page_tables.is_empty() {
             return Ok(None);
         }

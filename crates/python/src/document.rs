@@ -146,7 +146,7 @@ fn parse_number_tree(
         return Ok(());
     }
 
-    let dict = match resolved.downcast::<PyDict>() {
+    let dict = match resolved.cast::<PyDict>() {
         Ok(d) => d,
         Err(_) => return Ok(()),
     };
@@ -154,7 +154,7 @@ fn parse_number_tree(
     if let Some(nums_obj) = dict.get_item("Nums")? {
         let nums_resolved = resolve_pdf_obj(py, &nums_obj)?;
         let nums = nums_resolved.bind(py);
-        if let Ok(seq) = nums.downcast::<PySequence>() {
+        if let Ok(seq) = nums.cast::<PySequence>() {
             let len = seq.len().unwrap_or(0);
             let mut idx = 0;
             while idx + 1 < len {
@@ -173,7 +173,7 @@ fn parse_number_tree(
     if let Some(kids_obj) = dict.get_item("Kids")? {
         let kids_resolved = resolve_pdf_obj(py, &kids_obj)?;
         let kids = kids_resolved.bind(py);
-        if let Ok(seq) = kids.downcast::<PySequence>() {
+        if let Ok(seq) = kids.cast::<PySequence>() {
             let len = seq.len().unwrap_or(0);
             for idx in 0..len {
                 let kid = seq.get_item(idx)?;
@@ -588,16 +588,9 @@ impl PyPDFDocument {
     /// Get a single page by index.
     fn get_page(slf: PyRef<'_, Self>, py: Python<'_>, index: usize) -> PyResult<PyPDFPage> {
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
-        for (idx, page_result) in
-            bolivar_core::pdfpage::PDFPage::create_pages(&slf.inner).enumerate()
-        {
-            let page = page_result
-                .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", idx, e)))?;
-            if idx == index {
-                return PyPDFPage::from_core(py, page, &slf.inner, Some(&py_doc));
-            }
-        }
-        Err(PyValueError::new_err("page index out of range"))
+        let page = bolivar_core::pdfpage::PDFPage::get_page_by_index(&slf.inner, index)
+            .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", index, e)))?;
+        PyPDFPage::from_core(py, page, &slf.inner, Some(&py_doc))
     }
 
     /// Get document info dictionaries.

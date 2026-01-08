@@ -472,86 +472,32 @@ pub fn extract_tables_with_document_geometries(
 }
 
 /// Extract tables for specific pages with per-page geometry in input order.
-pub fn extract_tables_for_pages(
+/// Extract tables for a single page using indexed page lookup.
+pub fn extract_tables_for_page_indexed(
     doc: &PDFDocument,
-    page_numbers: &[usize],
-    geometries: &[PageGeometry],
-    options: ExtractOptions,
+    page_index: usize,
+    geometry: &PageGeometry,
+    mut options: ExtractOptions,
     settings: &TableSettings,
-) -> Result<Vec<PageTables>> {
-    if page_numbers.len() != geometries.len() {
-        return Err(PdfError::InvalidArgument(format!(
-            "geometry count mismatch: expected {}, got {}",
-            page_numbers.len(),
-            geometries.len()
-        )));
-    }
-
-    let mut options = options;
+) -> Result<PageTables> {
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
     let laparams = options.laparams.clone();
-
-    let mut wanted: std::collections::HashMap<usize, (usize, PageGeometry)> =
-        std::collections::HashMap::new();
-    for (pos, page_idx) in page_numbers.iter().enumerate() {
-        wanted.insert(*page_idx, (pos, geometries[pos].clone()));
-    }
-
-    let mut pending: Vec<(usize, usize, PDFPage, PageGeometry)> = Vec::new();
-    for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-        let Some((requested_pos, geom)) = wanted.get(&page_idx) else {
-            continue;
-        };
-        let page = page_result?;
-        pending.push((*requested_pos, page_idx, page, geom.clone()));
-    }
-
-    if pending.len() != page_numbers.len() {
-        return Err(PdfError::InvalidArgument(
-            "page number out of range".to_string(),
-        ));
-    }
-
-    let thread_count = default_thread_count();
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(thread_count)
-        .build()
-        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
-
-    let mut results: Vec<Result<(usize, PageTables)>> = pool.install(|| {
-        pending
-            .into_par_iter()
-            .map_init(
-                PageArena::new,
-                |arena, (requested_pos, page_idx, page, geom)| {
-                    arena.reset();
-                    let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
-                    let mut aggregator =
-                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
-                    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
-                    Ok((
-                        requested_pos,
-                        extract_tables_from_ltpage(&ltpage, &geom, settings),
-                    ))
-                },
-            )
-            .collect()
-    });
-
-    let mut ordered = Vec::with_capacity(results.len());
-    for result in results.drain(..) {
-        ordered.push(result?);
-    }
-    ordered.sort_by_key(|(pos, _)| *pos);
-    Ok(ordered.into_iter().map(|(_, tables)| tables).collect())
+    let caching = options.caching;
+    let mut arena = PageArena::new();
+    arena.reset();
+    let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+    let mut aggregator = PDFPageAggregator::new(laparams, page_index as i32 + 1, &mut arena);
+    let page = PDFPage::get_page_by_index(doc, page_index)?;
+    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
+    Ok(extract_tables_from_ltpage(&ltpage, geometry, settings))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        ExtractOptions, extract_pages, extract_tables_for_pages, extract_tables_with_document,
+        ExtractOptions, extract_pages, extract_tables_with_document,
         extract_tables_with_document_geometries,
     };
     use crate::pdfdocument::PDFDocument;
@@ -692,35 +638,6 @@ mod tests {
 
         let tables = extract_tables_with_document(&doc, options, &settings).unwrap();
         assert_eq!(tables.len(), 3);
-    }
-
-    #[test]
-    fn test_extract_tables_with_document_geometries_for_pages_preserves_order() {
-        let pdf_data = build_minimal_pdf_with_pages(3);
-        let doc = PDFDocument::new(&pdf_data, "").unwrap();
-        let settings = TableSettings::default();
-        let options = ExtractOptions::default();
-
-        let geom0 = PageGeometry {
-            page_bbox: (0.0, 0.0, 200.0, 200.0),
-            mediabox: (0.0, 0.0, 200.0, 200.0),
-            initial_doctop: 0.0,
-            force_crop: false,
-        };
-        let geom2 = PageGeometry {
-            page_bbox: (0.0, 0.0, 200.0, 200.0),
-            mediabox: (0.0, 0.0, 200.0, 200.0),
-            initial_doctop: 400.0,
-            force_crop: false,
-        };
-
-        let page_numbers = vec![2, 0];
-        let geoms = vec![geom2, geom0];
-
-        let tables =
-            extract_tables_for_pages(&doc, &page_numbers, &geoms, options, &settings).unwrap();
-
-        assert_eq!(tables.len(), 2);
     }
 
     #[test]

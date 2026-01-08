@@ -262,7 +262,7 @@ fn set_bbox_attrs(obj: &Bound<'_, PyAny>, bbox: (f64, f64, f64, f64)) -> PyResul
 
 fn instance_dict<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
     let dict_obj = obj.getattr("__dict__")?;
-    Ok(dict_obj.downcast::<PyDict>()?.clone())
+    Ok(dict_obj.cast::<PyDict>()?.clone())
 }
 
 /// Layout character - a single character with position and font info.
