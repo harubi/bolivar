@@ -13,3 +13,6 @@
 [submodule "references/PyMuPDF-performance"]
 	path = references/PyMuPDF-performance
 	url = https://github.com/ArtifexSoftware/PyMuPDF-performance
+[submodule "references/zpdf"]
+	path = references/zpdf
+	url = https://github.com/Lulzx/zpdf
