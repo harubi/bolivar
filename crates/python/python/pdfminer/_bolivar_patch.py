@@ -162,6 +162,7 @@ def _apply_patch(module) -> bool:
                     idx for idx in range(page_count) if (idx + 1) in allowed
                 ]
             self._page_number_set = set(self._page_numbers)
+            self._page_cache = {}
             self._doctops = None
 
         def _ensure_doctops(self):
@@ -194,6 +195,9 @@ def _apply_patch(module) -> bool:
                 raise IndexError("page index out of range")
             self._ensure_doctops()
             page_index = self._page_numbers[idx]
+            cached = self._page_cache.get(page_index)
+            if cached is not None:
+                return cached
             doctop = self._doctops[idx]
             try:
                 page_obj = self._doc.get_page(page_index)
@@ -207,6 +211,7 @@ def _apply_patch(module) -> bool:
                 page_number=page_index + 1,
                 initial_doctop=doctop,
             )
+            self._page_cache[page_index] = page
             return page
 
         def __iter__(self):

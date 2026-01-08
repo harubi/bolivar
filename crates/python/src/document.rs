@@ -805,7 +805,7 @@ impl PyPDFPage {
             artbox: page.artbox.map(|b| (b[0], b[1], b[2], b[3])),
             rotate: page.rotate,
             label: page.label.clone(),
-            contents: page.contents.clone(),
+            contents: page.get_contents(doc),
             resources: page.resources.clone(),
             annots_list,
             attrs_dict: attrs_dict.into_any().unbind(),

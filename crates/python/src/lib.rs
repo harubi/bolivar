@@ -132,7 +132,7 @@ mod tests {
         Python::with_gil(|py| {
             let py_bytes = PyBytes::new(py, &pdf_data);
             let text_bytes =
-                extract_text(py, py_bytes.as_any(), "", None, 0, true, None, None).unwrap();
+                extract_text(py, py_bytes.as_any(), "", None, 0, true, None).unwrap();
             let text_path = extract_text_from_path(
                 py,
                 path.to_string_lossy().as_ref(),
@@ -140,7 +140,6 @@ mod tests {
                 None,
                 0,
                 true,
-                None,
                 None,
             )
             .unwrap();
@@ -163,7 +162,6 @@ mod tests {
                 None,
                 0,
                 true,
-                None,
                 None,
             )
             .unwrap();

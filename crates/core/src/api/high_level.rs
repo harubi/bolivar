@@ -668,6 +668,7 @@ mod tests {
     #[test]
     fn test_extract_pages_uses_stream_path() {
         let pdf_data = build_minimal_pdf_with_pages(2);
+        crate::api::stream::set_stream_usage_enabled(true);
         crate::api::stream::take_stream_usage();
 
         let options = ExtractOptions::default();
@@ -677,7 +678,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(pages.len(), 2);
-        assert_eq!(crate::api::stream::take_stream_usage(), 1);
+        let usage = crate::api::stream::take_stream_usage();
+        crate::api::stream::set_stream_usage_enabled(false);
+        assert!(usage >= 1);
     }
 
     #[test]

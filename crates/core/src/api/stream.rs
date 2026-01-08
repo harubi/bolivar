@@ -22,15 +22,25 @@ pub const DEFAULT_STREAM_BUFFER_CAPACITY: usize = 50;
 
 #[cfg(test)]
 static STREAM_USAGE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+static STREAM_USAGE_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(test)]
 fn record_stream_usage() {
-    STREAM_USAGE.fetch_add(1, Ordering::Relaxed);
+    if STREAM_USAGE_ENABLED.load(Ordering::Relaxed) {
+        STREAM_USAGE.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 #[cfg(test)]
 pub(crate) fn take_stream_usage() -> usize {
     STREAM_USAGE.swap(0, Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn set_stream_usage_enabled(enabled: bool) {
+    STREAM_USAGE_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
 type StreamItem = (usize, Result<LTPage>);
