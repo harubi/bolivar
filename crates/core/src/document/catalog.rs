@@ -8,6 +8,7 @@
 //! - Trailer parsing (catalog, info)
 //! - Page labels
 
+use super::page::PageIndex;
 use super::security::{PDFSecurityHandler, create_security_handler};
 use crate::error::{PdfError, Result};
 use crate::model::objects::PDFObject;
@@ -18,7 +19,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::simd::prelude::*;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 const PNG_SIMD_LANES: usize = 32;
@@ -97,6 +98,7 @@ pub struct PDFDocument {
     cache: RwLock<HashMap<u32, Arc<PDFObject>>>,
     objstm_index: RwLock<Option<HashMap<u32, (u32, usize)>>>,
     security_handler: Option<Box<dyn PDFSecurityHandler + Send + Sync>>,
+    page_index: OnceLock<PageIndex>,
 }
 
 impl PDFDocument {
@@ -110,6 +112,7 @@ impl PDFDocument {
             cache: RwLock::new(HashMap::new()),
             objstm_index: RwLock::new(None),
             security_handler: None,
+            page_index: OnceLock::new(),
         };
         doc.parse(password)?;
         Ok(doc)
@@ -125,6 +128,7 @@ impl PDFDocument {
             cache: RwLock::new(HashMap::new()),
             objstm_index: RwLock::new(None),
             security_handler: None,
+            page_index: OnceLock::new(),
         };
         doc.parse(password)?;
         Ok(doc)
@@ -140,6 +144,7 @@ impl PDFDocument {
             cache: RwLock::new(HashMap::new()),
             objstm_index: RwLock::new(None),
             security_handler: None,
+            page_index: OnceLock::new(),
         };
         doc.parse(password)?;
         Ok(doc)
@@ -148,6 +153,11 @@ impl PDFDocument {
     /// Returns the raw PDF bytes.
     pub fn bytes(&self) -> &[u8] {
         self.data.as_slice()
+    }
+
+    /// Returns the cached page index for O(1) page lookup.
+    pub fn page_index(&self) -> &PageIndex {
+        self.page_index.get_or_init(|| PageIndex::new(self))
     }
 
     /// Parse the PDF document structure.

@@ -3,7 +3,7 @@
 //! Port of pdfminer.six pdfpage.py
 
 use super::catalog::PDFDocument;
-use crate::error::Result;
+use crate::error::{PdfError, Result};
 use crate::model::objects::PDFObject;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -43,6 +43,26 @@ impl PDFPage {
     /// Create pages iterator from a PDFDocument.
     pub fn create_pages(doc: &PDFDocument) -> PageIterator<'_> {
         PageIterator::new(doc)
+    }
+
+    /// Get a single page by index using the cached page index.
+    pub fn get_page_by_index(doc: &PDFDocument, index: usize) -> Result<Self> {
+        let page_ref = doc
+            .page_index()
+            .get(index)
+            .ok_or_else(|| PdfError::InvalidArgument("page index out of range".to_string()))?;
+
+        let obj = doc.getobj_shared(page_ref.objid)?;
+        let dict = obj
+            .as_ref()
+            .as_dict()
+            .map_err(|_| PdfError::SyntaxError("Page object missing dict".into()))?;
+        let mut attrs = dict.clone();
+        if let Some(inherited) = &page_ref.inherited {
+            inherited.apply_to(&mut attrs);
+        }
+
+        PDFPage::from_attrs(page_ref.objid, attrs, page_ref.label.clone(), doc)
     }
 
     /// Create a page from attributes.
@@ -239,6 +259,120 @@ impl InheritedNode {
                 dest.insert("Rotate".to_string(), val.clone());
             }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PageRef {
+    pub(crate) objid: u32,
+    pub(crate) inherited: Option<Arc<InheritedNode>>,
+    pub(crate) label: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct PageIndex {
+    pages: Vec<PageRef>,
+}
+
+impl PageIndex {
+    pub(crate) fn new(doc: &PDFDocument) -> Self {
+        let mut pages = Vec::new();
+        if let Some(page_tree_pages) = Self::collect_from_page_tree(doc) {
+            pages = page_tree_pages;
+        }
+        if pages.is_empty() {
+            pages = Self::collect_from_fallback(doc);
+        }
+        Self { pages }
+    }
+
+    pub(crate) fn get(&self, index: usize) -> Option<&PageRef> {
+        self.pages.get(index)
+    }
+
+    fn labels_iter(doc: &PDFDocument) -> Option<Box<dyn Iterator<Item = String> + '_>> {
+        doc.get_page_labels()
+            .ok()
+            .map(|l| Box::new(l) as Box<dyn Iterator<Item = String>>)
+    }
+
+    fn next_label(labels: &mut Option<Box<dyn Iterator<Item = String> + '_>>) -> Option<String> {
+        labels.as_mut().and_then(|l| l.next())
+    }
+
+    fn collect_from_page_tree(doc: &PDFDocument) -> Option<Vec<PageRef>> {
+        let catalog = doc.catalog();
+        let pages_ref = catalog.get("Pages")?;
+        let pages_ref = pages_ref.as_ref().ok()?;
+        let mut labels = Self::labels_iter(doc);
+        let mut stack = vec![(pages_ref.objid, InheritedNode::from_dict(None, catalog))];
+        let mut visited = HashSet::new();
+        let mut pages = Vec::new();
+
+        while let Some((objid, parent_inherited)) = stack.pop() {
+            if visited.contains(&objid) {
+                continue;
+            }
+            visited.insert(objid);
+
+            let obj = match doc.getobj_shared(objid) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let dict = match obj.as_ref().as_dict() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let obj_type = dict.get("Type").or_else(|| dict.get("type"));
+
+            match obj_type {
+                Some(PDFObject::Name(name)) if name == "Pages" => {
+                    let inherited =
+                        InheritedNode::from_dict(Some(Arc::clone(&parent_inherited)), dict);
+                    if let Some(kids) = dict.get("Kids")
+                        && let Ok(kids) = doc.resolve(kids)
+                        && let Ok(kids_arr) = kids.as_array()
+                    {
+                        for kid in kids_arr.iter().rev() {
+                            if let Ok(kid_ref) = kid.as_ref() {
+                                stack.push((kid_ref.objid, Arc::clone(&inherited)));
+                            } else if let Ok(kid_int) = kid.as_int() {
+                                stack.push((kid_int as u32, Arc::clone(&inherited)));
+                            }
+                        }
+                    }
+                }
+                Some(PDFObject::Name(name)) if name == "Page" => {
+                    pages.push(PageRef {
+                        objid,
+                        inherited: Some(parent_inherited),
+                        label: Self::next_label(&mut labels),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        Some(pages)
+    }
+
+    fn collect_from_fallback(doc: &PDFDocument) -> Vec<PageRef> {
+        let mut labels = Self::labels_iter(doc);
+        let mut pages = Vec::new();
+        for objid in doc.get_objids() {
+            if let Ok(obj) = doc.getobj_shared(objid)
+                && let Ok(dict) = obj.as_ref().as_dict()
+                && let Some(PDFObject::Name(type_name)) = dict.get("Type")
+                && type_name == "Page"
+            {
+                pages.push(PageRef {
+                    objid,
+                    inherited: None,
+                    label: Self::next_label(&mut labels),
+                });
+            }
+        }
+        pages
     }
 }
 
