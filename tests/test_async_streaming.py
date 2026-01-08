@@ -13,9 +13,7 @@ def build_minimal_pdf_with_pages(page_count: int) -> bytes:
     push("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
 
     kids = " ".join(f"{3 + i} 0 R" for i in range(page_count))
-    push(
-        f"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {page_count} >>\nendobj\n"
-    )
+    push(f"2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {page_count} >>\nendobj\n")
 
     for i in range(page_count):
         page_id = 3 + i
@@ -26,9 +24,7 @@ def build_minimal_pdf_with_pages(page_count: int) -> bytes:
 
     for i in range(page_count):
         contents_id = 3 + page_count + i
-        push(
-            f"{contents_id} 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n"
-        )
+        push(f"{contents_id} 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n")
 
     xref_pos = sum(len(part) for part in out)
     obj_count = len(offsets)

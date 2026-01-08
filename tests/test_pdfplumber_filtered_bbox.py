@@ -11,7 +11,7 @@ sys.path.insert(0, SHIM_PATH)
 
 
 def test_filtered_page_list_bbox(monkeypatch):
-    pdfplumber = _reload_pdfplumber(monkeypatch, None)
+    pdfplumber = _reload_pdfplumber(monkeypatch)
 
     assert (
         getattr(pdfplumber.page.Page.extract_tables, "_bolivar_patched", False) is True

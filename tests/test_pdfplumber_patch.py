@@ -69,48 +69,12 @@ def test_pdfplumber_pages_is_lazy_and_supports_slices(monkeypatch):
     )
     with pdfplumber.open(pdf_path) as pdf:
         pages = pdf.pages
-        assert not isinstance(pages, list)
+        # BolivarLazyPages is a list subclass for isinstance compatibility
+        assert isinstance(pages, list)
+        assert hasattr(pages, "_page_cache")  # But it's still lazy
         assert len(pages) >= 2
         assert pages[-1].page_number == len(pages)
         assert len(pages[1:3]) == 2
-
-
-def test_extract_tables_all_returns_full_document(monkeypatch):
-    pdfplumber = _reload_pdfplumber(monkeypatch)
-    pdf_path = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
-    )
-    with pdfplumber.open(pdf_path) as pdf:
-        assert hasattr(pdf, "extract_tables_all")
-        tables_by_page = pdf.extract_tables_all()
-        assert len(tables_by_page) == len(pdf.pages)
-        assert tables_by_page[0] == pdf.pages[0].extract_tables()
-
-
-def test_extract_tables_all_does_not_instantiate_pages(monkeypatch):
-    pdfplumber = _reload_pdfplumber(monkeypatch)
-    import pdfplumber.page as page_mod
-
-    calls = {"count": 0}
-    original_init = page_mod.Page.__init__
-
-    def _counting_init(self, *args, **kwargs):
-        calls["count"] += 1
-        return original_init(self, *args, **kwargs)
-
-    monkeypatch.setattr(page_mod.Page, "__init__", _counting_init)
-
-    pdf_path = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
-    )
-    with pdfplumber.open(pdf_path) as pdf:
-        calls["count"] = 0
-        _ = pdf.extract_tables_all()
-        assert calls["count"] == 0
 
 
 def test_extract_tables_does_not_cache(monkeypatch):

@@ -1,3 +1,4 @@
+import logging
 import sys
 import importlib.abc
 import importlib.machinery
@@ -32,15 +33,6 @@ def _apply_patch(module) -> bool:
     )
     from pdfplumber.utils.exceptions import PdfminerException
 
-    def _freeze_settings(obj):
-        if obj is None:
-            return None
-        if isinstance(obj, dict):
-            return tuple(sorted((k, _freeze_settings(v)) for k, v in obj.items()))
-        if isinstance(obj, (list, tuple)):
-            return tuple(_freeze_settings(v) for v in obj)
-        return obj
-
     def _page_geom(page):
         return (
             tuple(page.bbox),
@@ -73,28 +65,6 @@ def _apply_patch(module) -> bool:
             geoms[page_index] = current
         return geoms
 
-    def _build_geometries_for_pdf(pdf):
-        boxes = _safe_page_mediaboxes(pdf.doc)
-        doctops = []
-        running = 0.0
-        for box in boxes:
-            doctops.append(running)
-            running += box[3] - box[1]
-        return tuple(
-            (tuple(box), tuple(box), doctop, False)
-            for box, doctop in zip(boxes, doctops)
-        )
-
-    def _extract_tables_all(self, table_settings=None):
-        pdf = self
-        geoms = _build_geometries_for_pdf(pdf)
-        rust_doc = getattr(pdf, "_rust_doc", None) or pdf.doc._rust_doc
-        return extract_tables_from_document(
-            rust_doc,
-            geoms,
-            table_settings,
-        )
-
     if not already_patched:
 
         def _extract_tables(self, table_settings=None):
@@ -115,9 +85,8 @@ def _apply_patch(module) -> bool:
                 )
 
             geoms = tuple(_build_geometries(pdf, page_index, self))
-            rust_doc = getattr(pdf, "_rust_doc", None) or self.page_obj.doc._rust_doc
             tables_by_page = extract_tables_from_document(
-                rust_doc,
+                pdf.doc._rust_doc,
                 geoms,
                 table_settings,
             )
@@ -139,12 +108,7 @@ def _apply_patch(module) -> bool:
         _extract_table._bolivar_patched = True
         page_mod.Page.extract_table = _extract_table
 
-    pdf_mod = sys.modules.get("pdfplumber.pdf")
-    pdf_cls = getattr(pdf_mod, "PDF", None) if pdf_mod is not None else None
-    if pdf_cls is not None and not hasattr(pdf_cls, "extract_tables_all"):
-        pdf_cls.extract_tables_all = _extract_tables_all
-
-    class BolivarLazyPages:
+    class BolivarLazyPages(list):
         def __init__(self, pdf):
             self._pdf = pdf
             self._doc = getattr(pdf, "doc", None)
@@ -227,12 +191,11 @@ def _apply_patch(module) -> bool:
                 return (item.page_number - 1) in self._page_number_set
             return False
 
-    pdf_mod = sys.modules.get("pdfplumber.pdf")
-    if pdf_mod is None:
-        try:
-            import pdfplumber.pdf as pdf_mod
-        except Exception:
-            pdf_mod = None
+    # Always import to ensure module is fully initialized (not just in sys.modules)
+    try:
+        import pdfplumber.pdf as pdf_mod
+    except Exception:
+        pdf_mod = None
 
     if pdf_mod is not None and hasattr(pdf_mod, "PDF"):
         pdf_cls = pdf_mod.PDF
@@ -253,6 +216,20 @@ def _apply_patch(module) -> bool:
 
             _bolivar_pages._bolivar_patched = True
             pdf_cls.pages = property(_bolivar_pages)
+
+    # Check if PDF.pages was successfully patched
+    pdf_pages_patched = False
+    try:
+        import pdfplumber.pdf as _check_pdf
+
+        if hasattr(_check_pdf, "PDF"):
+            _pages_prop = getattr(_check_pdf.PDF, "pages", None)
+            if isinstance(_pages_prop, property) and getattr(
+                _pages_prop.fget, "_bolivar_patched", False
+            ):
+                pdf_pages_patched = True
+    except Exception:
+        pass
 
     # Patch pdfplumber.repair to use Rust repair
     try:
@@ -291,10 +268,15 @@ def _apply_patch(module) -> bool:
         pdf_mod = sys.modules.get("pdfplumber.pdf")
         if pdf_mod is not None and hasattr(pdf_mod, "_repair"):
             pdf_mod._repair = _rust_repair
-    return True
+
+    # Only consider patch complete when PDF.pages is patched
+    return pdf_pages_patched
 
 
 _HOOK_INSTALLED = False
+_HOOK_LOCK = threading.Lock()
+_PATCH_APPLIED = False
+_logger = logging.getLogger("bolivar.pdfplumber_patch")
 
 
 class _PdfplumberPatchLoader(importlib.abc.Loader):
@@ -307,11 +289,18 @@ class _PdfplumberPatchLoader(importlib.abc.Loader):
         return None
 
     def exec_module(self, module):
+        global _PATCH_APPLIED
         self.loader.exec_module(module)
-        try:
-            _apply_patch(module)
-        finally:
-            _remove_hook()
+        with _HOOK_LOCK:
+            if _PATCH_APPLIED:
+                return
+            try:
+                if _apply_patch(module):
+                    _PATCH_APPLIED = True
+                    _remove_hook_unlocked()  # Only remove hook after successful patch
+            except Exception as e:
+                _logger.warning("Failed to apply bolivar patch to pdfplumber: %s", e)
+                _remove_hook_unlocked()  # Remove on error to prevent infinite retries
 
 
 class _PdfplumberPatchFinder(importlib.abc.MetaPathFinder):
@@ -332,16 +321,19 @@ def _install_hook(names=None):
     global _HOOK_INSTALLED
     if names is None:
         names = {"pdfplumber", "pdfplumber.page", "pdfplumber.pdf"}
-    if _HOOK_INSTALLED:
-        for finder in sys.meta_path:
-            if isinstance(finder, _PdfplumberPatchFinder):
-                finder.names.update(names)
-        return
-    sys.meta_path.insert(0, _PdfplumberPatchFinder(names))
-    _HOOK_INSTALLED = True
+    with _HOOK_LOCK:
+        if _PATCH_APPLIED:
+            return
+        if _HOOK_INSTALLED:
+            for finder in sys.meta_path:
+                if isinstance(finder, _PdfplumberPatchFinder):
+                    finder.names.update(names)
+            return
+        sys.meta_path.insert(0, _PdfplumberPatchFinder(names))
+        _HOOK_INSTALLED = True
 
 
-def _remove_hook():
+def _remove_hook_unlocked():
     global _HOOK_INSTALLED
     if not _HOOK_INSTALLED:
         return
@@ -349,6 +341,11 @@ def _remove_hook():
         m for m in sys.meta_path if not isinstance(m, _PdfplumberPatchFinder)
     ]
     _HOOK_INSTALLED = False
+
+
+def _remove_hook():
+    with _HOOK_LOCK:
+        _remove_hook_unlocked()
 
 
 def patch_pdfplumber() -> bool:

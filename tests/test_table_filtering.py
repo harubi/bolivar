@@ -7,7 +7,7 @@ PDF_PATH = os.path.join(HERE, "pdfs/issue-140-example.pdf")
 
 
 def test_filtered_page_tables_use_rust(monkeypatch):
-    pdfplumber = _reload_pdfplumber(monkeypatch, None)
+    pdfplumber = _reload_pdfplumber(monkeypatch)
     from bolivar import extract_tables_from_page_filtered
 
     with pdfplumber.open(PDF_PATH) as pdf:
@@ -19,7 +19,7 @@ def test_filtered_page_tables_use_rust(monkeypatch):
 
 
 def test_text_layout_parity(monkeypatch):
-    pdfplumber = _reload_pdfplumber(monkeypatch, None)
+    pdfplumber = _reload_pdfplumber(monkeypatch)
     from bolivar import extract_table_from_page
 
     with pdfplumber.open(PDF_PATH) as pdf:
