@@ -4,6 +4,7 @@
 //! groups connected cells into tables.
 
 use std::collections::{HashMap, VecDeque};
+use std::simd::prelude::*;
 
 use super::intersections::{EdgeStore, IntersectionIdx};
 use super::text::{extract_text_from_char_ids, extract_text_from_char_ids_layout};
@@ -421,9 +422,13 @@ impl Table {
         });
 
         let mut active: Vec<usize> = Vec::new();
+        let mut active_x0: Vec<f64> = Vec::new();
+        let mut active_x1: Vec<f64> = Vec::new();
+        let mut active_top: Vec<f64> = Vec::new();
+        let mut active_bottom: Vec<f64> = Vec::new();
         let mut active_pos: Vec<Option<usize>> = vec![None; cell_infos.len()];
         let mut event_idx = 0usize;
-        for (char_idx, v_mid, _h_mid) in chars_with_idx {
+        for (char_idx, v_mid, h_mid) in chars_with_idx {
             while event_idx < events.len() {
                 let event = &events[event_idx];
                 if event.y > v_mid {
@@ -431,14 +436,27 @@ impl Table {
                 }
                 match event.kind {
                     CellEventKind::Add => {
+                        let bbox = &cell_infos[event.cell_id].bbox;
                         active_pos[event.cell_id] = Some(active.len());
                         active.push(event.cell_id);
+                        active_x0.push(bbox.x0);
+                        active_x1.push(bbox.x1);
+                        active_top.push(bbox.top);
+                        active_bottom.push(bbox.bottom);
                     }
                     CellEventKind::Remove => {
                         if let Some(pos) = active_pos[event.cell_id].take() {
                             let last = active.pop().unwrap();
+                            let last_x0 = active_x0.pop().unwrap();
+                            let last_x1 = active_x1.pop().unwrap();
+                            let last_top = active_top.pop().unwrap();
+                            let last_bottom = active_bottom.pop().unwrap();
                             if pos < active.len() {
                                 active[pos] = last;
+                                active_x0[pos] = last_x0;
+                                active_x1[pos] = last_x1;
+                                active_top[pos] = last_top;
+                                active_bottom[pos] = last_bottom;
                                 active_pos[last] = Some(pos);
                             }
                         }
@@ -449,7 +467,59 @@ impl Table {
 
             let ch = &chars[char_idx];
             let mut matches = 0usize;
-            for &cell_id in &active {
+            let mut i = 0usize;
+            while i + 4 <= active.len() {
+                let mask = char_in_bboxes_simd4(
+                    h_mid,
+                    v_mid,
+                    [
+                        active_x0[i],
+                        active_x0[i + 1],
+                        active_x0[i + 2],
+                        active_x0[i + 3],
+                    ],
+                    [
+                        active_x1[i],
+                        active_x1[i + 1],
+                        active_x1[i + 2],
+                        active_x1[i + 3],
+                    ],
+                    [
+                        active_top[i],
+                        active_top[i + 1],
+                        active_top[i + 2],
+                        active_top[i + 3],
+                    ],
+                    [
+                        active_bottom[i],
+                        active_bottom[i + 1],
+                        active_bottom[i + 2],
+                        active_bottom[i + 3],
+                    ],
+                );
+                if mask[0] {
+                    let cell_id = active[i];
+                    cell_char_indices[cell_id].push(CharId(char_idx));
+                    matches += 1;
+                }
+                if mask[1] {
+                    let cell_id = active[i + 1];
+                    cell_char_indices[cell_id].push(CharId(char_idx));
+                    matches += 1;
+                }
+                if mask[2] {
+                    let cell_id = active[i + 2];
+                    cell_char_indices[cell_id].push(CharId(char_idx));
+                    matches += 1;
+                }
+                if mask[3] {
+                    let cell_id = active[i + 3];
+                    cell_char_indices[cell_id].push(CharId(char_idx));
+                    matches += 1;
+                }
+                i += 4;
+            }
+            for &cell_id in &active[i..] {
                 let bbox = &cell_infos[cell_id].bbox;
                 if char_in_bbox(ch, bbox) {
                     cell_char_indices[cell_id].push(CharId(char_idx));
@@ -522,6 +592,27 @@ impl CellGroup {
             bottom,
         }
     }
+}
+
+#[inline]
+pub(crate) fn char_in_bboxes_simd4(
+    h_mid: f64,
+    v_mid: f64,
+    x0s: [f64; 4],
+    x1s: [f64; 4],
+    tops: [f64; 4],
+    bottoms: [f64; 4],
+) -> [bool; 4] {
+    let hmid = Simd::<f64, 4>::splat(h_mid);
+    let vmid = Simd::<f64, 4>::splat(v_mid);
+    let x0v = Simd::<f64, 4>::from_array(x0s);
+    let x1v = Simd::<f64, 4>::from_array(x1s);
+    let topv = Simd::<f64, 4>::from_array(tops);
+    let botv = Simd::<f64, 4>::from_array(bottoms);
+
+    let x_ok = hmid.simd_ge(x0v) & hmid.simd_lt(x1v);
+    let y_ok = vmid.simd_ge(topv) & vmid.simd_lt(botv);
+    (x_ok & y_ok).to_array()
 }
 
 /// Check if a character's center is inside a bounding box.

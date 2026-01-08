@@ -30,6 +30,7 @@ def _apply_patch(module) -> bool:
         extract_tables_from_page,
         extract_table_from_page_filtered,
     )
+    from pdfplumber.utils.exceptions import PdfminerException
 
     def _freeze_settings(obj):
         if obj is None:
@@ -48,8 +49,16 @@ def _apply_patch(module) -> bool:
             not getattr(page, "is_original", True),
         )
 
+    def _safe_page_mediaboxes(doc):
+        try:
+            return doc.page_mediaboxes()
+        except PdfminerException:
+            raise
+        except Exception as e:
+            raise PdfminerException(str(e))
+
     def _build_geometries(pdf, page_index, page):
-        boxes = pdf.doc.page_mediaboxes()
+        boxes = _safe_page_mediaboxes(pdf.doc)
         doctops = []
         running = 0.0
         for box in boxes:
@@ -65,7 +74,7 @@ def _apply_patch(module) -> bool:
         return geoms
 
     def _build_geometries_for_pdf(pdf):
-        boxes = pdf.doc.page_mediaboxes()
+        boxes = _safe_page_mediaboxes(pdf.doc)
         doctops = []
         running = 0.0
         for box in boxes:
@@ -187,6 +196,8 @@ def _apply_patch(module) -> bool:
             if self._doc is None:
                 raise RuntimeError("pdf document missing")
             page_count = self._doc.page_count()
+            if page_count <= 0:
+                raise PdfminerException("PDF contains no pages")
             pages_to_parse = getattr(pdf, "pages_to_parse", None)
             if pages_to_parse is None:
                 self._page_numbers = list(range(page_count))
@@ -197,18 +208,22 @@ def _apply_patch(module) -> bool:
                 ]
             self._page_number_set = set(self._page_numbers)
             self._doctops = None
+            self._page_cache = {}
 
         def _ensure_doctops(self):
             if self._doctops is not None:
                 return
-            boxes = self._doc.page_mediaboxes()
+            boxes = _safe_page_mediaboxes(self._doc)
             doctops = []
             running = 0.0
-            for page_index in self._page_numbers:
-                box = boxes[page_index]
-                height = box[3] - box[1]
-                doctops.append(running)
-                running += height
+            try:
+                for page_index in self._page_numbers:
+                    box = boxes[page_index]
+                    height = box[3] - box[1]
+                    doctops.append(running)
+                    running += height
+            except IndexError as e:
+                raise PdfminerException(str(e))
             self._doctops = doctops
 
         def __len__(self):
@@ -226,13 +241,23 @@ def _apply_patch(module) -> bool:
             self._ensure_doctops()
             page_index = self._page_numbers[idx]
             doctop = self._doctops[idx]
-            page_obj = self._doc.get_page(page_index)
-            return page_mod.Page(
+            cached = self._page_cache.get(page_index)
+            if cached is not None:
+                return cached
+            try:
+                page_obj = self._doc.get_page(page_index)
+            except PdfminerException:
+                raise
+            except Exception as e:
+                raise PdfminerException(str(e))
+            page = page_mod.Page(
                 self._pdf,
                 page_obj,
                 page_number=page_index + 1,
                 initial_doctop=doctop,
             )
+            self._page_cache[page_index] = page
+            return page
 
         def __iter__(self):
             for i in range(len(self)):

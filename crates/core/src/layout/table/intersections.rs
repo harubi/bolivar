@@ -5,6 +5,7 @@
 //! the foundation for detecting table cell boundaries.
 
 use std::collections::{BTreeMap, HashMap};
+use std::simd::prelude::*;
 
 use super::types::{EdgeObj, HEdgeId, KeyF64, KeyPoint, Orientation, VEdgeId, key_f64, key_point};
 
@@ -29,6 +30,53 @@ impl EdgeStore {
 pub struct IntersectionIdx {
     pub v: Vec<VEdgeId>,
     pub h: Vec<HEdgeId>,
+}
+
+#[inline]
+pub(crate) fn match_v_edges_simd4(
+    tops: [f64; 4],
+    bottoms: [f64; 4],
+    x0s: [f64; 4],
+    h_top: f64,
+    x_min: f64,
+    x_max: f64,
+    y_tol: f64,
+) -> [bool; 4] {
+    let topv = Simd::<f64, 4>::from_array(tops);
+    let botv = Simd::<f64, 4>::from_array(bottoms);
+    let x0v = Simd::<f64, 4>::from_array(x0s);
+    let htop = Simd::<f64, 4>::splat(h_top);
+    let ytol = Simd::<f64, 4>::splat(y_tol);
+    let xmin = Simd::<f64, 4>::splat(x_min);
+    let xmax = Simd::<f64, 4>::splat(x_max);
+
+    let y_ok = topv.simd_le(htop + ytol) & botv.simd_ge(htop - ytol);
+    let x_ok = x0v.simd_ge(xmin) & x0v.simd_le(xmax);
+    (y_ok & x_ok).to_array()
+}
+
+#[inline]
+pub(crate) fn match_block_simd4(
+    tops: [f64; 4],
+    bottoms: [f64; 4],
+    x0s: [f64; 4],
+    h_top: f64,
+    x_min: f64,
+    x_max: f64,
+    y_tol: f64,
+    live_mask: u8,
+) -> u8 {
+    let topv = Simd::<f64, 4>::from_array(tops);
+    let botv = Simd::<f64, 4>::from_array(bottoms);
+    let x0v = Simd::<f64, 4>::from_array(x0s);
+    let htop = Simd::<f64, 4>::splat(h_top);
+    let ytol = Simd::<f64, 4>::splat(y_tol);
+    let xmin = Simd::<f64, 4>::splat(x_min);
+    let xmax = Simd::<f64, 4>::splat(x_max);
+
+    let y_ok = topv.simd_le(htop + ytol) & botv.simd_ge(htop - ytol);
+    let x_ok = x0v.simd_ge(xmin) & x0v.simd_le(xmax);
+    (y_ok & x_ok).to_bitmask() as u8 & live_mask
 }
 
 /// Find all intersections between edges using a sweep-line algorithm.
@@ -164,15 +212,61 @@ pub fn edges_to_intersections(
             }
             EventKind::QueryH => {
                 let h = &h_sorted[event.idx];
-                let x_min = key_f64(h.x0 - x_tol);
-                let x_max = key_f64(h.x1 + x_tol);
-                for (_x0, v_indices) in active.range(x_min..=x_max) {
-                    for &v_idx in v_indices {
+                let x_min = h.x0 - x_tol;
+                let x_max = h.x1 + x_tol;
+                for (_x0, v_indices) in active.range(key_f64(x_min)..=key_f64(x_max)) {
+                    let mut i = 0usize;
+                    while i + 4 <= v_indices.len() {
+                        let idxs = &v_indices[i..i + 4];
+                        let v0 = &v_sorted[idxs[0]];
+                        let v1 = &v_sorted[idxs[1]];
+                        let v2 = &v_sorted[idxs[2]];
+                        let v3 = &v_sorted[idxs[3]];
+                        let mask = match_v_edges_simd4(
+                            [v0.top, v1.top, v2.top, v3.top],
+                            [v0.bottom, v1.bottom, v2.bottom, v3.bottom],
+                            [v0.x0, v1.x0, v2.x0, v3.x0],
+                            h.top,
+                            x_min,
+                            x_max,
+                            y_tol,
+                        );
+                        if mask[0] {
+                            let vertex = key_point(v0.x0, h.top);
+                            pairs
+                                .entry(vertex)
+                                .or_default()
+                                .push((VEdgeId(idxs[0]), HEdgeId(event.idx)));
+                        }
+                        if mask[1] {
+                            let vertex = key_point(v1.x0, h.top);
+                            pairs
+                                .entry(vertex)
+                                .or_default()
+                                .push((VEdgeId(idxs[1]), HEdgeId(event.idx)));
+                        }
+                        if mask[2] {
+                            let vertex = key_point(v2.x0, h.top);
+                            pairs
+                                .entry(vertex)
+                                .or_default()
+                                .push((VEdgeId(idxs[2]), HEdgeId(event.idx)));
+                        }
+                        if mask[3] {
+                            let vertex = key_point(v3.x0, h.top);
+                            pairs
+                                .entry(vertex)
+                                .or_default()
+                                .push((VEdgeId(idxs[3]), HEdgeId(event.idx)));
+                        }
+                        i += 4;
+                    }
+                    for &v_idx in &v_indices[i..] {
                         let v = &v_sorted[v_idx];
                         if v.top <= h.top + y_tol
                             && v.bottom >= h.top - y_tol
-                            && v.x0 >= h.x0 - x_tol
-                            && v.x0 <= h.x1 + x_tol
+                            && v.x0 >= x_min
+                            && v.x0 <= x_max
                         {
                             let vertex = key_point(v.x0, h.top);
                             pairs
