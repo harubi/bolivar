@@ -45,6 +45,10 @@ impl PageArena {
         &self.interner
     }
 
+    pub const fn bump(&self) -> &Bump {
+        &self.bump
+    }
+
     pub fn intern_color(&mut self, color: &[f64]) -> ColorId {
         let key = ColorKey::from_slice(color);
         if let Some(existing) = self.color_index.get(&key) {

@@ -1,3 +1,4 @@
+use bumpalo::collections::Vec as BumpVec;
 use lasso::Spur;
 
 use crate::arena::PageArena;
@@ -78,20 +79,20 @@ pub enum ArenaItem {
 }
 
 #[derive(Debug, Clone)]
-pub struct ArenaPage {
+pub struct ArenaPage<'a> {
     pub pageid: i32,
     pub bbox: Rect,
     pub rotate: f64,
-    pub items: Vec<ArenaItem>,
+    pub items: BumpVec<'a, ArenaItem>,
 }
 
-impl ArenaPage {
-    pub fn new(pageid: i32, bbox: Rect) -> Self {
+impl<'a> ArenaPage<'a> {
+    pub fn new_in(arena: &'a PageArena, pageid: i32, bbox: Rect) -> Self {
         Self {
             pageid,
             bbox,
             rotate: 0.0,
-            items: Vec::new(),
+            items: BumpVec::new_in(arena.bump()),
         }
     }
 

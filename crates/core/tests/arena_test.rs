@@ -73,7 +73,35 @@ fn test_materialize_page_with_one_char() {
         ncolor,
         scolor,
     });
-    let mut page = ArenaPage::new(1, (0.0, 0.0, 100.0, 100.0));
+    let mut page = ArenaPage::new_in(&arena, 1, (0.0, 0.0, 100.0, 100.0));
+    page.add(ArenaItem::Char(ch));
+    let ltpage = page.materialize(&arena);
+    assert_eq!(ltpage.iter().count(), 1);
+}
+
+#[test]
+fn test_arena_page_new_in_uses_bump_vec() {
+    let mut arena = PageArena::new();
+    let text = arena.intern("A");
+    let fontname = arena.intern("F1");
+    let ncolor = arena.intern_color(&[0.0]);
+    let scolor = arena.intern_color(&[0.0]);
+    let ch = arena.alloc_char(ArenaChar {
+        bbox: (0.0, 0.0, 1.0, 1.0),
+        text,
+        fontname,
+        size: 12.0,
+        upright: true,
+        adv: 1.0,
+        matrix: MATRIX_IDENTITY,
+        mcid: None,
+        tag: None,
+        ncs_name: None,
+        scs_name: None,
+        ncolor,
+        scolor,
+    });
+    let mut page = ArenaPage::new_in(&arena, 1, (0.0, 0.0, 100.0, 100.0));
     page.add(ArenaItem::Char(ch));
     let ltpage = page.materialize(&arena);
     assert_eq!(ltpage.iter().count(), 1);
@@ -83,7 +111,7 @@ fn test_materialize_page_with_one_char() {
 fn test_materialize_line_rect_curve() {
     let mut arena = PageArena::new();
     let color = arena.intern_color(&[0.0]);
-    let mut page = ArenaPage::new(1, (0.0, 0.0, 100.0, 100.0));
+    let mut page = ArenaPage::new_in(&arena, 1, (0.0, 0.0, 100.0, 100.0));
     page.add(ArenaItem::Line(ArenaLine {
         linewidth: 1.0,
         p0: (0.0, 0.0),
@@ -136,16 +164,6 @@ fn test_materialize_image_and_figure() {
     let mut arena = PageArena::new();
     let img_name = arena.intern("Im1");
     let cs = arena.intern("DeviceRGB");
-    let mut page = ArenaPage::new(1, (0.0, 0.0, 100.0, 100.0));
-    page.add(ArenaItem::Image(bolivar_core::arena::types::ArenaImage {
-        name: img_name,
-        bbox: (0.0, 0.0, 10.0, 10.0),
-        srcsize: (Some(10), Some(10)),
-        imagemask: false,
-        bits: 8,
-        colorspace: vec![cs],
-    }));
-
     let fig_name = arena.intern("Fig1");
     let ncolor = arena.intern_color(&[0.0]);
     let scolor = arena.intern_color(&[0.0]);
@@ -170,6 +188,15 @@ fn test_materialize_image_and_figure() {
         matrix: MATRIX_IDENTITY,
         items: vec![ArenaItem::Char(ch)],
     };
+    let mut page = ArenaPage::new_in(&arena, 1, (0.0, 0.0, 100.0, 100.0));
+    page.add(ArenaItem::Image(bolivar_core::arena::types::ArenaImage {
+        name: img_name,
+        bbox: (0.0, 0.0, 10.0, 10.0),
+        srcsize: (Some(10), Some(10)),
+        imagemask: false,
+        bits: 8,
+        colorspace: vec![cs],
+    }));
     page.add(ArenaItem::Figure(fig));
 
     let ltpage = page.materialize(&arena);

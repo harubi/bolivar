@@ -277,8 +277,10 @@ impl PDFLayoutAnalyzer {
     pub fn end_page(&mut self) -> Option<LTPage> {
         assert!(self.stack.is_empty(), "stack not empty");
         if let Some(container) = self.cur_item.take() {
-            let mut page = ArenaPage::new(self.pageno, container.bbox);
-            page.items = container.items;
+            let mut page = ArenaPage::new_in(&self.arena, self.pageno, container.bbox);
+            for item in container.items {
+                page.add(item);
+            }
             let mut ltpage = page.materialize(&self.arena);
             if let Some(ref laparams) = self.laparams {
                 ltpage.analyze(laparams);
