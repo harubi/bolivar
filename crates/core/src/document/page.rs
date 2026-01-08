@@ -6,6 +6,7 @@ use super::catalog::PDFDocument;
 use crate::error::Result;
 use crate::model::objects::PDFObject;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// A PDF page object.
 #[derive(Debug)]
@@ -39,10 +40,6 @@ pub struct PDFPage {
 }
 
 impl PDFPage {
-    /// Inheritable page attributes.
-    const INHERITABLE_ATTRS: &'static [&'static str] =
-        &["Resources", "MediaBox", "CropBox", "Rotate"];
-
     /// Create pages iterator from a PDFDocument.
     pub fn create_pages(doc: &PDFDocument) -> PageIterator<'_> {
         PageIterator::new(doc)
@@ -166,11 +163,90 @@ impl PDFPage {
     }
 }
 
+#[derive(Debug)]
+struct InheritedNode {
+    parent: Option<Arc<InheritedNode>>,
+    resources: Option<PDFObject>,
+    mediabox: Option<PDFObject>,
+    cropbox: Option<PDFObject>,
+    rotate: Option<PDFObject>,
+}
+
+impl InheritedNode {
+    fn from_dict(
+        parent: Option<Arc<InheritedNode>>,
+        dict: &HashMap<String, PDFObject>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            parent,
+            resources: dict.get("Resources").cloned(),
+            mediabox: dict.get("MediaBox").cloned(),
+            cropbox: dict.get("CropBox").cloned(),
+            rotate: dict.get("Rotate").cloned(),
+        })
+    }
+
+    fn resolve_resources(&self) -> Option<&PDFObject> {
+        self.resources.as_ref().or_else(|| {
+            self.parent
+                .as_ref()
+                .and_then(|parent| parent.resolve_resources())
+        })
+    }
+
+    fn resolve_mediabox(&self) -> Option<&PDFObject> {
+        self.mediabox.as_ref().or_else(|| {
+            self.parent
+                .as_ref()
+                .and_then(|parent| parent.resolve_mediabox())
+        })
+    }
+
+    fn resolve_cropbox(&self) -> Option<&PDFObject> {
+        self.cropbox.as_ref().or_else(|| {
+            self.parent
+                .as_ref()
+                .and_then(|parent| parent.resolve_cropbox())
+        })
+    }
+
+    fn resolve_rotate(&self) -> Option<&PDFObject> {
+        self.rotate.as_ref().or_else(|| {
+            self.parent
+                .as_ref()
+                .and_then(|parent| parent.resolve_rotate())
+        })
+    }
+
+    fn apply_to(&self, dest: &mut HashMap<String, PDFObject>) {
+        if !dest.contains_key("Resources") {
+            if let Some(val) = self.resolve_resources() {
+                dest.insert("Resources".to_string(), val.clone());
+            }
+        }
+        if !dest.contains_key("MediaBox") {
+            if let Some(val) = self.resolve_mediabox() {
+                dest.insert("MediaBox".to_string(), val.clone());
+            }
+        }
+        if !dest.contains_key("CropBox") {
+            if let Some(val) = self.resolve_cropbox() {
+                dest.insert("CropBox".to_string(), val.clone());
+            }
+        }
+        if !dest.contains_key("Rotate") {
+            if let Some(val) = self.resolve_rotate() {
+                dest.insert("Rotate".to_string(), val.clone());
+            }
+        }
+    }
+}
+
 /// Iterator over pages in a PDF document.
 pub struct PageIterator<'a> {
     doc: &'a PDFDocument,
     /// Stack for depth-first traversal: (objid, inherited_attrs)
-    stack: Vec<(u32, HashMap<String, PDFObject>)>,
+    stack: Vec<(u32, Arc<InheritedNode>)>,
     /// Visited object IDs (to prevent cycles)
     visited: HashSet<u32>,
     /// Page labels iterator
@@ -199,9 +275,10 @@ impl<'a> PageIterator<'a> {
         if let Some(pages_ref) = catalog.get("Pages")
             && let Ok(pages_ref) = pages_ref.as_ref()
         {
+            let inherited = InheritedNode::from_dict(None, catalog);
             return Self {
                 doc,
-                stack: vec![(pages_ref.objid, catalog.clone())],
+                stack: vec![(pages_ref.objid, inherited)],
                 visited: HashSet::new(),
                 labels,
                 fallback_mode: false,
@@ -252,7 +329,7 @@ impl<'a> Iterator for PageIterator<'a> {
         }
 
         // Normal mode: depth-first traversal of page tree
-        while let Some((objid, parent_attrs)) = self.stack.pop() {
+        while let Some((objid, parent_inherited)) = self.stack.pop() {
             if self.visited.contains(&objid) {
                 continue;
             }
@@ -264,19 +341,9 @@ impl<'a> Iterator for PageIterator<'a> {
             };
 
             let dict = match obj.as_ref().as_dict() {
-                Ok(d) => d.clone(),
+                Ok(d) => d,
                 Err(_) => continue,
             };
-
-            // Merge inheritable attributes
-            let mut attrs = dict.clone();
-            for &key in PDFPage::INHERITABLE_ATTRS {
-                if !attrs.contains_key(key)
-                    && let Some(val) = parent_attrs.get(key)
-                {
-                    attrs.insert(key.to_string(), val.clone());
-                }
-            }
 
             // Check Type
             let obj_type = dict.get("Type").or_else(|| dict.get("type"));
@@ -284,22 +351,26 @@ impl<'a> Iterator for PageIterator<'a> {
             match obj_type {
                 Some(PDFObject::Name(name)) if name == "Pages" => {
                     // Intermediate node - push kids onto stack (in reverse for correct order)
+                    let inherited =
+                        InheritedNode::from_dict(Some(Arc::clone(&parent_inherited)), dict);
                     if let Some(kids) = dict.get("Kids")
                         && let Ok(kids) = self.doc.resolve(kids)
                         && let Ok(kids_arr) = kids.as_array()
                     {
                         for kid in kids_arr.iter().rev() {
                             if let Ok(kid_ref) = kid.as_ref() {
-                                self.stack.push((kid_ref.objid, attrs.clone()));
+                                self.stack.push((kid_ref.objid, Arc::clone(&inherited)));
                             } else if let Ok(kid_int) = kid.as_int() {
                                 // Sometimes kids are stored as integers
-                                self.stack.push((kid_int as u32, attrs.clone()));
+                                self.stack.push((kid_int as u32, Arc::clone(&inherited)));
                             }
                         }
                     }
                 }
                 Some(PDFObject::Name(name)) if name == "Page" => {
                     // Leaf node - this is a page
+                    let mut attrs = dict.clone();
+                    parent_inherited.apply_to(&mut attrs);
                     let label = self.get_next_label();
                     self.pages_yielded = true;
                     return Some(PDFPage::from_attrs(objid, attrs, label, self.doc));
@@ -316,5 +387,34 @@ impl<'a> Iterator for PageIterator<'a> {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InheritedNode;
+    use crate::model::objects::PDFObject;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_inherited_node_apply_to_fills_missing() {
+        let mut root = HashMap::new();
+        root.insert("MediaBox".to_string(), PDFObject::Name("root".into()));
+        root.insert("Rotate".to_string(), PDFObject::Int(90));
+
+        let mut mid = HashMap::new();
+        mid.insert("Resources".to_string(), PDFObject::Name("mid".into()));
+
+        let root_node = InheritedNode::from_dict(None, &root);
+        let mid_node = InheritedNode::from_dict(Some(root_node), &mid);
+
+        let mut leaf = HashMap::new();
+        leaf.insert("Resources".to_string(), PDFObject::Name("leaf".into()));
+
+        mid_node.apply_to(&mut leaf);
+
+        assert_eq!(leaf.get("Resources"), Some(&PDFObject::Name("leaf".into())));
+        assert_eq!(leaf.get("MediaBox"), Some(&PDFObject::Name("root".into())));
+        assert_eq!(leaf.get("Rotate"), Some(&PDFObject::Int(90)));
     }
 }
