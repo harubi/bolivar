@@ -7,3 +7,9 @@
 [submodule "references/tabula-java"]
 	path = references/tabula-java
 	url = https://github.com/tabulapdf/tabula-java
+[submodule "references/PyMuPDF"]
+	path = references/PyMuPDF
+	url = https://github.com/pymupdf/PyMuPDF
+[submodule "references/PyMuPDF-performance"]
+	path = references/PyMuPDF-performance
+	url = https://github.com/ArtifexSoftware/PyMuPDF-performance
