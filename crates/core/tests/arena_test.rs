@@ -130,3 +130,64 @@ fn test_materialize_line_rect_curve() {
     assert!(matches!(items.next(), Some(LTItem::Rect(_))));
     assert!(matches!(items.next(), Some(LTItem::Curve(_))));
 }
+
+#[test]
+fn test_materialize_image_and_figure() {
+    let mut arena = PageArena::new();
+    let img_name = arena.intern("Im1");
+    let cs = arena.intern("DeviceRGB");
+    let mut page = ArenaPage::new(1, (0.0, 0.0, 100.0, 100.0));
+    page.add(ArenaItem::Image(bolivar_core::arena::types::ArenaImage {
+        name: img_name,
+        bbox: (0.0, 0.0, 10.0, 10.0),
+        srcsize: (Some(10), Some(10)),
+        imagemask: false,
+        bits: 8,
+        colorspace: vec![cs],
+    }));
+
+    let fig_name = arena.intern("Fig1");
+    let ncolor = arena.intern_color(&[0.0]);
+    let scolor = arena.intern_color(&[0.0]);
+    let ch = ArenaChar {
+        bbox: (1.0, 1.0, 2.0, 2.0),
+        text: arena.intern("A"),
+        fontname: arena.intern("F1"),
+        size: 12.0,
+        upright: true,
+        adv: 1.0,
+        matrix: MATRIX_IDENTITY,
+        mcid: None,
+        tag: None,
+        ncs_name: None,
+        scs_name: None,
+        ncolor,
+        scolor,
+    };
+    let fig = bolivar_core::arena::types::ArenaFigure {
+        name: fig_name,
+        bbox: (0.0, 0.0, 10.0, 10.0),
+        matrix: MATRIX_IDENTITY,
+        items: vec![ArenaItem::Char(ch)],
+    };
+    page.add(ArenaItem::Figure(fig));
+
+    let ltpage = page.materialize(&arena);
+    let mut items = ltpage.iter();
+    match items.next() {
+        Some(LTItem::Image(img)) => {
+            assert_eq!(img.name, "Im1");
+            assert_eq!(img.srcsize, (Some(10), Some(10)));
+            assert_eq!(img.bits, 8);
+            assert_eq!(img.colorspace, vec!["DeviceRGB".to_string()]);
+        }
+        other => panic!("expected image, got {other:?}"),
+    }
+    match items.next() {
+        Some(LTItem::Figure(fig)) => {
+            assert_eq!(fig.name, "Fig1");
+            assert_eq!(fig.iter().count(), 1);
+        }
+        other => panic!("expected figure, got {other:?}"),
+    }
+}

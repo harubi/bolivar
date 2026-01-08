@@ -1,7 +1,7 @@
 use lasso::Spur;
 
 use crate::arena::PageArena;
-use crate::layout::types::{LTChar, LTCurve, LTItem, LTLine, LTPage, LTRect};
+use crate::layout::types::{LTChar, LTCurve, LTFigure, LTImage, LTItem, LTLine, LTPage, LTRect};
 use crate::utils::{Matrix, Point, Rect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -73,6 +73,8 @@ pub enum ArenaItem {
     Line(ArenaLine),
     Rect(ArenaRect),
     Curve(ArenaCurve),
+    Image(ArenaImage),
+    Figure(ArenaFigure),
 }
 
 #[derive(Debug, Clone)]
@@ -100,14 +102,68 @@ impl ArenaPage {
     pub fn materialize(self, arena: &PageArena) -> LTPage {
         let mut page = LTPage::new(self.pageid, self.bbox, self.rotate);
         for item in self.items {
-            match item {
-                ArenaItem::Char(ch) => page.add(LTItem::Char(ch.materialize(arena))),
-                ArenaItem::Line(line) => page.add(LTItem::Line(line.materialize(arena))),
-                ArenaItem::Rect(rect) => page.add(LTItem::Rect(rect.materialize(arena))),
-                ArenaItem::Curve(curve) => page.add(LTItem::Curve(curve.materialize(arena))),
-            }
+            page.add(materialize_item(item, arena));
         }
         page
+    }
+}
+
+fn materialize_item(item: ArenaItem, arena: &PageArena) -> LTItem {
+    match item {
+        ArenaItem::Char(ch) => LTItem::Char(ch.materialize(arena)),
+        ArenaItem::Line(line) => LTItem::Line(line.materialize(arena)),
+        ArenaItem::Rect(rect) => LTItem::Rect(rect.materialize(arena)),
+        ArenaItem::Curve(curve) => LTItem::Curve(curve.materialize(arena)),
+        ArenaItem::Image(image) => LTItem::Image(image.materialize(arena)),
+        ArenaItem::Figure(figure) => LTItem::Figure(Box::new(figure.materialize(arena))),
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ArenaImage {
+    pub name: Spur,
+    pub bbox: Rect,
+    pub srcsize: (Option<i32>, Option<i32>),
+    pub imagemask: bool,
+    pub bits: i32,
+    pub colorspace: Vec<Spur>,
+}
+
+impl ArenaImage {
+    pub fn materialize(&self, arena: &PageArena) -> LTImage {
+        let name = arena.resolve(self.name);
+        let colorspace = self
+            .colorspace
+            .iter()
+            .map(|cs| arena.resolve(*cs).to_string())
+            .collect();
+        LTImage::new(
+            name,
+            self.bbox,
+            self.srcsize,
+            self.imagemask,
+            self.bits,
+            colorspace,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ArenaFigure {
+    pub name: Spur,
+    pub bbox: Rect,
+    pub matrix: Matrix,
+    pub items: Vec<ArenaItem>,
+}
+
+impl ArenaFigure {
+    pub fn materialize(self, arena: &PageArena) -> LTFigure {
+        let name = arena.resolve(self.name).to_string();
+        let mut fig = LTFigure::new(&name, self.bbox, self.matrix);
+        for item in self.items {
+            fig.add(materialize_item(item, arena));
+        }
+        fig
     }
 }
 
