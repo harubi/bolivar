@@ -313,6 +313,37 @@ mod table_extraction_tests {
     }
 
     #[test]
+    fn intersections_aosoa_block_mask_expected() {
+        let tops = [-5.0, -1.0, 1.0, -5.0];
+        let bottoms = [5.0, 1.0, 5.0, 5.0];
+        let x0s = [5.0, 7.0, 2.0, 20.0];
+        let live_mask = 0b1011u8;
+        let mask = super::intersections::match_block_simd4(
+            tops, bottoms, x0s, 0.0, 0.0, 10.0, 0.0, live_mask,
+        );
+        assert_eq!(mask, 0b0011u8);
+    }
+
+    #[test]
+    fn intersections_active_bucket_reuses_lane() {
+        let mut bucket = super::intersections::ActiveBucket::default();
+        let a = bucket.insert(0, 1.0, 2.0, 3.0);
+        let b = bucket.insert(1, 4.0, 5.0, 6.0);
+        assert_ne!(a, b);
+        bucket.remove(b);
+        let c = bucket.insert(2, 7.0, 8.0, 9.0);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn intersections_aosoa_expected_points() {
+        let edges = vec![make_h_edge(0.0, 0.0, 10.0), make_v_edge(5.0, -5.0, 5.0)];
+        let (_store, intersections) =
+            super::intersections::edges_to_intersections(&edges, 0.0, 0.0);
+        assert_eq!(intersections.len(), 1);
+    }
+
+    #[test]
     fn char_in_bboxes_simd4_expected() {
         let h_mid = 5.0;
         let v_mid = 5.0;
