@@ -518,7 +518,7 @@ pub fn extract_tables_from_document_pages(
                 .map_err(|e| format!("Failed to extract tables: {}", e))?;
                 out.push(page_tables);
             }
-            Ok(out)
+            Ok::<_, String>(out)
         })
         .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {}", e)))?;
 
