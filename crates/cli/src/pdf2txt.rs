@@ -5,6 +5,7 @@
 //!
 //! Port of pdfminer.six tools/pdf2txt.py
 
+use bolivar_core::arena::PageArena;
 use bolivar_core::converter::{
     HOCRConverter, HTMLConverter, PDFPageAggregator, TextConverter, XMLConverter,
 };
@@ -287,6 +288,7 @@ where
 {
     let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
     let laparams = options.laparams.clone().unwrap_or_default();
+    let mut arena = PageArena::new();
 
     let mut page_count = 0;
     for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
@@ -301,10 +303,12 @@ where
         }
 
         let page = page_result?;
+        arena.reset();
         let mut aggregator = PDFPageAggregator::new_with_imagewriter(
             Some(laparams.clone()),
             page_idx as i32 + 1,
             Some(image_writer.clone()),
+            &mut arena,
         );
         let mut interpreter = PDFPageInterpreter::new(&mut rsrcmgr, &mut aggregator);
         interpreter.process_page(&page, Some(doc));

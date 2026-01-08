@@ -3,6 +3,7 @@
 //! Provides functions for extracting tables from PDF pages and converting
 //! page objects to chars/edges for table extraction.
 
+use bolivar_core::arena::PageArena;
 use bolivar_core::high_level::{
     ExtractOptions, extract_pages as core_extract_pages,
     extract_pages_with_document as core_extract_pages_with_document,
@@ -385,9 +386,11 @@ pub fn process_page(
     let ltpage = py.detach(|| {
         // Create resource manager
         let mut rsrcmgr = bolivar_core::pdfinterp::PDFResourceManager::with_caching(true);
+        let mut arena = PageArena::new();
 
         // Create aggregator for this page
-        let mut aggregator = bolivar_core::converter::PDFPageAggregator::new(la, pageid as i32);
+        let mut aggregator =
+            bolivar_core::converter::PDFPageAggregator::new(la, pageid as i32, &mut arena);
 
         // Recreate the core PDFPage with contents
         // This is a workaround since we can't store references across Python calls

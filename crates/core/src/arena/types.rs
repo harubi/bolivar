@@ -1,7 +1,7 @@
 use bumpalo::collections::Vec as BumpVec;
 use lasso::Spur;
 
-use crate::arena::PageArena;
+use crate::arena::{ArenaBump, ArenaLookup};
 use crate::layout::types::{LTChar, LTCurve, LTFigure, LTImage, LTItem, LTLine, LTPage, LTRect};
 use crate::utils::{Matrix, Point, Rect};
 
@@ -36,7 +36,7 @@ pub struct ArenaChar {
 }
 
 impl ArenaChar {
-    pub fn materialize(&self, arena: &PageArena) -> LTChar {
+    pub fn materialize(&self, arena: &impl ArenaLookup) -> LTChar {
         let text = arena.resolve(self.text);
         let fontname = arena.resolve(self.fontname);
         let tag = self.tag.map(|t| arena.resolve(t).to_string());
@@ -69,13 +69,13 @@ impl ArenaChar {
 }
 
 #[derive(Debug, Clone)]
-pub enum ArenaItem {
+pub enum ArenaItem<'a> {
     Char(ArenaChar),
     Line(ArenaLine),
     Rect(ArenaRect),
     Curve(ArenaCurve),
-    Image(ArenaImage),
-    Figure(ArenaFigure),
+    Image(ArenaImage<'a>),
+    Figure(ArenaFigure<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -83,11 +83,11 @@ pub struct ArenaPage<'a> {
     pub pageid: i32,
     pub bbox: Rect,
     pub rotate: f64,
-    pub items: BumpVec<'a, ArenaItem>,
+    pub items: BumpVec<'a, ArenaItem<'a>>,
 }
 
 impl<'a> ArenaPage<'a> {
-    pub fn new_in(arena: &'a PageArena, pageid: i32, bbox: Rect) -> Self {
+    pub fn new_in(arena: &'a impl ArenaBump, pageid: i32, bbox: Rect) -> Self {
         Self {
             pageid,
             bbox,
@@ -96,11 +96,11 @@ impl<'a> ArenaPage<'a> {
         }
     }
 
-    pub fn add(&mut self, item: ArenaItem) {
+    pub fn add(&mut self, item: ArenaItem<'a>) {
         self.items.push(item);
     }
 
-    pub fn materialize(self, arena: &PageArena) -> LTPage {
+    pub fn materialize(self, arena: &impl ArenaLookup) -> LTPage {
         let mut page = LTPage::new(self.pageid, self.bbox, self.rotate);
         for item in self.items {
             page.add(materialize_item(item, arena));
@@ -109,7 +109,7 @@ impl<'a> ArenaPage<'a> {
     }
 }
 
-fn materialize_item(item: ArenaItem, arena: &PageArena) -> LTItem {
+fn materialize_item(item: ArenaItem<'_>, arena: &impl ArenaLookup) -> LTItem {
     match item {
         ArenaItem::Char(ch) => LTItem::Char(ch.materialize(arena)),
         ArenaItem::Line(line) => LTItem::Line(line.materialize(arena)),
@@ -121,17 +121,17 @@ fn materialize_item(item: ArenaItem, arena: &PageArena) -> LTItem {
 }
 
 #[derive(Debug, Clone)]
-pub struct ArenaImage {
+pub struct ArenaImage<'a> {
     pub name: Spur,
     pub bbox: Rect,
     pub srcsize: (Option<i32>, Option<i32>),
     pub imagemask: bool,
     pub bits: i32,
-    pub colorspace: Vec<Spur>,
+    pub colorspace: BumpVec<'a, Spur>,
 }
 
-impl ArenaImage {
-    pub fn materialize(&self, arena: &PageArena) -> LTImage {
+impl<'a> ArenaImage<'a> {
+    pub fn materialize(&self, arena: &impl ArenaLookup) -> LTImage {
         let name = arena.resolve(self.name);
         let colorspace = self
             .colorspace
@@ -150,15 +150,28 @@ impl ArenaImage {
 }
 
 #[derive(Debug, Clone)]
-pub struct ArenaFigure {
+pub struct ArenaFigure<'a> {
     pub name: Spur,
     pub bbox: Rect,
     pub matrix: Matrix,
-    pub items: Vec<ArenaItem>,
+    pub items: BumpVec<'a, ArenaItem<'a>>,
 }
 
-impl ArenaFigure {
-    pub fn materialize(self, arena: &PageArena) -> LTFigure {
+impl<'a> ArenaFigure<'a> {
+    pub fn new_in(arena: &'a impl ArenaBump, name: Spur, bbox: Rect, matrix: Matrix) -> Self {
+        Self {
+            name,
+            bbox,
+            matrix,
+            items: BumpVec::new_in(arena.bump()),
+        }
+    }
+
+    pub fn add(&mut self, item: ArenaItem<'a>) {
+        self.items.push(item);
+    }
+
+    pub fn materialize(self, arena: &impl ArenaLookup) -> LTFigure {
         let name = arena.resolve(self.name).to_string();
         let mut fig = LTFigure::new(&name, self.bbox, self.matrix);
         for item in self.items {
@@ -184,7 +197,7 @@ pub struct ArenaCurve {
 }
 
 impl ArenaCurve {
-    pub fn materialize(&self, arena: &PageArena) -> LTCurve {
+    pub fn materialize(&self, arena: &impl ArenaLookup) -> LTCurve {
         let stroking_color = Some(arena.color(self.stroking_color).to_vec());
         let non_stroking_color = Some(arena.color(self.non_stroking_color).to_vec());
         let mut curve = if self.original_path.is_some() || self.dashing_style.is_some() {
@@ -233,7 +246,7 @@ pub struct ArenaLine {
 }
 
 impl ArenaLine {
-    pub fn materialize(&self, arena: &PageArena) -> LTLine {
+    pub fn materialize(&self, arena: &impl ArenaLookup) -> LTLine {
         let stroking_color = Some(arena.color(self.stroking_color).to_vec());
         let non_stroking_color = Some(arena.color(self.non_stroking_color).to_vec());
         let mut line = if self.original_path.is_some() || self.dashing_style.is_some() {
@@ -283,7 +296,7 @@ pub struct ArenaRect {
 }
 
 impl ArenaRect {
-    pub fn materialize(&self, arena: &PageArena) -> LTRect {
+    pub fn materialize(&self, arena: &impl ArenaLookup) -> LTRect {
         let stroking_color = Some(arena.color(self.stroking_color).to_vec());
         let non_stroking_color = Some(arena.color(self.non_stroking_color).to_vec());
         let mut rect = if self.original_path.is_some() || self.dashing_style.is_some() {

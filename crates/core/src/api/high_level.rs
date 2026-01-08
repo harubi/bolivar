@@ -10,6 +10,7 @@ use std::io::Write;
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 
+use crate::arena::PageArena;
 use crate::converter::{PDFPageAggregator, TextConverter};
 use crate::error::{PdfError, Result};
 use crate::layout::{LAParams, LTPage};
@@ -270,10 +271,11 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
     let mut results: Vec<(usize, Result<LTPage>)> = pool.install(|| {
         selected_pages
             .into_par_iter()
-            .map(|(page_idx, page)| {
+            .map_init(PageArena::new, |arena, (page_idx, page)| {
+                arena.reset();
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                 let mut aggregator =
-                    PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1);
+                    PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1, arena);
                 let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc);
                 (page_idx, ltpage)
             })
@@ -295,7 +297,7 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
 /// which populates the device (aggregator) with layout items.
 fn process_page(
     page: &PDFPage,
-    aggregator: &mut PDFPageAggregator,
+    aggregator: &mut PDFPageAggregator<'_>,
     rsrcmgr: &mut PDFResourceManager,
     doc: &PDFDocument,
 ) -> Result<LTPage> {
@@ -528,15 +530,20 @@ pub fn extract_tables_for_pages(
     let mut results: Vec<Result<(usize, PageTables)>> = pool.install(|| {
         pending
             .into_par_iter()
-            .map(|(requested_pos, page_idx, page, geom)| {
-                let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
-                let mut aggregator = PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1);
-                let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
-                Ok((
-                    requested_pos,
-                    extract_tables_from_ltpage(&ltpage, &geom, settings),
-                ))
-            })
+            .map_init(
+                PageArena::new,
+                |arena, (requested_pos, page_idx, page, geom)| {
+                    arena.reset();
+                    let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
+                    let mut aggregator =
+                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
+                    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
+                    Ok((
+                        requested_pos,
+                        extract_tables_from_ltpage(&ltpage, &geom, settings),
+                    ))
+                },
+            )
             .collect()
     });
 
@@ -594,9 +601,11 @@ fn extract_pages_from_doc(
     let mut processed: Vec<(usize, Result<LTPage>)> = pool.install(|| {
         pending
             .into_par_iter()
-            .map(|(page_idx, page)| {
+            .map_init(PageArena::new, |arena, (page_idx, page)| {
+                arena.reset();
                 let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
-                let mut aggregator = PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1);
+                let mut aggregator =
+                    PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
                 let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc);
                 (page_idx, ltpage)
             })

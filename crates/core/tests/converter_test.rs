@@ -2,6 +2,7 @@
 //!
 //! Port of tests from pdfminer.six tests/test_converter.py
 
+use bolivar_core::arena::PageArena;
 use bolivar_core::converter::{
     HOCRConverter, HTMLConverter, PDFConverter, PDFLayoutAnalyzer, PDFPageAggregator,
     TextConverter, XMLConverter,
@@ -23,8 +24,8 @@ mod layout_analyzer_tests {
     use super::*;
     use bolivar_core::interp::PDFDevice;
 
-    fn get_analyzer() -> PDFLayoutAnalyzer {
-        let mut analyzer = PDFLayoutAnalyzer::new(None, 1);
+    fn get_analyzer<'a>(arena: &'a mut PageArena) -> PDFLayoutAnalyzer<'a> {
+        let mut analyzer = PDFLayoutAnalyzer::new(None, 1, arena.context());
         analyzer.set_ctm(MATRIX_IDENTITY);
         analyzer
     }
@@ -32,7 +33,8 @@ mod layout_analyzer_tests {
     #[test]
     fn test_layout_analyzer_uses_arena_items() {
         let path = vec![('m', vec![0.0, 0.0]), ('l', vec![1.0, 0.0])];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -41,7 +43,8 @@ mod layout_analyzer_tests {
 
     #[test]
     fn test_aggregator_materializes_page() {
-        let mut aggregator = PDFPageAggregator::new(None, 1);
+        let mut arena = PageArena::new();
+        let mut aggregator = PDFPageAggregator::new(None, 1, &mut arena);
         aggregator.begin_page(1, (0.0, 0.0, 100.0, 100.0), MATRIX_IDENTITY);
         aggregator.end_page(1);
         let page = aggregator.get_result();
@@ -52,7 +55,8 @@ mod layout_analyzer_tests {
     fn test_paint_path_simple_line() {
         // Test path: m(6,7) l(7,7) - single line segment
         let path = vec![('m', vec![6.0, 7.0]), ('l', vec![7.0, 7.0])];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -68,7 +72,8 @@ mod layout_analyzer_tests {
             ('l', vec![6.0, 91.0]),
             ('h', vec![]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -94,7 +99,8 @@ mod layout_analyzer_tests {
             ('l', vec![67.0, 3.0]),
             ('h', vec![]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 3);
@@ -110,7 +116,8 @@ mod layout_analyzer_tests {
             ('l', vec![10.0, 10.0]),
             ('h', vec![]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -127,7 +134,8 @@ mod layout_analyzer_tests {
             ('l', vec![10.0, 10.0]),
             ('l', vec![10.0, 90.0]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -147,7 +155,8 @@ mod layout_analyzer_tests {
             ('l', vec![10.0, 90.0]),
             ('h', vec![]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -164,7 +173,8 @@ mod layout_analyzer_tests {
             ('l', vec![110.0, 10.0]),
             ('h', vec![]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -181,7 +191,8 @@ mod layout_analyzer_tests {
             ('l', vec![210.0, 10.0]),
             ('h', vec![]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -203,7 +214,8 @@ mod layout_analyzer_tests {
             ('l', vec![350.0, 10.0]),
             ('h', vec![]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 2);
@@ -226,7 +238,8 @@ mod layout_analyzer_tests {
             ('l', vec![30.0, 30.0]),
             ('h', vec![]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 3);
@@ -247,7 +260,8 @@ mod layout_analyzer_tests {
             ('m', vec![10.0, 10.0]),
             ('l', vec![30.0, 30.0]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 3);
@@ -261,7 +275,8 @@ mod layout_analyzer_tests {
             ('m', vec![72.41, 433.89]),
             ('c', vec![72.41, 434.45, 71.96, 434.89, 71.41, 434.89]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -280,7 +295,8 @@ mod layout_analyzer_tests {
             ('m', vec![72.41, 433.89]),
             ('v', vec![71.96, 434.89, 71.41, 434.89]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -295,7 +311,8 @@ mod layout_analyzer_tests {
             ('m', vec![72.41, 433.89]),
             ('y', vec![72.41, 434.45, 71.41, 434.89]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -310,7 +327,8 @@ mod layout_analyzer_tests {
             ('m', vec![72.41, 433.89]),
             ('c', vec![72.41, 434.45, 71.96, 434.89, 71.41, 434.89]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
 
         let mut graphicstate = PDFGraphicState::default();
@@ -328,7 +346,8 @@ mod layout_analyzer_tests {
     #[test]
     fn test_paint_path_without_starting_m() {
         // Paths without starting 'm' should be ignored
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
 
         // Path starting with 'h'
@@ -391,7 +410,8 @@ mod layout_analyzer_tests {
 
     #[test]
     fn test_render_char_basic() {
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
         analyzer.begin_figure("Fig1", (10.0, 10.0, 100.0, 100.0), MATRIX_IDENTITY);
 
@@ -419,7 +439,8 @@ mod layout_analyzer_tests {
 
     #[test]
     fn test_render_char_with_scaling() {
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
         analyzer.begin_figure("Fig1", (10.0, 10.0, 100.0, 100.0), MATRIX_IDENTITY);
 
@@ -445,7 +466,8 @@ mod layout_analyzer_tests {
 
     #[test]
     fn test_render_char_with_rise() {
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
         analyzer.begin_figure("Fig1", (10.0, 10.0, 100.0, 100.0), MATRIX_IDENTITY);
 
@@ -471,7 +493,8 @@ mod layout_analyzer_tests {
 
     #[test]
     fn test_render_char_undefined() {
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
         analyzer.begin_figure("Fig1", (10.0, 10.0, 100.0, 100.0), MATRIX_IDENTITY);
 
@@ -498,7 +521,8 @@ mod layout_analyzer_tests {
 
     #[test]
     fn test_render_image_in_figure() {
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
         analyzer.begin_figure("Fig1", (10.0, 10.0, 100.0, 100.0), MATRIX_IDENTITY);
 
@@ -521,7 +545,8 @@ mod layout_analyzer_tests {
 
     #[test]
     fn test_render_image_outside_figure_ignored() {
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
         // Note: NOT in a figure
 
@@ -538,7 +563,8 @@ mod layout_analyzer_tests {
 
     #[test]
     fn test_render_image_with_imagemask() {
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = get_analyzer(&mut arena);
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
         analyzer.begin_figure("Fig1", (10.0, 10.0, 100.0, 100.0), MATRIX_IDENTITY);
 
@@ -564,13 +590,15 @@ mod page_aggregator_tests {
 
     #[test]
     fn test_page_aggregator_creation() {
-        let aggregator = PDFPageAggregator::new(None, 1);
+        let mut arena = PageArena::new();
+        let aggregator = PDFPageAggregator::new(None, 1, &mut arena);
         assert!(aggregator.result().is_none());
     }
 
     #[test]
     fn test_page_aggregator_receives_layout() {
-        let mut aggregator = PDFPageAggregator::new(None, 1);
+        let mut arena = PageArena::new();
+        let mut aggregator = PDFPageAggregator::new(None, 1, &mut arena);
         let page = LTPage::new(1, (0.0, 0.0, 612.0, 792.0), 0.0);
         aggregator.receive_layout(page);
         assert!(aggregator.result().is_some());
@@ -578,7 +606,8 @@ mod page_aggregator_tests {
 
     #[test]
     fn test_page_aggregator_get_result() {
-        let mut aggregator = PDFPageAggregator::new(None, 1);
+        let mut arena = PageArena::new();
+        let mut aggregator = PDFPageAggregator::new(None, 1, &mut arena);
         let page = LTPage::new(1, (0.0, 0.0, 612.0, 792.0), 0.0);
         aggregator.receive_layout(page);
         let result = aggregator.get_result();
@@ -839,7 +868,8 @@ mod integration_tests {
 
     #[test]
     fn test_analyzer_page_lifecycle() {
-        let mut analyzer = PDFLayoutAnalyzer::new(Some(LAParams::default()), 1);
+        let mut arena = PageArena::new();
+        let mut analyzer = PDFLayoutAnalyzer::new(Some(LAParams::default()), 1, arena.context());
         analyzer.set_ctm(MATRIX_IDENTITY);
 
         // Simulate page processing
@@ -852,7 +882,8 @@ mod integration_tests {
 
     #[test]
     fn test_analyzer_figure_lifecycle() {
-        let mut analyzer = PDFLayoutAnalyzer::new(Some(LAParams::default()), 1);
+        let mut arena = PageArena::new();
+        let mut analyzer = PDFLayoutAnalyzer::new(Some(LAParams::default()), 1, arena.context());
         analyzer.set_ctm(MATRIX_IDENTITY);
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
 
@@ -881,7 +912,8 @@ mod marked_content_tests {
 
     #[test]
     fn test_page_aggregator_tracks_marked_content_stack() {
-        let mut aggregator = PDFPageAggregator::new(Some(LAParams::default()), 1);
+        let mut arena = PageArena::new();
+        let mut aggregator = PDFPageAggregator::new(Some(LAParams::default()), 1, &mut arena);
         aggregator.begin_page(1, (0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
 
         // Initially no marked content
@@ -905,7 +937,8 @@ mod marked_content_tests {
 
     #[test]
     fn test_page_aggregator_nested_marked_content() {
-        let mut aggregator = PDFPageAggregator::new(Some(LAParams::default()), 1);
+        let mut arena = PageArena::new();
+        let mut aggregator = PDFPageAggregator::new(Some(LAParams::default()), 1, &mut arena);
         aggregator.begin_page(1, (0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
 
         // Outer marked content with MCID 1
@@ -933,7 +966,8 @@ mod marked_content_tests {
 
     #[test]
     fn test_page_aggregator_marked_content_without_mcid() {
-        let mut aggregator = PDFPageAggregator::new(Some(LAParams::default()), 1);
+        let mut arena = PageArena::new();
+        let mut aggregator = PDFPageAggregator::new(Some(LAParams::default()), 1, &mut arena);
         aggregator.begin_page(1, (0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
 
         // Begin marked content without MCID (just tag name, no properties)
@@ -953,7 +987,8 @@ mod marked_content_tests {
         use bolivar_core::layout::LTChar;
 
         // Test directly with PDFLayoutAnalyzer to verify MCID tracking
-        let mut analyzer = PDFLayoutAnalyzer::new(Some(LAParams::default()), 1);
+        let mut arena = PageArena::new();
+        let mut analyzer = PDFLayoutAnalyzer::new(Some(LAParams::default()), 1, arena.context());
         analyzer.set_ctm(MATRIX_IDENTITY);
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
 
@@ -998,7 +1033,8 @@ mod marked_content_tests {
     fn test_render_string_passes_mcid_to_ltchar() {
         use bolivar_core::pdfcolor::PREDEFINED_COLORSPACE;
 
-        let mut aggregator = PDFPageAggregator::new(None, 1); // No laparams to skip analysis
+        let mut arena = PageArena::new();
+        let mut aggregator = PDFPageAggregator::new(None, 1, &mut arena); // No laparams to skip analysis
         aggregator.begin_page(1, (0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
 
         // Begin marked content with MCID
@@ -1053,6 +1089,7 @@ mod marked_content_tests {
 // ============================================================================
 
 mod pdf_path_tests {
+    use bolivar_core::arena::PageArena;
     use bolivar_core::high_level::extract_pages;
     use bolivar_core::layout::LTItem;
 
@@ -1179,18 +1216,14 @@ mod pdf_path_tests {
         use bolivar_core::pdfstate::PDFGraphicState;
         use bolivar_core::utils::MATRIX_IDENTITY;
 
-        fn get_analyzer() -> PDFLayoutAnalyzer {
-            let mut analyzer = PDFLayoutAnalyzer::new(None, 1);
-            analyzer.set_ctm(MATRIX_IDENTITY);
-            analyzer
-        }
-
         // Test "c" operator - cubic bezier
         let path = vec![
             ('m', vec![72.41, 433.89]),
             ('c', vec![72.41, 434.45, 71.96, 434.89, 71.41, 434.89]),
         ];
-        let mut analyzer = get_analyzer();
+        let mut arena = PageArena::new();
+        let mut analyzer = PDFLayoutAnalyzer::new(None, 1, arena.context());
+        analyzer.set_ctm(MATRIX_IDENTITY);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
 
@@ -1230,6 +1263,7 @@ mod pdf_path_tests {
 // ============================================================================
 
 mod color_space_tests {
+    use bolivar_core::arena::PageArena;
     use bolivar_core::high_level::extract_pages;
     use bolivar_core::layout::{LTChar, LTItem};
 
@@ -1331,7 +1365,8 @@ mod color_space_tests {
         use bolivar_core::pdfstate::PDFGraphicState;
         use bolivar_core::utils::MATRIX_IDENTITY;
 
-        let mut analyzer = PDFLayoutAnalyzer::new(None, 1);
+        let mut arena = PageArena::new();
+        let mut analyzer = PDFLayoutAnalyzer::new(None, 1, arena.context());
         analyzer.set_ctm(MATRIX_IDENTITY);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
 

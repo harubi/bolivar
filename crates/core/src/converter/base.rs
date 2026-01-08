@@ -15,6 +15,7 @@ use std::rc::Rc;
 use lasso::Spur;
 
 use crate::arena::PageArena;
+use crate::arena::page_arena::ArenaContext;
 use crate::arena::types::{
     ArenaChar, ArenaCurve, ArenaFigure, ArenaImage, ArenaItem, ArenaLine, ArenaPage, ArenaRect,
 };
@@ -26,6 +27,7 @@ use crate::pdffont::{CharDisp, PDFFont};
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
 use crate::pdftypes::PDFStream;
 use crate::utils::{Matrix, Point, Rect, apply_matrix_pt, apply_matrix_rect, mult_matrix};
+use bumpalo::collections::Vec as BumpVec;
 
 /// Path operation with operator and operands.
 pub type PathOp = (char, Vec<f64>);
@@ -52,7 +54,7 @@ impl LTContainer {
     }
 
     /// Return the number of items.
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.items.len()
     }
 
@@ -73,24 +75,24 @@ impl LTContainer {
 }
 
 #[derive(Debug, Clone)]
-struct ArenaContainer {
+struct ArenaContainer<'a> {
     bbox: Rect,
-    items: Vec<ArenaItem>,
+    items: BumpVec<'a, ArenaItem<'a>>,
 }
 
-impl ArenaContainer {
-    pub const fn new(bbox: Rect) -> Self {
+impl<'a> ArenaContainer<'a> {
+    pub fn new_in(arena: &ArenaContext<'a>, bbox: Rect) -> Self {
         Self {
             bbox,
-            items: Vec::new(),
+            items: BumpVec::new_in(arena.bump()),
         }
     }
 
-    pub fn add(&mut self, item: ArenaItem) {
+    pub fn add(&mut self, item: ArenaItem<'a>) {
         self.items.push(item);
     }
 
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.items.len()
     }
 
@@ -122,35 +124,35 @@ struct FigureState {
     matrix: Matrix,
 }
 
-pub struct PDFLayoutAnalyzer {
+pub struct PDFLayoutAnalyzer<'a> {
     /// Current page number (1-indexed)
     pageno: i32,
     /// Layout analysis parameters
     laparams: Option<LAParams>,
     /// Stack of layout containers (for nested figures)
-    stack: Vec<ArenaContainer>,
+    stack: Vec<ArenaContainer<'a>>,
     /// Stack of figure metadata (for nested figures)
     figure_stack: Vec<FigureState>,
     /// Current layout container
-    cur_item: Option<ArenaContainer>,
+    cur_item: Option<ArenaContainer<'a>>,
     /// Current transformation matrix
     pub(crate) ctm: Matrix,
     /// Optional image writer for exporting images
     image_writer: Option<Rc<RefCell<ImageWriter>>>,
     /// Page-scoped arena for typed layout items
-    arena: PageArena,
+    arena: ArenaContext<'a>,
     /// Stack of marked content states (for BMC/BDC/EMC operators)
     marked_content_stack: Vec<MarkedContentState>,
 }
 
-impl PDFLayoutAnalyzer {
+impl<'a> PDFLayoutAnalyzer<'a> {
     /// Create a new layout analyzer.
     ///
     /// # Arguments
     /// * `laparams` - Layout analysis parameters (None to disable analysis)
     /// * `pageno` - Starting page number (1-indexed)
-    pub fn new(laparams: Option<LAParams>, pageno: i32) -> Self {
-        Self::new_with_imagewriter(laparams, pageno, None)
+    pub fn new(laparams: Option<LAParams>, pageno: i32, arena: ArenaContext<'a>) -> Self {
+        Self::new_with_imagewriter(laparams, pageno, None, arena)
     }
 
     /// Create a new layout analyzer with an optional image writer.
@@ -158,6 +160,7 @@ impl PDFLayoutAnalyzer {
         laparams: Option<LAParams>,
         pageno: i32,
         image_writer: Option<Rc<RefCell<ImageWriter>>>,
+        arena: ArenaContext<'a>,
     ) -> Self {
         Self {
             pageno,
@@ -167,7 +170,7 @@ impl PDFLayoutAnalyzer {
             cur_item: None,
             ctm: (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
             image_writer,
-            arena: PageArena::new(),
+            arena,
             marked_content_stack: Vec::new(),
         }
     }
@@ -184,7 +187,7 @@ impl PDFLayoutAnalyzer {
 
     /// Set the current layout container bbox (for testing).
     pub fn set_cur_item(&mut self, bbox: Rect) {
-        self.cur_item = Some(ArenaContainer::new(bbox));
+        self.cur_item = Some(ArenaContainer::new_in(&self.arena, bbox));
     }
 
     /// Get the number of items in current container.
@@ -268,9 +271,8 @@ impl PDFLayoutAnalyzer {
     pub fn begin_page(&mut self, mediabox: Rect, ctm: Matrix) {
         let (x0, y0, x1, y1) = apply_matrix_rect(ctm, mediabox);
         let bbox = (0.0, 0.0, (x0 - x1).abs(), (y0 - y1).abs());
-        self.arena.reset();
         self.marked_content_stack.clear();
-        self.cur_item = Some(ArenaContainer::new(bbox));
+        self.cur_item = Some(ArenaContainer::new_in(&self.arena, bbox));
     }
 
     /// End processing a page and return the analyzed page.
@@ -306,7 +308,7 @@ impl PDFLayoutAnalyzer {
             bbox,
             matrix: combined_matrix,
         });
-        let fig_container = ArenaContainer::new(fig_bbox);
+        let fig_container = ArenaContainer::new_in(&self.arena, fig_bbox);
         self.cur_item = Some(fig_container);
     }
 
@@ -696,8 +698,10 @@ impl PDFLayoutAnalyzer {
         let colorspace = self.get_image_colorspace(stream);
 
         let name_key = self.arena.intern(name);
-        let colorspace_keys: Vec<Spur> =
-            colorspace.iter().map(|cs| self.arena.intern(cs)).collect();
+        let mut colorspace_keys = BumpVec::new_in(self.arena.bump());
+        for cs in &colorspace {
+            colorspace_keys.push(self.arena.intern(cs));
+        }
         let item = ArenaImage {
             name: name_key,
             bbox,
@@ -839,16 +843,16 @@ fn approx_eq(a: f64, b: f64) -> bool {
 ///
 /// Unlike other converters that output immediately, this aggregator stores
 /// the most recent page for retrieval via get_result().
-pub struct PDFPageAggregator {
+pub struct PDFPageAggregator<'a> {
     #[allow(dead_code)]
-    analyzer: PDFLayoutAnalyzer,
+    analyzer: PDFLayoutAnalyzer<'a>,
     result: Option<LTPage>,
 }
 
-impl PDFPageAggregator {
+impl<'a> PDFPageAggregator<'a> {
     /// Create a new page aggregator.
-    pub fn new(laparams: Option<LAParams>, pageno: i32) -> Self {
-        Self::new_with_imagewriter(laparams, pageno, None)
+    pub fn new(laparams: Option<LAParams>, pageno: i32, arena: &'a mut PageArena) -> Self {
+        Self::new_with_imagewriter(laparams, pageno, None, arena)
     }
 
     /// Create a new page aggregator with an optional image writer.
@@ -856,9 +860,15 @@ impl PDFPageAggregator {
         laparams: Option<LAParams>,
         pageno: i32,
         image_writer: Option<Rc<RefCell<ImageWriter>>>,
+        arena: &'a mut PageArena,
     ) -> Self {
         Self {
-            analyzer: PDFLayoutAnalyzer::new_with_imagewriter(laparams, pageno, image_writer),
+            analyzer: PDFLayoutAnalyzer::new_with_imagewriter(
+                laparams,
+                pageno,
+                image_writer,
+                arena.context(),
+            ),
             result: None,
         }
     }
@@ -889,7 +899,7 @@ impl PDFPageAggregator {
     }
 }
 
-impl PDFDevice for PDFPageAggregator {
+impl<'a> PDFDevice for PDFPageAggregator<'a> {
     fn set_ctm(&mut self, ctm: Matrix) {
         self.analyzer.set_ctm(ctm);
     }

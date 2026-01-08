@@ -4,6 +4,7 @@ use bolivar_core::arena::types::{
 };
 use bolivar_core::layout::LTItem;
 use bolivar_core::utils::MATRIX_IDENTITY;
+use bumpalo::collections::Vec as BumpVec;
 
 #[test]
 fn test_page_arena_intern_and_reset() {
@@ -108,6 +109,38 @@ fn test_arena_page_new_in_uses_bump_vec() {
 }
 
 #[test]
+fn test_arena_figure_new_in_uses_bump_vec() {
+    let mut arena = PageArena::new();
+    let fig_name = arena.intern("Fig1");
+    let ncolor = arena.intern_color(&[0.0]);
+    let scolor = arena.intern_color(&[0.0]);
+    let ch = ArenaChar {
+        bbox: (1.0, 1.0, 2.0, 2.0),
+        text: arena.intern("A"),
+        fontname: arena.intern("F1"),
+        size: 12.0,
+        upright: true,
+        adv: 1.0,
+        matrix: MATRIX_IDENTITY,
+        mcid: None,
+        tag: None,
+        ncs_name: None,
+        scs_name: None,
+        ncolor,
+        scolor,
+    };
+    let mut fig = bolivar_core::arena::types::ArenaFigure::new_in(
+        &arena,
+        fig_name,
+        (0.0, 0.0, 10.0, 10.0),
+        MATRIX_IDENTITY,
+    );
+    fig.add(ArenaItem::Char(ch));
+    let ltfig = fig.materialize(&arena);
+    assert_eq!(ltfig.iter().count(), 1);
+}
+
+#[test]
 fn test_materialize_line_rect_curve() {
     let mut arena = PageArena::new();
     let color = arena.intern_color(&[0.0]);
@@ -186,16 +219,18 @@ fn test_materialize_image_and_figure() {
         name: fig_name,
         bbox: (0.0, 0.0, 10.0, 10.0),
         matrix: MATRIX_IDENTITY,
-        items: vec![ArenaItem::Char(ch)],
+        items: BumpVec::from_iter_in([ArenaItem::Char(ch)], arena.bump()),
     };
     let mut page = ArenaPage::new_in(&arena, 1, (0.0, 0.0, 100.0, 100.0));
+    let mut colorspace = BumpVec::new_in(arena.bump());
+    colorspace.push(cs);
     page.add(ArenaItem::Image(bolivar_core::arena::types::ArenaImage {
         name: img_name,
         bbox: (0.0, 0.0, 10.0, 10.0),
         srcsize: (Some(10), Some(10)),
         imagemask: false,
         bits: 8,
-        colorspace: vec![cs],
+        colorspace,
     }));
     page.add(ArenaItem::Figure(fig));
 
