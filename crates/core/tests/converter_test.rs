@@ -21,6 +21,7 @@ use std::io::Cursor;
 
 mod layout_analyzer_tests {
     use super::*;
+    use bolivar_core::interp::PDFDevice;
 
     fn get_analyzer() -> PDFLayoutAnalyzer {
         let mut analyzer = PDFLayoutAnalyzer::new(None, 1);
@@ -36,6 +37,15 @@ mod layout_analyzer_tests {
         analyzer.paint_path(&PDFGraphicState::default(), false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
         assert!(analyzer.all_cur_items_are_lines());
+    }
+
+    #[test]
+    fn test_aggregator_materializes_page() {
+        let mut aggregator = PDFPageAggregator::new(None, 1);
+        aggregator.begin_page(1, (0.0, 0.0, 100.0, 100.0), MATRIX_IDENTITY);
+        aggregator.end_page(1);
+        let page = aggregator.get_result();
+        assert_eq!(page.pageid, 1);
     }
 
     #[test]
