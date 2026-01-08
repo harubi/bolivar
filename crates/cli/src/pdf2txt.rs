@@ -5,20 +5,18 @@
 //!
 //! Port of pdfminer.six tools/pdf2txt.py
 
+use bolivar_core::api::stream::extract_tables_stream_from_doc;
 use bolivar_core::arena::PageArena;
 use bolivar_core::converter::{
     HOCRConverter, HTMLConverter, PDFPageAggregator, TextConverter, XMLConverter,
 };
 use bolivar_core::error::{PdfError, Result};
-use bolivar_core::high_level::{
-    ExtractOptions, extract_pages_with_document, extract_tables_with_document,
-};
+use bolivar_core::high_level::{ExtractOptions, extract_pages_with_document};
 use bolivar_core::image::ImageWriter;
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use bolivar_core::pdfpage::PDFPage;
-use bolivar_core::table::TableSettings;
 use clap::{ArgAction, Parser, ValueEnum};
 use memmap2::Mmap;
 use std::cell::RefCell;
@@ -26,6 +24,7 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// Output type for the extracted content.
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
@@ -343,18 +342,17 @@ fn process_file<W: Write>(
     };
 
     // Create PDFDocument from mmap
-    let doc = PDFDocument::new_from_mmap(mmap, &options.password)?;
+    let doc = Arc::new(PDFDocument::new_from_mmap(mmap, &options.password)?);
 
     // Handle table extraction mode
     if args.extract_tables {
-        let settings = TableSettings::default();
-        let mut all_pages_data: Vec<serde_json::Value> = Vec::new();
+        let stream = extract_tables_stream_from_doc(Arc::clone(&doc), options)?;
 
-        let tables_by_page = extract_tables_with_document(&doc, options, &settings)?;
-        for (page_idx, tables) in tables_by_page.into_iter().enumerate() {
-            let page_num = page_idx + 1;
-            match args.table_format {
-                TableFormat::Csv => {
+        match args.table_format {
+            TableFormat::Csv => {
+                for item in stream {
+                    let (page_idx, tables) = item?;
+                    let page_num = page_idx + 1;
                     for (table_idx, table) in tables.iter().enumerate() {
                         writeln!(writer, "--- Page {} Table {} ---", page_num, table_idx + 1)?;
                         for row in table {
@@ -367,7 +365,15 @@ fn process_file<W: Write>(
                         writeln!(writer)?;
                     }
                 }
-                TableFormat::Json => {
+            }
+            TableFormat::Json => {
+                writeln!(writer, "{{")?;
+                writeln!(writer, "  \"pages\": [")?;
+
+                let mut iter = stream.peekable();
+                while let Some(item) = iter.next() {
+                    let (page_idx, tables) = item?;
+                    let page_num = page_idx + 1;
                     let page_tables: Vec<serde_json::Value> = tables
                         .iter()
                         .map(|table| {
@@ -387,20 +393,27 @@ fn process_file<W: Write>(
                             serde_json::json!({ "rows": rows })
                         })
                         .collect();
-                    all_pages_data.push(serde_json::json!({
+                    let page_json = serde_json::json!({
                         "page": page_num,
                         "tables": page_tables
-                    }));
-                }
-            }
-        }
+                    });
 
-        // For JSON, write the complete output at the end
-        if matches!(args.table_format, TableFormat::Json) {
-            let output = serde_json::json!({ "pages": all_pages_data });
-            let json_str =
-                serde_json::to_string_pretty(&output).expect("Failed to serialize tables to JSON");
-            writeln!(writer, "{json_str}")?;
+                    let trailing_comma = iter.peek().is_some();
+                    let page_json_str =
+                        serde_json::to_string_pretty(&page_json).expect("json serialize");
+                    let lines: Vec<&str> = page_json_str.lines().collect();
+                    for (idx, line) in lines.iter().enumerate() {
+                        if idx + 1 == lines.len() && trailing_comma {
+                            writeln!(writer, "    {line},")?;
+                        } else {
+                            writeln!(writer, "    {line}")?;
+                        }
+                    }
+                }
+
+                writeln!(writer, "  ]")?;
+                writeln!(writer, "}}")?;
+            }
         }
 
         return Ok(());
