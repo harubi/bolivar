@@ -35,3 +35,13 @@ def test_interpreter_produces_layout():
     interp = PDFPageInterpreter(rsrc, device)
     interp.process_page(page)
     assert device.get_result() is not None
+
+
+def test_interpreter_does_not_cache_pages():
+    doc, page = _load_first_page()
+    rsrc = PDFResourceManager()
+    device = PDFPageAggregator(rsrc)
+    interp = PDFPageInterpreter(rsrc, device)
+    assert not hasattr(doc, "_layout_cache")
+    interp.process_page(page)
+    assert not hasattr(doc, "_layout_cache")

@@ -36,7 +36,6 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bolivar_core::high_level::LayoutCache;
     use pyo3::types::PyBytes;
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -172,41 +171,5 @@ mod tests {
         });
 
         let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn test_layout_cache_lock_released_before_table_extract() {
-        use bolivar_core::pdfdocument::PDFDocument;
-
-        let pdf_data = build_minimal_pdf_with_pages(1);
-        let doc = PDFDocument::new(&pdf_data, "").unwrap();
-        let doc = PyPDFDocument {
-            inner: doc,
-            resolved_cache: Mutex::new(HashMap::new()),
-            layout_cache: Mutex::new(LayoutCache::new()),
-        };
-
-        reset_layout_cache_release_flag();
-
-        Python::with_gil(|py| {
-            let result = extract_tables_from_page(
-                py,
-                &doc,
-                0,
-                (0.0, 0.0, 200.0, 200.0),
-                (0.0, 0.0, 200.0, 200.0),
-                0.0,
-                None,
-                None,
-                None,
-                false,
-            );
-            assert!(result.is_ok());
-        });
-
-        assert!(
-            layout_cache_release_hit(),
-            "expected layout cache to be released before table extraction"
-        );
     }
 }

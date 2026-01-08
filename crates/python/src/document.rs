@@ -2,7 +2,6 @@
 //!
 //! Provides PyPDFDocument, PyPDFPage, and parser classes with lazy page loading.
 
-use bolivar_core::high_level::LayoutCache;
 use bolivar_core::parser::{
     PDFParser as CorePDFParser, PSBaseParser as CorePSBaseParser,
     PSStackParser as CorePSStackParser,
@@ -493,8 +492,6 @@ pub struct PyPDFDocument {
     pub inner: PDFDocument,
     /// Cache resolved objects for faster PDFObjRef resolution
     pub resolved_cache: Mutex<HashMap<u32, Py<PyAny>>>,
-    /// Cache extracted layout pages for reuse across table extraction calls
-    pub layout_cache: Mutex<LayoutCache>,
 }
 
 #[pymethods]
@@ -521,7 +518,6 @@ impl PyPDFDocument {
         Ok(Self {
             inner: doc,
             resolved_cache: Mutex::new(HashMap::new()),
-            layout_cache: Mutex::new(LayoutCache::new()),
         })
     }
 
@@ -548,7 +544,6 @@ impl PyPDFDocument {
         Ok(Self {
             inner: doc,
             resolved_cache: Mutex::new(HashMap::new()),
-            layout_cache: Mutex::new(LayoutCache::new()),
         })
     }
 

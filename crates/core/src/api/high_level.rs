@@ -89,32 +89,6 @@ pub type Row = Vec<Cell>;
 pub type Table = Vec<Row>;
 pub type PageTables = Vec<Table>;
 
-/// Cache for layout pages extracted from a document.
-#[derive(Debug, Default)]
-pub struct LayoutCache {
-    options: Option<ExtractOptions>,
-    pages: Option<Vec<LTPage>>,
-}
-
-impl LayoutCache {
-    pub fn new() -> Self {
-        Self {
-            options: None,
-            pages: None,
-        }
-    }
-
-    pub fn get_or_init(&mut self, doc: &PDFDocument, options: ExtractOptions) -> Result<&[LTPage]> {
-        let needs_refresh = self.options.as_ref().map_or(true, |o| o != &options);
-        if needs_refresh {
-            let pages = extract_pages_with_document(doc, options.clone())?;
-            self.pages = Some(pages);
-            self.options = Some(options);
-        }
-        Ok(self.pages.as_ref().unwrap())
-    }
-}
-
 impl Default for ExtractOptions {
     fn default() -> Self {
         Self {
@@ -704,24 +678,6 @@ mod tests {
 
         assert_eq!(pages.len(), 2);
         assert_eq!(crate::api::stream::take_stream_usage(), 1);
-    }
-
-    #[test]
-    fn test_layout_cache_reuses_pages() {
-        let _guard = thread_log_guard();
-        let pdf_data = build_minimal_pdf_with_pages(3);
-        let doc = PDFDocument::new(&pdf_data, "").unwrap();
-
-        super::clear_thread_log();
-        let mut cache = super::LayoutCache::new();
-        let options = ExtractOptions::default();
-
-        let _ = cache.get_or_init(&doc, options.clone()).unwrap();
-        assert!(super::take_thread_log_len() > 0);
-
-        super::clear_thread_log();
-        let _ = cache.get_or_init(&doc, options).unwrap();
-        assert_eq!(super::take_thread_log_len(), 0);
     }
 
     #[test]

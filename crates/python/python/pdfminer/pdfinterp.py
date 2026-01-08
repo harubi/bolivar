@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Tuple, Union
 from bolivar import (
     LAParams as _RustLAParams,
     process_page as _rust_process_page,
-    process_pages as _rust_process_pages,
 )
 from bolivar._bolivar import PDFResourceManager as _RustPDFResourceManager
 
@@ -63,43 +62,7 @@ class PDFPageInterpreter:
                 # Already a Rust LAParams or compatible
                 rust_laparams = laparams
 
-        # Prefer parallel precomputation and cache per LAParams.
-        cache = getattr(page.doc, "_layout_cache", None)
-        if cache is None:
-            cache = {}
-            page.doc._layout_cache = cache
-
-        key = None
-        if laparams is None:
-            key = ("default",)
-        else:
-            try:
-                key = (
-                    laparams.line_overlap,
-                    laparams.char_margin,
-                    laparams.line_margin,
-                    laparams.word_margin,
-                    laparams.boxes_flow,
-                    laparams.detect_vertical,
-                    laparams.all_texts,
-                )
-            except Exception:
-                key = ("default",)
-
-        cached_pages = cache.get(key)
-        if cached_pages is None:
-            cached_pages = _rust_process_pages(rust_doc, rust_laparams)
-            cache[key] = cached_pages
-
-        page_index = getattr(page, "_page_index", None)
-        if page_index is None:
-            page_index = page.pageid - 1
-
-        if 0 <= page_index < len(cached_pages):
-            ltpage = cached_pages[page_index]
-        else:
-            # Fallback: process single page
-            ltpage = _rust_process_page(rust_doc, rust_page, rust_laparams)
+        ltpage = _rust_process_page(rust_doc, rust_page, rust_laparams)
 
         # Send the result to the device
         self.device._receive_layout(ltpage)

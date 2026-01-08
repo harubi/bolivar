@@ -23,27 +23,12 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PySequence};
 use std::fs::File;
-#[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::convert::py_text_to_string;
 use crate::document::{PdfInput, PyPDFDocument, PyPDFPage, pdf_input_from_py};
 use crate::layout::{PyLTItem, PyLTPage, ltitem_to_py, ltpage_to_py};
 use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings, parse_text_settings};
 use crate::stream::{async_runtime_poc, extract_pages_async};
-
-#[cfg(test)]
-pub static LAYOUT_CACHE_RELEASED: AtomicBool = AtomicBool::new(false);
-
-#[cfg(test)]
-pub fn reset_layout_cache_release_flag() {
-    LAYOUT_CACHE_RELEASED.store(false, Ordering::SeqCst);
-}
-
-#[cfg(test)]
-pub fn layout_cache_release_hit() -> bool {
-    LAYOUT_CACHE_RELEASED.load(Ordering::SeqCst)
-}
 
 /// Convert page objects (chars, lines, rects, curves) to CharObj and EdgeObj.
 pub fn page_objects_to_chars_edges(
