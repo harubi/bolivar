@@ -145,6 +145,11 @@ impl PDFDocument {
         Ok(doc)
     }
 
+    /// Returns the raw PDF bytes.
+    pub fn bytes(&self) -> &[u8] {
+        self.data.as_slice()
+    }
+
     /// Parse the PDF document structure.
     fn parse(&mut self, password: &str) -> Result<()> {
         // Find startxref

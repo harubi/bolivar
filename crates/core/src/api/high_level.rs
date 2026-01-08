@@ -10,6 +10,7 @@ use std::io::Write;
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 
+use crate::api::stream::{PageStream, extract_pages_stream_from_doc};
 use crate::arena::PageArena;
 use crate::converter::{PDFPageAggregator, TextConverter};
 use crate::error::{PdfError, Result};
@@ -19,7 +20,7 @@ use crate::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use crate::pdfpage::PDFPage;
 use crate::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone, Copy)]
 struct ThreadRecord {
@@ -56,7 +57,7 @@ pub fn take_thread_log_len() -> usize {
     take_thread_log().len()
 }
 
-fn default_thread_count() -> usize {
+pub(crate) fn default_thread_count() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
@@ -295,7 +296,7 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
 ///
 /// Uses PDFPageInterpreter to execute the page's content stream,
 /// which populates the device (aggregator) with layout items.
-fn process_page(
+pub(crate) fn process_page(
     page: &PDFPage,
     aggregator: &mut PDFPageAggregator<'_>,
     rsrcmgr: &mut PDFResourceManager,
@@ -355,6 +356,26 @@ impl PageIterator {
     }
 }
 
+/// Extract and stream LTPage objects from PDF data in order.
+///
+/// Returns a PageStream that yields ordered LTPage results.
+pub fn extract_pages_stream(
+    pdf_data: &[u8],
+    options: Option<ExtractOptions>,
+) -> Result<PageStream> {
+    let mut options = options.unwrap_or_default();
+    if options.laparams.is_none() {
+        options.laparams = Some(LAParams::default());
+    }
+
+    if pdf_data.len() < 8 || !pdf_data.starts_with(b"%PDF-") {
+        return Err(PdfError::SyntaxError("Invalid PDF header".to_string()));
+    }
+
+    let doc = PDFDocument::new(pdf_data, &options.password)?;
+    extract_pages_stream_from_doc(Arc::new(doc), options)
+}
+
 /// Extract and yield LTPage objects from PDF data.
 ///
 /// Returns an iterator over analyzed pages.
@@ -388,10 +409,8 @@ pub fn extract_pages(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result
         return Err(PdfError::SyntaxError("Invalid PDF header".to_string()));
     }
 
-    // Parse PDF document
-    let doc = PDFDocument::new(pdf_data, &options.password)?;
-
-    let pages = extract_pages_from_doc(&doc, &options)?;
+    let stream = extract_pages_stream(pdf_data, Some(options))?;
+    let pages: Vec<Result<LTPage>> = stream.collect();
 
     Ok(PageIterator {
         pages: pages.into_iter(),
@@ -403,7 +422,7 @@ pub fn extract_pages_with_document(
     doc: &PDFDocument,
     options: ExtractOptions,
 ) -> Result<Vec<LTPage>> {
-    extract_pages_from_doc(doc, &options)?.into_iter().collect()
+    extract_pages_stream(doc.bytes(), Some(options))?.collect()
 }
 
 /// Extract tables from an already-parsed PDFDocument.
@@ -555,70 +574,6 @@ pub fn extract_tables_for_pages(
     Ok(ordered.into_iter().map(|(_, tables)| tables).collect())
 }
 
-fn extract_pages_from_doc(
-    doc: &PDFDocument,
-    options: &ExtractOptions,
-) -> Result<Vec<Result<LTPage>>> {
-    // Use LAParams as provided (None disables layout analysis).
-    let laparams = options.laparams.clone();
-
-    // Collect pages into a vector
-    // This is necessary because PDFPage borrows from PDFDocument
-    let mut pages: Vec<Result<LTPage>> = Vec::new();
-    let mut page_count = 0;
-
-    let thread_count = default_thread_count();
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(thread_count)
-        .build()
-        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
-
-    let mut pending: Vec<(usize, PDFPage)> = Vec::new();
-    let mut errors: Vec<(usize, Result<LTPage>)> = Vec::new();
-
-    for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-        if let Some(ref nums) = options.page_numbers
-            && !nums.contains(&page_idx)
-        {
-            continue;
-        }
-
-        if options.maxpages > 0 && page_count >= options.maxpages {
-            break;
-        }
-
-        match page_result {
-            Ok(page) => {
-                pending.push((page_idx, page));
-                page_count += 1;
-            }
-            Err(e) => {
-                errors.push((page_idx, Err(e)));
-            }
-        }
-    }
-
-    let mut processed: Vec<(usize, Result<LTPage>)> = pool.install(|| {
-        pending
-            .into_par_iter()
-            .map_init(PageArena::new, |arena, (page_idx, page)| {
-                arena.reset();
-                let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
-                let mut aggregator =
-                    PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
-                let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc);
-                (page_idx, ltpage)
-            })
-            .collect()
-    });
-
-    processed.extend(errors);
-    processed.sort_by_key(|(page_idx, _)| *page_idx);
-    pages.extend(processed.into_iter().map(|(_, result)| result));
-
-    Ok(pages)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -734,6 +689,21 @@ mod tests {
 
         let unique: HashSet<_> = records.iter().map(|record| record.id).collect();
         assert!(!unique.is_empty(), "expected at least one recorded thread");
+    }
+
+    #[test]
+    fn test_extract_pages_uses_stream_path() {
+        let pdf_data = build_minimal_pdf_with_pages(2);
+        crate::api::stream::take_stream_usage();
+
+        let options = ExtractOptions::default();
+        let pages: Vec<_> = extract_pages(&pdf_data, Some(options))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(pages.len(), 2);
+        assert_eq!(crate::api::stream::take_stream_usage(), 1);
     }
 
     #[test]
