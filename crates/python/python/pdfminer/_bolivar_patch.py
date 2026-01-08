@@ -86,13 +86,16 @@ def _apply_patch(module) -> bool:
                     force_crop=force_crop,
                 )
 
-            geoms = tuple(_build_geometries(pdf, page_index, self))
-            tables_by_page = extract_tables_from_document(
+            force_crop = not getattr(self, "is_original", True)
+            return extract_tables_from_page(
                 pdf.doc._rust_doc,
-                geoms,
+                page_index,
+                self.bbox,
+                self.mediabox,
+                self.initial_doctop,
                 table_settings,
+                force_crop=force_crop,
             )
-            return tables_by_page[page_index]
 
         def _table_cell_count(table):
             return sum(len(row) for row in table)
@@ -211,6 +214,7 @@ def _apply_patch(module) -> bool:
                     page._layout = LTPage(ltpage)
                     yield page
                     idx += 1
+
             return gen()
 
     # Always import to ensure module is fully initialized (not just in sys.modules)
@@ -240,6 +244,7 @@ def _apply_patch(module) -> bool:
             pdf_cls.pages = property(_bolivar_pages)
 
         if not hasattr(pdf_cls, "__aenter__"):
+
             async def _aenter(self):
                 return self
 

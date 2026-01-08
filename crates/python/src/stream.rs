@@ -3,7 +3,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use bolivar_core::api::stream::{DEFAULT_STREAM_BUFFER_CAPACITY, extract_pages_stream_from_doc as core_extract_pages_stream_from_doc};
+use bolivar_core::api::stream::{
+    DEFAULT_STREAM_BUFFER_CAPACITY,
+    extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
+};
 use bolivar_core::error::Result as CoreResult;
 use bolivar_core::high_level::{ExtractOptions, extract_pages_stream as core_extract_pages_stream};
 use bolivar_core::layout::LTPage;

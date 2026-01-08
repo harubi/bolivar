@@ -116,6 +116,24 @@ def test_extract_tables_does_not_instantiate_all_pages(monkeypatch):
         assert calls["count"] == 0
 
 
+def test_extract_tables_avoids_document_wide_extraction(monkeypatch):
+    import bolivar
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("doc_extraction_called")
+
+    monkeypatch.setattr(bolivar, "extract_tables_from_document", _boom)
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        page0 = pdf.pages[0]
+        _ = page0.extract_tables()
+
+
 def test_extract_tables_rejects_threads_kw(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
