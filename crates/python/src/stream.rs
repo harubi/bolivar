@@ -44,7 +44,7 @@ impl AsyncPageStream {
             let mut guard = rx.lock().await;
             match guard.recv().await {
                 Some(Ok(page)) => Python::attach(|py| {
-                    let py_page = Py::new(py, ltpage_to_py(&page))?;
+                    let py_page = Py::new(py, ltpage_to_py(page))?;
                     Ok(py_page.into_any())
                 }),
                 Some(Err(err)) => {

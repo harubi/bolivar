@@ -15,7 +15,7 @@ use crate::arena::PageArena;
 use crate::converter::{PDFPageAggregator, TextConverter};
 use crate::error::{PdfError, Result};
 use crate::layout::{LAParams, LTPage};
-use crate::pdfdocument::PDFDocument;
+use crate::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
 use crate::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use crate::pdfpage::PDFPage;
 use crate::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
@@ -61,6 +61,10 @@ pub(crate) fn default_thread_count() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
+}
+
+fn cache_capacity(caching: bool) -> usize {
+    if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
 }
 
 /// Options for text extraction.
@@ -122,7 +126,8 @@ impl Default for ExtractOptions {
 /// ```
 pub fn extract_text(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result<String> {
     let options = options.unwrap_or_default();
-    let doc = PDFDocument::new(pdf_data, &options.password)?;
+    let doc =
+        PDFDocument::new_with_cache(pdf_data, &options.password, cache_capacity(options.caching))?;
     extract_text_with_document(&doc, options)
 }
 
@@ -200,7 +205,7 @@ fn extract_text_to_fp_inner<W: Write>(
     }
 
     // Parse PDF document
-    let doc = PDFDocument::new(pdf_data, password)?;
+    let doc = PDFDocument::new_with_cache(pdf_data, password, cache_capacity(caching))?;
     extract_text_to_fp_from_doc_inner(&doc, writer, page_numbers, maxpages, caching, laparams)
 }
 
@@ -346,7 +351,8 @@ pub fn extract_pages_stream(
         return Err(PdfError::SyntaxError("Invalid PDF header".to_string()));
     }
 
-    let doc = PDFDocument::new(pdf_data, &options.password)?;
+    let doc =
+        PDFDocument::new_with_cache(pdf_data, &options.password, cache_capacity(options.caching))?;
     extract_pages_stream_from_doc(Arc::new(doc), options)
 }
 

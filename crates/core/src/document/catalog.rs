@@ -14,17 +14,103 @@ use crate::error::{PdfError, Result};
 use crate::model::objects::PDFObject;
 use crate::parser::parser::PDFParser;
 use bytes::Bytes;
+use indexmap::IndexMap;
 use memmap2::Mmap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::simd::prelude::*;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 const PNG_SIMD_LANES: usize = 32;
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
 const PNG_SIMD_LANES: usize = 16;
+
+pub const DEFAULT_CACHE_CAPACITY: usize = 1024;
+pub const DEFAULT_PAGE_CACHE_CAPACITY: usize = 64;
+
+struct ObjectCache {
+    capacity: usize,
+    map: IndexMap<u32, Arc<PDFObject>>,
+}
+
+struct PageCache {
+    capacity: usize,
+    map: IndexMap<usize, Arc<super::page::PDFPage>>,
+}
+
+impl PageCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            map: IndexMap::new(),
+        }
+    }
+
+    fn get(&mut self, index: usize) -> Option<Arc<super::page::PDFPage>> {
+        if self.capacity == 0 {
+            return None;
+        }
+        let pos = self.map.get_index_of(&index)?;
+        let value = Arc::clone(self.map.get_index(pos)?.1);
+        if pos + 1 != self.map.len() {
+            self.map.move_index(pos, self.map.len() - 1);
+        }
+        Some(value)
+    }
+
+    fn insert(&mut self, index: usize, page: Arc<super::page::PDFPage>) {
+        if self.capacity == 0 {
+            return;
+        }
+        if self.map.contains_key(&index) {
+            self.map.shift_remove(&index);
+        }
+        self.map.insert(index, page);
+        if self.map.len() > self.capacity {
+            self.map.shift_remove_index(0);
+        }
+    }
+}
+impl ObjectCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            map: IndexMap::new(),
+        }
+    }
+
+    fn get(&mut self, objid: u32) -> Option<Arc<PDFObject>> {
+        if self.capacity == 0 {
+            return None;
+        }
+        let index = self.map.get_index_of(&objid)?;
+        let value = Arc::clone(self.map.get_index(index)?.1);
+        if index + 1 != self.map.len() {
+            self.map.move_index(index, self.map.len() - 1);
+        }
+        Some(value)
+    }
+
+    fn insert(&mut self, objid: u32, value: Arc<PDFObject>) {
+        if self.capacity == 0 {
+            return;
+        }
+        if self.map.contains_key(&objid) {
+            self.map.shift_remove(&objid);
+        }
+        self.map.insert(objid, value);
+        if self.map.len() > self.capacity {
+            self.map.shift_remove_index(0);
+        }
+    }
+
+    #[allow(dead_code)]
+    fn clear(&mut self) {
+        self.map.clear();
+    }
+}
 
 /// XRef entry - location of an object in the PDF file.
 #[derive(Debug, Clone)]
@@ -95,64 +181,105 @@ pub struct PDFDocument {
     xrefs: Vec<XRef>,
     catalog: HashMap<String, PDFObject>,
     info: Vec<HashMap<String, PDFObject>>,
-    cache: RwLock<HashMap<u32, Arc<PDFObject>>>,
+    cache: Mutex<ObjectCache>,
+    page_cache: Mutex<PageCache>,
     objstm_index: RwLock<Option<HashMap<u32, (u32, usize)>>>,
     security_handler: Option<Box<dyn PDFSecurityHandler + Send + Sync>>,
     page_index: OnceLock<PageIndex>,
 }
 
 impl PDFDocument {
-    /// Create a new PDFDocument from raw PDF data.
-    pub fn new<D: AsRef<[u8]>>(data: D, password: &str) -> Result<Self> {
+    fn new_with_cache_inner(data: PdfBytes, password: &str, cache_capacity: usize) -> Result<Self> {
         let mut doc = Self {
-            data: PdfBytes::Owned(Bytes::copy_from_slice(data.as_ref())),
+            data,
             xrefs: Vec::new(),
             catalog: HashMap::new(),
             info: Vec::new(),
-            cache: RwLock::new(HashMap::new()),
+            cache: Mutex::new(ObjectCache::new(cache_capacity)),
+            page_cache: Mutex::new(PageCache::new(DEFAULT_PAGE_CACHE_CAPACITY)),
             objstm_index: RwLock::new(None),
             security_handler: None,
             page_index: OnceLock::new(),
         };
         doc.parse(password)?;
         Ok(doc)
+    }
+
+    /// Create a new PDFDocument from raw PDF data.
+    pub fn new<D: AsRef<[u8]>>(data: D, password: &str) -> Result<Self> {
+        Self::new_with_cache(data, password, DEFAULT_CACHE_CAPACITY)
+    }
+
+    /// Create a new PDFDocument with an explicit object cache capacity.
+    pub fn new_with_cache<D: AsRef<[u8]>>(
+        data: D,
+        password: &str,
+        cache_capacity: usize,
+    ) -> Result<Self> {
+        Self::new_with_cache_inner(
+            PdfBytes::Owned(Bytes::copy_from_slice(data.as_ref())),
+            password,
+            cache_capacity,
+        )
     }
 
     /// Create a new PDFDocument from a memory-mapped PDF.
     pub fn new_from_mmap(mmap: Mmap, password: &str) -> Result<Self> {
-        let mut doc = Self {
-            data: PdfBytes::Shared(Bytes::from_owner(mmap)),
-            xrefs: Vec::new(),
-            catalog: HashMap::new(),
-            info: Vec::new(),
-            cache: RwLock::new(HashMap::new()),
-            objstm_index: RwLock::new(None),
-            security_handler: None,
-            page_index: OnceLock::new(),
-        };
-        doc.parse(password)?;
-        Ok(doc)
+        Self::new_from_mmap_with_cache(mmap, password, DEFAULT_CACHE_CAPACITY)
+    }
+
+    /// Create a new PDFDocument from a memory-mapped PDF with an explicit cache capacity.
+    pub fn new_from_mmap_with_cache(
+        mmap: Mmap,
+        password: &str,
+        cache_capacity: usize,
+    ) -> Result<Self> {
+        Self::new_with_cache_inner(
+            PdfBytes::Shared(Bytes::from_owner(mmap)),
+            password,
+            cache_capacity,
+        )
     }
 
     /// Create a new PDFDocument from shared bytes (zero-copy).
     pub fn new_from_bytes(data: Bytes, password: &str) -> Result<Self> {
-        let mut doc = Self {
-            data: PdfBytes::Shared(data),
-            xrefs: Vec::new(),
-            catalog: HashMap::new(),
-            info: Vec::new(),
-            cache: RwLock::new(HashMap::new()),
-            objstm_index: RwLock::new(None),
-            security_handler: None,
-            page_index: OnceLock::new(),
-        };
-        doc.parse(password)?;
-        Ok(doc)
+        Self::new_from_bytes_with_cache(data, password, DEFAULT_CACHE_CAPACITY)
+    }
+
+    /// Create a new PDFDocument from shared bytes (zero-copy) with an explicit cache capacity.
+    pub fn new_from_bytes_with_cache(
+        data: Bytes,
+        password: &str,
+        cache_capacity: usize,
+    ) -> Result<Self> {
+        Self::new_with_cache_inner(PdfBytes::Shared(data), password, cache_capacity)
     }
 
     /// Returns the raw PDF bytes.
     pub fn bytes(&self) -> &[u8] {
         self.data.as_slice()
+    }
+
+    pub fn cache_page(&self, index: usize, page: Arc<super::page::PDFPage>) {
+        if let Ok(mut cache) = self.page_cache.lock() {
+            cache.insert(index, page);
+        }
+    }
+
+    pub fn get_cached_page(&self, index: usize) -> Option<Arc<super::page::PDFPage>> {
+        self.page_cache
+            .lock()
+            .ok()
+            .and_then(|mut cache| cache.get(index))
+    }
+
+    pub fn get_page_cached(&self, index: usize) -> Result<Arc<super::page::PDFPage>> {
+        if let Some(page) = self.get_cached_page(index) {
+            return Ok(page);
+        }
+        let page = Arc::new(super::page::PDFPage::get_page_by_index(self, index)?);
+        self.cache_page(index, Arc::clone(&page));
+        Ok(page)
     }
 
     /// Returns the cached page index for O(1) page lookup.
@@ -1117,10 +1244,10 @@ impl PDFDocument {
         let _guard = ThreadLocalGuard { objid };
 
         // Check cache first
-        if let Ok(cache) = self.cache.read()
-            && let Some(obj) = cache.get(&objid)
+        if let Ok(mut cache) = self.cache.lock()
+            && let Some(obj) = cache.get(objid)
         {
-            return Ok(Arc::clone(obj));
+            return Ok(obj);
         }
 
         // Find in xrefs
@@ -1154,7 +1281,7 @@ impl PDFDocument {
                 };
 
                 let obj = Arc::new(obj);
-                if let Ok(mut cache) = self.cache.write() {
+                if let Ok(mut cache) = self.cache.lock() {
                     cache.insert(objid, Arc::clone(&obj));
                 }
                 return Ok(obj);
@@ -1166,7 +1293,7 @@ impl PDFDocument {
             && let Ok(Some(obj)) = self.find_obj_in_objstms(objid)
         {
             let obj = Arc::new(obj);
-            if let Ok(mut cache) = self.cache.write() {
+            if let Ok(mut cache) = self.cache.lock() {
                 cache.insert(objid, Arc::clone(&obj));
             }
             return Ok(obj);
@@ -1591,6 +1718,11 @@ impl PDFDocument {
         self.get_page_count()
     }
 
+    /// Get mediaboxes for all pages in the document.
+    pub fn page_mediaboxes(&self) -> Result<Vec<[f64; 4]>> {
+        self.page_index().mediaboxes(self)
+    }
+
     /// Get page labels iterator.
     pub fn get_page_labels(&self) -> Result<PageLabels<'_>> {
         if let Some(page_labels_obj) = self.catalog.get("PageLabels") {
@@ -1917,6 +2049,91 @@ fn format_alpha(n: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pdfpage::{reset_page_create_count, take_page_create_count};
+
+    fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"%PDF-1.4\n");
+
+        let mut offsets: Vec<usize> = Vec::new();
+        let push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
+            offsets.push(buf.len());
+            buf.extend_from_slice(obj.as_bytes());
+        };
+
+        push_obj(
+            &mut out,
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+            &mut offsets,
+        );
+
+        let kids: String = (0..page_count)
+            .map(|i| format!("{} 0 R", 3 + i))
+            .collect::<Vec<_>>()
+            .join(" ");
+        push_obj(
+            &mut out,
+            format!(
+                "2 0 obj\n<< /Type /Pages /Kids [{}] /Count {} >>\nendobj\n",
+                kids, page_count
+            ),
+            &mut offsets,
+        );
+
+        for i in 0..page_count {
+            let page_id = 3 + i;
+            let contents_id = 3 + page_count + i;
+            push_obj(
+                &mut out,
+                format!(
+                    "{} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents {} 0 R >>\nendobj\n",
+                    page_id, contents_id
+                ),
+                &mut offsets,
+            );
+        }
+
+        for i in 0..page_count {
+            let contents_id = 3 + page_count + i;
+            push_obj(
+                &mut out,
+                format!(
+                    "{} 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n",
+                    contents_id
+                ),
+                &mut offsets,
+            );
+        }
+
+        let xref_pos = out.len();
+        let obj_count = offsets.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", obj_count + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{:010} 00000 n \n", offset).as_bytes());
+        }
+        out.extend_from_slice(b"trailer\n<< /Size ");
+        out.extend_from_slice((obj_count + 1).to_string().as_bytes());
+        out.extend_from_slice(b" /Root 1 0 R >>\nstartxref\n");
+        out.extend_from_slice(xref_pos.to_string().as_bytes());
+        out.extend_from_slice(b"\n%%EOF");
+
+        out
+    }
+
+    #[test]
+    fn test_get_page_cached_reuses_page() {
+        let pdf = build_minimal_pdf_with_pages(2);
+        let doc = PDFDocument::new(pdf, "").unwrap();
+        reset_page_create_count();
+
+        let _ = doc.get_page_cached(0).unwrap();
+        assert_eq!(take_page_create_count(), 1);
+
+        let _ = doc.get_page_cached(0).unwrap();
+        assert_eq!(take_page_create_count(), 0);
+    }
 
     /// Test that PDFDocument can be created from owned data and stored.
     /// This requires owned Bytes - will fail with borrowed reference design.
@@ -2010,6 +2227,43 @@ mod tests {
         let obj1 = doc.getobj_shared(1).unwrap();
         let obj2 = doc.getobj_shared(1).unwrap();
         assert!(Arc::ptr_eq(&obj1, &obj2));
+    }
+
+    #[test]
+    fn test_getobj_shared_no_cache_returns_new_arc() {
+        use std::sync::Arc;
+
+        let path = format!("{}/tests/fixtures/simple1.pdf", env!("CARGO_MANIFEST_DIR"));
+        let data = std::fs::read(path).unwrap();
+        let doc = PDFDocument::new_with_cache(data, "", 0).unwrap();
+        let obj1 = doc.getobj_shared(1).unwrap();
+        let obj2 = doc.getobj_shared(1).unwrap();
+        assert!(!Arc::ptr_eq(&obj1, &obj2));
+    }
+
+    #[test]
+    fn test_object_cache_lru_evicts_oldest() {
+        use std::sync::Arc;
+
+        let path = format!("{}/tests/fixtures/simple1.pdf", env!("CARGO_MANIFEST_DIR"));
+        let data = std::fs::read(path).unwrap();
+        let doc = PDFDocument::new_with_cache(data, "", 1).unwrap();
+        let obj1 = doc.getobj_shared(1).unwrap();
+        let _obj2 = doc.getobj_shared(2).unwrap();
+        let obj1_again = doc.getobj_shared(1).unwrap();
+        assert!(!Arc::ptr_eq(&obj1, &obj1_again));
+    }
+
+    #[test]
+    fn test_page_mediaboxes_does_not_create_pages() {
+        let pdf = build_minimal_pdf_with_pages(3);
+        let doc = PDFDocument::new(pdf, "").unwrap();
+        crate::pdfpage::reset_page_create_count();
+
+        let boxes = doc.page_mediaboxes().unwrap();
+        assert_eq!(boxes.len(), 3);
+        let created = crate::pdfpage::take_page_create_count();
+        assert_eq!(created, 0);
     }
 
     #[test]

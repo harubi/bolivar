@@ -8,6 +8,22 @@ use crate::model::objects::PDFObject;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+static PAGE_CREATE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn reset_page_create_count() {
+    PAGE_CREATE_COUNT.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn take_page_create_count() -> usize {
+    PAGE_CREATE_COUNT.swap(0, Ordering::Relaxed)
+}
+
 /// A PDF page object.
 #[derive(Debug)]
 pub struct PDFPage {
@@ -72,6 +88,8 @@ impl PDFPage {
         label: Option<String>,
         doc: &PDFDocument,
     ) -> Result<Self> {
+        #[cfg(test)]
+        PAGE_CREATE_COUNT.fetch_add(1, Ordering::Relaxed);
         let mediabox = Self::parse_box(&attrs, "MediaBox", doc)
             .ok_or_else(|| crate::error::PdfError::SyntaxError("MediaBox missing".into()))?;
         let cropbox = Self::parse_box(&attrs, "CropBox", doc).or(Some(mediabox));
@@ -169,6 +187,10 @@ impl PDFPage {
         doc: &PDFDocument,
     ) -> Option<[f64; 4]> {
         let obj = attrs.get(key)?;
+        Self::parse_box_obj(obj, doc)
+    }
+
+    fn parse_box_obj(obj: &PDFObject, doc: &PDFDocument) -> Option<[f64; 4]> {
         let resolved = doc.resolve_shared(obj).ok()?;
         let arr = resolved.as_ref().as_array().ok()?;
         if arr.len() != 4 {
@@ -288,6 +310,32 @@ impl PageIndex {
 
     pub(crate) fn get(&self, index: usize) -> Option<&PageRef> {
         self.pages.get(index)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.pages.len()
+    }
+
+    pub(crate) fn mediaboxes(&self, doc: &PDFDocument) -> Result<Vec<[f64; 4]>> {
+        let mut boxes = Vec::with_capacity(self.pages.len());
+        for (idx, page_ref) in self.pages.iter().enumerate() {
+            let obj = doc.getobj_shared(page_ref.objid)?;
+            let dict = obj
+                .as_ref()
+                .as_dict()
+                .map_err(|_| PdfError::SyntaxError("Page object missing dict".into()))?;
+            let mut mediabox_obj = dict.get("MediaBox");
+            if mediabox_obj.is_none() {
+                if let Some(inherited) = &page_ref.inherited {
+                    mediabox_obj = inherited.resolve_mediabox();
+                }
+            }
+            let mediabox = mediabox_obj
+                .and_then(|obj| PDFPage::parse_box_obj(obj, doc))
+                .ok_or_else(|| PdfError::SyntaxError(format!("Page {} missing mediabox", idx)))?;
+            boxes.push(mediabox);
+        }
+        Ok(boxes)
     }
 
     fn labels_iter(doc: &PDFDocument) -> Option<Box<dyn Iterator<Item = String> + '_>> {

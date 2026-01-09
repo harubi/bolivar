@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, sync_channel};
 
 use rayon::ThreadPoolBuilder;
@@ -45,6 +45,27 @@ pub(crate) fn set_stream_usage_enabled(enabled: bool) {
 }
 
 type StreamItem = (usize, Result<LTPage>);
+
+fn build_page_order(doc: &PDFDocument, options: &ExtractOptions) -> Vec<usize> {
+    let mut order = Vec::new();
+    let page_count = doc.page_index().len();
+    let mut selected = 0usize;
+
+    for page_idx in 0..page_count {
+        if let Some(ref nums) = options.page_numbers {
+            if !nums.contains(&page_idx) {
+                continue;
+            }
+        }
+        if options.maxpages > 0 && selected >= options.maxpages {
+            break;
+        }
+        order.push(page_idx);
+        selected += 1;
+    }
+
+    order
+}
 
 pub struct PageStream {
     rx: Receiver<StreamItem>,
@@ -215,35 +236,8 @@ pub fn extract_pages_stream_from_doc(
 
     let laparams = options.laparams.clone();
     let caching = options.caching;
-
-    let mut order: Vec<usize> = Vec::new();
-    let mut pending: Vec<(usize, PDFPage)> = Vec::new();
-    let mut errors: Vec<StreamItem> = Vec::new();
-    let mut page_count = 0;
-
-    for (page_idx, page_result) in PDFPage::create_pages(doc.as_ref()).enumerate() {
-        if let Some(ref nums) = options.page_numbers {
-            if !nums.contains(&page_idx) {
-                continue;
-            }
-        }
-
-        if options.maxpages > 0 && page_count >= options.maxpages {
-            break;
-        }
-
-        order.push(page_idx);
-
-        match page_result {
-            Ok(page) => {
-                pending.push((page_idx, page));
-                page_count += 1;
-            }
-            Err(e) => {
-                errors.push((page_idx, Err(e)));
-            }
-        }
-    }
+    let order = build_page_order(doc.as_ref(), &options);
+    let work_order = order.clone();
 
     let thread_count = default_thread_count();
     let pool = ThreadPoolBuilder::new()
@@ -255,42 +249,48 @@ pub fn extract_pages_stream_from_doc(
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_worker = Arc::clone(&cancel);
     let doc_worker = Arc::clone(&doc);
+    let next_index = Arc::new(AtomicUsize::new(0));
+    let next_index_worker = Arc::clone(&next_index);
 
     std::thread::spawn(move || {
-        for (page_idx, result) in errors {
-            if cancel_worker.load(Ordering::Relaxed) {
-                return;
-            }
-            if tx.send((page_idx, result)).is_err() {
-                return;
-            }
-        }
-
         pool.install(|| {
-            pending
-                .into_par_iter()
-                .map_init(PageArena::new, |arena, (page_idx, page)| {
+            (0..thread_count).into_par_iter().for_each(|_| {
+                let mut arena = PageArena::new();
+                loop {
                     if cancel_worker.load(Ordering::Relaxed) {
-                        return None;
+                        return;
                     }
+                    let pos = next_index_worker.fetch_add(1, Ordering::Relaxed);
+                    if pos >= work_order.len() {
+                        break;
+                    }
+                    let page_idx = work_order[pos];
+                    let page = match PDFPage::get_page_by_index(doc_worker.as_ref(), page_idx) {
+                        Ok(page) => Arc::new(page),
+                        Err(e) => {
+                            if tx.send((page_idx, Err(e))).is_err() {
+                                cancel_worker.store(true, Ordering::Relaxed);
+                            }
+                            continue;
+                        }
+                    };
+                    doc_worker.cache_page(page_idx, Arc::clone(&page));
 
                     arena.reset();
                     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                     let mut aggregator =
-                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
+                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
                     let ltpage =
                         process_page(&page, &mut aggregator, &mut rsrcmgr, doc_worker.as_ref());
-                    Some((page_idx, ltpage))
-                })
-                .filter_map(|item| item)
-                .for_each_with(tx, |sender, (page_idx, result)| {
                     if cancel_worker.load(Ordering::Relaxed) {
                         return;
                     }
-                    if sender.send((page_idx, result)).is_err() {
+                    if tx.send((page_idx, ltpage)).is_err() {
                         cancel_worker.store(true, Ordering::Relaxed);
+                        return;
                     }
-                });
+                }
+            });
         });
     });
 
@@ -308,35 +308,8 @@ pub fn extract_tables_stream_from_doc(
     let settings = TableSettings::default();
     let laparams = options.laparams.clone();
     let caching = options.caching;
-
-    let mut order: Vec<usize> = Vec::new();
-    let mut pending: Vec<(usize, PDFPage)> = Vec::new();
-    let mut errors: Vec<(usize, Result<PageTables>)> = Vec::new();
-    let mut page_count = 0;
-
-    for (page_idx, page_result) in PDFPage::create_pages(doc.as_ref()).enumerate() {
-        if let Some(ref nums) = options.page_numbers {
-            if !nums.contains(&page_idx) {
-                continue;
-            }
-        }
-
-        if options.maxpages > 0 && page_count >= options.maxpages {
-            break;
-        }
-
-        order.push(page_idx);
-
-        match page_result {
-            Ok(page) => {
-                pending.push((page_idx, page));
-                page_count += 1;
-            }
-            Err(e) => {
-                errors.push((page_idx, Err(e)));
-            }
-        }
-    }
+    let order = build_page_order(doc.as_ref(), &options);
+    let work_order = order.clone();
 
     let thread_count = default_thread_count();
     let pool = ThreadPoolBuilder::new()
@@ -348,50 +321,150 @@ pub fn extract_tables_stream_from_doc(
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_worker = Arc::clone(&cancel);
     let doc_worker = Arc::clone(&doc);
+    let next_index = Arc::new(AtomicUsize::new(0));
+    let next_index_worker = Arc::clone(&next_index);
 
     std::thread::spawn(move || {
-        for (page_idx, result) in errors {
-            if cancel_worker.load(Ordering::Relaxed) {
-                return;
-            }
-            if tx.send((page_idx, result)).is_err() {
-                return;
-            }
-        }
-
         pool.install(|| {
-            pending
-                .into_par_iter()
-                .map_init(PageArena::new, |arena, (page_idx, page)| {
+            (0..thread_count).into_par_iter().for_each(|_| {
+                let mut arena = PageArena::new();
+                loop {
                     if cancel_worker.load(Ordering::Relaxed) {
-                        return None;
+                        return;
                     }
+                    let pos = next_index_worker.fetch_add(1, Ordering::Relaxed);
+                    if pos >= work_order.len() {
+                        break;
+                    }
+                    let page_idx = work_order[pos];
+                    let page = match PDFPage::get_page_by_index(doc_worker.as_ref(), page_idx) {
+                        Ok(page) => Arc::new(page),
+                        Err(e) => {
+                            if tx.send((page_idx, Err(e))).is_err() {
+                                cancel_worker.store(true, Ordering::Relaxed);
+                            }
+                            continue;
+                        }
+                    };
+                    doc_worker.cache_page(page_idx, Arc::clone(&page));
 
                     arena.reset();
                     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                     let mut aggregator =
-                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
+                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
                     let ltpage =
                         process_page(&page, &mut aggregator, &mut rsrcmgr, doc_worker.as_ref());
-                    Some((page_idx, ltpage))
-                })
-                .filter_map(|item| item)
-                .for_each_with(tx, |sender, (page_idx, result)| {
-                    if cancel_worker.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    let tables = result.map(|page| {
+                    let tables = ltpage.map(|page| {
                         let geom = page_geometry_from_ltpage(&page);
                         extract_tables_from_ltpage(&page, &geom, &settings)
                     });
-                    if sender.send((page_idx, tables)).is_err() {
-                        cancel_worker.store(true, Ordering::Relaxed);
+                    if cancel_worker.load(Ordering::Relaxed) {
+                        return;
                     }
-                });
+                    if tx.send((page_idx, tables)).is_err() {
+                        cancel_worker.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                }
+            });
         });
     });
 
     Ok(TableStream::new(rx, order, cancel))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"%PDF-1.4\n");
+
+        let mut offsets: Vec<usize> = Vec::new();
+        let push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
+            offsets.push(buf.len());
+            buf.extend_from_slice(obj.as_bytes());
+        };
+
+        push_obj(
+            &mut out,
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+            &mut offsets,
+        );
+
+        let kids: String = (0..page_count)
+            .map(|i| format!("{} 0 R", 3 + i))
+            .collect::<Vec<_>>()
+            .join(" ");
+        push_obj(
+            &mut out,
+            format!(
+                "2 0 obj\n<< /Type /Pages /Kids [{}] /Count {} >>\nendobj\n",
+                kids, page_count
+            ),
+            &mut offsets,
+        );
+
+        for i in 0..page_count {
+            let page_id = 3 + i;
+            let contents_id = 3 + page_count + i;
+            push_obj(
+                &mut out,
+                format!(
+                    "{} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents {} 0 R >>\nendobj\n",
+                    page_id, contents_id
+                ),
+                &mut offsets,
+            );
+        }
+
+        for i in 0..page_count {
+            let contents_id = 3 + page_count + i;
+            push_obj(
+                &mut out,
+                format!(
+                    "{} 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n",
+                    contents_id
+                ),
+                &mut offsets,
+            );
+        }
+
+        let xref_pos = out.len();
+        let obj_count = offsets.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", obj_count + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{:010} 00000 n \n", offset).as_bytes());
+        }
+        out.extend_from_slice(b"trailer\n<< /Size ");
+        out.extend_from_slice((obj_count + 1).to_string().as_bytes());
+        out.extend_from_slice(b" /Root 1 0 R >>\nstartxref\n");
+        out.extend_from_slice(xref_pos.to_string().as_bytes());
+        out.extend_from_slice(b"\n%%EOF");
+
+        out
+    }
+
+    #[test]
+    fn test_page_stream_only_creates_requested_pages() {
+        let pdf = build_minimal_pdf_with_pages(5);
+        let doc = PDFDocument::new(pdf, "").unwrap();
+        crate::pdfpage::reset_page_create_count();
+
+        let options = ExtractOptions {
+            page_numbers: Some(vec![2]),
+            ..ExtractOptions::default()
+        };
+
+        let stream = extract_pages_stream_from_doc(doc.into(), options).unwrap();
+        let _ = stream.collect::<Result<Vec<_>>>().unwrap();
+
+        let created = crate::pdfpage::take_page_create_count();
+        assert_eq!(created, 1);
+    }
 }
 
 fn page_geometry_from_ltpage(page: &LTPage) -> PageGeometry {
