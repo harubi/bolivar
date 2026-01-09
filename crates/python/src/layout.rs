@@ -7,13 +7,34 @@ use bolivar_core::utils::HasBBox;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 use std::io::Write;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::convert::name_to_psliteral;
 use crate::params::PyLAParams;
 
+const UNKNOWN_LEN: usize = usize::MAX;
+
+#[cfg(test)]
+static CONVERT_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+fn record_conversion() {
+    CONVERT_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+fn reset_conversion_count() {
+    CONVERT_COUNT.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+fn conversion_count() -> usize {
+    CONVERT_COUNT.load(Ordering::Relaxed)
+}
+
 /// Layout page - result of processing a PDF page.
 #[pyclass(name = "LTPage", dict)]
-#[derive(Clone)]
 pub struct PyLTPage {
     /// Page identifier (1-based page number)
     #[pyo3(get)]
@@ -23,8 +44,12 @@ pub struct PyLTPage {
     pub rotate: f64,
     /// Bounding box as (x0, y0, x1, y1)
     pub bbox: (f64, f64, f64, f64),
-    /// Layout items on this page
-    pub items: Vec<PyLTItem>,
+    /// Layout items on this page (materialized on demand)
+    items: Mutex<Option<Vec<PyLTItem>>>,
+    /// Core layout page for lazy conversion.
+    core: Option<Arc<bolivar_core::layout::LTPage>>,
+    /// Cached item count for __len__ without materializing.
+    items_len: AtomicUsize,
 }
 
 #[pymethods]
@@ -40,14 +65,78 @@ impl PyLTPage {
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
-        PyLTPageIter {
-            items: slf.items.clone(),
-            index: 0,
-        }
+        let items = slf.materialize_items();
+        PyLTPageIter { items, index: 0 }
     }
 
     fn __len__(&self) -> usize {
-        self.items.len()
+        if let Ok(items) = self.items.lock() {
+            if let Some(items) = items.as_ref() {
+                let len = items.len();
+                self.items_len.store(len, Ordering::Relaxed);
+                return len;
+            }
+        }
+        let cached = self.items_len.load(Ordering::Relaxed);
+        if cached != UNKNOWN_LEN {
+            return cached;
+        }
+        let len = self
+            .core
+            .as_ref()
+            .map(|core| core.iter().count())
+            .unwrap_or(0);
+        self.items_len.store(len, Ordering::Relaxed);
+        len
+    }
+}
+
+impl Clone for PyLTPage {
+    fn clone(&self) -> Self {
+        let items = self.items.lock().map(|guard| guard.clone()).unwrap_or(None);
+        let items_len = self.items_len.load(Ordering::Relaxed);
+        Self {
+            pageid: self.pageid,
+            rotate: self.rotate,
+            bbox: self.bbox,
+            items: Mutex::new(items),
+            core: self.core.clone(),
+            items_len: AtomicUsize::new(items_len),
+        }
+    }
+}
+
+impl PyLTPage {
+    fn materialize_items(&self) -> Vec<PyLTItem> {
+        if let Ok(items) = self.items.lock() {
+            if let Some(items) = items.as_ref() {
+                return items.clone();
+            }
+        }
+        let cached_len = self.items_len.load(Ordering::Relaxed);
+        let mut built = if cached_len == UNKNOWN_LEN {
+            Vec::new()
+        } else {
+            Vec::with_capacity(cached_len)
+        };
+        if let Some(core) = self.core.as_ref() {
+            for item in core.iter() {
+                built.push(ltitem_to_py(item));
+            }
+        }
+        self.items_len.store(built.len(), Ordering::Relaxed);
+        if let Ok(mut items) = self.items.lock() {
+            if items.is_none() {
+                *items = Some(built.clone());
+            } else if let Some(items) = items.as_ref() {
+                return items.clone();
+            }
+        }
+        built
+    }
+
+    pub fn core_ref(&self) -> Option<&bolivar_core::layout::LTPage> {
+        self.core.as_deref()
     }
 }
 
@@ -1324,25 +1413,38 @@ pub fn py_ltitem_to_core(item: &PyLTItem) -> bolivar_core::layout::LTItem {
 }
 
 pub fn py_ltpage_to_core(page: &PyLTPage) -> bolivar_core::layout::LTPage {
+    if let Some(core) = page.core_ref() {
+        return core.clone();
+    }
+
     let mut core_page = bolivar_core::layout::LTPage::new(page.pageid, page.bbox, page.rotate);
-    for item in &page.items {
-        core_page.add(py_ltitem_to_core(item));
+    if let Ok(items) = page.items.lock() {
+        if let Some(items) = items.as_ref() {
+            for item in items {
+                core_page.add(py_ltitem_to_core(item));
+            }
+        }
     }
     core_page
 }
 
-pub fn ltpage_to_py(ltpage: &bolivar_core::layout::LTPage) -> PyLTPage {
-    let items: Vec<PyLTItem> = ltpage.iter().map(ltitem_to_py).collect();
+pub fn ltpage_to_py(ltpage: bolivar_core::layout::LTPage) -> PyLTPage {
+    let bbox = (ltpage.x0(), ltpage.y0(), ltpage.x1(), ltpage.y1());
     PyLTPage {
         pageid: ltpage.pageid,
         rotate: ltpage.rotate,
-        bbox: (ltpage.x0(), ltpage.y0(), ltpage.x1(), ltpage.y1()),
-        items,
+        bbox,
+        items: Mutex::new(None),
+        core: Some(Arc::new(ltpage)),
+        items_len: AtomicUsize::new(UNKNOWN_LEN),
     }
 }
 
 pub fn ltitem_to_py(item: &bolivar_core::layout::LTItem) -> PyLTItem {
     use bolivar_core::layout::{LTItem, TextBoxType, TextLineType};
+
+    #[cfg(test)]
+    record_conversion();
 
     match item {
         LTItem::Char(c) => PyLTItem::Char(PyLTChar::from_core(c)),
@@ -1362,7 +1464,29 @@ pub fn ltitem_to_py(item: &bolivar_core::layout::LTItem) -> PyLTItem {
             TextBoxType::Vertical(b) => PyLTItem::TextBoxV(PyLTTextBoxVertical::from_core(b)),
         },
         LTItem::Figure(fig) => PyLTItem::Figure(PyLTFigure::from_core(fig)),
-        LTItem::Page(page) => PyLTItem::Page(ltpage_to_py(page)),
+        LTItem::Page(page) => PyLTItem::Page(ltpage_to_py((**page).clone())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{conversion_count, ltpage_to_py, reset_conversion_count};
+    use bolivar_core::layout::{LTItem, LTPage, LTRect};
+
+    #[test]
+    fn test_ltpage_to_py_is_lazy() {
+        reset_conversion_count();
+        let mut page = LTPage::new(1, (0.0, 0.0, 10.0, 10.0), 0.0);
+        let rect = LTRect::new(1.0, (0.0, 0.0, 1.0, 1.0), true, false, false, None, None);
+        page.add(LTItem::Rect(rect));
+
+        let py_page = ltpage_to_py(page);
+
+        assert_eq!(conversion_count(), 0);
+        assert_eq!(py_page.__len__(), 1);
+        assert_eq!(conversion_count(), 0);
+        let _ = py_page.materialize_items();
+        assert_eq!(conversion_count(), 1);
     }
 }
 

@@ -6,7 +6,7 @@ use bolivar_core::parser::{
     PDFParser as CorePDFParser, PSBaseParser as CorePSBaseParser,
     PSStackParser as CorePSStackParser,
 };
-use bolivar_core::pdfdocument::PDFDocument;
+use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
 use bolivar_core::pdftypes::{PDFObject, PDFStream};
 use bytes::Bytes;
 use memmap2::Mmap;
@@ -508,11 +508,14 @@ impl PyPDFDocument {
     /// Raises:
     ///     ValueError: If the PDF cannot be parsed
     #[new]
-    #[pyo3(signature = (data, password = ""))]
-    pub fn new(data: &Bound<'_, PyAny>, password: &str) -> PyResult<Self> {
+    #[pyo3(signature = (data, password = "", caching = true))]
+    pub fn new(data: &Bound<'_, PyAny>, password: &str, caching: bool) -> PyResult<Self> {
+        let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
         let doc = match pdf_input_from_py(data)? {
-            PdfInput::Shared(bytes) => PDFDocument::new_from_bytes(bytes, password),
-            PdfInput::Owned(bytes) => PDFDocument::new(bytes, password),
+            PdfInput::Shared(bytes) => {
+                PDFDocument::new_from_bytes_with_cache(bytes, password, cache_capacity)
+            }
+            PdfInput::Owned(bytes) => PDFDocument::new_with_cache(bytes, password, cache_capacity),
         }
         .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
         Ok(Self {
@@ -533,13 +536,19 @@ impl PyPDFDocument {
     /// Raises:
     ///     ValueError: If the PDF cannot be parsed
     #[classmethod]
-    #[pyo3(signature = (path, password = ""))]
-    pub fn from_path(_cls: &Bound<'_, PyType>, path: &str, password: &str) -> PyResult<Self> {
+    #[pyo3(signature = (path, password = "", caching = true))]
+    pub fn from_path(
+        _cls: &Bound<'_, PyType>,
+        path: &str,
+        password: &str,
+        caching: bool,
+    ) -> PyResult<Self> {
         let file = File::open(path)
             .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
         let mmap = unsafe { Mmap::map(&file) }
             .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-        let doc = PDFDocument::new_from_mmap(mmap, password)
+        let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
+        let doc = PDFDocument::new_from_mmap_with_cache(mmap, password, cache_capacity)
             .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
         Ok(Self {
             inner: Arc::new(doc),
@@ -559,7 +568,12 @@ impl PyPDFDocument {
         {
             let page = page_result
                 .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", idx, e)))?;
-            pages.push(PyPDFPage::from_core(py, page, &slf.inner, Some(&py_doc))?);
+            pages.push(PyPDFPage::from_core(
+                py,
+                Arc::new(page),
+                Arc::clone(&slf.inner),
+                Some(&py_doc),
+            )?);
         }
         Ok(pages)
     }
@@ -571,26 +585,24 @@ impl PyPDFDocument {
 
     /// Get mediaboxes for all pages in the document.
     fn page_mediaboxes(&self) -> PyResult<Vec<(f64, f64, f64, f64)>> {
-        let mut boxes = Vec::new();
-        for (idx, page_result) in
-            bolivar_core::pdfpage::PDFPage::create_pages(&self.inner).enumerate()
-        {
-            let page = page_result
-                .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", idx, e)))?;
-            let mediabox = page
-                .mediabox
-                .ok_or_else(|| PyValueError::new_err(format!("Page {} missing mediabox", idx)))?;
-            boxes.push((mediabox[0], mediabox[1], mediabox[2], mediabox[3]));
-        }
-        Ok(boxes)
+        let boxes = self
+            .inner
+            .page_mediaboxes()
+            .map_err(|e| PyValueError::new_err(format!("Failed to get mediaboxes: {}", e)))?;
+        Ok(boxes
+            .into_iter()
+            .map(|b| (b[0], b[1], b[2], b[3]))
+            .collect())
     }
 
     /// Get a single page by index.
     fn get_page(slf: PyRef<'_, Self>, py: Python<'_>, index: usize) -> PyResult<PyPDFPage> {
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
-        let page = bolivar_core::pdfpage::PDFPage::get_page_by_index(&slf.inner, index)
+        let page = slf
+            .inner
+            .get_page_cached(index)
             .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", index, e)))?;
-        PyPDFPage::from_core(py, page, &slf.inner, Some(&py_doc))
+        PyPDFPage::from_core(py, page, Arc::clone(&slf.inner), Some(&py_doc))
     }
 
     /// Get document info dictionaries.
@@ -724,71 +736,25 @@ pub struct PyPDFPage {
     /// Page label (logical page number)
     #[pyo3(get)]
     pub label: Option<String>,
-    /// Internal: decoded page contents (for processing)
-    pub contents: Vec<Vec<u8>>,
-    /// Internal: page resources (serialized for later use)
-    pub resources: std::collections::HashMap<String, bolivar_core::pdftypes::PDFObject>,
+    core: Arc<bolivar_core::pdfpage::PDFPage>,
+    doc: Arc<PDFDocument>,
     /// Page annotations (resolved to Python objects)
-    annots_list: Py<PyAny>,
+    annots_list: Mutex<Option<Py<PyAny>>>,
     /// Full page attributes dict (resolved)
-    attrs_dict: Py<PyAny>,
+    attrs_dict: Mutex<Option<Py<PyAny>>>,
     /// Page resources dict (resolved)
-    resources_dict: Py<PyAny>,
+    resources_dict: Mutex<Option<Py<PyAny>>>,
+    py_doc: Option<Py<PyAny>>,
 }
 
 impl PyPDFPage {
     /// Create from core PDFPage, resolving annotations
     pub fn from_core(
         py: Python<'_>,
-        page: bolivar_core::pdfpage::PDFPage,
-        doc: &PDFDocument,
+        page: Arc<bolivar_core::pdfpage::PDFPage>,
+        doc: Arc<PDFDocument>,
         py_doc: Option<&Py<PyAny>>,
     ) -> PyResult<Self> {
-        // Extract and resolve annotations
-        let annots_list: Py<PyAny> = if let Some(ref annots_obj) = page.annots {
-            // Resolve if it's a reference
-            let resolved = match annots_obj {
-                PDFObject::Ref(objref) => doc
-                    .getobj(objref.objid)
-                    .unwrap_or_else(|_| annots_obj.clone()),
-                _ => annots_obj.clone(),
-            };
-
-            // Convert array elements
-            if let PDFObject::Array(arr) = resolved {
-                let list = PyList::empty(py);
-                for item in arr {
-                    // Fresh visited set per annotation to prevent cross-contamination
-                    let mut visited = HashSet::new();
-                    let py_item = pdf_object_to_py(py, &item, doc, &mut visited)?;
-                    if py_item.bind(py).is_none() {
-                        continue;
-                    }
-                    list.append(py_item)?;
-                }
-                list.into_any().unbind()
-            } else {
-                PyList::empty(py).into_any().unbind()
-            }
-        } else {
-            PyList::empty(py).into_any().unbind()
-        };
-
-        let attrs_dict = PyDict::new(py);
-        for (k, v) in page.attrs.iter() {
-            let mut visited = HashSet::new();
-            // Resolve refs so attrs like Rotate are actual integers, not PDFObjRef
-            let py_val = pdf_object_to_py_internal(py, v, doc, &mut visited, true, true, py_doc)?;
-            attrs_dict.set_item(k, py_val)?;
-        }
-
-        let resources_dict = PyDict::new(py);
-        for (k, v) in page.resources.iter() {
-            let mut visited = HashSet::new();
-            let py_val = pdf_object_to_py_internal(py, v, doc, &mut visited, true, false, py_doc)?;
-            resources_dict.set_item(k, py_val)?;
-        }
-
         Ok(Self {
             pageid: page.pageid,
             mediabox: page.mediabox.map(|b| (b[0], b[1], b[2], b[3])),
@@ -798,12 +764,113 @@ impl PyPDFPage {
             artbox: page.artbox.map(|b| (b[0], b[1], b[2], b[3])),
             rotate: page.rotate,
             label: page.label.clone(),
-            contents: page.get_contents(doc),
-            resources: page.resources.clone(),
-            annots_list,
-            attrs_dict: attrs_dict.into_any().unbind(),
-            resources_dict: resources_dict.into_any().unbind(),
+            core: page,
+            doc,
+            annots_list: Mutex::new(None),
+            attrs_dict: Mutex::new(None),
+            resources_dict: Mutex::new(None),
+            py_doc: py_doc.map(|p| p.clone_ref(py)),
         })
+    }
+
+    pub(crate) fn core_contents(&self) -> Vec<Vec<u8>> {
+        self.core.get_contents(&self.doc)
+    }
+
+    pub(crate) fn core_resources(
+        &self,
+    ) -> std::collections::HashMap<String, bolivar_core::pdftypes::PDFObject> {
+        self.core.resources.clone()
+    }
+
+    fn ensure_attrs(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if let Ok(mut guard) = self.attrs_dict.lock() {
+            if let Some(value) = guard.as_ref() {
+                return Ok(value.clone_ref(py));
+            }
+            let attrs_dict = PyDict::new(py);
+            for (k, v) in self.core.attrs.iter() {
+                let mut visited = HashSet::new();
+                let py_val = pdf_object_to_py_internal(
+                    py,
+                    v,
+                    &self.doc,
+                    &mut visited,
+                    false,
+                    false,
+                    self.py_doc.as_ref(),
+                )?;
+                attrs_dict.set_item(k, py_val)?;
+            }
+            let obj = attrs_dict.into_any().unbind();
+            *guard = Some(obj.clone_ref(py));
+            return Ok(obj);
+        }
+        Ok(PyDict::new(py).into_any().unbind())
+    }
+
+    fn ensure_resources(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if let Ok(mut guard) = self.resources_dict.lock() {
+            if let Some(value) = guard.as_ref() {
+                return Ok(value.clone_ref(py));
+            }
+            let resources_dict = PyDict::new(py);
+            for (k, v) in self.core.resources.iter() {
+                let mut visited = HashSet::new();
+                let py_val = pdf_object_to_py_internal(
+                    py,
+                    v,
+                    &self.doc,
+                    &mut visited,
+                    false,
+                    false,
+                    self.py_doc.as_ref(),
+                )?;
+                resources_dict.set_item(k, py_val)?;
+            }
+            let obj = resources_dict.into_any().unbind();
+            *guard = Some(obj.clone_ref(py));
+            return Ok(obj);
+        }
+        Ok(PyDict::new(py).into_any().unbind())
+    }
+
+    fn ensure_annots(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if let Ok(mut guard) = self.annots_list.lock() {
+            if let Some(value) = guard.as_ref() {
+                return Ok(value.clone_ref(py));
+            }
+            let annots_obj = match self.core.annots.as_ref() {
+                Some(obj) => obj,
+                None => {
+                    let empty = PyList::empty(py).into_any().unbind();
+                    *guard = Some(empty.clone_ref(py));
+                    return Ok(empty);
+                }
+            };
+            let resolved = match annots_obj {
+                PDFObject::Ref(objref) => self
+                    .doc
+                    .getobj(objref.objid)
+                    .unwrap_or_else(|_| annots_obj.clone()),
+                _ => annots_obj.clone(),
+            };
+            let list = PyList::empty(py);
+            if let PDFObject::Array(arr) = resolved {
+                for item in arr {
+                    let mut visited = HashSet::new();
+                    let py_item = pdf_object_to_py(py, &item, &self.doc, &mut visited)?;
+                    if py_item.bind(py).is_none() {
+                        continue;
+                    }
+                    list.append(py_item)?;
+                }
+            }
+            let obj = list.into_any().unbind();
+            *guard = Some(obj.clone_ref(py));
+            return Ok(obj);
+        }
+        Ok(PyList::empty(py).into_any().unbind())
     }
 }
 
@@ -819,19 +886,22 @@ impl PyPDFPage {
     /// Get page annotations as list of dicts
     #[getter]
     fn annots(&self, py: Python<'_>) -> Py<PyAny> {
-        self.annots_list.clone_ref(py)
+        self.ensure_annots(py)
+            .unwrap_or_else(|_| PyList::empty(py).into_any().unbind())
     }
 
     /// Get page attributes dict (resolved)
     #[getter]
     fn attrs(&self, py: Python<'_>) -> Py<PyAny> {
-        self.attrs_dict.clone_ref(py)
+        self.ensure_attrs(py)
+            .unwrap_or_else(|_| PyDict::new(py).into_any().unbind())
     }
 
     /// Get page resources dict (resolved)
     #[getter]
     fn resources(&self, py: Python<'_>) -> Py<PyAny> {
-        self.resources_dict.clone_ref(py)
+        self.ensure_resources(py)
+            .unwrap_or_else(|_| PyDict::new(py).into_any().unbind())
     }
 }
 

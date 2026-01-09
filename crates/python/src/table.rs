@@ -5,19 +5,17 @@
 
 use bolivar_core::arena::PageArena;
 use bolivar_core::high_level::{
-    ExtractOptions, extract_pages as core_extract_pages,
-    extract_pages_with_document as core_extract_pages_with_document,
+    ExtractOptions, extract_pages_with_document as core_extract_pages_with_document,
     extract_tables_for_page_indexed as core_extract_tables_for_page_indexed,
     extract_tables_with_document_geometries as core_extract_tables_with_document_geometries,
-    extract_text as core_extract_text,
     extract_text_with_document as core_extract_text_with_document,
 };
-use bolivar_core::pdfdocument::PDFDocument;
+use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
 use bolivar_core::table::{
     BBox, CharObj, EdgeObj, Orientation, PageGeometry, WordObj, extract_table_from_objects,
-    extract_tables_from_objects, extract_text_from_ltpage, extract_words_from_ltpage,
+    extract_tables_from_ltpage as core_extract_tables_from_ltpage, extract_tables_from_objects,
+    extract_text_from_ltpage, extract_words_from_ltpage,
 };
-use bolivar_core::utils::HasBBox;
 use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -26,7 +24,7 @@ use std::fs::File;
 
 use crate::convert::py_text_to_string;
 use crate::document::{PdfInput, PyPDFDocument, PyPDFPage, pdf_input_from_py};
-use crate::layout::{PyLTItem, PyLTPage, ltitem_to_py, ltpage_to_py};
+use crate::layout::{PyLTPage, ltpage_to_py, py_ltpage_to_core};
 use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings, parse_text_settings};
 
 /// Convert page objects (chars, lines, rects, curves) to CharObj and EdgeObj.
@@ -365,8 +363,8 @@ pub fn process_page(
     let trimbox = page.trimbox.map(|b| [b.0, b.1, b.2, b.3]);
     let artbox = page.artbox.map(|b| [b.0, b.1, b.2, b.3]);
     let rotate = page.rotate;
-    let resources = page.resources.clone();
-    let contents = page.contents.clone();
+    let resources = page.core_resources();
+    let contents = page.core_contents();
 
     let ltpage = py.detach(|| {
         // Create resource manager
@@ -404,15 +402,7 @@ pub fn process_page(
         aggregator.get_result().clone()
     });
 
-    // Convert to Python types (preserve layout tree)
-    let items: Vec<PyLTItem> = ltpage.iter().map(ltitem_to_py).collect();
-
-    Ok(PyLTPage {
-        pageid: ltpage.pageid,
-        rotate: ltpage.rotate,
-        bbox: (ltpage.x0(), ltpage.y0(), ltpage.x1(), ltpage.y1()),
-        items,
-    })
+    Ok(ltpage_to_py(ltpage))
 }
 
 /// Process all PDF pages and return their layouts.
@@ -442,7 +432,7 @@ pub fn process_pages(
         .detach(|| core_extract_pages_with_document(&doc.inner, options))
         .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
 
-    Ok(pages.iter().map(ltpage_to_py).collect())
+    Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
 /// Extract tables from a document using per-page geometry.
@@ -522,6 +512,34 @@ pub fn extract_tables_from_document_pages(
         })
         .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {}", e)))?;
 
+    Ok(tables)
+}
+
+/// Extract tables from an existing LTPage using Rust table extraction.
+#[pyfunction]
+#[pyo3(signature = (ltpage, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, force_crop = false))]
+pub fn extract_tables_from_ltpage(
+    py: Python<'_>,
+    ltpage: &PyLTPage,
+    page_bbox: (f64, f64, f64, f64),
+    mediabox: (f64, f64, f64, f64),
+    initial_doctop: f64,
+    table_settings: Option<Py<PyAny>>,
+    force_crop: bool,
+) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
+    let settings = parse_table_settings(py, table_settings)?;
+    let geom = PageGeometry {
+        page_bbox,
+        mediabox,
+        initial_doctop,
+        force_crop,
+    };
+    if let Some(core_page) = ltpage.core_ref() {
+        let tables = py.detach(|| core_extract_tables_from_ltpage(core_page, &geom, &settings));
+        return Ok(tables);
+    }
+    let core_page = py_ltpage_to_core(ltpage);
+    let tables = py.detach(|| core_extract_tables_from_ltpage(&core_page, &geom, &settings));
     Ok(tables)
 }
 
@@ -746,13 +764,18 @@ pub fn extract_text(
         caching,
         laparams: laparams.map(|p| p.clone().into()),
     };
+    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
     let result = match pdf_input_from_py(data)? {
         PdfInput::Shared(bytes) => {
-            let doc = PDFDocument::new_from_bytes(bytes, password)
+            let doc = PDFDocument::new_from_bytes_with_cache(bytes, password, cache_capacity)
                 .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
             py.detach(|| core_extract_text_with_document(&doc, options))
         }
-        PdfInput::Owned(bytes) => py.detach(|| core_extract_text(&bytes, Some(options))),
+        PdfInput::Owned(bytes) => {
+            let doc = PDFDocument::new_with_cache(bytes, password, cache_capacity)
+                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+            py.detach(|| core_extract_text_with_document(&doc, options))
+        }
     };
     result.map_err(|e| PyValueError::new_err(format!("Failed to extract text: {}", e)))
 }
@@ -773,7 +796,8 @@ pub fn extract_text_from_path(
         .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
     let mmap = unsafe { Mmap::map(&file) }
         .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-    let doc = PDFDocument::new_from_mmap(mmap, password)
+    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
+    let doc = PDFDocument::new_from_mmap_with_cache(mmap, password, cache_capacity)
         .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
 
     let options = ExtractOptions {
@@ -807,19 +831,21 @@ pub fn extract_pages(
         caching,
         laparams: laparams.map(|p| p.clone().into()),
     };
+    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
     let pages = match pdf_input_from_py(data)? {
         PdfInput::Shared(bytes) => {
-            let doc = PDFDocument::new_from_bytes(bytes, password)
+            let doc = PDFDocument::new_from_bytes_with_cache(bytes, password, cache_capacity)
                 .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
             py.detach(|| core_extract_pages_with_document(&doc, options))
         }
-        PdfInput::Owned(bytes) => py.detach(|| {
-            let iter = core_extract_pages(&bytes, Some(options))?;
-            iter.collect::<bolivar_core::error::Result<Vec<_>>>()
-        }),
+        PdfInput::Owned(bytes) => {
+            let doc = PDFDocument::new_with_cache(bytes, password, cache_capacity)
+                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+            py.detach(|| core_extract_pages_with_document(&doc, options))
+        }
     }
     .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
-    Ok(pages.iter().map(ltpage_to_py).collect())
+    Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
 /// Extract pages (layout) from a PDF file path using memory-mapped I/O.
@@ -838,7 +864,8 @@ pub fn extract_pages_from_path(
         .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
     let mmap = unsafe { Mmap::map(&file) }
         .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-    let doc = PDFDocument::new_from_mmap(mmap, password)
+    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
+    let doc = PDFDocument::new_from_mmap_with_cache(mmap, password, cache_capacity)
         .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
 
     let mut options = ExtractOptions {
@@ -856,7 +883,7 @@ pub fn extract_pages_from_path(
     let pages = py
         .detach(|| core_extract_pages_with_document(&doc, options))
         .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
-    Ok(pages.iter().map(ltpage_to_py).collect())
+    Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
 /// Register the table module functions with the Python module.
@@ -869,6 +896,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_document, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_document_pages, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tables_from_ltpage, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_table_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page_filtered, m)?)?;

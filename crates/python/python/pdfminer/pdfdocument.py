@@ -23,7 +23,7 @@ class PDFDocument:
         Args:
             parser: PDFParser instance wrapping a file stream
             password: Password for encrypted PDFs (bytes or str)
-            caching: Whether to cache resources (ignored, always True)
+            caching: Whether to cache resolved objects (default: True)
             fallback: Whether to use fallback parsing (ignored)
         """
         self.parser = parser
@@ -42,11 +42,13 @@ class PDFDocument:
                 path = None
 
         if path:
-            self._rust_doc = _RustPDFDocument.from_path(path, password=password)
+            self._rust_doc = _RustPDFDocument.from_path(
+                path, password=password, caching=caching
+            )
         else:
             # Fallback to in-memory bytes
             data = parser.get_data()
-            self._rust_doc = _RustPDFDocument(data, password=password)
+            self._rust_doc = _RustPDFDocument(data, password=password, caching=caching)
 
         # Lazily load pages from Rust
         self._rust_pages = None
