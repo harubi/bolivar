@@ -27,6 +27,7 @@ def _apply_patch(module) -> bool:
 
     from bolivar import (
         extract_tables_from_document,
+        extract_tables_from_ltpage,
         extract_tables_from_page_filtered,
         extract_tables_from_page,
         extract_table_from_page_filtered,
@@ -72,6 +73,24 @@ def _apply_patch(module) -> bool:
         def _extract_tables(self, table_settings=None):
             if getattr(self, "filter_fn", None) is not None:
                 return extract_tables_from_page_filtered(self, table_settings)
+            layout = getattr(self, "_layout_rust", None)
+            if layout is None:
+                wrapper = getattr(self, "_layout", None)
+                layout = (
+                    getattr(wrapper, "_rust_page", None)
+                    if wrapper is not None
+                    else None
+                )
+            if layout is not None:
+                force_crop = not getattr(self, "is_original", True)
+                return extract_tables_from_ltpage(
+                    layout,
+                    self.bbox,
+                    self.mediabox,
+                    self.initial_doctop,
+                    table_settings,
+                    force_crop=force_crop,
+                )
             page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
             pdf = getattr(self, "pdf", None)
             if pdf is None or not hasattr(pdf, "doc"):
@@ -133,6 +152,12 @@ def _apply_patch(module) -> bool:
             self._page_number_set = set(self._page_numbers)
             self._page_cache = {}
             self._doctops = None
+
+        def close(self):
+            for page in self._page_cache.values():
+                if hasattr(page, "close"):
+                    page.close()
+            self._page_cache.clear()
 
         def _ensure_doctops(self):
             if self._doctops is not None:
@@ -232,6 +257,7 @@ def _apply_patch(module) -> bool:
                             initial_doctop=doctop,
                         )
                     page._layout = LTPage(ltpage)
+                    page._layout_rust = ltpage
                     yield page
                     idx += 1
 
@@ -262,6 +288,26 @@ def _apply_patch(module) -> bool:
 
             _bolivar_pages._bolivar_patched = True
             pdf_cls.pages = property(_bolivar_pages)
+
+        current_close = getattr(pdf_cls, "close", None)
+        if current_close is None or not getattr(
+            current_close, "_bolivar_patched", False
+        ):
+
+            def _bolivar_close(self):
+                pages = getattr(self, "_pages", None)
+                if pages is not None:
+                    if hasattr(pages, "close"):
+                        pages.close()
+                    else:
+                        for page in pages:
+                            page.close()
+                self.flush_cache()
+                if not getattr(self, "stream_is_external", False):
+                    self.stream.close()
+
+            _bolivar_close._bolivar_patched = True
+            pdf_cls.close = _bolivar_close
 
         if not hasattr(pdf_cls, "__aenter__"):
 
