@@ -565,12 +565,8 @@ class LTPage(LTContainer):
             super().__init__(rust_page.bbox)
             self.pageid = rust_page.pageid
             self.rotate = int(rust_page.rotate)
-
-            # Wrap Rust items in Python shims
-            for rust_item in rust_page:
-                wrapped = _wrap_rust_item(rust_item)
-                if wrapped is not None:
-                    self._objs.append(wrapped)
+            self._objs_ready = False
+            self._len = None
         else:
             # Traditional pdfminer.six constructor
             self._rust_page = None
@@ -578,8 +574,11 @@ class LTPage(LTContainer):
             super().__init__(bbox)
             self.pageid = pageid
             self.rotate = rotate
+            self._objs_ready = True
+            self._len = len(self._objs)
 
     def __iter__(self) -> Iterator[LTItem]:
+        self._ensure_objs()
         return self._iter_layout(self._objs)
 
     def _iter_layout(self, objs: List[LTItem]) -> Iterator[LTItem]:
@@ -587,6 +586,35 @@ class LTPage(LTContainer):
             yield obj
             if isinstance(obj, LTContainer):
                 yield from self._iter_layout(obj._objs)
+
+    def __len__(self) -> int:
+        if getattr(self, "_rust_page", None) is not None and not getattr(
+            self, "_objs_ready", True
+        ):
+            cached = getattr(self, "_len", None)
+            if cached is None:
+                cached = len(self._rust_page)
+                self._len = cached
+            return cached
+        return len(object.__getattribute__(self, "_objs"))
+
+    def __getattribute__(self, name: str):
+        if name == "_objs":
+            object.__getattribute__(self, "_ensure_objs")()
+        return object.__getattribute__(self, name)
+
+    def _ensure_objs(self) -> None:
+        rust_page = object.__getattribute__(self, "_rust_page")
+        if rust_page is None:
+            return
+        if object.__getattribute__(self, "_objs_ready"):
+            return
+        object.__setattr__(self, "_objs_ready", True)
+        objs = object.__getattribute__(self, "_objs")
+        for rust_item in rust_page:
+            wrapped = _wrap_rust_item(rust_item)
+            if wrapped is not None:
+                objs.append(wrapped)
 
 
 __all__ = [
