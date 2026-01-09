@@ -77,6 +77,23 @@ def test_pdfplumber_pages_is_lazy_and_supports_slices(monkeypatch):
         assert len(pages[1:3]) == 2
 
 
+def test_pdfplumber_close_does_not_iterate_lazy_pages(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    pdf = pdfplumber.open(pdf_path)
+    pages = pdf.pages
+
+    def _boom(self):
+        raise AssertionError("lazy pages iterated on close")
+
+    monkeypatch.setattr(type(pages), "__iter__", _boom, raising=True)
+    pdf.close()
+
+
 def test_extract_tables_does_not_cache(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(

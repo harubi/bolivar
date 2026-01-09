@@ -44,3 +44,18 @@ def test_pdfplumber_pages_async_does_not_fill_cache():
             assert len(pages._page_cache) == 0
 
     asyncio.run(run())
+
+
+def test_async_page_extract_tables_uses_layout():
+    path = "references/pdfplumber/tests/pdfs/nics-background-checks-2015-11.pdf"
+
+    async def run():
+        async with pdfplumber.open(path) as pdf:
+            async for page in pdf.pages:
+                assert getattr(page, "_layout", None) is not None
+                page.page_obj.doc = None
+                page.pdf = None
+                page.extract_tables()
+                break
+
+    asyncio.run(run())
