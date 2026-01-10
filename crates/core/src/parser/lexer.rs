@@ -990,51 +990,112 @@ impl<'a> PSBaseParser<'a> {
 
     /// Parse a number (integer or real)
     fn parse_number(&mut self) -> Result<PSToken> {
+        self.parse_number_fast()
+    }
+
+    fn parse_number_fast(&mut self) -> Result<PSToken> {
+        let data = self.data.as_slice();
+        let len = data.len();
         let start = self.pos;
-        let mut has_dot = false;
+        let mut pos = self.pos;
+        let mut negative = false;
 
-        // Handle sign
-        if matches!(self.peek(), Some(b'+') | Some(b'-')) {
-            self.advance();
+        if pos < len {
+            match data[pos] {
+                b'-' => {
+                    negative = true;
+                    pos += 1;
+                }
+                b'+' => {
+                    pos += 1;
+                }
+                _ => {}
+            }
         }
 
-        // Handle leading dot
-        if self.peek() == Some(b'.') {
-            has_dot = true;
-            self.advance();
-        }
-
-        // Parse digits
-        while let Some(b) = self.peek() {
-            if b.is_ascii_digit() {
-                self.advance();
-            } else if b == b'.' && !has_dot {
-                has_dot = true;
-                self.advance();
+        let mut int_part: i64 = 0;
+        let mut has_int = false;
+        let mut overflow = false;
+        while pos < len {
+            let c = data[pos];
+            if c.is_ascii_digit() {
+                has_int = true;
+                if let Some(v) = int_part
+                    .checked_mul(10)
+                    .and_then(|v| v.checked_add((c - b'0') as i64))
+                {
+                    int_part = v;
+                } else {
+                    overflow = true;
+                }
+                pos += 1;
             } else {
                 break;
             }
         }
 
-        let s = std::str::from_utf8(&self.data.as_slice()[start..self.pos]).map_err(|_| {
-            PdfError::TokenError {
+        let mut has_dot = false;
+        let mut frac_part: i64 = 0;
+        let mut frac_digits: u32 = 0;
+        if pos < len && data[pos] == b'.' {
+            has_dot = true;
+            pos += 1;
+            while pos < len {
+                let c = data[pos];
+                if c.is_ascii_digit() {
+                    frac_part = frac_part * 10 + (c - b'0') as i64;
+                    frac_digits += 1;
+                    pos += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if !has_int && frac_digits == 0 {
+            self.pos = start;
+            return Err(PdfError::TokenError {
                 pos: start,
                 msg: "invalid number".into(),
-            }
-        })?;
+            });
+        }
 
-        if has_dot {
-            let val: f64 = s.parse().map_err(|_| PdfError::TokenError {
+        self.pos = pos;
+        if overflow {
+            let s = std::str::from_utf8(&data[start..pos]).map_err(|_| PdfError::TokenError {
                 pos: start,
-                msg: format!("invalid real: {}", s),
+                msg: "invalid number".into(),
             })?;
-            Ok(PSToken::Real(val))
-        } else {
+            if has_dot {
+                let val: f64 = s.parse().map_err(|_| PdfError::TokenError {
+                    pos: start,
+                    msg: format!("invalid real: {}", s),
+                })?;
+                return Ok(PSToken::Real(val));
+            }
             let val: i64 = s.parse().map_err(|_| PdfError::TokenError {
                 pos: start,
                 msg: format!("invalid int: {}", s),
             })?;
-            Ok(PSToken::Int(val))
+            return Ok(PSToken::Int(val));
+        }
+
+        if has_dot {
+            let mut value = int_part as f64;
+            if frac_digits > 0 {
+                let mut divisor = 1.0;
+                for _ in 0..frac_digits {
+                    divisor *= 10.0;
+                }
+                value += (frac_part as f64) / divisor;
+            }
+            if negative {
+                value = -value;
+            }
+            Ok(PSToken::Real(value))
+        } else {
+            let value = if negative { -int_part } else { int_part };
+            Ok(PSToken::Int(value))
         }
     }
 
@@ -2055,6 +2116,19 @@ mod tests {
         let data = b"hello";
         let end = PSBaseParser::find_keyword_end_simd(data);
         assert_eq!(end, 5);
+    }
+
+    #[test]
+    fn parse_number_fast_matches_parse() {
+        let mut p = PSBaseParser::new(b"12 -3 4.5 -0.25");
+        p.skip_whitespace();
+        assert_eq!(p.parse_number_fast().unwrap(), PSToken::Int(12));
+        p.skip_whitespace();
+        assert_eq!(p.parse_number_fast().unwrap(), PSToken::Int(-3));
+        p.skip_whitespace();
+        assert_eq!(p.parse_number_fast().unwrap(), PSToken::Real(4.5));
+        p.skip_whitespace();
+        assert_eq!(p.parse_number_fast().unwrap(), PSToken::Real(-0.25));
     }
 
     #[test]
