@@ -301,11 +301,46 @@ pub fn extract_tables_stream_from_doc(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
 ) -> Result<TableStream> {
+    extract_tables_stream_from_doc_with_geometries_internal(
+        doc,
+        options,
+        TableSettings::default(),
+        None,
+    )
+}
+
+pub fn extract_tables_stream_from_doc_with_geometries(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    settings: TableSettings,
+    geometries: Vec<PageGeometry>,
+) -> Result<TableStream> {
+    let geom_count = doc.page_index().len();
+    if geometries.len() != geom_count {
+        return Err(PdfError::DecodeError(format!(
+            "geometry count mismatch: expected {}, got {}",
+            geom_count,
+            geometries.len()
+        )));
+    }
+    extract_tables_stream_from_doc_with_geometries_internal(
+        doc,
+        options,
+        settings,
+        Some(Arc::new(geometries)),
+    )
+}
+
+fn extract_tables_stream_from_doc_with_geometries_internal(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    settings: TableSettings,
+    geometries: Option<Arc<Vec<PageGeometry>>>,
+) -> Result<TableStream> {
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
 
-    let settings = TableSettings::default();
     let laparams = options.laparams.clone();
     let caching = options.caching;
     let order = build_page_order(doc.as_ref(), &options);
@@ -323,6 +358,7 @@ pub fn extract_tables_stream_from_doc(
     let doc_worker = Arc::clone(&doc);
     let next_index = Arc::new(AtomicUsize::new(0));
     let next_index_worker = Arc::clone(&next_index);
+    let geom_worker = geometries.clone();
 
     std::thread::spawn(move || {
         pool.install(|| {
@@ -355,7 +391,10 @@ pub fn extract_tables_stream_from_doc(
                     let ltpage =
                         process_page(&page, &mut aggregator, &mut rsrcmgr, doc_worker.as_ref());
                     let tables = ltpage.map(|page| {
-                        let geom = page_geometry_from_ltpage(&page);
+                        let geom = match geom_worker.as_ref() {
+                            Some(geoms) => geoms[page_idx].clone(),
+                            None => page_geometry_from_ltpage(&page),
+                        };
                         extract_tables_from_ltpage(&page, &geom, &settings)
                     });
                     if cancel_worker.load(Ordering::Relaxed) {
@@ -464,6 +503,27 @@ mod tests {
 
         let created = crate::pdfpage::take_page_create_count();
         assert_eq!(created, 1);
+    }
+
+    #[test]
+    fn test_tables_stream_uses_geometries_len_mismatch() {
+        let pdf = build_minimal_pdf_with_pages(2);
+        let doc = PDFDocument::new(pdf, "").unwrap();
+        let options = ExtractOptions::default();
+        let settings = TableSettings::default();
+        let geoms = vec![PageGeometry {
+            page_bbox: (0.0, 0.0, 200.0, 200.0),
+            mediabox: (0.0, 0.0, 200.0, 200.0),
+            initial_doctop: 0.0,
+            force_crop: false,
+        }];
+
+        let err =
+            extract_tables_stream_from_doc_with_geometries(doc.into(), options, settings, geoms);
+        assert!(err.is_err());
+        if let Err(err) = err {
+            assert!(err.to_string().contains("geometry count"));
+        }
     }
 }
 

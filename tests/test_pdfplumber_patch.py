@@ -151,6 +151,62 @@ def test_extract_tables_avoids_document_wide_extraction(monkeypatch):
         _ = page0.extract_tables()
 
 
+def test_extract_tables_uses_stream_not_per_page(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    fn = pdfplumber.page.Page.extract_tables
+    freevars = dict(zip(fn.__code__.co_freevars, fn.__closure__))
+    target = freevars["extract_tables_from_page"].cell_contents
+    calls = {"count": 0}
+
+    def profiler(frame, event, arg):
+        if event == "c_call" and arg is target:
+            calls["count"] += 1
+        return profiler
+
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    sys.setprofile(profiler)
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            page = pdf.pages[0]
+            page.extract_tables()
+    finally:
+        sys.setprofile(None)
+
+    assert calls["count"] == 0
+
+
+def test_extract_tables_reuses_table_stream(monkeypatch):
+    import bolivar._bolivar as _bolivar
+
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    calls = {"count": 0}
+    target = _bolivar.extract_tables_stream_from_document
+
+    def profiler(frame, event, arg):
+        if event == "c_call" and arg is target:
+            calls["count"] += 1
+        return profiler
+
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    sys.setprofile(profiler)
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            _ = pdf.pages[0].extract_tables()
+            _ = pdf.pages[1].extract_tables()
+    finally:
+        sys.setprofile(None)
+
+    assert calls["count"] == 1
+
+
 def test_extract_tables_rejects_threads_kw(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
@@ -166,7 +222,7 @@ def test_extract_tables_rejects_threads_kw(monkeypatch):
 
 def test_extract_tables_uses_bolivar(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
-    from bolivar import extract_tables_from_page
+    import bolivar._bolivar as _bolivar
 
     pdf_path = os.path.join(
         os.path.dirname(__file__),
@@ -176,13 +232,24 @@ def test_extract_tables_uses_bolivar(monkeypatch):
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
         page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
-        expected = extract_tables_from_page(
-            page.page_obj.doc._rust_doc,
-            page_index,
-            page.bbox,
-            page.mediabox,
-            page.initial_doctop,
+        boxes = pdf.doc._rust_doc.page_mediaboxes()
+        geometries = []
+        running = 0.0
+        for box in boxes:
+            box = tuple(box)
+            geometries.append((box, box, running, False))
+            running += box[3] - box[1]
+        stream = _bolivar.extract_tables_stream_from_document(
+            pdf.doc._rust_doc,
+            geometries,
+            laparams=pdf.laparams,
+            caching=pdf.doc.caching,
         )
+        expected = None
+        for idx, tables in stream:
+            if idx == page_index:
+                expected = tables
+                break
         got = page.extract_tables()
 
     assert got == expected

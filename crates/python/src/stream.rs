@@ -1,11 +1,13 @@
 //! Async streaming bindings for Python.
 
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bolivar_core::api::stream::{
-    DEFAULT_STREAM_BUFFER_CAPACITY,
+    DEFAULT_STREAM_BUFFER_CAPACITY, TableStream,
     extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
+    extract_tables_stream_from_doc_with_geometries as core_extract_tables_stream_from_doc_with_geometries,
 };
 use bolivar_core::error::Result as CoreResult;
 use bolivar_core::high_level::{ExtractOptions, extract_pages_stream as core_extract_pages_stream};
@@ -16,7 +18,7 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::document::{PyPDFDocument, pdf_input_from_py};
 use crate::layout::ltpage_to_py;
-use crate::params::PyLAParams;
+use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings};
 
 #[pyclass]
 pub struct AsyncPageStream {
@@ -76,6 +78,49 @@ impl AsyncPageStream {
 impl Drop for AsyncPageStream {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+#[pyclass]
+pub struct PyTableStream {
+    stream: StdMutex<Option<TableStream>>,
+}
+
+#[pymethods]
+impl PyTableStream {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(
+        &mut self,
+        py: Python<'_>,
+    ) -> PyResult<Option<(usize, Vec<Vec<Vec<Option<String>>>>)>> {
+        let mut stream = {
+            let mut guard = self
+                .stream
+                .lock()
+                .map_err(|_| PyValueError::new_err("table stream lock poisoned"))?;
+            guard
+                .take()
+                .ok_or_else(|| PyValueError::new_err("table stream closed"))?
+        };
+        let (next, stream) = py.detach(|| {
+            let next = stream.next();
+            (next, stream)
+        });
+        let mut guard = self
+            .stream
+            .lock()
+            .map_err(|_| PyValueError::new_err("table stream lock poisoned"))?;
+        *guard = Some(stream);
+        match next {
+            None => Ok(None),
+            Some(Ok((page_idx, tables))) => Ok(Some((page_idx, tables))),
+            Some(Err(err)) => Err(PyValueError::new_err(format!(
+                "Failed to extract tables: {err}"
+            ))),
+        }
     }
 }
 
@@ -186,10 +231,48 @@ pub fn extract_pages_async_from_document(
     })
 }
 
+/// Extract tables as a blocking stream from an existing PDFDocument.
+#[pyfunction]
+#[pyo3(signature = (doc, geometries, table_settings = None, laparams = None, page_numbers = None, maxpages = 0, caching = true))]
+pub fn extract_tables_stream_from_document(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    geometries: &Bound<'_, PyAny>,
+    table_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+) -> PyResult<PyTableStream> {
+    let settings = parse_table_settings(py, table_settings)?;
+    let geoms = parse_page_geometries(geometries)?;
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers,
+        maxpages,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+    };
+
+    let stream = core_extract_tables_stream_from_doc_with_geometries(
+        Arc::clone(&doc.inner),
+        options,
+        settings,
+        geoms,
+    )
+    .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {e}")))?;
+
+    Ok(PyTableStream {
+        stream: StdMutex::new(Some(stream)),
+    })
+}
+
 /// Register stream-related functions with the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(async_runtime_poc, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages_async, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages_async_from_document, m)?)?;
+    m.add_class::<PyTableStream>()?;
+    m.add_function(wrap_pyfunction!(extract_tables_stream_from_document, m)?)?;
     Ok(())
 }

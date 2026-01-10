@@ -26,11 +26,10 @@ def _apply_patch(module) -> bool:
     already_patched = getattr(page_mod.Page.extract_tables, "_bolivar_patched", False)
 
     from bolivar import (
-        extract_tables_from_document,
-        extract_tables_from_ltpage,
         extract_tables_from_page_filtered,
         extract_tables_from_page,
         extract_table_from_page_filtered,
+        extract_tables_stream_from_document,
     )
     from bolivar._bolivar import extract_pages_async_from_document
     from pdfminer.layout import LTPage
@@ -52,69 +51,134 @@ def _apply_patch(module) -> bool:
         except Exception as e:
             raise PdfminerException(str(e))
 
-    def _build_geometries(pdf, page_index, page):
-        boxes = _safe_page_mediaboxes(pdf.doc)
+    def _base_geometries(doc):
+        boxes = _safe_page_mediaboxes(doc)
         doctops = []
         running = 0.0
         for box in boxes:
             doctops.append(running)
             running += box[3] - box[1]
-        geoms = [
+        return [
             (tuple(box), tuple(box), doctop, False)
             for box, doctop in zip(boxes, doctops)
         ]
+
+    def _get_base_geometries(pdf, doc):
+        if pdf is not None:
+            base = getattr(pdf, "_bolivar_table_geom_base", None)
+            if base is not None:
+                return base
+        base = _base_geometries(doc)
+        if pdf is not None:
+            pdf._bolivar_table_geom_base = base
+        return base
+
+    def _build_geometries(doc, page_index, page, base=None):
+        if base is None:
+            base = _base_geometries(doc)
+        geoms = list(base)
         current = _page_geom(page)
         if 0 <= page_index < len(geoms) and geoms[page_index] != current:
             geoms[page_index] = current
         return geoms
+
+    def _normalize_key(value):
+        if isinstance(value, dict):
+            return tuple(
+                sorted((key, _normalize_key(val)) for key, val in value.items())
+            )
+        if isinstance(value, (list, tuple)):
+            return tuple(_normalize_key(val) for val in value)
+        return value
+
+    def _settings_key(table_settings):
+        return _normalize_key(table_settings)
+
+    def _laparams_key(pdf):
+        laparams = getattr(pdf, "laparams", None) if pdf is not None else None
+        if laparams is None:
+            return None
+        try:
+            items = getattr(laparams, "__dict__", None)
+            if items:
+                return tuple(sorted((k, _normalize_key(v)) for k, v in items.items()))
+        except Exception:
+            pass
+        return repr(laparams)
+
+    class _BolivarTableStream:
+        def __init__(self, stream):
+            self._stream = iter(stream)
+            self._cache = {}
+            self._done = False
+            self._lock = threading.Lock()
+
+        def get(self, page_index):
+            with self._lock:
+                if page_index in self._cache:
+                    return self._cache[page_index]
+                if self._done:
+                    return None
+                while page_index not in self._cache:
+                    try:
+                        idx, tables = next(self._stream)
+                    except StopIteration:
+                        self._done = True
+                        break
+                    self._cache[idx] = tables
+                return self._cache.get(page_index)
+
+    def _get_table_stream(pdf, doc, table_settings, geometries, page_numbers):
+        streams = None
+        if pdf is not None:
+            streams = getattr(pdf, "_bolivar_table_streams", None)
+            if streams is None:
+                streams = {}
+                pdf._bolivar_table_streams = streams
+        settings_key = _settings_key(table_settings)
+        geometries_key = tuple(geometries)
+        laparams_key = _laparams_key(pdf)
+        page_numbers_key = tuple(page_numbers) if page_numbers is not None else None
+        key = (settings_key, geometries_key, laparams_key, page_numbers_key)
+        if streams is not None and key in streams:
+            return streams[key]
+        rust_doc = getattr(doc, "_rust_doc", None) or doc
+        stream = extract_tables_stream_from_document(
+            rust_doc,
+            geometries,
+            table_settings=table_settings,
+            laparams=getattr(pdf, "laparams", None) if pdf is not None else None,
+            page_numbers=page_numbers,
+            maxpages=0,
+            caching=getattr(doc, "caching", True),
+        )
+        wrapped = _BolivarTableStream(stream)
+        if streams is not None:
+            streams[key] = wrapped
+        return wrapped
 
     if not already_patched:
 
         def _extract_tables(self, table_settings=None):
             if getattr(self, "filter_fn", None) is not None:
                 return extract_tables_from_page_filtered(self, table_settings)
-            layout = getattr(self, "_layout_rust", None)
-            if layout is None:
-                wrapper = getattr(self, "_layout", None)
-                layout = (
-                    getattr(wrapper, "_rust_page", None)
-                    if wrapper is not None
-                    else None
-                )
-            if layout is not None:
-                force_crop = not getattr(self, "is_original", True)
-                return extract_tables_from_ltpage(
-                    layout,
-                    self.bbox,
-                    self.mediabox,
-                    self.initial_doctop,
-                    table_settings,
-                    force_crop=force_crop,
-                )
             page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
             pdf = getattr(self, "pdf", None)
-            if pdf is None or not hasattr(pdf, "doc"):
-                force_crop = not getattr(self, "is_original", True)
-                return extract_tables_from_page(
-                    self.page_obj.doc._rust_doc,
-                    page_index,
-                    self.bbox,
-                    self.mediabox,
-                    self.initial_doctop,
-                    table_settings,
-                    force_crop=force_crop,
-                )
-
-            force_crop = not getattr(self, "is_original", True)
-            return extract_tables_from_page(
-                pdf.doc._rust_doc,
-                page_index,
-                self.bbox,
-                self.mediabox,
-                self.initial_doctop,
-                table_settings,
-                force_crop=force_crop,
+            doc = getattr(pdf, "doc", None) if pdf is not None else None
+            if doc is None:
+                doc = getattr(self.page_obj, "doc", None)
+            if doc is None:
+                raise PdfminerException("pdf document missing")
+            base_geoms = _get_base_geometries(pdf, doc)
+            geoms = _build_geometries(doc, page_index, self, base=base_geoms)
+            pages = getattr(pdf, "pages", None) if pdf is not None else None
+            page_numbers = (
+                list(getattr(pages, "_page_numbers", [])) if pages is not None else None
             )
+            stream = _get_table_stream(pdf, doc, table_settings, geoms, page_numbers)
+            _unused = extract_tables_from_page
+            tables = stream.get(page_index)
+            return tables or []
 
         def _table_cell_count(table):
             return sum(len(row) for row in table)
