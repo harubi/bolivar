@@ -32,89 +32,6 @@ pub struct IntersectionIdx {
     pub h: Vec<HEdgeId>,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct AoSoABlock {
-    pub x0: [f64; 4],
-    pub top: [f64; 4],
-    pub bottom: [f64; 4],
-    pub id: [usize; 4],
-    pub mask: u8,
-}
-
-impl Default for AoSoABlock {
-    fn default() -> Self {
-        Self {
-            x0: [0.0; 4],
-            top: [0.0; 4],
-            bottom: [0.0; 4],
-            id: [0; 4],
-            mask: 0,
-        }
-    }
-}
-
-impl AoSoABlock {
-    fn insert(&mut self, id: usize, x0: f64, top: f64, bottom: f64) -> Option<u8> {
-        for lane in 0..4 {
-            let lane_bit = 1u8 << lane;
-            if self.mask & lane_bit == 0 {
-                self.x0[lane] = x0;
-                self.top[lane] = top;
-                self.bottom[lane] = bottom;
-                self.id[lane] = id;
-                self.mask |= lane_bit;
-                return Some(lane_bit);
-            }
-        }
-        None
-    }
-
-    fn remove(&mut self, lane_bit: u8) {
-        self.mask &= !lane_bit;
-    }
-}
-
-pub(crate) type BucketSlot = (usize, u8);
-
-#[derive(Default, Debug)]
-pub(crate) struct ActiveBucket {
-    pub blocks: Vec<AoSoABlock>,
-    len: usize,
-}
-
-impl ActiveBucket {
-    pub fn insert(&mut self, id: usize, x0: f64, top: f64, bottom: f64) -> BucketSlot {
-        for (block_idx, block) in self.blocks.iter_mut().enumerate() {
-            if let Some(lane_bit) = block.insert(id, x0, top, bottom) {
-                self.len += 1;
-                return (block_idx, lane_bit);
-            }
-        }
-
-        let mut block = AoSoABlock::default();
-        let lane_bit = block
-            .insert(id, x0, top, bottom)
-            .expect("new block must accept insert");
-        self.blocks.push(block);
-        self.len += 1;
-        (self.blocks.len() - 1, lane_bit)
-    }
-
-    pub fn remove(&mut self, slot: BucketSlot) {
-        let (block_idx, lane_bit) = slot;
-        if let Some(block) = self.blocks.get_mut(block_idx) {
-            if block.mask & lane_bit != 0 {
-                block.remove(lane_bit);
-                self.len = self.len.saturating_sub(1);
-            }
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-}
-
 #[inline]
 pub(crate) fn match_v_edges_simd4(
     tops: [f64; 4],
@@ -138,28 +55,28 @@ pub(crate) fn match_v_edges_simd4(
     (y_ok & x_ok).to_array()
 }
 
-#[inline]
-pub(crate) fn match_block_simd4(
-    tops: [f64; 4],
-    bottoms: [f64; 4],
-    x0s: [f64; 4],
-    h_top: f64,
-    x_min: f64,
-    x_max: f64,
-    y_tol: f64,
-    live_mask: u8,
-) -> u8 {
-    let topv = Simd::<f64, 4>::from_array(tops);
-    let botv = Simd::<f64, 4>::from_array(bottoms);
-    let x0v = Simd::<f64, 4>::from_array(x0s);
-    let htop = Simd::<f64, 4>::splat(h_top);
-    let ytol = Simd::<f64, 4>::splat(y_tol);
-    let xmin = Simd::<f64, 4>::splat(x_min);
-    let xmax = Simd::<f64, 4>::splat(x_max);
-
-    let y_ok = topv.simd_le(htop + ytol) & botv.simd_ge(htop - ytol);
-    let x_ok = x0v.simd_ge(xmin) & x0v.simd_le(xmax);
-    (y_ok & x_ok).to_bitmask() as u8 & live_mask
+pub(crate) fn remove_active_entry(
+    active: &mut BTreeMap<KeyF64, Vec<usize>>,
+    active_slots: &mut [Option<(KeyF64, usize)>],
+    v_idx: usize,
+) {
+    let Some((key, pos)) = active_slots.get_mut(v_idx).and_then(Option::take) else {
+        return;
+    };
+    let mut remove_bucket = false;
+    if let Some(bucket) = active.get_mut(&key) {
+        let _ = bucket.swap_remove(pos);
+        if pos < bucket.len() {
+            let moved_idx = bucket[pos];
+            active_slots[moved_idx] = Some((key, pos));
+        }
+        if bucket.is_empty() {
+            remove_bucket = true;
+        }
+    }
+    if remove_bucket {
+        active.remove(&key);
+    }
 }
 
 /// Find all intersections between edges using a sweep-line algorithm.
@@ -272,8 +189,8 @@ pub fn edges_to_intersections(
             .then(a.idx.cmp(&b.idx))
     });
 
-    let mut active: BTreeMap<KeyF64, ActiveBucket> = BTreeMap::new();
-    let mut active_slots: Vec<Option<(KeyF64, BucketSlot)>> = vec![None; v_sorted.len()];
+    let mut active: BTreeMap<KeyF64, Vec<usize>> = BTreeMap::new();
+    let mut active_slots: Vec<Option<(KeyF64, usize)>> = vec![None; v_sorted.len()];
     let mut pairs: HashMap<KeyPoint, Vec<(VEdgeId, HEdgeId)>> = HashMap::new();
 
     for event in events {
@@ -282,56 +199,56 @@ pub fn edges_to_intersections(
                 let v = &v_sorted[event.idx];
                 let key = key_f64(v.x0);
                 let bucket = active.entry(key).or_default();
-                let slot = bucket.insert(event.idx, v.x0, v.top, v.bottom);
-                active_slots[event.idx] = Some((key, slot));
+                bucket.push(event.idx);
+                let pos = bucket.len() - 1;
+                active_slots[event.idx] = Some((key, pos));
             }
             EventKind::RemoveV => {
-                if let Some((key, slot)) = active_slots[event.idx].take() {
-                    let mut remove_bucket = false;
-                    if let Some(bucket) = active.get_mut(&key) {
-                        bucket.remove(slot);
-                        if bucket.is_empty() {
-                            remove_bucket = true;
-                        }
-                    }
-                    if remove_bucket {
-                        active.remove(&key);
-                    }
-                }
+                remove_active_entry(&mut active, &mut active_slots, event.idx);
             }
             EventKind::QueryH => {
                 let h = &h_sorted[event.idx];
                 let x_min = h.x0 - x_tol;
                 let x_max = h.x1 + x_tol;
                 for (_x0, bucket) in active.range(key_f64(x_min)..=key_f64(x_max)) {
-                    for block in &bucket.blocks {
-                        if block.mask == 0 {
-                            continue;
-                        }
-                        let mask = match_block_simd4(
-                            block.top,
-                            block.bottom,
-                            block.x0,
-                            h.top,
-                            x_min,
-                            x_max,
-                            y_tol,
-                            block.mask,
-                        );
-                        if mask == 0 {
-                            continue;
-                        }
-                        let mut lane_bit = 1u8;
+                    let mut i = 0usize;
+                    while i + 4 <= bucket.len() {
+                        let v0 = &v_sorted[bucket[i]];
+                        let v1 = &v_sorted[bucket[i + 1]];
+                        let v2 = &v_sorted[bucket[i + 2]];
+                        let v3 = &v_sorted[bucket[i + 3]];
+
+                        let tops = [v0.top, v1.top, v2.top, v3.top];
+                        let bottoms = [v0.bottom, v1.bottom, v2.bottom, v3.bottom];
+                        let x0s = [v0.x0, v1.x0, v2.x0, v3.x0];
+
+                        let mask =
+                            match_v_edges_simd4(tops, bottoms, x0s, h.top, x_min, x_max, y_tol);
                         for lane in 0..4 {
-                            if mask & lane_bit != 0 {
-                                let v_idx = block.id[lane];
-                                let vertex = key_point(block.x0[lane], h.top);
+                            if mask[lane] {
+                                let v_idx = bucket[i + lane];
+                                let vertex = key_point(v_sorted[v_idx].x0, h.top);
                                 pairs
                                     .entry(vertex)
                                     .or_default()
                                     .push((VEdgeId(v_idx), HEdgeId(event.idx)));
                             }
-                            lane_bit <<= 1;
+                        }
+                        i += 4;
+                    }
+
+                    for &v_idx in &bucket[i..] {
+                        let v = &v_sorted[v_idx];
+                        if v.top <= h.top + y_tol
+                            && v.bottom >= h.top - y_tol
+                            && v.x0 >= x_min
+                            && v.x0 <= x_max
+                        {
+                            let vertex = key_point(v.x0, h.top);
+                            pairs
+                                .entry(vertex)
+                                .or_default()
+                                .push((VEdgeId(v_idx), HEdgeId(event.idx)));
                         }
                     }
                 }

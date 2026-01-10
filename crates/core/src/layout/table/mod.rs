@@ -30,8 +30,8 @@ mod table_extraction_tests {
     use super::intersections::edges_to_intersections;
     use super::text::extract_words;
     use super::types::{
-        BBox, BBoxKey, CharObj, EdgeObj, HEdgeId, Orientation, TextSettings, VEdgeId, bbox_key,
-        key_point,
+        BBox, BBoxKey, CharObj, EdgeObj, HEdgeId, KeyF64, Orientation, TextSettings, VEdgeId,
+        bbox_key, key_f64, key_point,
     };
 
     fn make_v_edge(x: f64, top: f64, bottom: f64) -> EdgeObj {
@@ -313,34 +313,42 @@ mod table_extraction_tests {
     }
 
     #[test]
-    fn intersections_aosoa_block_mask_expected() {
-        let tops = [-5.0, -1.0, 1.0, -5.0];
-        let bottoms = [5.0, 1.0, 5.0, 5.0];
-        let x0s = [5.0, 7.0, 2.0, 20.0];
-        let live_mask = 0b1011u8;
-        let mask = super::intersections::match_block_simd4(
-            tops, bottoms, x0s, 0.0, 0.0, 10.0, 0.0, live_mask,
-        );
-        assert_eq!(mask, 0b0011u8);
+    fn intersections_swap_pop_updates_slot() {
+        use std::collections::BTreeMap;
+
+        let mut active: BTreeMap<KeyF64, Vec<usize>> = BTreeMap::new();
+        let key = key_f64(1.0);
+        active.insert(key, vec![0, 1, 2]);
+
+        let mut active_slots: Vec<Option<(KeyF64, usize)>> = vec![None; 3];
+        active_slots[0] = Some((key, 0));
+        active_slots[1] = Some((key, 1));
+        active_slots[2] = Some((key, 2));
+
+        super::intersections::remove_active_entry(&mut active, &mut active_slots, 1);
+
+        let bucket = active.get(&key).unwrap();
+        assert_eq!(bucket.len(), 2);
+        assert!(active_slots[1].is_none());
+        assert_eq!(bucket[1], 2);
+        assert_eq!(active_slots[2], Some((key, 1)));
     }
 
     #[test]
-    fn intersections_active_bucket_reuses_lane() {
-        let mut bucket = super::intersections::ActiveBucket::default();
-        let a = bucket.insert(0, 1.0, 2.0, 3.0);
-        let b = bucket.insert(1, 4.0, 5.0, 6.0);
-        assert_ne!(a, b);
-        bucket.remove(b);
-        let c = bucket.insert(2, 7.0, 8.0, 9.0);
-        assert_eq!(b, c);
-    }
+    fn intersections_swap_pop_removes_empty_bucket() {
+        use std::collections::BTreeMap;
 
-    #[test]
-    fn intersections_aosoa_expected_points() {
-        let edges = vec![make_h_edge(0.0, 0.0, 10.0), make_v_edge(5.0, -5.0, 5.0)];
-        let (_store, intersections) =
-            super::intersections::edges_to_intersections(&edges, 0.0, 0.0);
-        assert_eq!(intersections.len(), 1);
+        let mut active: BTreeMap<KeyF64, Vec<usize>> = BTreeMap::new();
+        let key = key_f64(2.0);
+        active.insert(key, vec![0]);
+
+        let mut active_slots: Vec<Option<(KeyF64, usize)>> = vec![None; 1];
+        active_slots[0] = Some((key, 0));
+
+        super::intersections::remove_active_entry(&mut active, &mut active_slots, 0);
+
+        assert!(active.get(&key).is_none());
+        assert!(active_slots[0].is_none());
     }
 
     #[test]
