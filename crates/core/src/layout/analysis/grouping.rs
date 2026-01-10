@@ -3,6 +3,7 @@
 //! Contains group_objects() for grouping characters into text lines,
 //! and group_textlines() for grouping text lines into text boxes.
 
+use crate::simd::F64_LANES;
 use crate::utils::{INF_F64, Rect};
 
 use super::super::arena::{
@@ -132,7 +133,7 @@ fn group_objects_pair_flags_simd(laparams: &LAParams, objs: &[LTChar]) -> (Vec<b
     let mut halign_flags = vec![false; len - 1];
     let mut valign_flags = vec![false; len - 1];
 
-    const LANES: usize = 4;
+    const LANES: usize = F64_LANES;
     let mut i = 0usize;
 
     use std::simd::prelude::*;

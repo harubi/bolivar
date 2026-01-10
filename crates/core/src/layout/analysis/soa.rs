@@ -1,7 +1,6 @@
+use crate::simd::F64_LANES as LANES;
 use crate::utils::Rect;
 use std::simd::prelude::*;
-
-const LANES: usize = 4;
 
 pub struct RectSoA {
     pub x0: Vec<[f64; LANES]>,
@@ -109,7 +108,8 @@ mod tests {
             (4.0, 0.0, 5.0, 1.0),
         ];
         let soa = RectSoA::from_bboxes(&bboxes);
-        assert_eq!(soa.x0.len(), 2);
+        let expected_chunks = (5 + LANES - 1) / LANES;
+        assert_eq!(soa.x0.len(), expected_chunks);
     }
 }
 

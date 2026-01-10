@@ -13,6 +13,7 @@ use super::security::{PDFSecurityHandler, create_security_handler};
 use crate::error::{PdfError, Result};
 use crate::model::objects::PDFObject;
 use crate::parser::parser::PDFParser;
+use crate::simd::U8_LANES;
 use bytes::Bytes;
 use indexmap::IndexMap;
 use memmap2::Mmap;
@@ -22,14 +23,8 @@ use std::collections::HashSet;
 use std::simd::prelude::*;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-const PNG_SIMD_LANES: usize = 32;
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
-const PNG_SIMD_LANES: usize = 16;
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-const KEYWORD_SIMD_LANES: usize = 32;
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
-const KEYWORD_SIMD_LANES: usize = 16;
+const PNG_SIMD_LANES: usize = U8_LANES;
+const KEYWORD_SIMD_LANES: usize = U8_LANES;
 
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024;
 pub const DEFAULT_PAGE_CACHE_CAPACITY: usize = 64;

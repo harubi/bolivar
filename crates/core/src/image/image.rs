@@ -6,6 +6,7 @@ use crate::codec::ascii85::{ascii85decode, asciihexdecode};
 use crate::codec::lzw::lzwdecode_with_earlychange;
 use crate::codec::runlength::rldecode;
 use crate::pdftypes::{PDFObject, PDFStream};
+use crate::simd::U8_LANES;
 use crate::{PdfError, Result};
 use flate2::read::ZlibDecoder;
 use std::collections::HashMap;
@@ -15,11 +16,7 @@ use std::path::{Path, PathBuf};
 use std::simd::prelude::*;
 
 const MAX_IMAGE_DECODED_BYTES: usize = 256 * 1024 * 1024;
-
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-const PNG_SIMD_LANES: usize = 32;
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
-const PNG_SIMD_LANES: usize = 16;
+const PNG_SIMD_LANES: usize = U8_LANES;
 
 /// Align a value to a 4-byte boundary (32-bit alignment for BMP rows).
 pub const fn align32(x: i32) -> i32 {

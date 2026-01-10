@@ -16,6 +16,7 @@ pub mod interp;
 pub mod layout;
 pub mod model;
 pub mod parser;
+pub mod simd;
 pub mod utils;
 
 // Re-export table module for backwards compatibility

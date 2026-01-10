@@ -3,6 +3,7 @@
 //! Port of pdfminer.six psparser.py
 
 use crate::error::{PdfError, Result};
+use crate::simd::U8_LANES;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::simd::prelude::*;
@@ -672,10 +673,7 @@ pub enum PSToken {
 /// Buffer size for reading (matches pdfminer.six)
 #[allow(dead_code)]
 const BUFSIZ: usize = 4096;
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-const PS_SIMD_LANES: usize = 32;
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
-const PS_SIMD_LANES: usize = 16;
+const PS_SIMD_LANES: usize = U8_LANES;
 const PS_SIMD_FULL_MASK: u64 = (1u64 << PS_SIMD_LANES) - 1;
 
 /// PostScript base parser - performs tokenization
@@ -1269,10 +1267,7 @@ impl<'a> PSBaseParser<'a> {
 }
 
 impl<'a> ContentLexer<'a> {
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    const SIMD_LANES: usize = 32;
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
-    const SIMD_LANES: usize = 16;
+    const SIMD_LANES: usize = U8_LANES;
     const SIMD_FULL_MASK: u64 = (1u64 << Self::SIMD_LANES) - 1;
 
     pub const fn new(data: &'a [u8]) -> Self {
@@ -1777,10 +1772,7 @@ impl<'a> ContentLexer<'a> {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-const HEX_SIMD_LANES: usize = 32;
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
-const HEX_SIMD_LANES: usize = 16;
+const HEX_SIMD_LANES: usize = U8_LANES;
 
 const fn is_ws_byte(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x00' | b'\x0c')

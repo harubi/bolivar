@@ -3,12 +3,10 @@
 //! Port of pdfminer.six ascii85.py
 
 use crate::error::Result;
+use crate::simd::{SimdU8, U8_LANES};
 use std::simd::prelude::*;
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-const ASCII_SIMD_LANES: usize = 32;
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
-const ASCII_SIMD_LANES: usize = 16;
+const LANES: usize = U8_LANES;
 
 /// Decode ASCII85-encoded data (PDF variant).
 /// Handles: z-encoding, <~ ~> markers, whitespace, missing EOD.
@@ -35,9 +33,9 @@ fn ascii85decode_simd(data: &[u8]) -> Result<Vec<u8>> {
     let mut idx = 0;
     while idx < data.len() {
         let remaining = data.len() - idx;
-        if remaining >= ASCII_SIMD_LANES {
-            let chunk = &data[idx..idx + ASCII_SIMD_LANES];
-            let bytes = Simd::<u8, ASCII_SIMD_LANES>::from_slice(chunk);
+        if remaining >= LANES {
+            let chunk = &data[idx..idx + LANES];
+            let bytes = SimdU8::from_slice(chunk);
             let is_ws = bytes.simd_eq(Simd::splat(b' '))
                 | bytes.simd_eq(Simd::splat(b'\t'))
                 | bytes.simd_eq(Simd::splat(b'\n'))
@@ -50,7 +48,7 @@ fn ascii85decode_simd(data: &[u8]) -> Result<Vec<u8>> {
             let all_data = is_data.all();
             if !has_ws && !has_z && all_data {
                 filtered.extend_from_slice(chunk);
-                idx += ASCII_SIMD_LANES;
+                idx += LANES;
                 continue;
             }
         }
@@ -105,14 +103,14 @@ fn asciihexdecode_simd(data: &[u8]) -> Result<Vec<u8>> {
 
     while idx < data.len() {
         let remaining = data.len() - idx;
-        if remaining >= ASCII_SIMD_LANES {
-            let chunk = &data[idx..idx + ASCII_SIMD_LANES];
-            let bytes = Simd::<u8, ASCII_SIMD_LANES>::from_slice(chunk);
+        if remaining >= LANES {
+            let chunk = &data[idx..idx + LANES];
+            let bytes = SimdU8::from_slice(chunk);
             let is_gt = bytes.simd_eq(Simd::splat(b'>'));
             if is_gt.any() {
                 let lanes = is_gt.to_array();
                 let mut stop = 0;
-                while stop < ASCII_SIMD_LANES && !lanes[stop] {
+                while stop < LANES && !lanes[stop] {
                     stop += 1;
                 }
                 for &byte in &chunk[..stop] {
@@ -149,16 +147,16 @@ fn asciihexdecode_simd(data: &[u8]) -> Result<Vec<u8>> {
                     result.push((high << 4) | low);
                     lane = 1;
                 }
-                while lane + 1 < ASCII_SIMD_LANES {
+                while lane + 1 < LANES {
                     let high = nibbles[lane];
                     let low = nibbles[lane + 1];
                     result.push((high << 4) | low);
                     lane += 2;
                 }
-                if lane < ASCII_SIMD_LANES {
+                if lane < LANES {
                     pending = Some(nibbles[lane]);
                 }
-                idx += ASCII_SIMD_LANES;
+                idx += LANES;
                 continue;
             }
         }
