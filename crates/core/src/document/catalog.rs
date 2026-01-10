@@ -26,6 +26,10 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 const PNG_SIMD_LANES: usize = 32;
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
 const PNG_SIMD_LANES: usize = 16;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+const KEYWORD_SIMD_LANES: usize = 32;
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+const KEYWORD_SIMD_LANES: usize = 16;
 
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024;
 pub const DEFAULT_PAGE_CACHE_CAPACITY: usize = 64;
@@ -354,45 +358,73 @@ impl PDFDocument {
         Ok(())
     }
 
-    /// Find the startxref position by scanning backwards from end of file.
-    fn find_startxref(&self) -> Result<usize> {
-        // Search backwards for "startxref"
-        let search = b"startxref";
-        let data = self.data.as_slice();
+    fn find_startxref_simd(data: &[u8]) -> Option<usize> {
+        let needle = b"startxref";
+        if data.len() < needle.len() {
+            return None;
+        }
 
-        // Start from near end of file
         let search_start = if data.len() > 1024 {
             data.len() - 1024
         } else {
             0
         };
+        let hay = &data[search_start..];
+
+        type V = Simd<u8, { KEYWORD_SIMD_LANES }>;
+        let s_mask = V::splat(b's');
+        let mut found: Option<usize> = None;
+        let mut i = 0usize;
+
+        while i + KEYWORD_SIMD_LANES <= hay.len() {
+            let chunk = V::from_slice(&hay[i..i + KEYWORD_SIMD_LANES]);
+            let mut mask = chunk.simd_eq(s_mask).to_bitmask();
+            while mask != 0 {
+                let lane = mask.trailing_zeros() as usize;
+                let pos = i + lane;
+                if pos + needle.len() <= hay.len() && &hay[pos..pos + needle.len()] == needle {
+                    found = Some(search_start + pos);
+                }
+                mask &= mask - 1;
+            }
+            i += KEYWORD_SIMD_LANES;
+        }
+
+        for pos in i..hay.len() {
+            if pos + needle.len() <= hay.len() && &hay[pos..pos + needle.len()] == needle {
+                found = Some(search_start + pos);
+            }
+        }
+
+        found
+    }
+
+    /// Find the startxref position by scanning backwards from end of file.
+    fn find_startxref(&self) -> Result<usize> {
+        let search = b"startxref";
+        let data = self.data.as_slice();
 
         // Handle files too small to contain startxref
         if data.len() < search.len() {
             return Err(crate::error::PdfError::SyntaxError("PDF too small".into()));
         }
-        for i in (search_start..data.len() - search.len()).rev() {
-            if &data[i..i + search.len()] == search {
-                // Found startxref, now find the number after it
-                let rest = &data[i + search.len()..];
-                // Skip whitespace
-                let mut pos = 0;
-                while pos < rest.len()
-                    && (rest[pos] == b' ' || rest[pos] == b'\n' || rest[pos] == b'\r')
-                {
-                    pos += 1;
-                }
-                // Read number
-                let mut num_end = pos;
-                while num_end < rest.len() && rest[num_end].is_ascii_digit() {
-                    num_end += 1;
-                }
-                if num_end > pos {
-                    let num_str = std::str::from_utf8(&rest[pos..num_end])
-                        .map_err(|_| PdfError::NoValidXRef)?;
-                    return num_str.parse().map_err(|_| PdfError::NoValidXRef);
-                }
-            }
+        let Some(i) = Self::find_startxref_simd(data) else {
+            return Err(PdfError::NoValidXRef);
+        };
+
+        let rest = &data[i + search.len()..];
+        let mut pos = 0;
+        while pos < rest.len() && (rest[pos] == b' ' || rest[pos] == b'\n' || rest[pos] == b'\r') {
+            pos += 1;
+        }
+        let mut num_end = pos;
+        while num_end < rest.len() && rest[num_end].is_ascii_digit() {
+            num_end += 1;
+        }
+        if num_end > pos {
+            let num_str =
+                std::str::from_utf8(&rest[pos..num_end]).map_err(|_| PdfError::NoValidXRef)?;
+            return num_str.parse().map_err(|_| PdfError::NoValidXRef);
         }
 
         Err(PdfError::NoValidXRef)
@@ -1628,12 +1660,41 @@ impl PDFDocument {
         Ok(obj)
     }
 
-    fn find_endstream(data: &[u8]) -> Option<usize> {
+    fn find_endstream_simd(data: &[u8]) -> Option<usize> {
         let needle = b"endstream";
-        for i in 0..data.len().saturating_sub(needle.len()) {
-            if &data[i..i + needle.len()] == needle {
-                // Trim trailing whitespace
-                let mut end = i;
+        if data.len() < needle.len() {
+            return None;
+        }
+
+        type V = Simd<u8, { KEYWORD_SIMD_LANES }>;
+        let e_mask = V::splat(b'e');
+        let mut i = 0usize;
+
+        while i + KEYWORD_SIMD_LANES <= data.len() {
+            let chunk = V::from_slice(&data[i..i + KEYWORD_SIMD_LANES]);
+            let mut mask = chunk.simd_eq(e_mask).to_bitmask();
+            while mask != 0 {
+                let lane = mask.trailing_zeros() as usize;
+                let pos = i + lane;
+                if pos + needle.len() <= data.len() && &data[pos..pos + needle.len()] == needle {
+                    let mut end = pos;
+                    while end > 0
+                        && (data[end - 1] == b' '
+                            || data[end - 1] == b'\n'
+                            || data[end - 1] == b'\r')
+                    {
+                        end -= 1;
+                    }
+                    return Some(end);
+                }
+                mask &= mask - 1;
+            }
+            i += KEYWORD_SIMD_LANES;
+        }
+
+        for pos in i..data.len() {
+            if pos + needle.len() <= data.len() && &data[pos..pos + needle.len()] == needle {
+                let mut end = pos;
                 while end > 0
                     && (data[end - 1] == b' ' || data[end - 1] == b'\n' || data[end - 1] == b'\r')
                 {
@@ -1642,7 +1703,12 @@ impl PDFDocument {
                 return Some(end);
             }
         }
+
         None
+    }
+
+    fn find_endstream(data: &[u8]) -> Option<usize> {
+        Self::find_endstream_simd(data)
     }
 
     /// Get document catalog.
@@ -2282,6 +2348,20 @@ mod tests {
         assert_eq!(format_alpha(26), "z");
         assert_eq!(format_alpha(27), "aa");
         assert_eq!(format_alpha(28), "ab");
+    }
+
+    #[test]
+    fn find_endstream_simd_trims_whitespace() {
+        let data = b"abc  \nendstream";
+        let end = PDFDocument::find_endstream_simd(data).unwrap();
+        assert_eq!(&data[..end], b"abc");
+    }
+
+    #[test]
+    fn find_startxref_simd_matches_scalar() {
+        let data = b"trailer\nstartxref\n123\n%%EOF";
+        let pos = PDFDocument::find_startxref_simd(data).unwrap();
+        assert_eq!(&data[pos..pos + 9], b"startxref");
     }
 
     #[test]
