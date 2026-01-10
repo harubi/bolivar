@@ -859,6 +859,65 @@ impl<'a> PSBaseParser<'a> {
         data.len()
     }
 
+    fn find_literal_special_simd(data: &[u8]) -> usize {
+        if data.is_empty() {
+            return 0;
+        }
+
+        let mut i = 0;
+        let prefix_len = data.len().min(8);
+        while i < prefix_len {
+            let b = data[i];
+            if b == b'(' || b == b')' || b == b'\\' {
+                return i;
+            }
+            i += 1;
+        }
+
+        if data.len() - i < PS_SIMD_LANES {
+            while i < data.len() {
+                let b = data[i];
+                if b == b'(' || b == b')' || b == b'\\' {
+                    return i;
+                }
+                i += 1;
+            }
+            return data.len();
+        }
+
+        type V = Simd<u8, { PS_SIMD_LANES }>;
+        let (prefix, middle, suffix) = data[i..].as_simd::<{ PS_SIMD_LANES }>();
+
+        let mut offset = i;
+        for (idx, &b) in prefix.iter().enumerate() {
+            if b == b'(' || b == b')' || b == b'\\' {
+                return offset + idx;
+            }
+        }
+        offset += prefix.len();
+
+        let open = V::splat(b'(');
+        let close = V::splat(b')');
+        let slash = V::splat(b'\\');
+
+        for chunk in middle.iter() {
+            let mask =
+                (chunk.simd_eq(open) | chunk.simd_eq(close) | chunk.simd_eq(slash)).to_bitmask();
+            if mask != 0 {
+                return offset + mask.trailing_zeros() as usize;
+            }
+            offset += PS_SIMD_LANES;
+        }
+
+        for (idx, &b) in suffix.iter().enumerate() {
+            if b == b'(' || b == b')' || b == b'\\' {
+                return offset + idx;
+            }
+        }
+
+        data.len()
+    }
+
     fn find_first_non_ws_simd(data: &[u8]) -> usize {
         if data.is_empty() {
             return 0;
@@ -1099,50 +1158,66 @@ impl<'a> PSBaseParser<'a> {
 
     /// Parse a literal string (...)
     fn parse_string(&mut self) -> Result<PSToken> {
-        self.advance(); // Skip '('
+        let data = self.data.as_slice();
+        let len = data.len();
+        let mut pos = self.pos + 1; // skip '('
         let mut result = Vec::new();
         let mut depth = 1;
 
-        while depth > 0 {
-            match self.advance() {
-                Some(b'(') => {
+        while pos < len && depth > 0 {
+            let offset = Self::find_literal_special_simd(&data[pos..]);
+            if offset > 0 {
+                let next = pos + offset;
+                result.extend_from_slice(&data[pos..next]);
+                pos = next;
+                if pos >= len {
+                    break;
+                }
+            }
+
+            let c = data[pos];
+            pos += 1;
+            match c {
+                b'(' => {
                     depth += 1;
                     result.push(b'(');
                 }
-                Some(b')') => {
+                b')' => {
                     depth -= 1;
                     if depth > 0 {
                         result.push(b')');
                     }
                 }
-                Some(b'\\') => {
-                    // Escape sequence
-                    match self.advance() {
-                        Some(b'n') => result.push(b'\n'),
-                        Some(b'r') => result.push(b'\r'),
-                        Some(b't') => result.push(b'\t'),
-                        Some(b'b') => result.push(0x08),
-                        Some(b'f') => result.push(0x0c),
-                        Some(b'(') => result.push(b'('),
-                        Some(b')') => result.push(b')'),
-                        Some(b'\\') => result.push(b'\\'),
-                        Some(b'\r') => {
-                            // Line continuation - skip \r and optional \n
-                            if self.peek() == Some(b'\n') {
-                                self.advance();
+                b'\\' => {
+                    if pos >= len {
+                        self.pos = pos;
+                        return Err(PdfError::UnexpectedEof);
+                    }
+                    let esc = data[pos];
+                    pos += 1;
+                    match esc {
+                        b'n' => result.push(b'\n'),
+                        b'r' => result.push(b'\r'),
+                        b't' => result.push(b'\t'),
+                        b'b' => result.push(0x08),
+                        b'f' => result.push(0x0c),
+                        b'(' => result.push(b'('),
+                        b')' => result.push(b')'),
+                        b'\\' => result.push(b'\\'),
+                        b'\r' => {
+                            if pos < len && data[pos] == b'\n' {
+                                pos += 1;
                             }
                         }
-                        Some(b'\n') => {
-                            // Line continuation - skip newline
-                        }
-                        Some(c) if c.is_ascii_digit() && c < b'8' => {
-                            // Octal escape (1-3 digits)
+                        b'\n' => {}
+                        c if c.is_ascii_digit() && c < b'8' => {
                             let mut octal = (c - b'0') as u32;
                             for _ in 0..2 {
-                                if let Some(d) = self.peek() {
+                                if pos < len {
+                                    let d = data[pos];
                                     if d.is_ascii_digit() && d < b'8' {
-                                        self.advance();
                                         octal = octal * 8 + (d - b'0') as u32;
+                                        pos += 1;
                                     } else {
                                         break;
                                     }
@@ -1150,18 +1225,17 @@ impl<'a> PSBaseParser<'a> {
                             }
                             result.push((octal & 0xFF) as u8);
                         }
-                        Some(c) => {
-                            // Unknown escape, just keep the character
-                            result.push(c);
-                        }
-                        None => return Err(PdfError::UnexpectedEof),
+                        c => result.push(c),
                     }
                 }
-                Some(c) => result.push(c),
-                None => return Err(PdfError::UnexpectedEof),
+                c => result.push(c),
             }
         }
 
+        self.pos = pos;
+        if depth > 0 {
+            return Err(PdfError::UnexpectedEof);
+        }
         Ok(PSToken::String(result))
     }
 
@@ -1459,6 +1533,16 @@ impl<'a> ContentLexer<'a> {
         let mut result = Vec::with_capacity(32);
 
         while pos < len && depth > 0 {
+            let offset = PSBaseParser::find_literal_special_simd(&data[pos..]);
+            if offset > 0 {
+                let next = pos + offset;
+                result.extend_from_slice(&data[pos..next]);
+                pos = next;
+                if pos >= len {
+                    break;
+                }
+            }
+
             let c = data[pos];
             pos += 1;
             match c {
@@ -2121,6 +2205,24 @@ mod tests {
         assert_eq!(p.parse_number_fast().unwrap(), PSToken::Real(4.5));
         p.skip_whitespace();
         assert_eq!(p.parse_number_fast().unwrap(), PSToken::Real(-0.25));
+    }
+
+    #[test]
+    fn find_literal_special_simd_offsets() {
+        let data = b"abcdef";
+        assert_eq!(PSBaseParser::find_literal_special_simd(data), data.len());
+
+        let data = b"abc(def";
+        assert_eq!(PSBaseParser::find_literal_special_simd(data), 3);
+
+        let data = b"abc\\def";
+        assert_eq!(PSBaseParser::find_literal_special_simd(data), 3);
+
+        let data = b"abc)def";
+        assert_eq!(PSBaseParser::find_literal_special_simd(data), 3);
+
+        let data = b")tail";
+        assert_eq!(PSBaseParser::find_literal_special_simd(data), 0);
     }
 
     #[test]
