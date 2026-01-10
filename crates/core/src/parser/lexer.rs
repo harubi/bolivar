@@ -776,6 +776,91 @@ impl<'a> PSBaseParser<'a> {
         Self::is_whitespace(b) || Self::is_delimiter(b)
     }
 
+    fn find_keyword_end_simd(data: &[u8]) -> usize {
+        if data.is_empty() {
+            return 0;
+        }
+        let mut i = 0;
+        let prefix_len = data.len().min(8);
+        while i < prefix_len {
+            if Self::is_keyword_end(data[i]) {
+                return i;
+            }
+            i += 1;
+        }
+
+        if data.len() - i < PS_SIMD_LANES {
+            while i < data.len() {
+                if Self::is_keyword_end(data[i]) {
+                    return i;
+                }
+                i += 1;
+            }
+            return data.len();
+        }
+
+        type V = Simd<u8, { PS_SIMD_LANES }>;
+        let (prefix, middle, suffix) = data[i..].as_simd::<{ PS_SIMD_LANES }>();
+
+        let mut offset = i;
+        for (idx, &b) in prefix.iter().enumerate() {
+            if Self::is_keyword_end(b) {
+                return offset + idx;
+            }
+        }
+        offset += prefix.len();
+
+        let ws_space = V::splat(b' ');
+        let ws_tab = V::splat(b'\t');
+        let ws_lf = V::splat(b'\n');
+        let ws_cr = V::splat(b'\r');
+        let ws_ff = V::splat(0x0c);
+        let ws_nul = V::splat(0x00);
+
+        let d_paren_l = V::splat(b'(');
+        let d_paren_r = V::splat(b')');
+        let d_lt = V::splat(b'<');
+        let d_gt = V::splat(b'>');
+        let d_brack_l = V::splat(b'[');
+        let d_brack_r = V::splat(b']');
+        let d_brace_l = V::splat(b'{');
+        let d_brace_r = V::splat(b'}');
+        let d_slash = V::splat(b'/');
+        let d_pct = V::splat(b'%');
+
+        for chunk in middle.iter() {
+            let is_ws = chunk.simd_eq(ws_space)
+                | chunk.simd_eq(ws_tab)
+                | chunk.simd_eq(ws_lf)
+                | chunk.simd_eq(ws_cr)
+                | chunk.simd_eq(ws_ff)
+                | chunk.simd_eq(ws_nul);
+            let is_delim = chunk.simd_eq(d_paren_l)
+                | chunk.simd_eq(d_paren_r)
+                | chunk.simd_eq(d_lt)
+                | chunk.simd_eq(d_gt)
+                | chunk.simd_eq(d_brack_l)
+                | chunk.simd_eq(d_brack_r)
+                | chunk.simd_eq(d_brace_l)
+                | chunk.simd_eq(d_brace_r)
+                | chunk.simd_eq(d_slash)
+                | chunk.simd_eq(d_pct);
+            let mask = (is_ws | is_delim).to_bitmask();
+            if mask != 0 {
+                return offset + mask.trailing_zeros() as usize;
+            }
+            offset += PS_SIMD_LANES;
+        }
+
+        for (idx, &b) in suffix.iter().enumerate() {
+            if Self::is_keyword_end(b) {
+                return offset + idx;
+            }
+        }
+
+        data.len()
+    }
+
     fn find_first_non_ws_simd(data: &[u8]) -> usize {
         if data.is_empty() {
             return 0;
@@ -1031,15 +1116,10 @@ impl<'a> PSBaseParser<'a> {
     /// Parse a keyword
     fn parse_keyword(&mut self) -> Result<PSToken> {
         let start = self.pos;
-
-        while let Some(b) = self.peek() {
-            if Self::is_keyword_end(b) {
-                break;
-            }
-            self.advance();
-        }
-
-        let bytes = &self.data.as_slice()[start..self.pos];
+        let data = self.data.as_slice();
+        let offset = Self::find_keyword_end_simd(&data[self.pos..]);
+        self.pos += offset;
+        let bytes = &data[start..self.pos];
 
         // Check for boolean literals
         if bytes == b"true" {
@@ -1962,6 +2042,19 @@ mod tests {
         assert_eq!(Keyword::ArrayStart.as_bytes(), b"[");
         assert_eq!(Keyword::DictEnd.as_bytes(), b">>");
         assert_eq!(Keyword::BT.as_bytes(), b"BT");
+    }
+
+    #[test]
+    fn find_keyword_end_simd_matches_scalar() {
+        let data = b"hello/world";
+        let end = PSBaseParser::find_keyword_end_simd(data);
+        assert_eq!(end, 5);
+        let data = b"hello world";
+        let end = PSBaseParser::find_keyword_end_simd(data);
+        assert_eq!(end, 5);
+        let data = b"hello";
+        let end = PSBaseParser::find_keyword_end_simd(data);
+        assert_eq!(end, 5);
     }
 
     #[test]
