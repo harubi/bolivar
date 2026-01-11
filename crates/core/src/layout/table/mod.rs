@@ -31,8 +31,8 @@ mod table_extraction_tests {
     use super::intersections::{ActiveBucket, IntersectionIdx};
     use super::text::extract_words;
     use super::types::{
-        BBox, BBoxKey, CharObj, EdgeObj, HEdgeId, KeyF64, KeyPoint, Orientation, TextSettings,
-        VEdgeId, bbox_key, key_f64, key_point,
+        BBox, BBoxKey, CharObj, EdgeObj, HEdgeId, KeyPoint, Orientation, TextSettings, VEdgeId,
+        bbox_key, key_point,
     };
     use std::collections::HashMap;
 
@@ -354,24 +354,22 @@ mod table_extraction_tests {
 
     #[test]
     fn intersections_swap_pop_updates_slot() {
-        use std::collections::BTreeMap;
-
-        let mut active: BTreeMap<KeyF64, ActiveBucket> = BTreeMap::new();
-        let key = key_f64(1.0);
+        let mut active = vec![ActiveBucket::default()];
+        let bucket_idx = 0usize;
         let mut bucket = ActiveBucket::default();
         let slot0 = bucket.insert(0, &make_v_edge(1.0, 0.0, 10.0));
         let slot1 = bucket.insert(1, &make_v_edge(1.0, 0.0, 10.0));
         let slot2 = bucket.insert(2, &make_v_edge(1.0, 0.0, 10.0));
-        active.insert(key, bucket);
+        active[bucket_idx] = bucket;
 
         let mut active_slots = vec![None; 3];
-        active_slots[0] = Some((key, slot0));
-        active_slots[1] = Some((key, slot1));
-        active_slots[2] = Some((key, slot2));
+        active_slots[0] = Some((bucket_idx, slot0));
+        active_slots[1] = Some((bucket_idx, slot1));
+        active_slots[2] = Some((bucket_idx, slot2));
 
         super::intersections::remove_active_entry(&mut active, &mut active_slots, 1);
 
-        let bucket = active.get(&key).unwrap();
+        let bucket = active.get(bucket_idx).unwrap();
         assert_eq!(bucket.active_len(), 2);
         assert!(active_slots[1].is_none());
         assert!(active_slots[0].is_some());
@@ -380,20 +378,18 @@ mod table_extraction_tests {
 
     #[test]
     fn intersections_swap_pop_removes_empty_bucket() {
-        use std::collections::BTreeMap;
-
-        let mut active: BTreeMap<KeyF64, ActiveBucket> = BTreeMap::new();
-        let key = key_f64(2.0);
+        let mut active = vec![ActiveBucket::default()];
+        let bucket_idx = 0usize;
         let mut bucket = ActiveBucket::default();
         let slot0 = bucket.insert(0, &make_v_edge(2.0, 0.0, 10.0));
-        active.insert(key, bucket);
+        active[bucket_idx] = bucket;
 
         let mut active_slots = vec![None; 1];
-        active_slots[0] = Some((key, slot0));
+        active_slots[0] = Some((bucket_idx, slot0));
 
         super::intersections::remove_active_entry(&mut active, &mut active_slots, 0);
 
-        assert!(active.get(&key).is_none());
+        assert_eq!(active[bucket_idx].active_len(), 0);
         assert!(active_slots[0].is_none());
     }
 
@@ -414,5 +410,14 @@ mod table_extraction_tests {
         let edges = sample_edges_for_intersections();
         let (_store, out) = edges_to_intersections(&edges, 0.0, 0.0);
         assert_eq!(out.len(), scalar_edges_to_intersections(&edges).len());
+    }
+
+    #[test]
+    fn intersections_bucketed_matches_scalar_count() {
+        let edges = sample_edges_for_intersections();
+        let (_store, out) = edges_to_intersections(&edges, 0.0, 0.0);
+        assert_eq!(out.len(), scalar_edges_to_intersections(&edges).len());
+        let buckets = super::intersections::bucket_count_for_edges(&edges, 0.0);
+        assert!(buckets > 0);
     }
 }

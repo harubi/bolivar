@@ -4,10 +4,10 @@
 //! intersections between horizontal and vertical edges, which is
 //! the foundation for detecting table cell boundaries.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::simd::prelude::*;
 
-use super::types::{EdgeObj, HEdgeId, KeyF64, KeyPoint, Orientation, VEdgeId, key_f64, key_point};
+use super::types::{EdgeObj, HEdgeId, KeyPoint, Orientation, VEdgeId, key_point};
 
 /// Storage for sorted vertical and horizontal edges.
 pub struct EdgeStore {
@@ -130,33 +130,93 @@ impl ActiveBucket {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     #[cfg(test)]
     pub(crate) fn active_len(&self) -> usize {
         self.len
     }
 }
 
-pub(crate) fn remove_active_entry(
-    active: &mut BTreeMap<KeyF64, ActiveBucket>,
-    active_slots: &mut [Option<(KeyF64, ActiveSlot)>],
-    v_idx: usize,
-) {
-    let Some((key, slot)) = active_slots.get_mut(v_idx).and_then(Option::take) else {
-        return;
-    };
-    let mut remove_bucket = false;
-    if let Some(bucket) = active.get_mut(&key) {
-        bucket.remove(slot);
-        if bucket.is_empty() {
-            remove_bucket = true;
+fn bucket_params_for_edges(edges: &[EdgeObj], x_tol: f64) -> Option<(f64, f64, usize)> {
+    let mut min_x = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut v_count = 0usize;
+    for edge in edges {
+        if edge.orientation == Some(Orientation::Vertical) {
+            min_x = min_x.min(edge.x0);
+            max_x = max_x.max(edge.x0);
+            v_count += 1;
         }
     }
-    if remove_bucket {
-        active.remove(&key);
+    if v_count == 0 || !min_x.is_finite() || !max_x.is_finite() {
+        return None;
+    }
+    let min_x = min_x - x_tol;
+    let max_x = max_x + x_tol;
+    let span = (max_x - min_x).max(0.0);
+    let bucket_width = if x_tol > 0.0 {
+        (x_tol * 2.0).max(1e-6)
+    } else {
+        (span / v_count as f64).max(1.0)
+    };
+    if !bucket_width.is_finite() || bucket_width <= 0.0 {
+        return None;
+    }
+    let bucket_count = ((span / bucket_width).floor() as usize).saturating_add(1);
+    Some((min_x, bucket_width, bucket_count))
+}
+
+fn bucket_index(x: f64, min_x: f64, bucket_width: f64, bucket_count: usize) -> usize {
+    if bucket_count == 0 {
+        return 0;
+    }
+    if x <= min_x {
+        return 0;
+    }
+    let raw = ((x - min_x) / bucket_width).floor();
+    if !raw.is_finite() {
+        return 0;
+    }
+    let idx = raw as isize;
+    if idx < 0 {
+        0
+    } else if (idx as usize) >= bucket_count {
+        bucket_count - 1
+    } else {
+        idx as usize
+    }
+}
+
+fn bucket_range(
+    x_min: f64,
+    x_max: f64,
+    min_x: f64,
+    bucket_width: f64,
+    bucket_count: usize,
+) -> Option<(usize, usize)> {
+    if bucket_count == 0 {
+        return None;
+    }
+    let start = bucket_index(x_min, min_x, bucket_width, bucket_count);
+    let end = bucket_index(x_max, min_x, bucket_width, bucket_count);
+    Some((start.min(end), start.max(end)))
+}
+
+pub(crate) fn bucket_count_for_edges(edges: &[EdgeObj], x_tol: f64) -> usize {
+    bucket_params_for_edges(edges, x_tol)
+        .map(|(_, _, count)| count)
+        .unwrap_or(0)
+}
+
+pub(crate) fn remove_active_entry(
+    active: &mut [ActiveBucket],
+    active_slots: &mut [Option<(usize, ActiveSlot)>],
+    v_idx: usize,
+) {
+    let Some((bucket_idx, slot)) = active_slots.get_mut(v_idx).and_then(Option::take) else {
+        return;
+    };
+    if let Some(bucket) = active.get_mut(bucket_idx) {
+        bucket.remove(slot);
     }
 }
 
@@ -270,18 +330,29 @@ pub fn edges_to_intersections(
             .then(a.idx.cmp(&b.idx))
     });
 
-    let mut active: BTreeMap<KeyF64, ActiveBucket> = BTreeMap::new();
-    let mut active_slots: Vec<Option<(KeyF64, ActiveSlot)>> = vec![None; v_sorted.len()];
+    let bucket_params = bucket_params_for_edges(&v_sorted, x_tol);
+    if bucket_params.is_none() {
+        return (
+            EdgeStore {
+                v: v_sorted,
+                h: h_sorted,
+            },
+            HashMap::new(),
+        );
+    }
+    let (min_x, bucket_width, bucket_count) = bucket_params.unwrap();
+    let mut active = vec![ActiveBucket::default(); bucket_count];
+    let mut active_slots: Vec<Option<(usize, ActiveSlot)>> = vec![None; v_sorted.len()];
     let mut pairs: HashMap<KeyPoint, Vec<(VEdgeId, HEdgeId)>> = HashMap::new();
 
     for event in events {
         match event.kind {
             EventKind::AddV => {
                 let v = &v_sorted[event.idx];
-                let key = key_f64(v.x0);
-                let bucket = active.entry(key).or_default();
+                let bucket_idx = bucket_index(v.x0, min_x, bucket_width, bucket_count);
+                let bucket = &mut active[bucket_idx];
                 let slot = bucket.insert(event.idx, v);
-                active_slots[event.idx] = Some((key, slot));
+                active_slots[event.idx] = Some((bucket_idx, slot));
             }
             EventKind::RemoveV => {
                 remove_active_entry(&mut active, &mut active_slots, event.idx);
@@ -290,7 +361,12 @@ pub fn edges_to_intersections(
                 let h = &h_sorted[event.idx];
                 let x_min = h.x0 - x_tol;
                 let x_max = h.x1 + x_tol;
-                for (_x0, bucket) in active.range(key_f64(x_min)..=key_f64(x_max)) {
+                let Some((start, end)) =
+                    bucket_range(x_min, x_max, min_x, bucket_width, bucket_count)
+                else {
+                    continue;
+                };
+                for bucket in &active[start..=end] {
                     for block in &bucket.blocks {
                         if block.mask == 0 {
                             continue;
