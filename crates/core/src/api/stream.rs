@@ -15,6 +15,7 @@ use crate::layout::{LAParams, LTPage};
 use crate::pdfdocument::PDFDocument;
 use crate::pdfinterp::PDFResourceManager;
 use crate::pdfpage::PDFPage;
+use crate::table::edge_probe::{page_has_edges, should_skip_tables};
 use crate::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
 
 use super::high_level::{ExtractOptions, PageTables, default_thread_count, process_page};
@@ -383,6 +384,18 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                         }
                     };
                     doc_worker.cache_page(page_idx, Arc::clone(&page));
+
+                    let has_edges = page_has_edges(&page, doc_worker.as_ref(), caching);
+                    if should_skip_tables(&settings, has_edges) {
+                        if cancel_worker.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        if tx.send((page_idx, Ok(Vec::new()))).is_err() {
+                            cancel_worker.store(true, Ordering::Relaxed);
+                            return;
+                        }
+                        continue;
+                    }
 
                     arena.reset();
                     let mut rsrcmgr = PDFResourceManager::with_caching(caching);

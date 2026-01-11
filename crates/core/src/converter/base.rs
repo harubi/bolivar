@@ -849,6 +849,25 @@ pub struct PDFPageAggregator<'a> {
     result: Option<LTPage>,
 }
 
+/// Lightweight device to probe for vector edges without building layout.
+pub struct PDFEdgeProbe {
+    has_edges: bool,
+    ctm: Option<Matrix>,
+}
+
+impl PDFEdgeProbe {
+    pub const fn new() -> Self {
+        Self {
+            has_edges: false,
+            ctm: None,
+        }
+    }
+
+    pub const fn has_edges(&self) -> bool {
+        self.has_edges
+    }
+}
+
 impl<'a> PDFPageAggregator<'a> {
     /// Create a new page aggregator.
     pub fn new(laparams: Option<LAParams>, pageno: i32, arena: &'a mut PageArena) -> Self {
@@ -1180,6 +1199,38 @@ impl<'a> PDFDevice for PDFPageAggregator<'a> {
 
     fn end_tag(&mut self) {
         self.analyzer.end_tag();
+    }
+}
+
+impl PDFDevice for PDFEdgeProbe {
+    fn set_ctm(&mut self, ctm: Matrix) {
+        self.ctm = Some(ctm);
+    }
+
+    fn ctm(&self) -> Option<Matrix> {
+        self.ctm
+    }
+
+    fn paint_path(
+        &mut self,
+        _graphicstate: &PDFGraphicState,
+        stroke: bool,
+        fill: bool,
+        _evenodd: bool,
+        path: &[PathSegment],
+    ) {
+        if self.has_edges || (!stroke && !fill) {
+            return;
+        }
+        for seg in path {
+            match seg {
+                PathSegment::LineTo(..) | PathSegment::CurveTo(..) => {
+                    self.has_edges = true;
+                    break;
+                }
+                PathSegment::MoveTo(..) | PathSegment::ClosePath => {}
+            }
+        }
     }
 }
 

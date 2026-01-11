@@ -110,6 +110,7 @@ pub struct EdgeObj {
 
 #[derive(Clone, Debug)]
 pub struct TableSettings {
+    pub probe_policy: TableProbePolicy,
     pub vertical_strategy: String,
     pub horizontal_strategy: String,
     pub explicit_vertical_lines: Vec<ExplicitLine>,
@@ -130,6 +131,7 @@ pub struct TableSettings {
 impl Default for TableSettings {
     fn default() -> Self {
         Self {
+            probe_policy: TableProbePolicy::Auto,
             vertical_strategy: "lines".to_string(),
             horizontal_strategy: "lines".to_string(),
             explicit_vertical_lines: Vec::new(),
@@ -147,6 +149,13 @@ impl Default for TableSettings {
             text_settings: TextSettings::default(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TableProbePolicy {
+    Auto,
+    Always,
+    Never,
 }
 
 #[derive(Clone, Debug)]

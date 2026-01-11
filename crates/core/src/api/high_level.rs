@@ -19,6 +19,7 @@ use crate::layout::{LAParams, LTPage};
 use crate::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
 use crate::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use crate::pdfpage::PDFPage;
+use crate::table::edge_probe::{page_has_edges, should_skip_tables};
 use crate::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
 
 use std::cell::RefCell;
@@ -468,7 +469,9 @@ pub fn extract_tables_with_document(
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
-    let pages = extract_pages_with_document(doc, options.clone())?;
+    let order = build_page_order(doc, &options);
+    let laparams = options.laparams.clone();
+    let caching = options.caching;
     let thread_count = default_thread_count();
     let pool = ThreadPoolBuilder::new()
         .num_threads(thread_count)
@@ -476,15 +479,28 @@ pub fn extract_tables_with_document(
         .map_err(|e| PdfError::DecodeError(e.to_string()))?;
 
     let mut results: Vec<(usize, Vec<Vec<Vec<Option<String>>>>)> = pool.install(|| {
-        pages
-            .into_par_iter()
-            .enumerate()
-            .map(|(idx, page)| {
-                let geom = page_geometry_from_ltpage(&page);
-                (idx, extract_tables_from_ltpage(&page, &geom, settings))
+        order
+            .par_iter()
+            .map(|&page_idx| {
+                let page = PDFPage::get_page_by_index(doc, page_idx)?;
+                let has_edges = page_has_edges(&page, doc, caching);
+                if should_skip_tables(settings, has_edges) {
+                    return Ok((page_idx, Vec::new()));
+                }
+                let mut arena = PageArena::new();
+                arena.reset();
+                let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+                let mut aggregator =
+                    PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
+                let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
+                let geom = page_geometry_from_ltpage(&ltpage);
+                Ok((
+                    page_idx,
+                    extract_tables_from_ltpage(&ltpage, &geom, settings),
+                ))
             })
-            .collect()
-    });
+            .collect::<Result<Vec<_>>>()
+    })?;
 
     results.sort_by_key(|(idx, _)| *idx);
     Ok(results.into_iter().map(|(_, tables)| tables).collect())
@@ -501,14 +517,16 @@ pub fn extract_tables_with_document_geometries(
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
-    let pages = extract_pages_with_document(doc, options.clone())?;
-    if geometries.len() != pages.len() {
+    let order = build_page_order(doc, &options);
+    if geometries.len() != order.len() {
         return Err(PdfError::DecodeError(format!(
             "geometry count mismatch: expected {}, got {}",
-            pages.len(),
+            order.len(),
             geometries.len()
         )));
     }
+    let laparams = options.laparams.clone();
+    let caching = options.caching;
     let thread_count = default_thread_count();
     let pool = ThreadPoolBuilder::new()
         .num_threads(thread_count)
@@ -516,18 +534,50 @@ pub fn extract_tables_with_document_geometries(
         .map_err(|e| PdfError::DecodeError(e.to_string()))?;
 
     let mut results: Vec<(usize, Vec<Vec<Vec<Option<String>>>>)> = pool.install(|| {
-        pages
-            .into_par_iter()
+        order
+            .par_iter()
             .enumerate()
-            .map(|(idx, page)| {
+            .map(|(idx, &page_idx)| {
+                let page = PDFPage::get_page_by_index(doc, page_idx)?;
+                let has_edges = page_has_edges(&page, doc, caching);
+                if should_skip_tables(settings, has_edges) {
+                    return Ok((idx, Vec::new()));
+                }
+                let mut arena = PageArena::new();
+                arena.reset();
+                let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+                let mut aggregator =
+                    PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
+                let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
                 let geom = &geometries[idx];
-                (idx, extract_tables_from_ltpage(&page, geom, settings))
+                Ok((idx, extract_tables_from_ltpage(&ltpage, geom, settings)))
             })
-            .collect()
-    });
+            .collect::<Result<Vec<_>>>()
+    })?;
 
     results.sort_by_key(|(idx, _)| *idx);
     Ok(results.into_iter().map(|(_, tables)| tables).collect())
+}
+
+fn build_page_order(doc: &PDFDocument, options: &ExtractOptions) -> Vec<usize> {
+    let mut order = Vec::new();
+    let page_count = doc.page_index().len();
+    let mut selected = 0usize;
+
+    for page_idx in 0..page_count {
+        if let Some(ref nums) = options.page_numbers {
+            if !nums.contains(&page_idx) {
+                continue;
+            }
+        }
+        if options.maxpages > 0 && selected >= options.maxpages {
+            break;
+        }
+        order.push(page_idx);
+        selected += 1;
+    }
+
+    order
 }
 
 /// Extract tables for specific pages with per-page geometry in input order.
@@ -560,7 +610,7 @@ mod tests {
         extract_tables_with_document_geometries,
     };
     use crate::pdfdocument::PDFDocument;
-    use crate::table::{PageGeometry, TableSettings};
+    use crate::table::{PageGeometry, TableProbePolicy, TableSettings};
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};
 
@@ -715,5 +765,20 @@ mod tests {
         let err =
             extract_tables_with_document_geometries(&doc, options, &settings, &[geom]).unwrap_err();
         assert!(err.to_string().contains("geometry"));
+    }
+
+    #[test]
+    fn table_probe_policy_controls_skip() {
+        let pdf_data = build_minimal_pdf_with_pages(1);
+        let doc = PDFDocument::new(&pdf_data, "").unwrap();
+        let options = ExtractOptions::default();
+        let mut settings = TableSettings::default();
+        settings.probe_policy = TableProbePolicy::Always;
+
+        crate::layout::table::edge_probe::take_probe_calls();
+        let out = extract_tables_with_document(&doc, options, &settings).unwrap();
+        assert_eq!(out.len(), 1);
+        let calls = crate::layout::table::edge_probe::take_probe_calls();
+        assert!(calls > 0);
     }
 }

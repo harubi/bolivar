@@ -4,6 +4,7 @@
 //! including edge detection, cell boundary finding, and text extraction.
 
 mod clustering;
+pub(crate) mod edge_probe;
 mod edges;
 mod finder;
 mod geometry;
@@ -14,8 +15,8 @@ mod types;
 
 // Re-export public types
 pub use types::{
-    BBox, CharObj, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TextDir,
-    TextSettings, WordObj,
+    BBox, CharObj, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableProbePolicy,
+    TableSettings, TextDir, TextSettings, WordObj,
 };
 
 // Re-export public API functions

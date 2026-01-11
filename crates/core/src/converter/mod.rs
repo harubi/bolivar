@@ -14,7 +14,9 @@ mod text;
 mod xml;
 
 // Re-export all public items for backwards compatibility
-pub use base::{LTContainer, PDFConverter, PDFLayoutAnalyzer, PDFPageAggregator, PathOp};
+pub use base::{
+    LTContainer, PDFConverter, PDFEdgeProbe, PDFLayoutAnalyzer, PDFPageAggregator, PathOp,
+};
 pub use html::{HOCRConverter, HTMLConverter};
 pub use text::TextConverter;
 pub use xml::XMLConverter;
