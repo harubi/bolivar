@@ -490,18 +490,18 @@ mod tests {
     #[test]
     fn test_page_stream_only_creates_requested_pages() {
         let pdf = build_minimal_pdf_with_pages(5);
-        let doc = PDFDocument::new(pdf, "").unwrap();
-        crate::pdfpage::reset_page_create_count();
+        let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
+        crate::pdfpage::reset_page_create_count(doc.as_ref());
 
         let options = ExtractOptions {
             page_numbers: Some(vec![2]),
             ..ExtractOptions::default()
         };
 
-        let stream = extract_pages_stream_from_doc(doc.into(), options).unwrap();
+        let stream = extract_pages_stream_from_doc(Arc::clone(&doc), options).unwrap();
         let _ = stream.collect::<Result<Vec<_>>>().unwrap();
 
-        let created = crate::pdfpage::take_page_create_count();
+        let created = crate::pdfpage::take_page_create_count(doc.as_ref());
         assert_eq!(created, 1);
     }
 

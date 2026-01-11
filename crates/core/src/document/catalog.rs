@@ -2205,13 +2205,13 @@ mod tests {
     fn test_get_page_cached_reuses_page() {
         let pdf = build_minimal_pdf_with_pages(2);
         let doc = PDFDocument::new(pdf, "").unwrap();
-        reset_page_create_count();
+        reset_page_create_count(&doc);
 
         let _ = doc.get_page_cached(0).unwrap();
-        assert_eq!(take_page_create_count(), 1);
+        assert_eq!(take_page_create_count(&doc), 1);
 
         let _ = doc.get_page_cached(0).unwrap();
-        assert_eq!(take_page_create_count(), 0);
+        assert_eq!(take_page_create_count(&doc), 0);
     }
 
     /// Test that PDFDocument can be created from owned data and stored.
@@ -2351,11 +2351,11 @@ mod tests {
     fn test_page_mediaboxes_does_not_create_pages() {
         let pdf = build_minimal_pdf_with_pages(3);
         let doc = PDFDocument::new(pdf, "").unwrap();
-        crate::pdfpage::reset_page_create_count();
+        crate::pdfpage::reset_page_create_count(&doc);
 
         let boxes = doc.page_mediaboxes().unwrap();
         assert_eq!(boxes.len(), 3);
-        let created = crate::pdfpage::take_page_create_count();
+        let created = crate::pdfpage::take_page_create_count(&doc);
         assert_eq!(created, 0);
     }
 

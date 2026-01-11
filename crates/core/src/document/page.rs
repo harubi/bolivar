@@ -9,19 +9,45 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 #[cfg(test)]
-static PAGE_CREATE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static PAGE_CREATE_COUNTS: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
 
 #[cfg(test)]
-pub(crate) fn reset_page_create_count() {
-    PAGE_CREATE_COUNT.store(0, Ordering::Relaxed);
+fn page_create_counts() -> &'static Mutex<HashMap<usize, usize>> {
+    PAGE_CREATE_COUNTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[cfg(test)]
-pub(crate) fn take_page_create_count() -> usize {
-    PAGE_CREATE_COUNT.swap(0, Ordering::Relaxed)
+fn doc_key(doc: &PDFDocument) -> usize {
+    doc as *const PDFDocument as usize
+}
+
+#[cfg(test)]
+pub(crate) fn reset_page_create_count(doc: &PDFDocument) {
+    let key = doc_key(doc);
+    if let Ok(mut counts) = page_create_counts().lock() {
+        counts.insert(key, 0);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn take_page_create_count(doc: &PDFDocument) -> usize {
+    let key = doc_key(doc);
+    if let Ok(mut counts) = page_create_counts().lock() {
+        return counts.remove(&key).unwrap_or(0);
+    }
+    0
+}
+
+#[cfg(test)]
+fn bump_page_create_count(doc: &PDFDocument) {
+    let key = doc_key(doc);
+    if let Ok(mut counts) = page_create_counts().lock() {
+        let entry = counts.entry(key).or_insert(0);
+        *entry += 1;
+    }
 }
 
 /// A PDF page object.
@@ -89,7 +115,7 @@ impl PDFPage {
         doc: &PDFDocument,
     ) -> Result<Self> {
         #[cfg(test)]
-        PAGE_CREATE_COUNT.fetch_add(1, Ordering::Relaxed);
+        bump_page_create_count(doc);
         let mediabox = Self::parse_box(&attrs, "MediaBox", doc)
             .ok_or_else(|| crate::error::PdfError::SyntaxError("MediaBox missing".into()))?;
         let cropbox = Self::parse_box(&attrs, "CropBox", doc).or(Some(mediabox));
