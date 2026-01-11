@@ -55,21 +55,102 @@ pub(crate) fn match_v_edges_simd4(
     (y_ok & x_ok).to_array()
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ActiveSlot {
+    block: usize,
+    lane: u8,
+}
+
+#[derive(Clone, Debug)]
+struct AoSoABlock {
+    tops: [f64; 4],
+    bottoms: [f64; 4],
+    x0s: [f64; 4],
+    ids: [usize; 4],
+    mask: u8,
+}
+
+impl Default for AoSoABlock {
+    fn default() -> Self {
+        Self {
+            tops: [0.0; 4],
+            bottoms: [0.0; 4],
+            x0s: [0.0; 4],
+            ids: [0; 4],
+            mask: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ActiveBucket {
+    blocks: Vec<AoSoABlock>,
+    free: Vec<ActiveSlot>,
+    len: usize,
+}
+
+impl ActiveBucket {
+    pub(crate) fn insert(&mut self, v_idx: usize, v: &EdgeObj) -> ActiveSlot {
+        if let Some(slot) = self.free.pop() {
+            let lane = slot.lane as usize;
+            let block = &mut self.blocks[slot.block];
+            block.tops[lane] = v.top;
+            block.bottoms[lane] = v.bottom;
+            block.x0s[lane] = v.x0;
+            block.ids[lane] = v_idx;
+            block.mask |= 1u8 << lane;
+            self.len += 1;
+            return slot;
+        }
+
+        let mut block = AoSoABlock::default();
+        block.tops[0] = v.top;
+        block.bottoms[0] = v.bottom;
+        block.x0s[0] = v.x0;
+        block.ids[0] = v_idx;
+        block.mask = 1;
+        let slot = ActiveSlot {
+            block: self.blocks.len(),
+            lane: 0,
+        };
+        self.blocks.push(block);
+        self.len += 1;
+        slot
+    }
+
+    fn remove(&mut self, slot: ActiveSlot) {
+        let lane = slot.lane as usize;
+        if let Some(block) = self.blocks.get_mut(slot.block) {
+            let bit = 1u8 << lane;
+            if block.mask & bit != 0 {
+                block.mask &= !bit;
+                self.free.push(slot);
+                self.len = self.len.saturating_sub(1);
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_len(&self) -> usize {
+        self.len
+    }
+}
+
 pub(crate) fn remove_active_entry(
-    active: &mut BTreeMap<KeyF64, Vec<usize>>,
-    active_slots: &mut [Option<(KeyF64, usize)>],
+    active: &mut BTreeMap<KeyF64, ActiveBucket>,
+    active_slots: &mut [Option<(KeyF64, ActiveSlot)>],
     v_idx: usize,
 ) {
-    let Some((key, pos)) = active_slots.get_mut(v_idx).and_then(Option::take) else {
+    let Some((key, slot)) = active_slots.get_mut(v_idx).and_then(Option::take) else {
         return;
     };
     let mut remove_bucket = false;
     if let Some(bucket) = active.get_mut(&key) {
-        let _ = bucket.swap_remove(pos);
-        if pos < bucket.len() {
-            let moved_idx = bucket[pos];
-            active_slots[moved_idx] = Some((key, pos));
-        }
+        bucket.remove(slot);
         if bucket.is_empty() {
             remove_bucket = true;
         }
@@ -189,8 +270,8 @@ pub fn edges_to_intersections(
             .then(a.idx.cmp(&b.idx))
     });
 
-    let mut active: BTreeMap<KeyF64, Vec<usize>> = BTreeMap::new();
-    let mut active_slots: Vec<Option<(KeyF64, usize)>> = vec![None; v_sorted.len()];
+    let mut active: BTreeMap<KeyF64, ActiveBucket> = BTreeMap::new();
+    let mut active_slots: Vec<Option<(KeyF64, ActiveSlot)>> = vec![None; v_sorted.len()];
     let mut pairs: HashMap<KeyPoint, Vec<(VEdgeId, HEdgeId)>> = HashMap::new();
 
     for event in events {
@@ -199,9 +280,8 @@ pub fn edges_to_intersections(
                 let v = &v_sorted[event.idx];
                 let key = key_f64(v.x0);
                 let bucket = active.entry(key).or_default();
-                bucket.push(event.idx);
-                let pos = bucket.len() - 1;
-                active_slots[event.idx] = Some((key, pos));
+                let slot = bucket.insert(event.idx, v);
+                active_slots[event.idx] = Some((key, slot));
             }
             EventKind::RemoveV => {
                 remove_active_entry(&mut active, &mut active_slots, event.idx);
@@ -211,44 +291,38 @@ pub fn edges_to_intersections(
                 let x_min = h.x0 - x_tol;
                 let x_max = h.x1 + x_tol;
                 for (_x0, bucket) in active.range(key_f64(x_min)..=key_f64(x_max)) {
-                    let mut i = 0usize;
-                    while i + 4 <= bucket.len() {
-                        let v0 = &v_sorted[bucket[i]];
-                        let v1 = &v_sorted[bucket[i + 1]];
-                        let v2 = &v_sorted[bucket[i + 2]];
-                        let v3 = &v_sorted[bucket[i + 3]];
-
-                        let tops = [v0.top, v1.top, v2.top, v3.top];
-                        let bottoms = [v0.bottom, v1.bottom, v2.bottom, v3.bottom];
-                        let x0s = [v0.x0, v1.x0, v2.x0, v3.x0];
-
-                        let mask =
-                            match_v_edges_simd4(tops, bottoms, x0s, h.top, x_min, x_max, y_tol);
+                    for block in &bucket.blocks {
+                        if block.mask == 0 {
+                            continue;
+                        }
+                        let mask = match_v_edges_simd4(
+                            block.tops,
+                            block.bottoms,
+                            block.x0s,
+                            h.top,
+                            x_min,
+                            x_max,
+                            y_tol,
+                        );
+                        let mut mask_bits = 0u8;
                         for lane in 0..4 {
                             if mask[lane] {
-                                let v_idx = bucket[i + lane];
+                                mask_bits |= 1u8 << lane;
+                            }
+                        }
+                        mask_bits &= block.mask;
+                        if mask_bits == 0 {
+                            continue;
+                        }
+                        for lane in 0..4 {
+                            if mask_bits & (1u8 << lane) != 0 {
+                                let v_idx = block.ids[lane];
                                 let vertex = key_point(v_sorted[v_idx].x0, h.top);
                                 pairs
                                     .entry(vertex)
                                     .or_default()
                                     .push((VEdgeId(v_idx), HEdgeId(event.idx)));
                             }
-                        }
-                        i += 4;
-                    }
-
-                    for &v_idx in &bucket[i..] {
-                        let v = &v_sorted[v_idx];
-                        if v.top <= h.top + y_tol
-                            && v.bottom >= h.top - y_tol
-                            && v.x0 >= x_min
-                            && v.x0 <= x_max
-                        {
-                            let vertex = key_point(v.x0, h.top);
-                            pairs
-                                .entry(vertex)
-                                .or_default()
-                                .push((VEdgeId(v_idx), HEdgeId(event.idx)));
                         }
                     }
                 }

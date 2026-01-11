@@ -28,11 +28,13 @@ pub use finder::{
 mod table_extraction_tests {
     use super::grid::{cells_to_tables, intersections_to_cells};
     use super::intersections::edges_to_intersections;
+    use super::intersections::{ActiveBucket, IntersectionIdx};
     use super::text::extract_words;
     use super::types::{
-        BBox, BBoxKey, CharObj, EdgeObj, HEdgeId, KeyF64, Orientation, TextSettings, VEdgeId,
-        bbox_key, key_f64, key_point,
+        BBox, BBoxKey, CharObj, EdgeObj, HEdgeId, KeyF64, KeyPoint, Orientation, TextSettings,
+        VEdgeId, bbox_key, key_f64, key_point,
     };
+    use std::collections::HashMap;
 
     fn make_v_edge(x: f64, top: f64, bottom: f64) -> EdgeObj {
         EdgeObj {
@@ -67,6 +69,44 @@ mod table_extraction_tests {
             x1: edge.x1,
             bottom: edge.bottom,
         })
+    }
+
+    fn sample_edges_for_intersections() -> Vec<EdgeObj> {
+        vec![
+            make_v_edge(0.0, 0.0, 10.0),
+            make_v_edge(5.0, 0.0, 10.0),
+            make_h_edge(0.0, 0.0, 5.0),
+            make_h_edge(5.0, 0.0, 5.0),
+            make_h_edge(10.0, 0.0, 5.0),
+        ]
+    }
+
+    fn scalar_edges_to_intersections(_edges: &[EdgeObj]) -> HashMap<KeyPoint, IntersectionIdx> {
+        let mut v_edges: Vec<&EdgeObj> = Vec::new();
+        let mut h_edges: Vec<&EdgeObj> = Vec::new();
+        for edge in _edges {
+            match edge.orientation {
+                Some(Orientation::Vertical) => v_edges.push(edge),
+                Some(Orientation::Horizontal) => h_edges.push(edge),
+                _ => {}
+            }
+        }
+
+        let mut intersections: HashMap<KeyPoint, IntersectionIdx> = HashMap::new();
+        for (v_idx, v) in v_edges.iter().enumerate() {
+            for (h_idx, h) in h_edges.iter().enumerate() {
+                if v.x0 >= h.x0 && v.x0 <= h.x1 && h.top >= v.top && h.top <= v.bottom {
+                    let vertex = key_point(v.x0, h.top);
+                    let entry = intersections.entry(vertex).or_insert(IntersectionIdx {
+                        v: Vec::new(),
+                        h: Vec::new(),
+                    });
+                    entry.v.push(VEdgeId(v_idx));
+                    entry.h.push(HEdgeId(h_idx));
+                }
+            }
+        }
+        intersections
     }
 
     #[test]
@@ -316,34 +356,40 @@ mod table_extraction_tests {
     fn intersections_swap_pop_updates_slot() {
         use std::collections::BTreeMap;
 
-        let mut active: BTreeMap<KeyF64, Vec<usize>> = BTreeMap::new();
+        let mut active: BTreeMap<KeyF64, ActiveBucket> = BTreeMap::new();
         let key = key_f64(1.0);
-        active.insert(key, vec![0, 1, 2]);
+        let mut bucket = ActiveBucket::default();
+        let slot0 = bucket.insert(0, &make_v_edge(1.0, 0.0, 10.0));
+        let slot1 = bucket.insert(1, &make_v_edge(1.0, 0.0, 10.0));
+        let slot2 = bucket.insert(2, &make_v_edge(1.0, 0.0, 10.0));
+        active.insert(key, bucket);
 
-        let mut active_slots: Vec<Option<(KeyF64, usize)>> = vec![None; 3];
-        active_slots[0] = Some((key, 0));
-        active_slots[1] = Some((key, 1));
-        active_slots[2] = Some((key, 2));
+        let mut active_slots = vec![None; 3];
+        active_slots[0] = Some((key, slot0));
+        active_slots[1] = Some((key, slot1));
+        active_slots[2] = Some((key, slot2));
 
         super::intersections::remove_active_entry(&mut active, &mut active_slots, 1);
 
         let bucket = active.get(&key).unwrap();
-        assert_eq!(bucket.len(), 2);
+        assert_eq!(bucket.active_len(), 2);
         assert!(active_slots[1].is_none());
-        assert_eq!(bucket[1], 2);
-        assert_eq!(active_slots[2], Some((key, 1)));
+        assert!(active_slots[0].is_some());
+        assert!(active_slots[2].is_some());
     }
 
     #[test]
     fn intersections_swap_pop_removes_empty_bucket() {
         use std::collections::BTreeMap;
 
-        let mut active: BTreeMap<KeyF64, Vec<usize>> = BTreeMap::new();
+        let mut active: BTreeMap<KeyF64, ActiveBucket> = BTreeMap::new();
         let key = key_f64(2.0);
-        active.insert(key, vec![0]);
+        let mut bucket = ActiveBucket::default();
+        let slot0 = bucket.insert(0, &make_v_edge(2.0, 0.0, 10.0));
+        active.insert(key, bucket);
 
-        let mut active_slots: Vec<Option<(KeyF64, usize)>> = vec![None; 1];
-        active_slots[0] = Some((key, 0));
+        let mut active_slots = vec![None; 1];
+        active_slots[0] = Some((key, slot0));
 
         super::intersections::remove_active_entry(&mut active, &mut active_slots, 0);
 
@@ -361,5 +407,12 @@ mod table_extraction_tests {
         let bottoms = [10.0, 10.0, 8.0, 6.0];
         let mask = super::grid::char_in_bboxes_simd4(h_mid, v_mid, x0s, x1s, tops, bottoms);
         assert_eq!(mask, [true, false, false, true]);
+    }
+
+    #[test]
+    fn intersections_aosoa_produces_same_count() {
+        let edges = sample_edges_for_intersections();
+        let (_store, out) = edges_to_intersections(&edges, 0.0, 0.0);
+        assert_eq!(out.len(), scalar_edges_to_intersections(&edges).len());
     }
 }
