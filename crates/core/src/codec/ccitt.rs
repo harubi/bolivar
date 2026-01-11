@@ -475,6 +475,10 @@ impl CCITTG4Parser {
         self.curline = line;
     }
 
+    pub fn curline(&self) -> &[i8] {
+        &self.curline
+    }
+
     pub fn reset_line(&mut self) {
         self.refline = self.curline.clone();
         self.curline = vec![1; self.width];

@@ -1,1 +1,1 @@
-import bolivar._autoload as _; _.install()
+import bolivar_autoload as _; _.install()
