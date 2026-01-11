@@ -96,6 +96,15 @@ pub fn apply_matrix_rect(m: Matrix, rect: Rect) -> Rect {
     (min_x, min_y, max_x, max_y)
 }
 
+/// Applies a matrix to a slice of rectangles.
+pub fn apply_matrix_rects(m: Matrix, rects: &[Rect]) -> Vec<Rect> {
+    let mut out = Vec::with_capacity(rects.len());
+    for &rect in rects {
+        out.push(apply_matrix_rect(m, rect));
+    }
+    out
+}
+
 /// Equivalent to apply_matrix_pt(m, (p, q)) - apply_matrix_pt(m, (0, 0)).
 /// Applies matrix transformation to a vector (ignoring translation).
 pub fn apply_matrix_norm(m: Matrix, v: Point) -> Point {
@@ -801,6 +810,15 @@ mod tests {
         let rect: Rect = (0.0, 0.0, 2.0, 3.0);
         let out = apply_matrix_rect(matrix, rect);
         assert_eq!(out, (-3.0, 0.0, 0.0, 2.0));
+    }
+
+    #[test]
+    fn apply_matrix_rects_matches_scalar_loop() {
+        let rects = vec![(0.0, 0.0, 1.0, 1.0), (1.0, 1.0, 2.0, 2.0)];
+        let m: Matrix = (1.0, 0.0, 0.0, 1.0, 10.0, 20.0);
+        let out = apply_matrix_rects(m, &rects);
+        let scalar: Vec<_> = rects.iter().map(|&r| apply_matrix_rect(m, r)).collect();
+        assert_eq!(out, scalar);
     }
 
     #[test]
