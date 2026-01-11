@@ -31,8 +31,6 @@ def _apply_patch(module) -> bool:
         extract_table_from_page_filtered,
         extract_tables_stream_from_document,
     )
-    from bolivar._bolivar import extract_pages_async_from_document
-    from pdfminer.layout import LTPage
     from pdfplumber.utils.exceptions import PdfminerException
 
     def _page_geom(page):
@@ -316,22 +314,11 @@ def _apply_patch(module) -> bool:
 
         def __aiter__(self):
             async def gen():
-                rust_doc = getattr(self._pdf, "_rust_doc", None) or self._doc._rust_doc
-                stream = extract_pages_async_from_document(
-                    rust_doc,
-                    page_numbers=list(self._page_numbers),
-                    maxpages=0,
-                    caching=getattr(self._doc, "caching", True),
-                    laparams=getattr(self._pdf, "laparams", None),
-                )
+                # Keep async iteration lightweight; avoid eager layout extraction to cap memory.
                 self._ensure_doctops()
                 page_numbers = list(self._page_numbers)
                 doctops = list(self._doctops or [])
-                idx = 0
-                async for ltpage in stream:
-                    if idx >= len(page_numbers):
-                        break
-                    page_index = page_numbers[idx]
+                for idx, page_index in enumerate(page_numbers):
                     cached = self._page_cache.get(page_index)
                     if cached is not None:
                         page = cached
@@ -349,10 +336,7 @@ def _apply_patch(module) -> bool:
                             page_number=page_index + 1,
                             initial_doctop=doctop,
                         )
-                    page._layout = LTPage(ltpage)
-                    page._layout_rust = ltpage
                     yield page
-                    idx += 1
 
             return gen()
 
