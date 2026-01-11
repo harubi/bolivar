@@ -11,6 +11,7 @@ use super::text::{extract_text_from_char_ids, extract_text_from_char_ids_layout}
 use super::types::{
     BBox, BBoxKey, CharId, CharObj, KeyF64, KeyPoint, TextSettings, bbox_key, key_f64, key_point,
 };
+use crate::arena::ArenaLookup;
 
 /// Convert intersections to table cells.
 pub fn intersections_to_cells(
@@ -345,14 +346,16 @@ impl Table {
         &self,
         chars: &[CharObj],
         text_settings: &TextSettings,
+        arena: &dyn ArenaLookup,
     ) -> Vec<Vec<Option<String>>> {
-        self.extract_soa(chars, text_settings)
+        self.extract_soa(chars, text_settings, arena)
     }
 
     pub fn extract_soa(
         &self,
         chars: &[CharObj],
         text_settings: &TextSettings,
+        arena: &dyn ArenaLookup,
     ) -> Vec<Vec<Option<String>>> {
         let rows = self.rows();
 
@@ -566,9 +569,10 @@ impl Table {
                                 indices,
                                 text_settings,
                                 cell_bbox,
+                                arena,
                             )
                         } else {
-                            extract_text_from_char_ids(chars, indices, text_settings)
+                            extract_text_from_char_ids(chars, indices, text_settings, arena)
                         };
                         row_out.push(Some(text));
                     }

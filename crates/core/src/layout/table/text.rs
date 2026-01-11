@@ -5,11 +5,17 @@
 
 use std::collections::HashMap;
 
+use crate::arena::ArenaLookup;
+
 use super::clustering::{bbox_from_chars, cluster_objects};
 use super::types::{CharId, CharObj, TextDir, TextSettings, WordObj};
 
 const DEFAULT_X_DENSITY: f64 = 7.25;
 const DEFAULT_Y_DENSITY: f64 = 13.0;
+
+fn char_text<'a>(obj: &CharObj, arena: &'a dyn ArenaLookup) -> &'a str {
+    arena.resolve(obj.text)
+}
 
 /// Get the line cluster key for a word based on text direction.
 pub fn get_line_cluster_key(dir: TextDir, obj: &WordObj) -> f64 {
@@ -47,7 +53,11 @@ fn get_char_dir(upright: bool, settings: &TextSettings) -> TextDir {
 }
 
 /// Merge characters into a word.
-pub fn merge_chars(ordered: &[&CharObj], settings: &TextSettings) -> WordObj {
+pub fn merge_chars(
+    ordered: &[&CharObj],
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+) -> WordObj {
     let bbox = bbox_from_chars(ordered);
     let doctop_adj = ordered[0].doctop - ordered[0].top;
     let upright = ordered[0].upright;
@@ -55,7 +65,7 @@ pub fn merge_chars(ordered: &[&CharObj], settings: &TextSettings) -> WordObj {
 
     let text = ordered
         .iter()
-        .map(|c| expand_ligature(&c.text, settings.expand_ligatures))
+        .map(|c| expand_ligature(char_text(c, arena), settings.expand_ligatures))
         .collect::<String>();
 
     WordObj {
@@ -144,6 +154,7 @@ pub fn iter_chars_to_words<'a>(
     ordered: &[&'a CharObj],
     direction: TextDir,
     settings: &TextSettings,
+    arena: &dyn ArenaLookup,
 ) -> Vec<Vec<&'a CharObj>> {
     let mut words: Vec<Vec<&CharObj>> = Vec::new();
     let mut current: Vec<&CharObj> = Vec::new();
@@ -154,7 +165,7 @@ pub fn iter_chars_to_words<'a>(
     let ytr = settings.y_tolerance_ratio;
 
     for &char in ordered {
-        let text = &char.text;
+        let text = char_text(char, arena);
         if !settings.keep_blank_chars && text.chars().all(|c| c.is_whitespace()) {
             if !current.is_empty() {
                 words.push(current);
@@ -229,16 +240,24 @@ fn iter_chars_to_lines<'a>(
 }
 
 /// Extract words from characters.
-pub fn extract_words(chars: &[CharObj], settings: &TextSettings) -> Vec<WordObj> {
+pub fn extract_words(
+    chars: &[CharObj],
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+) -> Vec<WordObj> {
     if chars.is_empty() {
         return Vec::new();
     }
     let refs: Vec<&CharObj> = chars.iter().collect();
-    extract_words_refs(&refs, settings)
+    extract_words_refs(&refs, settings, arena)
 }
 
 /// Extract words from character references.
-fn extract_words_refs<'a>(chars: &'a [&'a CharObj], settings: &TextSettings) -> Vec<WordObj> {
+fn extract_words_refs<'a>(
+    chars: &'a [&'a CharObj],
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+) -> Vec<WordObj> {
     if chars.is_empty() {
         return Vec::new();
     }
@@ -256,8 +275,8 @@ fn extract_words_refs<'a>(chars: &'a [&'a CharObj], settings: &TextSettings) -> 
             iter_chars_to_lines(&group, settings)
         };
         for (line_chars, direction) in line_groups {
-            for word_chars in iter_chars_to_words(&line_chars, direction, settings) {
-                words.push(merge_chars(&word_chars, settings));
+            for word_chars in iter_chars_to_words(&line_chars, direction, settings, arena) {
+                words.push(merge_chars(&word_chars, settings, arena));
             }
         }
     }
@@ -267,6 +286,7 @@ fn extract_words_refs<'a>(chars: &'a [&'a CharObj], settings: &TextSettings) -> 
 fn extract_word_map<'a>(
     chars: &'a [&'a CharObj],
     settings: &TextSettings,
+    arena: &dyn ArenaLookup,
 ) -> Vec<(WordObj, Vec<&'a CharObj>)> {
     if chars.is_empty() {
         return Vec::new();
@@ -285,8 +305,8 @@ fn extract_word_map<'a>(
             iter_chars_to_lines(&group, settings)
         };
         for (line_chars, direction) in line_groups {
-            for word_chars in iter_chars_to_words(&line_chars, direction, settings) {
-                let word = merge_chars(&word_chars, settings);
+            for word_chars in iter_chars_to_words(&line_chars, direction, settings, arena) {
+                let word = merge_chars(&word_chars, settings, arena);
                 words.push((word, word_chars));
             }
         }
@@ -316,8 +336,9 @@ fn extract_text_layout_refs(
     chars: &[&CharObj],
     settings: &TextSettings,
     layout_bbox: &super::types::BBox,
+    arena: &dyn ArenaLookup,
 ) -> String {
-    let word_map = extract_word_map(chars, settings);
+    let word_map = extract_word_map(chars, settings, arena);
     if word_map.is_empty() {
         return String::new();
     }
@@ -422,7 +443,7 @@ fn extract_text_layout_refs(
             }
 
             for c in chars {
-                let expanded = expand_ligature(&c.text, settings.expand_ligatures);
+                let expanded = expand_ligature(char_text(c, arena), settings.expand_ligatures);
                 for ch in expanded.chars() {
                     out.push(ch);
                     line_len += 1;
@@ -491,20 +512,24 @@ fn textmap_to_string(lines: Vec<String>, line_dir: TextDir, char_dir: TextDir) -
 }
 
 /// Extract text from characters.
-pub fn extract_text(chars: &[CharObj], settings: &TextSettings) -> String {
+pub fn extract_text(chars: &[CharObj], settings: &TextSettings, arena: &dyn ArenaLookup) -> String {
     if chars.is_empty() {
         return String::new();
     }
     let refs: Vec<&CharObj> = chars.iter().collect();
-    extract_text_refs(&refs, settings)
+    extract_text_refs(&refs, settings, arena)
 }
 
 /// Extract text from character references.
-fn extract_text_refs(chars: &[&CharObj], settings: &TextSettings) -> String {
+fn extract_text_refs(
+    chars: &[&CharObj],
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+) -> String {
     if chars.is_empty() {
         return String::new();
     }
-    let words = extract_words_refs(chars, settings);
+    let words = extract_words_refs(chars, settings, arena);
 
     let line_dir_render = settings.line_dir;
     let char_dir_render = settings.char_dir;
@@ -554,6 +579,7 @@ pub fn extract_text_from_char_ids(
     chars: &[CharObj],
     ids: &[CharId],
     settings: &TextSettings,
+    arena: &dyn ArenaLookup,
 ) -> String {
     if ids.is_empty() {
         return String::new();
@@ -562,7 +588,7 @@ pub fn extract_text_from_char_ids(
     for id in ids {
         refs.push(&chars[id.0]);
     }
-    extract_text_refs(&refs, settings)
+    extract_text_refs(&refs, settings, arena)
 }
 
 /// Extract text from specific character indices with layout spacing.
@@ -571,6 +597,7 @@ pub fn extract_text_from_char_ids_layout(
     ids: &[CharId],
     settings: &TextSettings,
     layout_bbox: &super::types::BBox,
+    arena: &dyn ArenaLookup,
 ) -> String {
     if ids.is_empty() {
         return String::new();
@@ -579,5 +606,5 @@ pub fn extract_text_from_char_ids_layout(
     for id in ids {
         refs.push(&chars[id.0]);
     }
-    extract_text_layout_refs(&refs, settings, layout_bbox)
+    extract_text_layout_refs(&refs, settings, layout_bbox, arena)
 }

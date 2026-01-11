@@ -501,17 +501,17 @@ pub fn extract_tables_with_document(
                 let mut collector =
                     PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
                 let page_arena = process_page_arena(&page, &mut collector, &mut rsrcmgr, doc)?;
+                let arena_lookup = collector.arena_lookup();
                 let geom = PageGeometry {
                     page_bbox: page_arena.bbox,
                     mediabox: page_arena.bbox,
                     initial_doctop: 0.0,
                     force_crop: false,
                 };
-                let (chars, edges) =
-                    collect_table_objects_from_arena(&page_arena, &geom, collector.arena_lookup());
+                let (chars, edges) = collect_table_objects_from_arena(&page_arena, &geom);
                 Ok((
                     page_idx,
-                    extract_tables_from_objects(chars, edges, &geom, settings),
+                    extract_tables_from_objects(chars, edges, &geom, settings, arena_lookup),
                 ))
             })
             .collect::<Result<Vec<_>>>()
@@ -564,12 +564,12 @@ pub fn extract_tables_with_document_geometries(
                 let mut collector =
                     PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
                 let page_arena = process_page_arena(&page, &mut collector, &mut rsrcmgr, doc)?;
+                let arena_lookup = collector.arena_lookup();
                 let geom = &geometries[idx];
-                let (chars, edges) =
-                    collect_table_objects_from_arena(&page_arena, geom, collector.arena_lookup());
+                let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
                 Ok((
                     idx,
-                    extract_tables_from_objects(chars, edges, geom, settings),
+                    extract_tables_from_objects(chars, edges, geom, settings, arena_lookup),
                 ))
             })
             .collect::<Result<Vec<_>>>()
@@ -620,10 +620,14 @@ pub fn extract_tables_for_page_indexed(
     let page = PDFPage::get_page_by_index(doc, page_index)?;
     let mut collector = PDFTableCollector::new(laparams, page_index as i32 + 1, &mut arena);
     let page_arena = process_page_arena(&page, &mut collector, &mut rsrcmgr, doc)?;
-    let (chars, edges) =
-        collect_table_objects_from_arena(&page_arena, geometry, collector.arena_lookup());
+    let arena_lookup = collector.arena_lookup();
+    let (chars, edges) = collect_table_objects_from_arena(&page_arena, geometry);
     Ok(extract_tables_from_objects(
-        chars, edges, geometry, settings,
+        chars,
+        edges,
+        geometry,
+        settings,
+        arena_lookup,
     ))
 }
 
@@ -703,6 +707,72 @@ mod tests {
                 &mut offsets,
             );
         }
+
+        let xref_pos = out.len();
+        let obj_count = offsets.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", obj_count + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{:010} 00000 n \n", offset).as_bytes());
+        }
+        out.extend_from_slice(b"trailer\n<< /Size ");
+        out.extend_from_slice((obj_count + 1).to_string().as_bytes());
+        out.extend_from_slice(b" /Root 1 0 R >>\nstartxref\n");
+        out.extend_from_slice(xref_pos.to_string().as_bytes());
+        out.extend_from_slice(b"\n%%EOF");
+
+        out
+    }
+
+    fn build_table_pdf_with_text() -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"%PDF-1.4\n");
+
+        let mut offsets: Vec<usize> = Vec::new();
+        let push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
+            offsets.push(buf.len());
+            buf.extend_from_slice(obj.as_bytes());
+        };
+
+        // 1: Catalog
+        push_obj(
+            &mut out,
+            "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".to_string(),
+            &mut offsets,
+        );
+
+        // 2: Pages
+        push_obj(
+            &mut out,
+            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_string(),
+            &mut offsets,
+        );
+
+        // 3: Page with font + contents
+        push_obj(
+            &mut out,
+            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n".to_string(),
+            &mut offsets,
+        );
+
+        let stream = "0 0 0 RG\n0 0 0 rg\n1 w\n0 0 100 50 re S\n50 0 m 50 50 l S\nBT /F1 12 Tf 10 20 Td (Total) Tj ET\n";
+        push_obj(
+            &mut out,
+            format!(
+                "4 0 obj\n<< /Length {} >>\nstream\n{}\nendstream\nendobj\n",
+                stream.as_bytes().len(),
+                stream
+            ),
+            &mut offsets,
+        );
+
+        // 5: Font
+        push_obj(
+            &mut out,
+            "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n".to_string(),
+            &mut offsets,
+        );
 
         let xref_pos = out.len();
         let obj_count = offsets.len();
@@ -804,5 +874,22 @@ mod tests {
         assert_eq!(out.len(), 1);
         let calls = crate::layout::table::edge_probe::take_probe_calls();
         assert!(calls > 0);
+    }
+
+    #[test]
+    fn table_text_output_matches_before() {
+        let pdf_data = build_table_pdf_with_text();
+        let doc = PDFDocument::new(&pdf_data, "").unwrap();
+        let options = ExtractOptions::default();
+        let settings = TableSettings::default();
+
+        let out = extract_tables_with_document(&doc, options, &settings).unwrap();
+        let found = out
+            .iter()
+            .flatten()
+            .flatten()
+            .flatten()
+            .any(|c| c.as_deref() == Some("Total"));
+        assert!(found, "tables: {:?}", out);
     }
 }

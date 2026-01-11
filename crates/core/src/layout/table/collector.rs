@@ -1,6 +1,5 @@
 //! Arena-backed collectors for table extraction.
 
-use crate::arena::ArenaLookup;
 use crate::arena::types::{ArenaItem, ArenaPage};
 use crate::utils::Rect;
 
@@ -22,7 +21,6 @@ fn arena_char_to_charobj(
     ch: &crate::arena::types::ArenaChar,
     geom: &PageGeometry,
     crop_bbox: Option<BBox>,
-    arena: &impl ArenaLookup,
 ) -> Option<CharObj> {
     let bbox = to_top_left_bbox(ch.bbox.0, ch.bbox.1, ch.bbox.2, ch.bbox.3, geom);
     let bbox = if let Some(crop) = crop_bbox {
@@ -31,7 +29,7 @@ fn arena_char_to_charobj(
         bbox
     };
     Some(CharObj {
-        text: arena.resolve(ch.text).to_string(),
+        text: ch.text,
         x0: bbox.x0,
         x1: bbox.x1,
         top: bbox.top,
@@ -47,7 +45,6 @@ fn arena_char_to_charobj(
 pub(crate) fn collect_table_objects_from_arena(
     page: &ArenaPage,
     geom: &PageGeometry,
-    arena: &impl ArenaLookup,
 ) -> (Vec<CharObj>, Vec<EdgeObj>) {
     let mut chars: Vec<CharObj> = Vec::new();
     let mut edges: Vec<EdgeObj> = Vec::new();
@@ -56,13 +53,12 @@ pub(crate) fn collect_table_objects_from_arena(
         item: &ArenaItem,
         geom: &PageGeometry,
         crop_bbox: Option<BBox>,
-        arena: &impl ArenaLookup,
         chars: &mut Vec<CharObj>,
         edges: &mut Vec<EdgeObj>,
     ) {
         match item {
             ArenaItem::Char(c) => {
-                if let Some(obj) = arena_char_to_charobj(c, geom, crop_bbox, arena) {
+                if let Some(obj) = arena_char_to_charobj(c, geom, crop_bbox) {
                     chars.push(obj);
                 }
             }
@@ -120,7 +116,7 @@ pub(crate) fn collect_table_objects_from_arena(
             }
             ArenaItem::Figure(fig) => {
                 for child in fig.items.iter() {
-                    visit_item(child, geom, crop_bbox, arena, chars, edges);
+                    visit_item(child, geom, crop_bbox, chars, edges);
                 }
             }
             _ => {}
@@ -139,7 +135,7 @@ pub(crate) fn collect_table_objects_from_arena(
     };
 
     for item in page.items.iter() {
-        visit_item(item, geom, crop_bbox, arena, &mut chars, &mut edges);
+        visit_item(item, geom, crop_bbox, &mut chars, &mut edges);
     }
 
     (chars, edges)

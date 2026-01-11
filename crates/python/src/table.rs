@@ -32,7 +32,7 @@ use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings, par
 pub fn page_objects_to_chars_edges(
     _py: Python<'_>,
     page: &Bound<'_, PyAny>,
-) -> PyResult<(Vec<CharObj>, Vec<EdgeObj>, PageGeometry)> {
+) -> PyResult<(Vec<CharObj>, Vec<EdgeObj>, PageGeometry, PageArena)> {
     fn extract_bbox(obj: &Bound<'_, PyAny>, name: &str) -> PyResult<(f64, f64, f64, f64)> {
         if let Ok(bbox) = obj.extract::<(f64, f64, f64, f64)>() {
             return Ok(bbox);
@@ -74,6 +74,7 @@ pub fn page_objects_to_chars_edges(
         force_crop: !is_original,
     };
 
+    let mut arena = PageArena::new();
     let mut chars: Vec<CharObj> = Vec::new();
     let chars_obj = page.getattr("chars")?;
     let chars_seq = chars_obj
@@ -88,7 +89,8 @@ pub fn page_objects_to_chars_edges(
         let text_obj = dict
             .get_item("text")?
             .ok_or_else(|| PyValueError::new_err("char missing text"))?;
-        let text = py_text_to_string(&text_obj)?;
+        let text_value = py_text_to_string(&text_obj)?;
+        let text = arena.intern(&text_value);
         let x0: f64 = dict
             .get_item("x0")?
             .and_then(|v| v.extract().ok())
@@ -312,7 +314,7 @@ pub fn page_objects_to_chars_edges(
         }
     }
 
-    Ok((chars, edges, geom))
+    Ok((chars, edges, geom, arena))
 }
 
 fn word_obj_to_py(py: Python<'_>, w: &WordObj) -> PyResult<Py<PyAny>> {
@@ -638,8 +640,12 @@ pub fn extract_tables_from_page_filtered(
     table_settings: Option<Py<PyAny>>,
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
-    let (chars, edges, geom) = page_objects_to_chars_edges(py, page)?;
-    py.detach(|| Ok(extract_tables_from_objects(chars, edges, &geom, &settings)))
+    let (chars, edges, geom, arena) = page_objects_to_chars_edges(py, page)?;
+    py.detach(move || {
+        Ok(extract_tables_from_objects(
+            chars, edges, &geom, &settings, &arena,
+        ))
+    })
 }
 
 /// Extract a single table from a filtered/cropped pdfplumber Page using Rust table extraction.
@@ -651,8 +657,12 @@ pub fn extract_table_from_page_filtered(
     table_settings: Option<Py<PyAny>>,
 ) -> PyResult<Option<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
-    let (chars, edges, geom) = page_objects_to_chars_edges(py, page)?;
-    py.detach(|| Ok(extract_table_from_objects(chars, edges, &geom, &settings)))
+    let (chars, edges, geom, arena) = page_objects_to_chars_edges(py, page)?;
+    py.detach(move || {
+        Ok(extract_table_from_objects(
+            chars, edges, &geom, &settings, &arena,
+        ))
+    })
 }
 
 /// Repair a PDF and return the repaired bytes.

@@ -38,6 +38,7 @@ mod table_extraction_tests {
         BBox, BBoxKey, CharObj, EdgeObj, HEdgeId, KeyPoint, Orientation, TextSettings, VEdgeId,
         bbox_key, key_point,
     };
+    use crate::arena::PageArena;
     use std::collections::HashMap;
 
     fn make_v_edge(x: f64, top: f64, bottom: f64) -> EdgeObj {
@@ -220,6 +221,10 @@ mod table_extraction_tests {
     #[test]
     fn table_extraction_rowspan_chars() {
         use super::grid::Table;
+        let mut arena = PageArena::new();
+        arena.reset();
+        let text_a = arena.intern("A");
+        let text_b = arena.intern("B");
 
         let table = Table {
             cells: vec![
@@ -246,7 +251,7 @@ mod table_extraction_tests {
 
         let chars: Vec<CharObj> = vec![
             CharObj {
-                text: "A".to_string(),
+                text: text_a,
                 x0: 1.5,
                 x1: 2.5,
                 top: 11.5,
@@ -258,7 +263,7 @@ mod table_extraction_tests {
                 upright: true,
             },
             CharObj {
-                text: "B".to_string(),
+                text: text_b,
                 x0: 6.5,
                 x1: 7.5,
                 top: 11.5,
@@ -272,7 +277,7 @@ mod table_extraction_tests {
         ];
 
         let settings = TextSettings::default();
-        let out = table.extract(&chars, &settings);
+        let out = table.extract(&chars, &settings, &arena);
         assert_eq!(
             out,
             vec![
@@ -312,9 +317,13 @@ mod table_extraction_tests {
 
     #[test]
     fn table_extraction_text_extraction_basic() {
+        let mut arena = PageArena::new();
+        arena.reset();
+        let text_h = arena.intern("H");
+        let text_i = arena.intern("i");
         let chars = vec![
             CharObj {
-                text: "H".to_string(),
+                text: text_h,
                 x0: 0.0,
                 x1: 5.0,
                 top: 0.0,
@@ -326,7 +335,7 @@ mod table_extraction_tests {
                 upright: true,
             },
             CharObj {
-                text: "i".to_string(),
+                text: text_i,
                 x0: 6.0,
                 x1: 8.0,
                 top: 0.0,
@@ -340,7 +349,7 @@ mod table_extraction_tests {
         ];
 
         let settings = TextSettings::default();
-        let words = extract_words(&chars, &settings);
+        let words = extract_words(&chars, &settings, &arena);
 
         assert_eq!(words.len(), 1);
         assert_eq!(words[0].text, "Hi");
@@ -427,6 +436,10 @@ mod table_extraction_tests {
 
     #[test]
     fn cell_matching_soa_matches_scalar() {
+        let mut arena = PageArena::new();
+        arena.reset();
+        let text_a = arena.intern("A");
+        let text_b = arena.intern("B");
         let cells = vec![
             BBox {
                 x0: 0.0,
@@ -443,7 +456,7 @@ mod table_extraction_tests {
         ];
         let chars = vec![
             CharObj {
-                text: "A".to_string(),
+                text: text_a,
                 x0: 1.0,
                 x1: 2.0,
                 top: 1.0,
@@ -455,7 +468,7 @@ mod table_extraction_tests {
                 upright: true,
             },
             CharObj {
-                text: "B".to_string(),
+                text: text_b,
                 x0: 6.0,
                 x1: 7.0,
                 top: 1.0,
@@ -470,8 +483,18 @@ mod table_extraction_tests {
         let out_a = super::grid::Table {
             cells: cells.clone(),
         }
-        .extract(&chars, &TextSettings::default());
-        let out_b = super::grid::Table { cells }.extract_soa(&chars, &TextSettings::default());
+        .extract(&chars, &TextSettings::default(), &arena);
+        let out_b =
+            super::grid::Table { cells }.extract_soa(&chars, &TextSettings::default(), &arena);
         assert_eq!(out_a, out_b);
+    }
+
+    #[test]
+    fn charobj_is_compact() {
+        assert!(
+            std::mem::size_of::<CharObj>() <= 88,
+            "CharObj too large: {} bytes",
+            std::mem::size_of::<CharObj>()
+        );
     }
 }

@@ -3,6 +3,7 @@
 //! This module provides the main entry points for extracting tables,
 //! words, and text from PDF pages.
 
+use crate::arena::{ArenaLookup, PageArena};
 use crate::layout::types::LTChar;
 use crate::utils::{HasBBox, Rect};
 
@@ -31,15 +32,21 @@ fn rects_equal(a: Rect, b: Rect) -> bool {
 }
 
 /// Convert an LTChar to CharObj, applying crop and coordinate transform.
-fn char_to_charobj(c: &LTChar, geom: &PageGeometry, crop_bbox: Option<BBox>) -> Option<CharObj> {
+fn char_to_charobj(
+    c: &LTChar,
+    geom: &PageGeometry,
+    crop_bbox: Option<BBox>,
+    arena: &mut PageArena,
+) -> Option<CharObj> {
     let bbox = to_top_left_bbox(c.x0(), c.y0(), c.x1(), c.y1(), geom);
     let bbox = if let Some(crop) = crop_bbox {
         bbox_overlap(bbox, crop)?
     } else {
         bbox
     };
+    let text = arena.intern(c.get_text());
     Some(CharObj {
-        text: c.get_text().to_string(),
+        text,
         x0: bbox.x0,
         x1: bbox.x1,
         top: bbox.top,
@@ -53,7 +60,11 @@ fn char_to_charobj(c: &LTChar, geom: &PageGeometry, crop_bbox: Option<BBox>) -> 
 }
 
 /// Collect all characters and edges from a page.
-fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Vec<EdgeObj>) {
+fn collect_page_objects(
+    page: &LTPage,
+    geom: &PageGeometry,
+    arena: &mut PageArena,
+) -> (Vec<CharObj>, Vec<EdgeObj>) {
     let mut chars: Vec<CharObj> = Vec::new();
     let mut edges: Vec<EdgeObj> = Vec::new();
 
@@ -61,12 +72,13 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
         item: &LTItem,
         geom: &PageGeometry,
         crop_bbox: Option<BBox>,
+        arena: &mut PageArena,
         chars: &mut Vec<CharObj>,
         edges: &mut Vec<EdgeObj>,
     ) {
         match item {
             LTItem::Char(c) => {
-                if let Some(obj) = char_to_charobj(c, geom, crop_bbox) {
+                if let Some(obj) = char_to_charobj(c, geom, crop_bbox, arena) {
                     chars.push(obj);
                 }
             }
@@ -126,7 +138,7 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
                 let mut push_chars = |elements: &mut dyn Iterator<Item = &TextLineElement>| {
                     for el in elements {
                         if let TextLineElement::Char(c) = el {
-                            if let Some(obj) = char_to_charobj(c, geom, crop_bbox) {
+                            if let Some(obj) = char_to_charobj(c, geom, crop_bbox, arena) {
                                 chars.push(obj);
                             }
                         }
@@ -141,7 +153,7 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
                 let mut push_line_chars = |elements: &mut dyn Iterator<Item = &TextLineElement>| {
                     for el in elements {
                         if let TextLineElement::Char(c) = el {
-                            if let Some(obj) = char_to_charobj(c, geom, crop_bbox) {
+                            if let Some(obj) = char_to_charobj(c, geom, crop_bbox, arena) {
                                 chars.push(obj);
                             }
                         }
@@ -162,12 +174,12 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
             }
             LTItem::Figure(fig) => {
                 for child in fig.iter() {
-                    visit_item(child, geom, crop_bbox, chars, edges);
+                    visit_item(child, geom, crop_bbox, arena, chars, edges);
                 }
             }
             LTItem::Page(p) => {
                 for child in p.iter() {
-                    visit_item(child, geom, crop_bbox, chars, edges);
+                    visit_item(child, geom, crop_bbox, arena, chars, edges);
                 }
             }
             _ => {}
@@ -186,23 +198,30 @@ fn collect_page_objects(page: &LTPage, geom: &PageGeometry) -> (Vec<CharObj>, Ve
     };
 
     for item in page.iter() {
-        visit_item(item, geom, crop_bbox, &mut chars, &mut edges);
+        visit_item(item, geom, crop_bbox, arena, &mut chars, &mut edges);
     }
 
     (chars, edges)
 }
 
 /// Main table finder that orchestrates the extraction pipeline.
-struct TableFinder {
+struct TableFinder<'a> {
     page_bbox: BBox,
     chars: Vec<CharObj>,
     edges: Vec<EdgeObj>,
     settings: TableSettings,
+    arena: &'a dyn ArenaLookup,
 }
 
-impl TableFinder {
-    fn new(page: &LTPage, geom: &PageGeometry, settings: TableSettings) -> Self {
-        let (chars, edges) = collect_page_objects(page, geom);
+impl<'a> TableFinder<'a> {
+    fn new(
+        page: &LTPage,
+        geom: &PageGeometry,
+        settings: TableSettings,
+        arena: &'a mut PageArena,
+    ) -> Self {
+        let (chars, edges) = collect_page_objects(page, geom, arena);
+        let arena_lookup: &dyn ArenaLookup = arena;
         let page_bbox = BBox {
             x0: geom.page_bbox.0,
             top: geom.page_bbox.1,
@@ -214,14 +233,16 @@ impl TableFinder {
             chars,
             edges,
             settings,
+            arena: arena_lookup,
         }
     }
 
-    const fn from_objects(
+    fn from_objects(
         chars: Vec<CharObj>,
         edges: Vec<EdgeObj>,
         geom: &PageGeometry,
         settings: TableSettings,
+        arena: &'a dyn ArenaLookup,
     ) -> Self {
         let page_bbox = BBox {
             x0: geom.page_bbox.0,
@@ -234,6 +255,7 @@ impl TableFinder {
             chars,
             edges,
             settings,
+            arena,
         }
     }
 
@@ -245,7 +267,7 @@ impl TableFinder {
 
         let mut words: Vec<WordObj> = Vec::new();
         if v_strat == "text" || h_strat == "text" {
-            words = extract_words(&self.chars, &settings.text_settings);
+            words = extract_words(&self.chars, &settings.text_settings, self.arena);
         }
 
         // explicit vertical lines
@@ -400,7 +422,9 @@ pub fn extract_tables_from_ltpage(
     geom: &PageGeometry,
     settings: &TableSettings,
 ) -> Vec<Vec<Vec<Option<String>>>> {
-    let finder = TableFinder::new(page, geom, settings.clone());
+    let mut arena = PageArena::new();
+    arena.reset();
+    let finder = TableFinder::new(page, geom, settings.clone(), &mut arena);
     let mut tables = finder.find_tables();
     if geom.force_crop {
         let crop = BBox {
@@ -413,7 +437,7 @@ pub fn extract_tables_from_ltpage(
     }
     tables
         .iter()
-        .map(|t| t.extract(&finder.chars, &settings.text_settings))
+        .map(|t| t.extract(&finder.chars, &settings.text_settings, finder.arena))
         .collect()
 }
 
@@ -423,8 +447,10 @@ pub fn extract_tables_from_objects(
     edges: Vec<EdgeObj>,
     geom: &PageGeometry,
     settings: &TableSettings,
+    arena: &impl ArenaLookup,
 ) -> Vec<Vec<Vec<Option<String>>>> {
-    let finder = TableFinder::from_objects(chars, edges, geom, settings.clone());
+    let arena: &dyn ArenaLookup = arena;
+    let finder = TableFinder::from_objects(chars, edges, geom, settings.clone(), arena);
     let mut tables = finder.find_tables();
     if geom.force_crop {
         let crop = BBox {
@@ -437,7 +463,7 @@ pub fn extract_tables_from_objects(
     }
     tables
         .iter()
-        .map(|t| t.extract(&finder.chars, &settings.text_settings))
+        .map(|t| t.extract(&finder.chars, &settings.text_settings, finder.arena))
         .collect()
 }
 
@@ -447,7 +473,9 @@ pub fn extract_table_from_ltpage(
     geom: &PageGeometry,
     settings: &TableSettings,
 ) -> Option<Vec<Vec<Option<String>>>> {
-    let finder = TableFinder::new(page, geom, settings.clone());
+    let mut arena = PageArena::new();
+    arena.reset();
+    let finder = TableFinder::new(page, geom, settings.clone(), &mut arena);
     let mut tables = finder.find_tables();
     if geom.force_crop {
         let crop = BBox {
@@ -494,7 +522,7 @@ pub fn extract_table_from_ltpage(
         }
     }
 
-    Some(tables[best_idx].extract(&finder.chars, &settings.text_settings))
+    Some(tables[best_idx].extract(&finder.chars, &settings.text_settings, finder.arena))
 }
 
 /// Extract the largest table from precomputed characters/edges.
@@ -503,8 +531,10 @@ pub fn extract_table_from_objects(
     edges: Vec<EdgeObj>,
     geom: &PageGeometry,
     settings: &TableSettings,
+    arena: &impl ArenaLookup,
 ) -> Option<Vec<Vec<Option<String>>>> {
-    let finder = TableFinder::from_objects(chars, edges, geom, settings.clone());
+    let arena: &dyn ArenaLookup = arena;
+    let finder = TableFinder::from_objects(chars, edges, geom, settings.clone(), arena);
     let mut tables = finder.find_tables();
     if geom.force_crop {
         let crop = BBox {
@@ -551,7 +581,7 @@ pub fn extract_table_from_objects(
         }
     }
 
-    Some(tables[best_idx].extract(&finder.chars, &settings.text_settings))
+    Some(tables[best_idx].extract(&finder.chars, &settings.text_settings, finder.arena))
 }
 
 /// Extract words from a page.
@@ -560,8 +590,10 @@ pub fn extract_words_from_ltpage(
     geom: &PageGeometry,
     settings: TextSettings,
 ) -> Vec<WordObj> {
-    let (chars, _edges) = collect_page_objects(page, geom);
-    extract_words(&chars, &settings)
+    let mut arena = PageArena::new();
+    arena.reset();
+    let (chars, _edges) = collect_page_objects(page, geom, &mut arena);
+    extract_words(&chars, &settings, &arena)
 }
 
 /// Extract text from a page.
@@ -570,8 +602,10 @@ pub fn extract_text_from_ltpage(
     geom: &PageGeometry,
     settings: TextSettings,
 ) -> String {
-    let (chars, _edges) = collect_page_objects(page, geom);
-    extract_text(&chars, &settings)
+    let mut arena = PageArena::new();
+    arena.reset();
+    let (chars, _edges) = collect_page_objects(page, geom, &mut arena);
+    extract_text(&chars, &settings, &arena)
 }
 
 #[cfg(test)]
@@ -649,11 +683,16 @@ mod tests {
         };
 
         let ltpage = page.clone().materialize(&ctx);
-        let (chars_lt, edges_lt) = collect_page_objects(&ltpage, &geom);
-        let (chars_arena, edges_arena) = collect_table_objects_from_arena(&page, &geom, &ctx);
+        let mut lt_arena = PageArena::new();
+        lt_arena.reset();
+        let (chars_lt, edges_lt) = collect_page_objects(&ltpage, &geom, &mut lt_arena);
+        let (chars_arena, edges_arena) = collect_table_objects_from_arena(&page, &geom);
 
         assert_eq!(chars_lt.len(), chars_arena.len());
         assert_eq!(edges_lt.len(), edges_arena.len());
-        assert_eq!(chars_lt[0].text, chars_arena[0].text);
+        assert_eq!(
+            lt_arena.resolve(chars_lt[0].text),
+            ctx.resolve(chars_arena[0].text)
+        );
     }
 }

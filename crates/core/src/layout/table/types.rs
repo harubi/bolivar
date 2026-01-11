@@ -1,5 +1,6 @@
 //! Table extraction types and settings.
 
+use lasso::Spur;
 use ordered_float::OrderedFloat;
 
 use crate::utils::{Point, Rect};
@@ -70,7 +71,7 @@ impl BBox {
 
 #[derive(Clone, Debug)]
 pub struct CharObj {
-    pub text: String,
+    pub text: Spur,
     pub x0: f64,
     pub x1: f64,
     pub top: f64,

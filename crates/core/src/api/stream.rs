@@ -413,6 +413,7 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                     );
                     let tables = match page_arena {
                         Ok(page_arena) => {
+                            let arena_lookup = collector.arena_lookup();
                             let geom = match geom_worker.as_ref() {
                                 Some(geoms) => geoms[page_idx].clone(),
                                 None => PageGeometry {
@@ -422,12 +423,15 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                                     force_crop: false,
                                 },
                             };
-                            let (chars, edges) = collect_table_objects_from_arena(
-                                &page_arena,
+                            let (chars, edges) =
+                                collect_table_objects_from_arena(&page_arena, &geom);
+                            Ok(extract_tables_from_objects(
+                                chars,
+                                edges,
                                 &geom,
-                                collector.arena_lookup(),
-                            );
-                            Ok(extract_tables_from_objects(chars, edges, &geom, &settings))
+                                &settings,
+                                arena_lookup,
+                            ))
                         }
                         Err(err) => Err(err),
                     };
