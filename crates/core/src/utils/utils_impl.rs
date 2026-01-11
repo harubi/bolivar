@@ -7,15 +7,13 @@
 //! - Text formatting functions (Roman numerals, alphabetic)
 //! - Binary data helpers
 
+use geo_index::rtree::sort::HilbertSort;
+use geo_index::rtree::{RTree as GeoRTree, RTreeBuilder, RTreeIndex, SimpleDistanceMetric};
+use rstar::{AABB, PointDistance, RTree, RTreeObject};
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::ops::ControlFlow;
-use std::simd::prelude::*;
-
-use geo_index::rtree::sort::HilbertSort;
-use geo_index::rtree::{RTree as GeoRTree, RTreeBuilder, RTreeIndex, SimpleDistanceMetric};
-use rstar::{AABB, PointDistance, RTree, RTreeObject};
 
 /// Maximum integer value for PDF compatibility (32-bit signed max).
 pub const INF: i32 = i32::MAX;
@@ -84,23 +82,18 @@ pub fn apply_matrix_pt(m: Matrix, v: Point) -> Point {
 /// Note that the result is not a rotated rectangle, but a rectangle with the same
 /// orientation that tightly fits the outside of the rotated content.
 pub fn apply_matrix_rect(m: Matrix, rect: Rect) -> Rect {
-    apply_matrix_rect_simd(m, rect)
-}
-
-fn apply_matrix_rect_simd(m: Matrix, rect: Rect) -> Rect {
     let (x0, y0, x1, y1) = rect;
-    let xs = Simd::<f64, 4>::from_array([x0, x1, x1, x0]);
-    let ys = Simd::<f64, 4>::from_array([y0, y0, y1, y1]);
-    let (a, b, c, d, e, f) = m;
-    let xv = xs * Simd::splat(a) + ys * Simd::splat(c) + Simd::splat(e);
-    let yv = xs * Simd::splat(b) + ys * Simd::splat(d) + Simd::splat(f);
+    let p0 = apply_matrix_pt(m, (x0, y0));
+    let p1 = apply_matrix_pt(m, (x0, y1));
+    let p2 = apply_matrix_pt(m, (x1, y0));
+    let p3 = apply_matrix_pt(m, (x1, y1));
 
-    (
-        xv.reduce_min(),
-        yv.reduce_min(),
-        xv.reduce_max(),
-        yv.reduce_max(),
-    )
+    let min_x = p0.0.min(p1.0).min(p2.0).min(p3.0);
+    let min_y = p0.1.min(p1.1).min(p2.1).min(p3.1);
+    let max_x = p0.0.max(p1.0).max(p2.0).max(p3.0);
+    let max_y = p0.1.max(p1.1).max(p2.1).max(p3.1);
+
+    (min_x, min_y, max_x, max_y)
 }
 
 /// Equivalent to apply_matrix_pt(m, (p, q)) - apply_matrix_pt(m, (0, 0)).
@@ -803,10 +796,10 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_matrix_rect_simd_rotation() {
+    fn test_apply_matrix_rect_rotation() {
         let matrix: Matrix = (0.0, 1.0, -1.0, 0.0, 0.0, 0.0);
         let rect: Rect = (0.0, 0.0, 2.0, 3.0);
-        let out = apply_matrix_rect_simd(matrix, rect);
+        let out = apply_matrix_rect(matrix, rect);
         assert_eq!(out, (-3.0, 0.0, 0.0, 2.0));
     }
 

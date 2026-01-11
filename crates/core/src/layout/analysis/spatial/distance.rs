@@ -4,7 +4,6 @@
 
 use super::types::{DistKey, NodeStats};
 use crate::utils::Rect;
-use std::simd::prelude::*;
 
 /// Convert f64 to a sortable integer key preserving total ordering.
 ///
@@ -42,19 +41,9 @@ pub const fn bbox_union(a: Rect, b: Rect) -> Rect {
     (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3))
 }
 
-#[inline(always)]
-pub(crate) fn bbox_union_simd(a: Rect, b: Rect) -> Rect {
-    type V = Simd<f64, 4>;
-    let a_vec = V::from_array([a.0, a.1, a.2, a.3]);
-    let b_vec = V::from_array([b.0, b.1, b.2, b.3]);
-    let mins = a_vec.simd_min(b_vec).to_array();
-    let maxs = a_vec.simd_max(b_vec).to_array();
-    (mins[0], mins[1], maxs[2], maxs[3])
-}
-
 /// Calculate area expansion when adding a bbox to current bbox
 pub fn bbox_expand_area(current: Rect, add: Rect) -> f64 {
-    let union = bbox_union_simd(current, add);
+    let union = bbox_union(current, add);
     bbox_area(union) - bbox_area(current)
 }
 
@@ -114,9 +103,9 @@ mod tests {
     }
 
     #[test]
-    fn bbox_union_simd_matches_expected() {
+    fn bbox_union_matches_expected() {
         let a = (0.0, 1.0, 5.0, 6.0);
         let b = (-1.0, 2.0, 7.0, 4.0);
-        assert_eq!(bbox_union_simd(a, b), (-1.0, 1.0, 7.0, 6.0));
+        assert_eq!(bbox_union(a, b), (-1.0, 1.0, 7.0, 6.0));
     }
 }

@@ -4,7 +4,7 @@
 //! - Heap entries for priority queue processing
 //! - Node statistics for lower bound computation
 
-use super::distance::bbox_union_simd;
+use super::distance::bbox_union;
 use crate::utils::{HasBBox, Rect};
 
 /// Monotonically increasing ID assigned in parse order (matches pdfminer's id() semantics)
@@ -219,7 +219,7 @@ impl NodeStats {
         ids.sort();
 
         Self {
-            bbox: bbox_union_simd(self.bbox, other.bbox),
+            bbox: bbox_union(self.bbox, other.bbox),
             min_w: self.min_w.min(other.min_w),
             min_h: self.min_h.min(other.min_h),
             max_area: self.max_area.max(other.max_area),

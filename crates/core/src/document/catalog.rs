@@ -14,7 +14,7 @@ use crate::error::{PdfError, Result};
 use crate::font::encoding::{DiffEntry, EncodingDB};
 use crate::model::objects::PDFObject;
 use crate::parser::parser::PDFParser;
-use crate::simd::{U8_LANES, find_subslice_simd};
+use crate::simd::U8_LANES;
 use bytes::Bytes;
 use indexmap::IndexMap;
 use memmap2::Mmap;
@@ -430,14 +430,12 @@ impl PDFDocument {
         };
         let hay = &data[search_start..];
         let mut found = None;
-        let mut offset = 0usize;
-        while offset + needle.len() <= hay.len() {
-            let Some(pos) = find_subslice_simd(&hay[offset..], needle) else {
-                break;
-            };
-            let abs = offset + pos;
-            found = Some(search_start + abs);
-            offset = abs + 1;
+        if hay.len() >= needle.len() {
+            for pos in 0..=hay.len() - needle.len() {
+                if &hay[pos..pos + needle.len()] == needle {
+                    found = Some(search_start + pos);
+                }
+            }
         }
         found
     }
@@ -1708,13 +1706,18 @@ impl PDFDocument {
         if data.len() < needle.len() {
             return None;
         }
-        let pos = find_subslice_simd(data, needle)?;
-        let mut end = pos;
-        while end > 0 && (data[end - 1] == b' ' || data[end - 1] == b'\n' || data[end - 1] == b'\r')
-        {
-            end -= 1;
+        for pos in 0..=data.len() - needle.len() {
+            if &data[pos..pos + needle.len()] == needle {
+                let mut end = pos;
+                while end > 0
+                    && (data[end - 1] == b' ' || data[end - 1] == b'\n' || data[end - 1] == b'\r')
+                {
+                    end -= 1;
+                }
+                return Some(end);
+            }
         }
-        Some(end)
+        None
     }
 
     fn find_endstream(data: &[u8]) -> Option<usize> {
@@ -2386,6 +2389,14 @@ mod tests {
         let data = b"trailer\nstartxref\n123\n%%EOF";
         let pos = PDFDocument::find_startxref_simd(data).unwrap();
         assert_eq!(&data[pos..pos + 9], b"startxref");
+    }
+
+    #[test]
+    fn find_startxref_returns_last_occurrence() {
+        let data = b"startxref\n1\nstartxref\n2\n%%EOF";
+        let pos = PDFDocument::find_startxref_simd(data).unwrap();
+        assert_eq!(&data[pos..pos + 9], b"startxref");
+        assert_eq!(&data[pos + 9..pos + 11], b"\n2");
     }
 
     #[test]

@@ -3,14 +3,13 @@
 //! Contains group_textboxes_exact() for exact pdfminer-compatible hierarchical grouping.
 
 use std::collections::BinaryHeap;
-use std::simd::prelude::*;
 
 use crate::utils::{HasBBox, INF_F64, Plane, Rect};
 
 use super::super::params::LAParams;
 use super::super::types::{LTTextGroup, TextBoxType, TextGroupElement};
 use super::spatial::{
-    BestEntry, DynamicSpatialTree, FrontierEntry, PlaneElem, PyId, SpatialNode,
+    BestEntry, DynamicSpatialTree, FrontierEntry, PlaneElem, PyId, SpatialNode, bbox_union,
     calc_dist_lower_bound, expand_frontier_best,
 };
 
@@ -111,7 +110,7 @@ pub fn group_textboxes_exact(_laparams: &LAParams, boxes: &[TextBoxType]) -> Vec
                 if !best.skip_isany {
                     let bbox_a = bboxes[best.elem1_idx];
                     let bbox_b = bboxes[best.elem2_idx];
-                    let (x0, y0, x1, y1) = bbox_union_simd(bbox_a, bbox_b);
+                    let (x0, y0, x1, y1) = bbox_union(bbox_a, bbox_b);
 
                     let has_between = plane.any_with_indices((x0, y0, x1, y1), |_, elem| {
                         let idx = elem.idx;
@@ -146,7 +145,7 @@ pub fn group_textboxes_exact(_laparams: &LAParams, boxes: &[TextBoxType]) -> Vec
 
                 let bbox_a = bboxes[best.elem1_idx];
                 let bbox_b = bboxes[best.elem2_idx];
-                let new_bbox = bbox_union_simd(bbox_a, bbox_b);
+                let new_bbox = bbox_union(bbox_a, bbox_b);
                 let x0 = new_bbox.0;
                 let y0 = new_bbox.1;
                 let x1 = new_bbox.2;
@@ -195,23 +194,15 @@ pub fn group_textboxes_exact(_laparams: &LAParams, boxes: &[TextBoxType]) -> Vec
         .collect()
 }
 
-fn bbox_union_simd(a: Rect, b: Rect) -> Rect {
-    let av = Simd::<f64, 4>::from_array([a.0, a.1, a.2, a.3]);
-    let bv = Simd::<f64, 4>::from_array([b.0, b.1, b.2, b.3]);
-    let minv = av.simd_min(bv);
-    let maxv = av.simd_max(bv);
-    (minv[0], minv[1], maxv[2], maxv[3])
-}
-
 #[cfg(test)]
-mod textboxes_exact_simd_tests {
+mod textboxes_exact_tests {
     use super::*;
 
     #[test]
-    fn bbox_union_simd_expected() {
+    fn bbox_union_expected() {
         let a = (0.0, 1.0, 2.0, 3.0);
         let b = (-1.0, 2.0, 5.0, 4.0);
-        let out = bbox_union_simd(a, b);
+        let out = bbox_union(a, b);
         assert_eq!(out, (-1.0, 1.0, 5.0, 4.0));
     }
 }
