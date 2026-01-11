@@ -116,14 +116,6 @@ fn group_objects_pair_flags_soa(laparams: &LAParams, soa: &LayoutSoA) -> (Vec<bo
         return (Vec::new(), Vec::new());
     }
 
-    let mut width = Vec::with_capacity(len);
-    let mut height = Vec::with_capacity(len);
-
-    for idx in 0..len {
-        width.push(soa.x1[idx] - soa.x0[idx]);
-        height.push(soa.bottom[idx] - soa.top[idx]);
-    }
-
     let mut halign_flags = vec![false; len - 1];
     let mut valign_flags = vec![false; len - 1];
 
@@ -143,10 +135,10 @@ fn group_objects_pair_flags_soa(laparams: &LAParams, soa: &LayoutSoA) -> (Vec<bo
         let y0b = Simd::<f64, LANES>::from_slice(&soa.top[i + 1..i + 1 + LANES]);
         let x1b = Simd::<f64, LANES>::from_slice(&soa.x1[i + 1..i + 1 + LANES]);
         let y1b = Simd::<f64, LANES>::from_slice(&soa.bottom[i + 1..i + 1 + LANES]);
-        let w0 = Simd::<f64, LANES>::from_slice(&width[i..i + LANES]);
-        let w1 = Simd::<f64, LANES>::from_slice(&width[i + 1..i + 1 + LANES]);
-        let h0 = Simd::<f64, LANES>::from_slice(&height[i..i + LANES]);
-        let h1 = Simd::<f64, LANES>::from_slice(&height[i + 1..i + 1 + LANES]);
+        let w0 = Simd::<f64, LANES>::from_slice(&soa.w[i..i + LANES]);
+        let w1 = Simd::<f64, LANES>::from_slice(&soa.w[i + 1..i + 1 + LANES]);
+        let h0 = Simd::<f64, LANES>::from_slice(&soa.h[i..i + LANES]);
+        let h1 = Simd::<f64, LANES>::from_slice(&soa.h[i + 1..i + 1 + LANES]);
 
         let is_voverlap = y0b.simd_le(y1a) & y0a.simd_le(y1b);
         let is_hoverlap = x0b.simd_le(x1a) & x0a.simd_le(x1b);
@@ -219,14 +211,14 @@ fn group_objects_pair_flags_soa(laparams: &LAParams, soa: &LayoutSoA) -> (Vec<bo
         let hoverlap = if is_hoverlap { hmin } else { 0.0 };
         let hdistance = if is_hoverlap { 0.0 } else { hmin };
 
-        let min_height = height[idx].min(height[idx + 1]);
-        let max_width = width[idx].max(width[idx + 1]);
+        let min_height = soa.h[idx].min(soa.h[idx + 1]);
+        let max_width = soa.w[idx].max(soa.w[idx + 1]);
         let halign = is_voverlap
             && min_height * laparams.line_overlap < voverlap
             && hdistance < max_width * laparams.char_margin;
 
-        let min_width = width[idx].min(width[idx + 1]);
-        let max_height = height[idx].max(height[idx + 1]);
+        let min_width = soa.w[idx].min(soa.w[idx + 1]);
+        let max_height = soa.h[idx].max(soa.h[idx + 1]);
         let valign = laparams.detect_vertical
             && is_hoverlap
             && min_width * laparams.line_overlap < hoverlap
@@ -281,6 +273,27 @@ mod group_objects_simd_tests {
         let out = group_objects_soa(&laparams, &objs, &soa);
         let baseline = group_objects(&laparams, &objs);
         assert_eq!(out.len(), baseline.len());
+    }
+
+    #[test]
+    fn group_objects_soa_uses_precomputed_metrics() {
+        let laparams = LAParams::default();
+        let soa = LayoutSoA {
+            x0: vec![0.0, 12.0],
+            x1: vec![10.0, 22.0],
+            top: vec![0.0, 0.0],
+            bottom: vec![10.0, 10.0],
+            w: vec![1.0, 1.0],
+            h: vec![10.0, 10.0],
+            cx: vec![5.0, 17.0],
+            cy: vec![5.0, 5.0],
+            text: vec![String::new(), String::new()],
+            font: vec![String::new(), String::new()],
+            size: vec![10.0, 10.0],
+            flags: vec![0, 0],
+        };
+        let (halign_flags, _valign_flags) = group_objects_pair_flags_soa(&laparams, &soa);
+        assert!(!halign_flags[0]);
     }
 }
 
