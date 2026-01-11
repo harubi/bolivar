@@ -12,7 +12,7 @@ use rayon::prelude::*;
 
 use crate::api::stream::{PageStream, extract_pages_stream_from_doc};
 use crate::arena::PageArena;
-use crate::converter::{PDFPageAggregator, TextConverter};
+use crate::converter::{PDFPageAggregator, PDFTableCollector, TextConverter};
 use crate::error::{PdfError, Result};
 use crate::image::ImageWriter;
 use crate::layout::{LAParams, LTPage};
@@ -20,7 +20,9 @@ use crate::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
 use crate::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use crate::pdfpage::PDFPage;
 use crate::table::edge_probe::{page_has_edges, should_skip_tables};
-use crate::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
+use crate::table::{
+    PageGeometry, TableSettings, collect_table_objects_from_arena, extract_tables_from_objects,
+};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -297,14 +299,20 @@ pub(crate) fn process_page(
     Ok(aggregator.get_result().clone())
 }
 
-fn page_geometry_from_ltpage(page: &LTPage) -> PageGeometry {
-    let bbox = page.bbox();
-    PageGeometry {
-        page_bbox: bbox,
-        mediabox: bbox,
-        initial_doctop: 0.0,
-        force_crop: false,
-    }
+pub(crate) fn process_page_arena<'a>(
+    page: &PDFPage,
+    collector: &mut PDFTableCollector<'a>,
+    rsrcmgr: &mut PDFResourceManager,
+    doc: &PDFDocument,
+) -> Result<crate::arena::types::ArenaPage<'a>> {
+    record_thread();
+
+    let mut interpreter = PDFPageInterpreter::new(rsrcmgr, collector);
+    interpreter.process_page(page, Some(doc));
+
+    collector
+        .take_result()
+        .ok_or_else(|| PdfError::DecodeError("table collector produced no result".to_string()))
 }
 
 /// Iterator over analyzed pages.
@@ -490,13 +498,20 @@ pub fn extract_tables_with_document(
                 let mut arena = PageArena::new();
                 arena.reset();
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-                let mut aggregator =
-                    PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
-                let geom = page_geometry_from_ltpage(&ltpage);
+                let mut collector =
+                    PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
+                let page_arena = process_page_arena(&page, &mut collector, &mut rsrcmgr, doc)?;
+                let geom = PageGeometry {
+                    page_bbox: page_arena.bbox,
+                    mediabox: page_arena.bbox,
+                    initial_doctop: 0.0,
+                    force_crop: false,
+                };
+                let (chars, edges) =
+                    collect_table_objects_from_arena(&page_arena, &geom, collector.arena_lookup());
                 Ok((
                     page_idx,
-                    extract_tables_from_ltpage(&ltpage, &geom, settings),
+                    extract_tables_from_objects(chars, edges, &geom, settings),
                 ))
             })
             .collect::<Result<Vec<_>>>()
@@ -546,11 +561,16 @@ pub fn extract_tables_with_document_geometries(
                 let mut arena = PageArena::new();
                 arena.reset();
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-                let mut aggregator =
-                    PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
+                let mut collector =
+                    PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
+                let page_arena = process_page_arena(&page, &mut collector, &mut rsrcmgr, doc)?;
                 let geom = &geometries[idx];
-                Ok((idx, extract_tables_from_ltpage(&ltpage, geom, settings)))
+                let (chars, edges) =
+                    collect_table_objects_from_arena(&page_arena, geom, collector.arena_lookup());
+                Ok((
+                    idx,
+                    extract_tables_from_objects(chars, edges, geom, settings),
+                ))
             })
             .collect::<Result<Vec<_>>>()
     })?;
@@ -597,10 +617,14 @@ pub fn extract_tables_for_page_indexed(
     let mut arena = PageArena::new();
     arena.reset();
     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-    let mut aggregator = PDFPageAggregator::new(laparams, page_index as i32 + 1, &mut arena);
     let page = PDFPage::get_page_by_index(doc, page_index)?;
-    let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
-    Ok(extract_tables_from_ltpage(&ltpage, geometry, settings))
+    let mut collector = PDFTableCollector::new(laparams, page_index as i32 + 1, &mut arena);
+    let page_arena = process_page_arena(&page, &mut collector, &mut rsrcmgr, doc)?;
+    let (chars, edges) =
+        collect_table_objects_from_arena(&page_arena, geometry, collector.arena_lookup());
+    Ok(extract_tables_from_objects(
+        chars, edges, geometry, settings,
+    ))
 }
 
 #[cfg(test)]

@@ -267,6 +267,10 @@ impl<'a> PDFLayoutAnalyzer<'a> {
         !self.stack.is_empty()
     }
 
+    pub fn arena_lookup(&self) -> &ArenaContext<'a> {
+        &self.arena
+    }
+
     /// Begin processing a page.
     pub fn begin_page(&mut self, mediabox: Rect, ctm: Matrix) {
         let (x0, y0, x1, y1) = apply_matrix_rect(ctm, mediabox);
@@ -275,23 +279,31 @@ impl<'a> PDFLayoutAnalyzer<'a> {
         self.cur_item = Some(ArenaContainer::new_in(&self.arena, bbox));
     }
 
+    /// End processing a page and return the arena page (no materialization).
+    pub fn end_page_arena(&mut self) -> Option<ArenaPage<'a>> {
+        assert!(self.stack.is_empty(), "stack not empty");
+        let container = self.cur_item.take()?;
+        let mut page = ArenaPage {
+            pageid: self.pageno,
+            bbox: container.bbox,
+            rotate: 0.0,
+            items: BumpVec::new_in(self.arena.bump()),
+        };
+        for item in container.items {
+            page.add(item);
+        }
+        self.pageno += 1;
+        Some(page)
+    }
+
     /// End processing a page and return the analyzed page.
     pub fn end_page(&mut self) -> Option<LTPage> {
-        assert!(self.stack.is_empty(), "stack not empty");
-        if let Some(container) = self.cur_item.take() {
-            let mut page = ArenaPage::new_in(&self.arena, self.pageno, container.bbox);
-            for item in container.items {
-                page.add(item);
-            }
-            let mut ltpage = page.materialize(&self.arena);
-            if let Some(ref laparams) = self.laparams {
-                ltpage.analyze(laparams);
-            }
-            self.pageno += 1;
-            Some(ltpage)
-        } else {
-            None
+        let page = self.end_page_arena()?;
+        let mut ltpage = page.materialize(&self.arena);
+        if let Some(ref laparams) = self.laparams {
+            ltpage.analyze(laparams);
         }
+        Some(ltpage)
     }
 
     /// Begin processing a figure (Form XObject).
@@ -849,6 +861,12 @@ pub struct PDFPageAggregator<'a> {
     result: Option<LTPage>,
 }
 
+/// Table collector device that captures arena pages (no LTPage materialization).
+pub struct PDFTableCollector<'a> {
+    analyzer: PDFLayoutAnalyzer<'a>,
+    result: Option<ArenaPage<'a>>,
+}
+
 /// Lightweight device to probe for vector edges without building layout.
 pub struct PDFEdgeProbe {
     has_edges: bool,
@@ -915,6 +933,23 @@ impl<'a> PDFPageAggregator<'a> {
     /// Get the current marked content tag if inside marked content.
     pub fn current_tag(&self) -> Option<&str> {
         self.analyzer.current_tag()
+    }
+}
+
+impl<'a> PDFTableCollector<'a> {
+    pub fn new(laparams: Option<LAParams>, pageno: i32, arena: &'a mut PageArena) -> Self {
+        Self {
+            analyzer: PDFLayoutAnalyzer::new(laparams, pageno, arena.context()),
+            result: None,
+        }
+    }
+
+    pub fn take_result(&mut self) -> Option<ArenaPage<'a>> {
+        self.result.take()
+    }
+
+    pub fn arena_lookup(&self) -> &ArenaContext<'a> {
+        self.analyzer.arena_lookup()
     }
 }
 
@@ -1199,6 +1234,244 @@ impl<'a> PDFDevice for PDFPageAggregator<'a> {
 
     fn end_tag(&mut self) {
         self.analyzer.end_tag();
+    }
+}
+
+impl<'a> PDFDevice for PDFTableCollector<'a> {
+    fn set_ctm(&mut self, ctm: Matrix) {
+        self.analyzer.set_ctm(ctm);
+    }
+
+    fn ctm(&self) -> Option<Matrix> {
+        Some(self.analyzer.ctm)
+    }
+
+    fn begin_page(&mut self, _pageid: u32, mediabox: Rect, ctm: Matrix) {
+        self.analyzer.begin_page(mediabox, ctm);
+    }
+
+    fn end_page(&mut self, _pageid: u32) {
+        if let Some(page) = self.analyzer.end_page_arena() {
+            self.result = Some(page);
+        }
+    }
+
+    fn begin_figure(&mut self, name: &str, bbox: Rect, matrix: Matrix) {
+        self.analyzer.begin_figure(name, bbox, matrix);
+    }
+
+    fn end_figure(&mut self, name: &str) {
+        self.analyzer.end_figure(name);
+    }
+
+    fn paint_path(
+        &mut self,
+        graphicstate: &PDFGraphicState,
+        stroke: bool,
+        fill: bool,
+        evenodd: bool,
+        path: &[PathSegment],
+    ) {
+        let path_ops: Vec<PathOp> = path
+            .iter()
+            .map(|seg| match seg {
+                PathSegment::MoveTo(x, y) => ('m', vec![*x, *y]),
+                PathSegment::LineTo(x, y) => ('l', vec![*x, *y]),
+                PathSegment::CurveTo(x1, y1, x2, y2, x3, y3) => {
+                    ('c', vec![*x1, *y1, *x2, *y2, *x3, *y3])
+                }
+                PathSegment::ClosePath => ('h', vec![]),
+            })
+            .collect();
+        self.analyzer
+            .paint_path(graphicstate, stroke, fill, evenodd, &path_ops);
+    }
+
+    fn render_image(&mut self, name: &str, stream: &PDFStream) {
+        self.analyzer.render_image(name, stream);
+    }
+
+    fn render_string(
+        &mut self,
+        textstate: &mut PDFTextState,
+        seq: &PDFTextSeq,
+        _ncs: &PDFColorSpace,
+        graphicstate: &PDFGraphicState,
+    ) {
+        if textstate.render == 3 || textstate.render == 7 {
+            return;
+        }
+
+        let ctm = self.analyzer.ctm;
+        let matrix = mult_matrix(textstate.matrix, ctm);
+        let fontsize = textstate.fontsize;
+        let scaling = textstate.scaling * 0.01;
+        let charspace = textstate.charspace * scaling;
+        let wordspace = textstate.wordspace * scaling;
+        let rise = textstate.rise;
+        let dxscale = 0.001 * fontsize * scaling;
+
+        let (mut x, mut y) = textstate.linematrix;
+        let mut needcharspace = false;
+
+        let font = textstate.font.clone();
+
+        let is_vertical = font.as_ref().map(|f| f.is_vertical()).unwrap_or(false);
+
+        for item in seq {
+            match item {
+                PDFTextSeqItem::Number(n) => {
+                    if is_vertical {
+                        y -= n * dxscale;
+                    } else {
+                        x -= n * dxscale;
+                    }
+                    needcharspace = true;
+                }
+                PDFTextSeqItem::Bytes(data) => {
+                    let cids: Vec<u32> = if let Some(ref font) = font {
+                        font.decode(data)
+                    } else {
+                        data.iter().map(|&b| b as u32).collect()
+                    };
+
+                    for cid in cids {
+                        if needcharspace {
+                            if is_vertical {
+                                y += charspace;
+                            } else {
+                                x += charspace;
+                            }
+                        }
+
+                        let text = if let Some(ref font) = font {
+                            font.to_unichr(cid)
+                                .unwrap_or_else(|| self.analyzer.handle_undefined_char(cid))
+                        } else {
+                            if (0x20..0x7f).contains(&cid) {
+                                char::from_u32(cid)
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_else(|| format!("(cid:{})", cid))
+                            } else {
+                                format!("(cid:{})", cid)
+                            }
+                        };
+
+                        let char_disp = if let Some(ref font) = font {
+                            font.char_disp(cid)
+                        } else {
+                            CharDisp::Horizontal(0.6)
+                        };
+
+                        let char_width = if let Some(ref font) = font {
+                            font.char_width(cid) * fontsize * scaling
+                        } else {
+                            fontsize * scaling * 0.6
+                        };
+
+                        let char_matrix = (
+                            matrix.0,
+                            matrix.1,
+                            matrix.2,
+                            matrix.3,
+                            matrix.0.mul_add(x, matrix.2 * y) + matrix.4,
+                            matrix.1.mul_add(x, matrix.3 * y) + matrix.5,
+                        );
+
+                        let local_bbox = match char_disp {
+                            CharDisp::Vertical(vx_opt, vy) => {
+                                let vx = match vx_opt {
+                                    Some(v) => v * fontsize * 0.001,
+                                    None => fontsize * 0.5,
+                                };
+                                let vy_scaled = (1000.0 - vy) * fontsize * 0.001;
+                                (
+                                    -vx,
+                                    vy_scaled + rise + char_width,
+                                    -vx + fontsize,
+                                    vy_scaled + rise,
+                                )
+                            }
+                            CharDisp::Horizontal(_) => {
+                                let descent = if let Some(ref font) = font {
+                                    font.get_descent() * fontsize
+                                } else {
+                                    -fontsize * 0.25
+                                };
+                                (0.0, descent + rise, char_width, descent + rise + fontsize)
+                            }
+                        };
+
+                        let bbox = apply_matrix_rect(char_matrix, local_bbox);
+
+                        let (a, b, c, d, _, _) = char_matrix;
+                        let upright = (a * d * scaling > 0.0) && (b * c <= 0.0);
+
+                        let size = if is_vertical {
+                            bbox.2 - bbox.0
+                        } else {
+                            bbox.3 - bbox.1
+                        };
+
+                        let mcid = self.analyzer.current_mcid();
+                        let tag = self.analyzer.current_tag_key();
+                        let ncolor = self
+                            .analyzer
+                            .arena
+                            .intern_color(&graphicstate.ncolor.to_vec());
+                        let scolor = self
+                            .analyzer
+                            .arena
+                            .intern_color(&graphicstate.scolor.to_vec());
+                        let fontname = font
+                            .as_ref()
+                            .and_then(|f| f.fontname())
+                            .or(textstate.fontname.as_deref())
+                            .unwrap_or("unknown");
+                        let text_key = self.analyzer.arena.intern(&text);
+                        let fontname_key = self.analyzer.arena.intern(fontname);
+                        let ncs_name = Some(self.analyzer.arena.intern(&graphicstate.ncs.name));
+                        let scs_name = Some(self.analyzer.arena.intern(&graphicstate.scs.name));
+                        let item = ArenaChar {
+                            bbox,
+                            text: text_key,
+                            fontname: fontname_key,
+                            size,
+                            upright,
+                            adv: char_width,
+                            matrix: char_matrix,
+                            mcid,
+                            tag,
+                            ncs_name,
+                            scs_name,
+                            ncolor,
+                            scolor,
+                        };
+
+                        if let Some(ref mut container) = self.analyzer.cur_item {
+                            container.add(ArenaItem::Char(item));
+                        }
+
+                        if is_vertical {
+                            y += char_width;
+                        } else {
+                            x += char_width;
+                        }
+
+                        if cid == 32 && wordspace != 0.0 {
+                            if is_vertical {
+                                y += wordspace;
+                            } else {
+                                x += wordspace;
+                            }
+                        }
+                        needcharspace = true;
+                    }
+                }
+            }
+        }
+
+        textstate.linematrix = (x, y);
     }
 }
 

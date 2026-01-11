@@ -9,16 +9,20 @@ use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 
 use crate::arena::PageArena;
-use crate::converter::PDFPageAggregator;
+use crate::converter::{PDFPageAggregator, PDFTableCollector};
 use crate::error::{PdfError, Result};
 use crate::layout::{LAParams, LTPage};
 use crate::pdfdocument::PDFDocument;
 use crate::pdfinterp::PDFResourceManager;
 use crate::pdfpage::PDFPage;
 use crate::table::edge_probe::{page_has_edges, should_skip_tables};
-use crate::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
+use crate::table::{
+    PageGeometry, TableSettings, collect_table_objects_from_arena, extract_tables_from_objects,
+};
 
-use super::high_level::{ExtractOptions, PageTables, default_thread_count, process_page};
+use super::high_level::{
+    ExtractOptions, PageTables, default_thread_count, process_page, process_page_arena,
+};
 
 pub const DEFAULT_STREAM_BUFFER_CAPACITY: usize = 50;
 
@@ -300,7 +304,7 @@ pub fn extract_pages_stream_from_doc(
 
 pub fn extract_tables_stream_from_doc(
     doc: Arc<PDFDocument>,
-    mut options: ExtractOptions,
+    options: ExtractOptions,
 ) -> Result<TableStream> {
     extract_tables_stream_from_doc_with_geometries_internal(
         doc,
@@ -312,7 +316,7 @@ pub fn extract_tables_stream_from_doc(
 
 pub fn extract_tables_stream_from_doc_with_geometries(
     doc: Arc<PDFDocument>,
-    mut options: ExtractOptions,
+    options: ExtractOptions,
     settings: TableSettings,
     geometries: Vec<PageGeometry>,
 ) -> Result<TableStream> {
@@ -399,17 +403,34 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
 
                     arena.reset();
                     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-                    let mut aggregator =
-                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                    let ltpage =
-                        process_page(&page, &mut aggregator, &mut rsrcmgr, doc_worker.as_ref());
-                    let tables = ltpage.map(|page| {
-                        let geom = match geom_worker.as_ref() {
-                            Some(geoms) => geoms[page_idx].clone(),
-                            None => page_geometry_from_ltpage(&page),
-                        };
-                        extract_tables_from_ltpage(&page, &geom, &settings)
-                    });
+                    let mut collector =
+                        PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
+                    let page_arena = process_page_arena(
+                        &page,
+                        &mut collector,
+                        &mut rsrcmgr,
+                        doc_worker.as_ref(),
+                    );
+                    let tables = match page_arena {
+                        Ok(page_arena) => {
+                            let geom = match geom_worker.as_ref() {
+                                Some(geoms) => geoms[page_idx].clone(),
+                                None => PageGeometry {
+                                    page_bbox: page_arena.bbox,
+                                    mediabox: page_arena.bbox,
+                                    initial_doctop: 0.0,
+                                    force_crop: false,
+                                },
+                            };
+                            let (chars, edges) = collect_table_objects_from_arena(
+                                &page_arena,
+                                &geom,
+                                collector.arena_lookup(),
+                            );
+                            Ok(extract_tables_from_objects(chars, edges, &geom, &settings))
+                        }
+                        Err(err) => Err(err),
+                    };
                     if cancel_worker.load(Ordering::Relaxed) {
                         return;
                     }
@@ -537,15 +558,5 @@ mod tests {
         if let Err(err) = err {
             assert!(err.to_string().contains("geometry count"));
         }
-    }
-}
-
-fn page_geometry_from_ltpage(page: &LTPage) -> PageGeometry {
-    let bbox = page.bbox();
-    PageGeometry {
-        page_bbox: bbox,
-        mediabox: bbox,
-        initial_doctop: 0.0,
-        force_crop: false,
     }
 }

@@ -4,6 +4,7 @@
 //! including edge detection, cell boundary finding, and text extraction.
 
 mod clustering;
+mod collector;
 pub(crate) mod edge_probe;
 mod edges;
 mod finder;
@@ -18,6 +19,8 @@ pub use types::{
     BBox, CharObj, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableProbePolicy,
     TableSettings, TextDir, TextSettings, WordObj,
 };
+
+pub(crate) use collector::collect_table_objects_from_arena;
 
 // Re-export public API functions
 pub use finder::{

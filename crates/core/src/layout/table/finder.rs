@@ -573,3 +573,87 @@ pub fn extract_text_from_ltpage(
     let (chars, _edges) = collect_page_objects(page, geom);
     extract_text(&chars, &settings)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::collect_page_objects;
+    use crate::arena::PageArena;
+    use crate::arena::types::{ArenaChar, ArenaItem, ArenaLine, ArenaPage, ArenaRect};
+    use crate::layout::table::collect_table_objects_from_arena;
+    use crate::layout::table::types::PageGeometry;
+    use crate::utils::Rect;
+
+    #[test]
+    fn collect_table_objects_from_arena_matches_ltpage() {
+        let mut arena = PageArena::new();
+        let mut ctx = arena.context();
+        let bbox: Rect = (0.0, 0.0, 100.0, 100.0);
+        let color = ctx.intern_color(&[0.0, 0.0, 0.0]);
+        let text = ctx.intern("A");
+        let font = ctx.intern("F");
+        let mut page = ArenaPage::new_in(&ctx, 1, bbox);
+
+        let ch = ArenaChar {
+            bbox: (10.0, 20.0, 12.0, 30.0),
+            text,
+            fontname: font,
+            size: 10.0,
+            upright: true,
+            adv: 2.0,
+            matrix: (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
+            mcid: None,
+            tag: None,
+            ncs_name: None,
+            scs_name: None,
+            ncolor: color,
+            scolor: color,
+        };
+        page.add(ArenaItem::Char(ch));
+
+        let line = ArenaLine {
+            linewidth: 1.0,
+            p0: (0.0, 0.0),
+            p1: (10.0, 0.0),
+            stroke: true,
+            fill: false,
+            evenodd: false,
+            stroking_color: color,
+            non_stroking_color: color,
+            original_path: None,
+            dashing_style: None,
+            mcid: None,
+            tag: None,
+        };
+        page.add(ArenaItem::Line(line));
+
+        let rect = ArenaRect {
+            linewidth: 1.0,
+            bbox: (5.0, 5.0, 15.0, 15.0),
+            stroke: true,
+            fill: false,
+            evenodd: false,
+            stroking_color: color,
+            non_stroking_color: color,
+            original_path: None,
+            dashing_style: None,
+            mcid: None,
+            tag: None,
+        };
+        page.add(ArenaItem::Rect(rect));
+
+        let geom = PageGeometry {
+            page_bbox: bbox,
+            mediabox: bbox,
+            initial_doctop: 0.0,
+            force_crop: false,
+        };
+
+        let ltpage = page.clone().materialize(&ctx);
+        let (chars_lt, edges_lt) = collect_page_objects(&ltpage, &geom);
+        let (chars_arena, edges_arena) = collect_table_objects_from_arena(&page, &geom, &ctx);
+
+        assert_eq!(chars_lt.len(), chars_arena.len());
+        assert_eq!(edges_lt.len(), edges_arena.len());
+        assert_eq!(chars_lt[0].text, chars_arena[0].text);
+    }
+}
