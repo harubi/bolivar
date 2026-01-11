@@ -1,7 +1,6 @@
 # pdfminer.pdfpage compatibility shim
 
 
-
 class PDFPage:
     """PDF page - wraps bolivar's Rust PDFPage.
 

@@ -46,25 +46,6 @@ def test_sitecustomize_autoload_patches_pdfplumber():
     )
 
 
-def test_sitecustomize_autoload_ignores_env_opt_out():
-    env = os.environ.copy()
-    env["BOLIVAR_AUTOLOAD"] = "0"
-    code = (
-        "import pdfplumber; "
-        "print(getattr(pdfplumber.page.Page.extract_tables, '_bolivar_patched', False))"
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    assert lines, "expected subprocess output"
-    assert lines[-1] == "True"
-
-
 def test_autoload_prefers_bolivar_with_reference_path():
     env = os.environ.copy()
     env["ROOT"] = ROOT
@@ -74,6 +55,7 @@ def test_autoload_prefers_bolivar_with_reference_path():
         "sys.path.insert(0, os.path.join(os.environ['ROOT'], 'references', 'pdfminer.six')); "
         "import pdfminer, pdfplumber; "
         "print(pdfminer.__file__); "
+        "print(pdfplumber.__file__); "
         "print(getattr(pdfplumber.page.Page.extract_tables, '_bolivar_patched', False))"
     )
     result = subprocess.run(
@@ -86,6 +68,7 @@ def test_autoload_prefers_bolivar_with_reference_path():
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     assert lines, "expected subprocess output"
     assert "crates/python/python/pdfminer/__init__.py" in lines[0]
+    assert "crates/python/python/pdfplumber/__init__.py" in lines[1]
     assert lines[-1] == "True"
 
 

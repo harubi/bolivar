@@ -1,14 +1,10 @@
 import logging
 import os
-import sys
 import unittest
 
 import pytest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-# Ensure vendored pdfplumber is importable
-sys.path.insert(0, os.path.join(ROOT, "references/pdfplumber"))
-
 import pdfplumber
 from pdfplumber import table
 

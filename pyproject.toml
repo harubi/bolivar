@@ -16,7 +16,6 @@ classifiers = [
 ]
 dynamic = ["version"]
 dependencies = [
-    "pdfplumber>=0.11.9",
 ]
 
 [project.optional-dependencies]
@@ -29,5 +28,5 @@ python-source = "crates/python/python"
 module-name = "bolivar._bolivar"
 features = ["pyo3/extension-module"]
 # Include the pdfminer compatibility shim
-python-packages = ["bolivar", "pdfminer", "sitecustomize"]
+python-packages = ["bolivar", "pdfminer", "pdfplumber", "sitecustomize"]
 include = ["crates/python/python/bolivar_autoload.pth", "rust-toolchain.toml"]

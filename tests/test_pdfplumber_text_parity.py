@@ -1,7 +1,6 @@
 import logging
 import os
 import re
-import sys
 import unittest
 from itertools import groupby
 from operator import itemgetter
@@ -9,9 +8,6 @@ from operator import itemgetter
 import pytest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-# Ensure vendored pdfplumber is importable
-sys.path.insert(0, os.path.join(ROOT, "references/pdfplumber"))
-
 import pdfplumber
 from pdfplumber import utils
 
