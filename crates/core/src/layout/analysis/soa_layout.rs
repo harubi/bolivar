@@ -6,6 +6,10 @@ pub struct LayoutSoA {
     pub x1: Vec<f64>,
     pub top: Vec<f64>,
     pub bottom: Vec<f64>,
+    pub w: Vec<f64>,
+    pub h: Vec<f64>,
+    pub cx: Vec<f64>,
+    pub cy: Vec<f64>,
     pub text: Vec<String>,
     pub font: Vec<String>,
     pub size: Vec<f64>,
@@ -21,6 +25,10 @@ impl LayoutSoA {
             x1: Vec::with_capacity(chars.len()),
             top: Vec::with_capacity(chars.len()),
             bottom: Vec::with_capacity(chars.len()),
+            w: Vec::with_capacity(chars.len()),
+            h: Vec::with_capacity(chars.len()),
+            cx: Vec::with_capacity(chars.len()),
+            cy: Vec::with_capacity(chars.len()),
             text: Vec::with_capacity(chars.len()),
             font: Vec::with_capacity(chars.len()),
             size: Vec::with_capacity(chars.len()),
@@ -28,10 +36,18 @@ impl LayoutSoA {
         };
 
         for ch in chars {
-            soa.x0.push(ch.x0());
-            soa.x1.push(ch.x1());
-            soa.top.push(ch.y0());
-            soa.bottom.push(ch.y1());
+            let x0 = ch.x0();
+            let x1 = ch.x1();
+            let top = ch.y0();
+            let bottom = ch.y1();
+            soa.x0.push(x0);
+            soa.x1.push(x1);
+            soa.top.push(top);
+            soa.bottom.push(bottom);
+            soa.w.push(x1 - x0);
+            soa.h.push(bottom - top);
+            soa.cx.push((x0 + x1) * 0.5);
+            soa.cy.push((top + bottom) * 0.5);
             soa.text.push(ch.get_text().to_string());
             soa.font.push(ch.fontname().to_string());
             soa.size.push(ch.size());
@@ -61,5 +77,15 @@ mod tests {
         assert_eq!(soa.len(), 2);
         assert_eq!(soa.text[0], "A");
         assert_eq!(soa.text[1], "B");
+    }
+
+    #[test]
+    fn layout_soa_precomputes_metrics() {
+        let chars = vec![LTChar::builder((0.0, 0.0, 4.0, 2.0), "A", "F", 10.0).build()];
+        let soa = LayoutSoA::from_chars(&chars);
+        assert_eq!(soa.w[0], 4.0);
+        assert_eq!(soa.h[0], 2.0);
+        assert_eq!(soa.cx[0], 2.0);
+        assert_eq!(soa.cy[0], 1.0);
     }
 }
