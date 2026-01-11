@@ -1,18 +1,8 @@
 # pdfminer.psparser compatibility shim (Rust-backed)
 
 from bolivar._bolivar import (
-    PSBaseParser,
-    PSStackParser,
     PSLiteral,
     PSKeyword,
-    LIT,
-    KWD,
-    KEYWORD_PROC_BEGIN,
-    KEYWORD_PROC_END,
-    KEYWORD_ARRAY_BEGIN,
-    KEYWORD_ARRAY_END,
-    KEYWORD_DICT_BEGIN,
-    KEYWORD_DICT_END,
 )
 
 from . import psexceptions

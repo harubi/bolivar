@@ -14,12 +14,15 @@ use crate::api::stream::{PageStream, extract_pages_stream_from_doc};
 use crate::arena::PageArena;
 use crate::converter::{PDFPageAggregator, TextConverter};
 use crate::error::{PdfError, Result};
+use crate::image::ImageWriter;
 use crate::layout::{LAParams, LTPage};
 use crate::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
 use crate::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use crate::pdfpage::PDFPage;
 use crate::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone, Copy)]
@@ -403,6 +406,56 @@ pub fn extract_pages_with_document(
     options: ExtractOptions,
 ) -> Result<Vec<LTPage>> {
     extract_pages_stream(doc.bytes(), Some(options))?.collect()
+}
+
+/// Extract LTPage objects from an already-parsed PDFDocument while exporting images.
+pub fn extract_pages_with_images_with_document(
+    doc: &PDFDocument,
+    options: ExtractOptions,
+    output_dir: &str,
+) -> Result<Vec<LTPage>> {
+    let image_writer = ImageWriter::new(output_dir)?;
+    let image_writer = Rc::new(RefCell::new(image_writer));
+    extract_pages_with_images_with_writer(doc, options, image_writer)
+}
+
+fn extract_pages_with_images_with_writer(
+    doc: &PDFDocument,
+    options: ExtractOptions,
+    image_writer: Rc<RefCell<ImageWriter>>,
+) -> Result<Vec<LTPage>> {
+    let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
+    let laparams = options.laparams.unwrap_or_default();
+    let mut arena = PageArena::new();
+    let mut pages = Vec::new();
+    let mut page_count = 0;
+
+    for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
+        if let Some(ref nums) = options.page_numbers
+            && !nums.contains(&page_idx)
+        {
+            continue;
+        }
+
+        if options.maxpages > 0 && page_count >= options.maxpages {
+            break;
+        }
+
+        let page = page_result?;
+        arena.reset();
+        let mut aggregator = PDFPageAggregator::new_with_imagewriter(
+            Some(laparams.clone()),
+            page_idx as i32 + 1,
+            Some(image_writer.clone()),
+            &mut arena,
+        );
+
+        let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
+        pages.push(ltpage);
+        page_count += 1;
+    }
+
+    Ok(pages)
 }
 
 /// Extract tables from an already-parsed PDFDocument.

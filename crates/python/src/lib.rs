@@ -3,14 +3,17 @@
 //! This crate provides PyO3 bindings to expose bolivar's PDF parsing
 //! functionality to Python, with a pdfminer.six-compatible API.
 
+mod casting;
 mod codec;
 mod convert;
 mod document;
 mod font;
+mod image;
 mod layout;
 mod params;
 mod stream;
 mod table;
+mod utils;
 
 use pyo3::prelude::*;
 
@@ -28,12 +31,15 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register classes and functions from each module
     params::register(m)?;
+    casting::register(m)?;
     codec::register(m)?;
     document::register(m)?;
     font::register(m)?;
+    image::register(m)?;
     layout::register(m)?;
     stream::register(m)?;
     table::register(m)?;
+    utils::register(m)?;
 
     Ok(())
 }

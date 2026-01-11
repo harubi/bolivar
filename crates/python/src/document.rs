@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::convert::{
     intern_pskeyword, intern_psliteral, pdf_object_to_py, pdf_object_to_py_internal,
-    pdf_object_to_py_simple, ps_exception, ps_name_to_bytes, pstoken_to_py,
+    pdf_object_to_py_simple, ps_exception, ps_name_to_bytes, pstoken_to_py, py_to_pdf_object,
 };
 
 /// Helper enum for PDF input data.
@@ -343,7 +343,7 @@ pub fn KWD(py: Python<'_>, name: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 }
 
 /// PostScript base parser.
-#[pyclass(name = "PSBaseParser", unsendable)]
+#[pyclass(name = "PSBaseParser", unsendable, subclass)]
 pub struct PyPSBaseParser {
     parser: CorePSBaseParser<'static>,
 }
@@ -376,7 +376,7 @@ impl PyPSBaseParser {
 }
 
 /// PostScript stack parser.
-#[pyclass(name = "PSStackParser", unsendable)]
+#[pyclass(name = "PSStackParser", unsendable, subclass)]
 pub struct PyPSStackParser {
     parser: CorePSStackParser<'static>,
 }
@@ -449,13 +449,43 @@ pub struct PyPDFStream {
 
 #[pymethods]
 impl PyPDFStream {
+    #[new]
+    #[pyo3(signature = (attrs, rawdata, doc = None))]
+    fn new(
+        py: Python<'_>,
+        attrs: &Bound<'_, PyDict>,
+        rawdata: &Bound<'_, PyAny>,
+        doc: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let mut map = HashMap::new();
+        for (k, v) in attrs.iter() {
+            let key: String = k.extract()?;
+            let value = py_to_pdf_object(py, &v)?;
+            map.insert(key, value);
+        }
+        let data = if let Ok(bytes) = rawdata.downcast::<PyBytes>() {
+            bytes.as_bytes().to_vec()
+        } else if let Ok(s) = rawdata.extract::<String>() {
+            s.into_bytes()
+        } else {
+            return Err(PyTypeError::new_err("rawdata must be bytes or str"));
+        };
+        let stream = PDFStream::new(map, data);
+        let attrs_obj: Py<PyDict> = attrs.clone().unbind();
+        Ok(Self {
+            stream,
+            attrs: attrs_obj,
+            doc,
+        })
+    }
+
     #[getter]
     fn attrs(&self, py: Python<'_>) -> Py<PyDict> {
         self.attrs.clone_ref(py)
     }
 
-    #[getter]
-    fn rawdata(&self, py: Python<'_>) -> Py<PyAny> {
+    #[getter(rawdata)]
+    fn rawdata_bytes(&self, py: Python<'_>) -> Py<PyAny> {
         PyBytes::new(py, self.stream.get_rawdata())
             .into_any()
             .unbind()
@@ -476,6 +506,12 @@ impl PyPDFStream {
             self.stream.get_rawdata().to_vec()
         };
         Ok(PyBytes::new(py, &decoded).into_any().unbind())
+    }
+
+    fn get_rawdata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        Ok(PyBytes::new(py, self.stream.get_rawdata())
+            .into_any()
+            .unbind())
     }
 
     fn __repr__(&self) -> String {
@@ -595,6 +631,15 @@ impl PyPDFDocument {
             .collect())
     }
 
+    /// Get page labels for the document (as a list).
+    fn get_page_labels(&self) -> PyResult<Vec<String>> {
+        let labels = self
+            .inner
+            .get_page_labels()
+            .map_err(|e| PyValueError::new_err(format!("Failed to get page labels: {}", e)))?;
+        Ok(labels.collect())
+    }
+
     /// Get a single page by index.
     fn get_page(slf: PyRef<'_, Self>, py: Python<'_>, index: usize) -> PyResult<PyPDFPage> {
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
@@ -656,6 +701,22 @@ impl PyPDFDocument {
             out.push(py_dict.into_any().unbind());
         }
         Ok(out)
+    }
+
+    /// Get object IDs for each xref table.
+    #[getter]
+    fn xref_objids(slf: PyRef<'_, Self>) -> PyResult<Vec<Vec<u32>>> {
+        Ok(slf.inner.get_xref_objids())
+    }
+
+    /// Get fallback flags for each xref table.
+    #[getter]
+    fn xref_fallbacks(slf: PyRef<'_, Self>) -> PyResult<Vec<bool>> {
+        Ok(slf
+            .inner
+            .get_trailers()
+            .map(|(fallback, _)| fallback)
+            .collect())
     }
 
     /// Get document catalog dictionary.

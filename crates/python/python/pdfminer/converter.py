@@ -3,7 +3,11 @@
 # PDFPageAggregator is kept in pure Python for subclassability.
 # pdfplumber subclasses it as PDFPageAggregatorWithMarkedContent.
 
-from .layout import LTPage
+import io
+import re
+
+from .layout import LTCurve, LTLine, LTPage, LTRect
+from .utils import MATRIX_IDENTITY, apply_matrix_pt
 
 
 class PDFPageAggregator:
@@ -55,10 +59,131 @@ class PDFPageAggregator:
         return self.cur_item
 
 
-class PDFConverter:
-    """Base class for PDF converters - stub."""
+class PDFLayoutAnalyzer:
+    """PDFLayoutAnalyzer - minimal paint_path implementation for tests."""
 
-    pass
+    def __init__(self, rsrcmgr, pageno=1, laparams=None):
+        self.rsrcmgr = rsrcmgr
+        self.pageno = pageno
+        self.laparams = laparams
+        self.cur_item = None
+        self.ctm = MATRIX_IDENTITY
+        self._stack = []
+
+    def set_ctm(self, ctm):
+        self.ctm = tuple(ctm)
+
+    def paint_path(self, gstate, stroke, fill, evenodd, path):
+        """Paint paths described in section 4.4 of the PDF reference manual."""
+        if not path:
+            return
+        shape = "".join(str(x[0]) for x in path)
+
+        if shape[:1] != "m":
+            return
+        if shape.count("m") > 1:
+            for m in re.finditer(r"m[^m]+", shape):
+                subpath = path[m.start(0) : m.end(0)]
+                self.paint_path(gstate, stroke, fill, evenodd, subpath)
+            return
+
+        # Points for each operation (h uses starting point).
+        raw_pts = [tuple(p[-2:]) if p[0] != "h" else tuple(path[0][-2:]) for p in path]
+        pts = [apply_matrix_pt(self.ctm, (float(x), float(y))) for x, y in raw_pts]
+
+        operators = [str(operation[0]) for operation in path]
+        transformed_points = [
+            [
+                apply_matrix_pt(self.ctm, (float(a), float(b)))
+                for a, b in zip(operation[1::2], operation[2::2], strict=False)
+            ]
+            for operation in path
+        ]
+        transformed_path = [
+            (o, *p) for o, p in zip(operators, transformed_points, strict=False)
+        ]
+
+        # Drop redundant "l" on a path closed with "h".
+        if len(shape) > 3 and shape[-2:] == "lh" and pts[-2] == pts[0]:
+            shape = shape[:-2] + "h"
+            pts.pop()
+
+        if shape in {"mlh", "ml"}:
+            line = LTLine(
+                gstate.linewidth,
+                [pts[0], pts[1]],
+                stroke,
+                fill,
+                evenodd,
+                gstate.scolor,
+                gstate.ncolor,
+                gstate.dash,
+            )
+            line.original_path = transformed_path
+            line.dashing_style = gstate.dash
+            if self.cur_item is not None:
+                self.cur_item.add(line)
+            return
+
+        if shape in {"mlllh", "mllll"}:
+            (x0, y0), (x1, y1), (x2, y2), (x3, y3), _ = pts
+            is_closed_loop = pts[0] == pts[4]
+            has_square_coordinates = (
+                x0 == x1 and y1 == y2 and x2 == x3 and y3 == y0
+            ) or (y0 == y1 and x1 == x2 and y2 == y3 and x3 == x0)
+            if is_closed_loop and has_square_coordinates:
+                rect = LTRect(
+                    gstate.linewidth,
+                    [pts[0], pts[1], pts[2], pts[3]],
+                    stroke,
+                    fill,
+                    evenodd,
+                    gstate.scolor,
+                    gstate.ncolor,
+                    gstate.dash,
+                )
+                rect.original_path = transformed_path
+                rect.dashing_style = gstate.dash
+                if self.cur_item is not None:
+                    self.cur_item.add(rect)
+                return
+
+        curve = LTCurve(
+            gstate.linewidth,
+            pts,
+            stroke,
+            fill,
+            evenodd,
+            gstate.scolor,
+            gstate.ncolor,
+            gstate.dash,
+        )
+        curve.original_path = transformed_path
+        curve.dashing_style = gstate.dash
+        if self.cur_item is not None:
+            self.cur_item.add(curve)
+
+
+class PDFConverter(PDFLayoutAnalyzer):
+    """Base class for PDF converters."""
+
+    def __init__(self, rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None):
+        super().__init__(rsrcmgr, pageno=pageno, laparams=laparams)
+        self.outfp = outfp
+        self.codec = codec
+        self.outfp_binary = self._is_binary_stream(self.outfp)
+
+    @staticmethod
+    def _is_binary_stream(outfp):
+        if "b" in getattr(outfp, "mode", ""):
+            return True
+        if hasattr(outfp, "mode"):
+            return False
+        if isinstance(outfp, io.BytesIO):
+            return True
+        if isinstance(outfp, (io.StringIO, io.TextIOBase)):
+            return False
+        return True
 
 
 class TextConverter:
@@ -116,9 +241,11 @@ class XMLConverter:
 from bolivar._bolivar import (  # noqa: E402
     TextConverter as _RustTextConverter,
     HTMLConverter as _RustHTMLConverter,
+    HOCRConverter as _RustHOCRConverter,
     XMLConverter as _RustXMLConverter,
 )
 
 TextConverter = _RustTextConverter
 HTMLConverter = _RustHTMLConverter
+HOCRConverter = _RustHOCRConverter
 XMLConverter = _RustXMLConverter

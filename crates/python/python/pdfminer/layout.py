@@ -4,7 +4,9 @@
 
 from bolivar._bolivar import LAParams
 from pdfminer.psparser import PSLiteral
-from typing import Iterator, List, Optional, Tuple, Any
+from typing import Iterator, List, Tuple
+
+from .utils import INF, Plane
 
 
 class PDFGraphicState:
@@ -53,6 +55,35 @@ class LTComponent(LTItem):
         self.height = self.y1 - self.y0
         self.bbox = bbox
 
+    def is_empty(self) -> bool:
+        return self.width <= 0 or self.height <= 0
+
+    def is_hoverlap(self, obj: "LTComponent") -> bool:
+        return obj.x0 <= self.x1 and self.x0 <= obj.x1
+
+    def hdistance(self, obj: "LTComponent") -> float:
+        if self.is_hoverlap(obj):
+            return 0
+        return min(abs(self.x0 - obj.x1), abs(self.x1 - obj.x0))
+
+    def hoverlap(self, obj: "LTComponent") -> float:
+        if self.is_hoverlap(obj):
+            return min(abs(self.x0 - obj.x1), abs(self.x1 - obj.x0))
+        return 0
+
+    def is_voverlap(self, obj: "LTComponent") -> bool:
+        return obj.y0 <= self.y1 and self.y0 <= obj.y1
+
+    def vdistance(self, obj: "LTComponent") -> float:
+        if self.is_voverlap(obj):
+            return 0
+        return min(abs(self.y0 - obj.y1), abs(self.y1 - obj.y0))
+
+    def voverlap(self, obj: "LTComponent") -> float:
+        if self.is_voverlap(obj):
+            return min(abs(self.y0 - obj.y1), abs(self.y1 - obj.y0))
+        return 0
+
 
 class LTContainer(LTComponent):
     """A container that holds other layout items."""
@@ -76,6 +107,23 @@ class LTContainer(LTComponent):
 
 class LTTextContainer(LTContainer):
     """A container for text items."""
+
+    def __init__(
+        self, bbox: Tuple[float, float, float, float] = (INF, INF, -INF, -INF)
+    ):
+        super().__init__(bbox)
+
+    def add(self, obj: LTItem):
+        super().add(obj)
+        if isinstance(obj, LTComponent):
+            self.set_bbox(
+                (
+                    min(self.x0, obj.x0),
+                    min(self.y0, obj.y0),
+                    max(self.x1, obj.x1),
+                    max(self.y1, obj.y1),
+                )
+            )
 
     def get_text(self) -> str:
         """Get text content."""
@@ -429,15 +477,62 @@ class LTFigure(LTContainer):
 class LTTextLine(LTTextContainer):
     """A line of text."""
 
-    pass
+    def __init__(self, word_margin: float):
+        super().__init__((0, 0, 0, 0))
+        self.word_margin = word_margin
+
+    def find_neighbors(self, plane: Plane, ratio: float):
+        raise NotImplementedError
 
 
 class LTTextLineHorizontal(LTTextLine):
     """A horizontal line of text."""
 
+    def __init__(self, word_margin: float):
+        super().__init__(word_margin)
+        self._x1 = INF
+
+    def add(self, obj: LTComponent):
+        if isinstance(obj, LTChar) and self.word_margin:
+            margin = self.word_margin * max(obj.width, obj.height)
+            if self._x1 < obj.x0 - margin:
+                LTContainer.add(self, LTAnno(" "))
+        self._x1 = obj.x1
+        super().add(obj)
+
+    def find_neighbors(self, plane: Plane, ratio: float):
+        d = ratio * self.height
+        objs = plane.find((self.x0, self.y0 - d, self.x1, self.y1 + d))
+        return [
+            obj
+            for obj in objs
+            if isinstance(obj, LTTextLineHorizontal)
+            and self._is_same_height_as(obj, tolerance=d)
+            and (
+                self._is_left_aligned_with(obj, tolerance=d)
+                or self._is_right_aligned_with(obj, tolerance=d)
+                or self._is_centrally_aligned_with(obj, tolerance=d)
+            )
+        ]
+
+    def _is_left_aligned_with(self, other: LTComponent, tolerance: float = 0) -> bool:
+        return abs(other.x0 - self.x0) <= tolerance
+
+    def _is_right_aligned_with(self, other: LTComponent, tolerance: float = 0) -> bool:
+        return abs(other.x1 - self.x1) <= tolerance
+
+    def _is_centrally_aligned_with(
+        self, other: LTComponent, tolerance: float = 0
+    ) -> bool:
+        return abs((other.x0 + other.x1) / 2 - (self.x0 + self.x1) / 2) <= tolerance
+
+    def _is_same_height_as(self, other: LTComponent, tolerance: float = 0) -> bool:
+        return abs(other.height - self.height) <= tolerance
+
     @classmethod
     def from_rust(cls, rust_line) -> "LTTextLineHorizontal":
-        line = cls(rust_line.bbox)
+        line = cls(0)
+        line.set_bbox(rust_line.bbox)
         for child in rust_line:
             wrapped = _wrap_rust_item(child)
             if wrapped is not None:
@@ -448,9 +543,51 @@ class LTTextLineHorizontal(LTTextLine):
 class LTTextLineVertical(LTTextLine):
     """A vertical line of text."""
 
+    def __init__(self, word_margin: float):
+        super().__init__(word_margin)
+        self._y0 = -INF
+
+    def add(self, obj: LTComponent):
+        if isinstance(obj, LTChar) and self.word_margin:
+            margin = self.word_margin * max(obj.width, obj.height)
+            if obj.y1 + margin < self._y0:
+                LTContainer.add(self, LTAnno(" "))
+        self._y0 = obj.y0
+        super().add(obj)
+
+    def find_neighbors(self, plane: Plane, ratio: float):
+        d = ratio * self.width
+        objs = plane.find((self.x0 - d, self.y0, self.x1 + d, self.y1))
+        return [
+            obj
+            for obj in objs
+            if isinstance(obj, LTTextLineVertical)
+            and self._is_same_width_as(obj, tolerance=d)
+            and (
+                self._is_lower_aligned_with(obj, tolerance=d)
+                or self._is_upper_aligned_with(obj, tolerance=d)
+                or self._is_centrally_aligned_with(obj, tolerance=d)
+            )
+        ]
+
+    def _is_lower_aligned_with(self, other: LTComponent, tolerance: float = 0) -> bool:
+        return abs(other.y0 - self.y0) <= tolerance
+
+    def _is_upper_aligned_with(self, other: LTComponent, tolerance: float = 0) -> bool:
+        return abs(other.y1 - self.y1) <= tolerance
+
+    def _is_centrally_aligned_with(
+        self, other: LTComponent, tolerance: float = 0
+    ) -> bool:
+        return abs((other.y0 + other.y1) / 2 - (self.y0 + self.y1) / 2) <= tolerance
+
+    def _is_same_width_as(self, other: LTComponent, tolerance: float) -> bool:
+        return abs(other.width - self.width) <= tolerance
+
     @classmethod
     def from_rust(cls, rust_line) -> "LTTextLineVertical":
-        line = cls(rust_line.bbox)
+        line = cls(0)
+        line.set_bbox(rust_line.bbox)
         for child in rust_line:
             wrapped = _wrap_rust_item(child)
             if wrapped is not None:
@@ -516,6 +653,54 @@ class LTImage(LTComponent):
         return image
 
 
+def _uniq(items):
+    seen = set()
+    out = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+class LTLayoutContainer(LTContainer):
+    """Container that performs layout grouping."""
+
+    def __init__(self, bbox: Tuple[float, float, float, float]):
+        super().__init__(bbox)
+        self.groups = None
+
+    def group_textlines(self, laparams: LAParams, lines):
+        plane = Plane(self.bbox)
+        plane.extend(lines)
+        boxes = {}
+        for line in lines:
+            neighbors = line.find_neighbors(plane, laparams.line_margin)
+            members = [line]
+            for obj1 in neighbors:
+                members.append(obj1)
+                if obj1 in boxes:
+                    members.extend(boxes.pop(obj1))
+            if isinstance(line, LTTextLineHorizontal):
+                box = LTTextBoxHorizontal()
+            else:
+                box = LTTextBoxVertical()
+            for obj in _uniq(members):
+                box.add(obj)
+                boxes[obj] = box
+        done = set()
+        for line in lines:
+            if line not in boxes:
+                continue
+            box = boxes[line]
+            if box in done:
+                continue
+            done.add(box)
+            if not box.is_empty():
+                yield box
+
+
 def _wrap_rust_item(rust_item):
     type_name = type(rust_item).__name__
     if type_name == "LTChar":
@@ -579,7 +764,7 @@ class LTPage(LTContainer):
 
     def __iter__(self) -> Iterator[LTItem]:
         self._ensure_objs()
-        return self._iter_layout(self._objs)
+        return iter(self._objs)
 
     def _iter_layout(self, objs: List[LTItem]) -> Iterator[LTItem]:
         for obj in objs:
@@ -627,6 +812,7 @@ __all__ = [
     "LTFigure",
     "LTImage",
     "LTItem",
+    "LTLayoutContainer",
     "LTLine",
     "LTPage",
     "LTRect",

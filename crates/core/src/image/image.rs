@@ -3,6 +3,7 @@
 //! Port of pdfminer.six image.py
 
 use crate::codec::ascii85::{ascii85decode, asciihexdecode};
+use crate::codec::jbig2::{Jbig2StreamReader, Jbig2StreamWriter};
 use crate::codec::lzw::lzwdecode_with_earlychange;
 use crate::codec::runlength::rldecode;
 use crate::pdftypes::{PDFObject, PDFStream};
@@ -11,7 +12,7 @@ use crate::{PdfError, Result};
 use flate2::read::ZlibDecoder;
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::simd::prelude::*;
 
@@ -114,7 +115,42 @@ impl ImageWriter {
         }
 
         if last_filter.is_some_and(is_jbig2_decode) {
-            return self.write_and_return_filename(name, ".jb2", &data);
+            let mut globals: Vec<&PDFStream> = Vec::new();
+            for (filter, params) in &filters {
+                if is_jbig2_decode(filter) {
+                    if let Some(params) = params
+                        && let Some(PDFObject::Stream(stream)) = params.get("JBIG2Globals")
+                    {
+                        globals.push(stream.as_ref());
+                    }
+                }
+            }
+
+            if globals.len() > 1 {
+                return Err(PdfError::InvalidArgument(
+                    "There should never be more than one JBIG2Globals associated with a JBIG2 embedded image".to_string(),
+                ));
+            }
+
+            let mut input = Vec::new();
+            if let Some(global_stream) = globals.first() {
+                let mut globals_data =
+                    decode_stream_data_limited(global_stream, &get_filters(global_stream), None)?;
+                while globals_data.last() == Some(&b'\n') {
+                    globals_data.pop();
+                }
+                input.extend_from_slice(&globals_data);
+            }
+            input.extend_from_slice(&data);
+
+            let mut cursor = Cursor::new(input);
+            let mut reader = Jbig2StreamReader::new(&mut cursor);
+            let segments = reader.get_segments()?;
+
+            let mut output = Vec::new();
+            let mut writer = Jbig2StreamWriter::new(&mut output);
+            writer.write_file(&segments, true)?;
+            return self.write_and_return_filename(name, ".jb2", &output);
         }
 
         // Default to BMP for 8-bit grayscale/RGB images

@@ -350,12 +350,12 @@ pub trait PDFTextDevice: PDFDevice {
 /// Tag Extractor - extracts structured content tags to XML.
 ///
 /// Port of TagExtractor from pdfminer.six pdfdevice.py
-pub struct TagExtractor<'a, W: Write> {
+pub struct TagExtractor<W: Write> {
     /// Output writer
-    outfp: &'a mut W,
+    outfp: W,
     /// Output encoding (stored for future use with proper encoding support)
     #[allow(dead_code)]
-    codec: &'a str,
+    codec: String,
     /// Current page number
     pageno: u32,
     /// Stack of open tags
@@ -364,16 +364,21 @@ pub struct TagExtractor<'a, W: Write> {
     ctm: Option<Matrix>,
 }
 
-impl<'a, W: Write> TagExtractor<'a, W> {
+impl<W: Write> TagExtractor<W> {
     /// Create a new TagExtractor.
-    pub const fn new(outfp: &'a mut W, codec: &'a str) -> Self {
+    pub fn new(outfp: W, codec: &str) -> Self {
         Self {
             outfp,
-            codec,
+            codec: codec.to_string(),
             pageno: 0,
             stack: Vec::new(),
             ctm: None,
         }
+    }
+
+    /// Consume the extractor and return the inner writer.
+    pub fn into_inner(self) -> W {
+        self.outfp
     }
 
     /// Get current page number.
@@ -395,9 +400,14 @@ impl<'a, W: Write> TagExtractor<'a, W> {
         // In Python this encodes to self.codec; for simplicity we use UTF-8
         let _ = self.outfp.write_all(s.as_bytes());
     }
+
+    /// Flush output.
+    pub fn flush(&mut self) {
+        let _ = self.outfp.flush();
+    }
 }
 
-impl<'a, W: Write> PDFDevice for TagExtractor<'a, W> {
+impl<W: Write> PDFDevice for TagExtractor<W> {
     fn set_ctm(&mut self, ctm: Matrix) {
         self.ctm = Some(ctm);
     }
@@ -450,7 +460,7 @@ impl<'a, W: Write> PDFDevice for TagExtractor<'a, W> {
     }
 }
 
-impl<'a, W: Write> PDFTextDevice for TagExtractor<'a, W> {
+impl<W: Write> PDFTextDevice for TagExtractor<W> {
     /// Render a text string by extracting Unicode text and writing to output.
     ///
     /// Unlike the base PDFTextDevice which tracks positions, TagExtractor

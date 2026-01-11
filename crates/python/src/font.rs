@@ -1,9 +1,13 @@
 //! Font, CMap, and encoding bindings for Python.
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use bolivar_core::font::cmap::{CMap, CMapBase, CMapDB, IdentityCMap, IdentityCMapByte};
+use bolivar_core::font::cmap::{
+    CMap, CMapBase, CMapDB, IdentityCMap, IdentityCMapByte, UnicodeMap,
+};
 use bolivar_core::font::encoding::glyphname2unicode as core_glyphname2unicode;
 use bolivar_core::font::encoding::{DiffEntry, name2unicode as core_name2unicode};
 use bolivar_core::font::latin_enc::ENCODING as LATIN_ENCODING;
@@ -12,12 +16,14 @@ use bolivar_core::font::pdffont::{
     MockPdfFont, PDFCIDFont, PDFFont as CorePDFFont, get_widths as core_get_widths,
 };
 use bolivar_core::pdftypes::PDFObject;
+use flate2::read::GzDecoder;
 use pyo3::buffer::PyBuffer;
-use pyo3::exceptions::{PyKeyError, PyTypeError};
+use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PySequenceMethods, PyTuple, PyType};
+use pyo3::types::{PyDict, PyList, PySequence, PySequenceMethods, PyTuple, PyType};
+use serde_json::Value;
 
-use crate::document::{PyPSKeyword, PyPSLiteral};
+use crate::convert::{psliteral_name, py_to_pdf_object, py_to_pdf_object_resolving_refs};
 
 fn bytes_from_py(py: Python<'_>, data: &Bound<'_, PyAny>, label: &str) -> PyResult<Vec<u8>> {
     let buf = PyBuffer::<u8>::get(data)
@@ -25,80 +31,7 @@ fn bytes_from_py(py: Python<'_>, data: &Bound<'_, PyAny>, label: &str) -> PyResu
     buf.to_vec(py)
 }
 
-fn psliteral_name(obj: &Bound<'_, PyAny>) -> Option<String> {
-    if let Ok(lit) = obj.extract::<PyRef<'_, PyPSLiteral>>() {
-        return Some(String::from_utf8_lossy(&lit.name).to_string());
-    }
-    if let Ok(kwd) = obj.extract::<PyRef<'_, PyPSKeyword>>() {
-        return Some(String::from_utf8_lossy(&kwd.name).to_string());
-    }
-    if let Ok(name_attr) = obj.getattr("name") {
-        if let Ok(bytes) = name_attr.downcast::<PyBytes>() {
-            return Some(String::from_utf8_lossy(bytes.as_bytes()).to_string());
-        }
-        if let Ok(s) = name_attr.extract::<String>() {
-            return Some(s);
-        }
-    }
-    None
-}
-
-fn py_to_pdf_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFObject> {
-    if obj.is_none() {
-        return Ok(PDFObject::Null);
-    }
-    if let Ok(b) = obj.extract::<bool>() {
-        return Ok(PDFObject::Bool(b));
-    }
-    if let Ok(i) = obj.extract::<i64>() {
-        return Ok(PDFObject::Int(i));
-    }
-    if let Ok(f) = obj.extract::<f64>() {
-        return Ok(PDFObject::Real(f));
-    }
-    if let Ok(bytes) = obj.downcast::<PyBytes>() {
-        return Ok(PDFObject::String(bytes.as_bytes().to_vec()));
-    }
-    if let Some(name) = psliteral_name(obj) {
-        return Ok(PDFObject::Name(name));
-    }
-    if let Ok(s) = obj.extract::<String>() {
-        return Ok(PDFObject::Name(s));
-    }
-    if let Ok(dict) = obj.downcast::<PyDict>() {
-        let mut map = HashMap::new();
-        for (k, v) in dict.iter() {
-            let key: String = k.extract()?;
-            let value = py_to_pdf_object(py, &v)?;
-            map.insert(key, value);
-        }
-        return Ok(PDFObject::Dict(map));
-    }
-    if let Ok(seq) = obj.downcast::<PySequence>() {
-        if obj.downcast::<PyBytes>().is_ok() {
-            return Err(PyTypeError::new_err("bytes are not a sequence"));
-        }
-        let mut items = Vec::new();
-        let len = seq.len()?;
-        for idx in 0..len {
-            let item = seq.get_item(idx)?;
-            let value = py_to_pdf_object(py, &item)?;
-            items.push(value);
-        }
-        return Ok(PDFObject::Array(items));
-    }
-
-    Err(PyTypeError::new_err("unsupported PDF object type"))
-}
-
-fn py_to_pdf_object_resolving_refs(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFObject> {
-    if obj.hasattr("resolve")? {
-        if let Ok(resolved) = obj.call_method0("resolve") {
-            return py_to_pdf_object(py, &resolved);
-        }
-    }
-    py_to_pdf_object(py, obj)
-}
+// py_to_pdf_object helpers now live in convert.rs for reuse.
 
 fn insert_code2cid(
     py: Python<'_>,
@@ -123,6 +56,99 @@ fn insert_code2cid(
         }
     }
     Ok(())
+}
+
+fn cmap_directories(py: Python<'_>) -> PyResult<Vec<PathBuf>> {
+    let mut dirs = Vec::new();
+    let env_dir = std::env::var("CMAP_PATH").unwrap_or_else(|_| "/usr/share/pdfminer/".to_string());
+    dirs.push(PathBuf::from(env_dir));
+
+    let pdfminer = py.import("pdfminer")?;
+    let file: String = pdfminer.getattr("__file__")?.extract()?;
+    let base_dir = Path::new(&file)
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .to_path_buf();
+    dirs.push(base_dir.join("cmap"));
+    Ok(dirs)
+}
+
+fn find_cmap_json_path(py: Python<'_>, name: &str) -> PyResult<PathBuf> {
+    let filename = format!("{name}.json.gz");
+    for dir in cmap_directories(py)? {
+        let candidate = dir.join(&filename);
+        if !candidate.exists() {
+            continue;
+        }
+        let resolved_dir = match dir.canonicalize() {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        let resolved_path = match candidate.canonicalize() {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        if resolved_path.starts_with(&resolved_dir) {
+            return Ok(resolved_path);
+        }
+    }
+    Err(PyKeyError::new_err(format!("CMap not found: {name}")))
+}
+
+fn load_cmap_json(py: Python<'_>, name: &str) -> PyResult<Value> {
+    let path = find_cmap_json_path(py, name)?;
+    let file = File::open(&path)
+        .map_err(|e| PyValueError::new_err(format!("failed to open {}: {e}", path.display())))?;
+    let decoder = GzDecoder::new(file);
+    serde_json::from_reader(decoder)
+        .map_err(|e| PyValueError::new_err(format!("failed to parse {}: {e}", path.display())))
+}
+
+fn parse_code2cid_json(value: &Value, prefix: &mut Vec<u8>, cmap: &mut CMap) -> PyResult<()> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| PyValueError::new_err("CODE2CID must be an object"))?;
+    for (key, entry) in obj.iter() {
+        let byte: u16 = key
+            .parse()
+            .map_err(|_| PyValueError::new_err(format!("CODE2CID key is not int: {key}")))?;
+        if byte > u8::MAX as u16 {
+            return Err(PyValueError::new_err(format!(
+                "CODE2CID key out of range: {key}"
+            )));
+        }
+        prefix.push(byte as u8);
+        if entry.is_object() {
+            parse_code2cid_json(entry, prefix, cmap)?;
+        } else if let Some(cid) = entry.as_u64() {
+            let cid = u32::try_from(cid)
+                .map_err(|_| PyValueError::new_err("CODE2CID cid out of range"))?;
+            cmap.add_code2cid(prefix.as_slice(), cid);
+        } else {
+            return Err(PyValueError::new_err(
+                "CODE2CID values must be objects or integers",
+            ));
+        }
+        prefix.pop();
+    }
+    Ok(())
+}
+
+fn parse_cid2unichr_json(value: &Value) -> PyResult<HashMap<u32, String>> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| PyValueError::new_err("CID2UNICHR must be an object"))?;
+    let mut out = HashMap::new();
+    for (key, entry) in obj.iter() {
+        let cid: u32 = key
+            .parse()
+            .map_err(|_| PyValueError::new_err(format!("CID2UNICHR key is not int: {key}")))?;
+        let ch = entry
+            .as_str()
+            .ok_or_else(|| PyValueError::new_err("CID2UNICHR values must be strings"))?;
+        out.insert(cid, ch.to_string());
+    }
+    Ok(out)
 }
 
 #[pyclass(name = "CMap")]
@@ -274,6 +300,59 @@ impl PyIdentityCMapByte {
     }
 }
 
+#[pyclass(name = "UnicodeMap")]
+pub struct PyUnicodeMap {
+    inner: UnicodeMap,
+    cid2unichr_cache: Mutex<Option<Py<PyAny>>>,
+    cid2unichr_data: HashMap<u32, String>,
+}
+
+impl PyUnicodeMap {
+    fn from_parts(inner: UnicodeMap, cid2unichr_data: HashMap<u32, String>) -> Self {
+        Self {
+            inner,
+            cid2unichr_cache: Mutex::new(None),
+            cid2unichr_data,
+        }
+    }
+}
+
+#[pymethods]
+impl PyUnicodeMap {
+    #[new]
+    pub fn new() -> Self {
+        Self::from_parts(UnicodeMap::new(), HashMap::new())
+    }
+
+    fn __repr__(&self) -> String {
+        match self.inner.attrs.get("CMapName") {
+            Some(name) => format!("<UnicodeMap: {name}>"),
+            None => "<UnicodeMap: ?>".to_string(),
+        }
+    }
+
+    #[getter]
+    fn cid2unichr(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        if let Ok(mut guard) = self.cid2unichr_cache.lock() {
+            if let Some(value) = guard.as_ref() {
+                return Ok(value.clone_ref(py));
+            }
+            let dict = PyDict::new(py);
+            for (cid, ch) in self.cid2unichr_data.iter() {
+                dict.set_item(*cid, ch)?;
+            }
+            let obj = dict.into_any().unbind();
+            *guard = Some(obj.clone_ref(py));
+            return Ok(obj);
+        }
+        Ok(PyDict::new(py).into_any().unbind())
+    }
+
+    pub fn get_unichr(&self, cid: u32) -> Option<String> {
+        self.inner.get_unichr(cid)
+    }
+}
+
 #[pyclass(name = "CMapDB")]
 pub struct PyCMapDB;
 
@@ -297,6 +376,78 @@ impl PyCMapDB {
     #[classmethod]
     fn is_vertical(_cls: &Bound<'_, PyType>, name: &str) -> bool {
         CMapDB::is_vertical(name)
+    }
+
+    #[classmethod]
+    fn get_cmap(_cls: &Bound<'_, PyType>, py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
+        let name = name.replace('\0', "");
+        if CMapDB::is_identity_cmap_byte(&name) {
+            let cmap = PyIdentityCMapByte::new(CMapDB::is_vertical(&name));
+            return Ok(Py::new(py, cmap)?.into_any());
+        }
+        if CMapDB::is_identity_cmap(&name) {
+            let cmap = PyIdentityCMap::new(CMapDB::is_vertical(&name));
+            return Ok(Py::new(py, cmap)?.into_any());
+        }
+
+        let data = load_cmap_json(py, &name)?;
+        let code2cid = data
+            .get("CODE2CID")
+            .ok_or_else(|| PyValueError::new_err("CODE2CID missing from CMap data"))?;
+        let is_vertical = data
+            .get("IS_VERTICAL")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_else(|| CMapDB::is_vertical(&name));
+
+        let mut cmap = CMap::new();
+        cmap.attrs.insert("CMapName".to_string(), name.clone());
+        if is_vertical {
+            cmap.set_vertical(true);
+            cmap.attrs.insert("WMode".to_string(), "1".to_string());
+        }
+
+        let mut prefix = Vec::new();
+        parse_code2cid_json(code2cid, &mut prefix, &mut cmap)?;
+        Ok(Py::new(py, PyCMap::from_core(cmap))?.into_any())
+    }
+
+    #[classmethod]
+    #[pyo3(signature = (name, vertical = false))]
+    fn get_unicode_map(
+        _cls: &Bound<'_, PyType>,
+        py: Python<'_>,
+        name: &str,
+        vertical: bool,
+    ) -> PyResult<Py<PyAny>> {
+        let name = name.replace('\0', "");
+        let data = load_cmap_json(py, &format!("to-unicode-{name}"))?;
+        let key = if vertical {
+            "CID2UNICHR_V"
+        } else {
+            "CID2UNICHR_H"
+        };
+        let cid2unichr = data
+            .get(key)
+            .ok_or_else(|| PyValueError::new_err(format!("{key} missing from Unicode map")))?;
+        let parsed = parse_cid2unichr_json(cid2unichr)?;
+
+        let mut umap = UnicodeMap::new();
+        umap.attrs.insert("CMapName".to_string(), name.clone());
+        if vertical {
+            umap.set_vertical(true);
+            umap.attrs.insert("WMode".to_string(), "1".to_string());
+        }
+
+        let mut cid2unichr_data: HashMap<u32, String> = HashMap::new();
+        for (cid, ch) in parsed {
+            if ch == "\u{00a0}" && cid2unichr_data.get(&cid).map(|s| s.as_str()) == Some(" ") {
+                continue;
+            }
+            umap.add_cid2unichr(cid, ch.clone());
+            cid2unichr_data.insert(cid, ch);
+        }
+
+        Ok(Py::new(py, PyUnicodeMap::from_parts(umap, cid2unichr_data))?.into_any())
     }
 }
 
@@ -492,6 +643,11 @@ impl PyPDFCIDFont {
         dyn_cmap_to_py(py, &self.inner.cmap)
     }
 
+    #[getter]
+    pub fn cmap(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        dyn_cmap_to_py(py, &self.inner.cmap)
+    }
+
     pub fn char_width(&self, cid: u32) -> f64 {
         self.inner.char_width(cid)
     }
@@ -552,6 +708,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCMap>()?;
     m.add_class::<PyIdentityCMap>()?;
     m.add_class::<PyIdentityCMapByte>()?;
+    m.add_class::<PyUnicodeMap>()?;
     m.add_class::<PyCMapDB>()?;
     m.add_class::<PyEncodingDB>()?;
     m.add_class::<PyPDFFont>()?;

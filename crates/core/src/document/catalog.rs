@@ -1821,6 +1821,18 @@ impl PDFDocument {
         ids
     }
 
+    /// Get object IDs for each xref table.
+    pub fn get_xref_objids(&self) -> Vec<Vec<u32>> {
+        self.xrefs
+            .iter()
+            .map(|xref| {
+                let mut ids: Vec<u32> = xref.get_objids().collect();
+                ids.sort();
+                ids
+            })
+            .collect()
+    }
+
     /// Iterate over all xref trailers.
     ///
     /// Returns tuples of (is_fallback, trailer_dict).

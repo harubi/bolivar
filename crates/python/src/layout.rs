@@ -10,7 +10,7 @@ use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::convert::name_to_psliteral;
+use crate::convert::{name_to_psliteral, psliteral_name};
 use crate::params::PyLAParams;
 
 const UNKNOWN_LEN: usize = usize::MAX;
@@ -1203,6 +1203,115 @@ impl PyXMLConverter {
     }
 }
 
+/// HOCRConverter for converting layout to hOCR.
+#[pyclass(name = "HOCRConverter")]
+pub struct PyHOCRConverter {
+    converter: bolivar_core::converter::HOCRConverter<PyWriter>,
+}
+
+#[pymethods]
+impl PyHOCRConverter {
+    #[new]
+    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, stripcontrol=false, imagewriter=None))]
+    pub fn new(
+        rsrcmgr: &Bound<'_, PyAny>,
+        outfp: Py<PyAny>,
+        codec: &str,
+        pageno: i32,
+        laparams: Option<&PyLAParams>,
+        stripcontrol: bool,
+        imagewriter: Option<&Bound<'_, PyAny>>,
+    ) -> Self {
+        let _ = rsrcmgr;
+        let _ = imagewriter;
+        let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
+        let converter = bolivar_core::converter::HOCRConverter::with_options(
+            PyWriter::new(outfp),
+            codec,
+            pageno,
+            la,
+            stripcontrol,
+        );
+        Self { converter }
+    }
+
+    pub fn _receive_layout(&mut self, ltpage: &PyLTPage) {
+        let core_page = py_ltpage_to_core(ltpage);
+        self.converter.receive_layout(core_page);
+    }
+
+    fn close(&mut self) {
+        self.converter.close();
+        self.converter.flush();
+    }
+}
+
+fn tag_from_py(obj: &Bound<'_, PyAny>) -> PyResult<bolivar_core::psparser::PSLiteral> {
+    if let Some(name) = psliteral_name(obj) {
+        return Ok(bolivar_core::psparser::PSLiteral::new(&name));
+    }
+    let name: String = obj.extract()?;
+    Ok(bolivar_core::psparser::PSLiteral::new(&name))
+}
+
+/// TagExtractor for extracting marked content tags.
+#[pyclass(name = "TagExtractor")]
+pub struct PyTagExtractor {
+    inner: bolivar_core::interp::TagExtractor<PyWriter>,
+}
+
+#[pymethods]
+impl PyTagExtractor {
+    #[new]
+    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8"))]
+    pub fn new(rsrcmgr: &Bound<'_, PyAny>, outfp: Py<PyAny>, codec: &str) -> Self {
+        let _ = rsrcmgr;
+        let writer = PyWriter::new(outfp);
+        let inner = bolivar_core::interp::TagExtractor::new(writer, codec);
+        Self { inner }
+    }
+
+    pub fn begin_tag(
+        &mut self,
+        tag: &Bound<'_, PyAny>,
+        _props: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let literal = tag_from_py(tag)?;
+        bolivar_core::interp::PDFDevice::begin_tag(&mut self.inner, &literal, None);
+        Ok(())
+    }
+
+    pub fn end_tag(&mut self) {
+        bolivar_core::interp::PDFDevice::end_tag(&mut self.inner);
+    }
+
+    pub fn do_tag(
+        &mut self,
+        tag: &Bound<'_, PyAny>,
+        _props: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let literal = tag_from_py(tag)?;
+        bolivar_core::interp::PDFDevice::do_tag(&mut self.inner, &literal, None);
+        Ok(())
+    }
+
+    pub fn write(&mut self, text: &str) {
+        self.inner.write(text);
+    }
+
+    pub fn pageno(&self) -> u32 {
+        self.inner.pageno()
+    }
+
+    pub fn increment_pageno(&mut self) {
+        self.inner.increment_pageno();
+    }
+
+    fn close(&mut self) {
+        self.inner.flush();
+    }
+}
+
 // Conversion functions between Python and core types
 
 fn py_textline_element_from_item(item: &PyLTItem) -> Option<bolivar_core::layout::TextLineElement> {
@@ -1507,5 +1616,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTextConverter>()?;
     m.add_class::<PyHTMLConverter>()?;
     m.add_class::<PyXMLConverter>()?;
+    m.add_class::<PyHOCRConverter>()?;
+    m.add_class::<PyTagExtractor>()?;
     Ok(())
 }

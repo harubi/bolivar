@@ -17,6 +17,7 @@ pub mod stream;
 // Re-export for convenience
 pub use high_level::{
     ExtractOptions, PageIterator, extract_pages, extract_pages_stream, extract_pages_with_document,
-    extract_text, extract_text_to_fp, extract_text_with_document,
+    extract_pages_with_images_with_document, extract_text, extract_text_to_fp,
+    extract_text_with_document,
 };
 pub use stream::PageStream;

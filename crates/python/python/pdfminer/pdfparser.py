@@ -3,7 +3,6 @@
 from bolivar._bolivar import PDFParser as _RustPDFParser
 
 # Re-export PDFObjRef for compatibility (pdfplumber imports it from here)
-from .pdftypes import PDFObjRef
 
 PDFParser = _RustPDFParser
 

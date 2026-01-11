@@ -15,10 +15,12 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dynamic = ["version"]
-dependencies = []
+dependencies = [
+    "pdfplumber>=0.11.9",
+]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-cov"]
+test = ["pytest", "pytest-cov", "Pillow"]
 bench = ["pytest", "pytest-benchmark"]
 
 [tool.maturin]

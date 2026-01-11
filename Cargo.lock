@@ -218,9 +218,11 @@ version = "0.1.0"
 dependencies = [
  "bolivar-core",
  "bytes",
+ "flate2",
  "memmap2",
  "pyo3",
  "pyo3-async-runtimes",
+ "serde_json",
  "tokio",
 ]
 

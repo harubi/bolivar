@@ -560,6 +560,11 @@ impl<W: Write> HOCRConverter<W> {
         let _ = self.outfp.write_all(text.as_bytes());
     }
 
+    /// Flush output.
+    pub fn flush(&mut self) {
+        let _ = self.outfp.flush();
+    }
+
     /// Convert PDF bbox to hOCR bbox string.
     ///
     /// PDF y-coordinates are inverted compared to hOCR coordinates.

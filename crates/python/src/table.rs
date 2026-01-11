@@ -6,6 +6,7 @@
 use bolivar_core::arena::PageArena;
 use bolivar_core::high_level::{
     ExtractOptions, extract_pages_with_document as core_extract_pages_with_document,
+    extract_pages_with_images_with_document as core_extract_pages_with_images_with_document,
     extract_tables_for_page_indexed as core_extract_tables_for_page_indexed,
     extract_tables_with_document_geometries as core_extract_tables_with_document_geometries,
     extract_text_with_document as core_extract_text_with_document,
@@ -848,6 +849,43 @@ pub fn extract_pages(
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
+/// Extract pages (layout) from PDF bytes while exporting images.
+#[pyfunction]
+#[pyo3(signature = (data, output_dir, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
+pub fn extract_pages_with_images(
+    py: Python<'_>,
+    data: &Bound<'_, PyAny>,
+    output_dir: &str,
+    password: &str,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+    laparams: Option<&PyLAParams>,
+) -> PyResult<Vec<PyLTPage>> {
+    let options = ExtractOptions {
+        password: password.to_string(),
+        page_numbers,
+        maxpages,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+    };
+    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
+    let pages = match pdf_input_from_py(data)? {
+        PdfInput::Shared(bytes) => {
+            let doc = PDFDocument::new_from_bytes_with_cache(bytes, password, cache_capacity)
+                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+            py.detach(|| core_extract_pages_with_images_with_document(&doc, options, output_dir))
+        }
+        PdfInput::Owned(bytes) => {
+            let doc = PDFDocument::new_with_cache(bytes, password, cache_capacity)
+                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+            py.detach(|| core_extract_pages_with_images_with_document(&doc, options, output_dir))
+        }
+    }
+    .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+    Ok(pages.into_iter().map(ltpage_to_py).collect())
+}
+
 /// Extract pages (layout) from a PDF file path using memory-mapped I/O.
 #[pyfunction]
 #[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
@@ -886,12 +924,52 @@ pub fn extract_pages_from_path(
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
+/// Extract pages (layout) from a PDF file path while exporting images.
+#[pyfunction]
+#[pyo3(signature = (path, output_dir, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
+pub fn extract_pages_with_images_from_path(
+    py: Python<'_>,
+    path: &str,
+    output_dir: &str,
+    password: &str,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+    laparams: Option<&PyLAParams>,
+) -> PyResult<Vec<PyLTPage>> {
+    let file = File::open(path)
+        .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
+    let mmap = unsafe { Mmap::map(&file) }
+        .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
+    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
+    let doc = PDFDocument::new_from_mmap_with_cache(mmap, password, cache_capacity)
+        .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+
+    let mut options = ExtractOptions {
+        password: password.to_string(),
+        page_numbers,
+        maxpages,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+    };
+    if options.laparams.is_none() {
+        options.laparams = Some(bolivar_core::layout::LAParams::default());
+    }
+
+    let pages = py
+        .detach(|| core_extract_pages_with_images_with_document(&doc, options, output_dir))
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+    Ok(pages.into_iter().map(ltpage_to_py).collect())
+}
+
 /// Register the table module functions with the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_text, m)?)?;
     m.add_function(wrap_pyfunction!(extract_text_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages_from_path, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_pages_with_images, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_pages_with_images_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_document, m)?)?;

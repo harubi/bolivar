@@ -6,24 +6,18 @@
 //! Port of pdfminer.six tools/pdf2txt.py
 
 use bolivar_core::api::stream::extract_tables_stream_from_doc;
-use bolivar_core::arena::PageArena;
-use bolivar_core::converter::{
-    HOCRConverter, HTMLConverter, PDFPageAggregator, TextConverter, XMLConverter,
-};
+use bolivar_core::converter::{HOCRConverter, HTMLConverter, TextConverter, XMLConverter};
 use bolivar_core::error::{PdfError, Result};
-use bolivar_core::high_level::{ExtractOptions, extract_pages_with_document};
-use bolivar_core::image::ImageWriter;
+use bolivar_core::high_level::{
+    ExtractOptions, extract_pages_with_document, extract_pages_with_images_with_document,
+};
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfdocument::PDFDocument;
-use bolivar_core::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
-use bolivar_core::pdfpage::PDFPage;
 use clap::{ArgAction, Parser, ValueEnum};
 use memmap2::Mmap;
-use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// Output type for the extracted content.
@@ -276,50 +270,6 @@ fn csv_escape(s: &str) -> String {
     }
 }
 
-fn for_each_page_with_images<F>(
-    doc: &PDFDocument,
-    options: &ExtractOptions,
-    image_writer: Rc<RefCell<ImageWriter>>,
-    mut on_page: F,
-) -> Result<()>
-where
-    F: FnMut(bolivar_core::layout::LTPage),
-{
-    let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
-    let laparams = options.laparams.clone().unwrap_or_default();
-    let mut arena = PageArena::new();
-
-    let mut page_count = 0;
-    for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-        if let Some(ref nums) = options.page_numbers
-            && !nums.contains(&page_idx)
-        {
-            continue;
-        }
-
-        if options.maxpages > 0 && page_count >= options.maxpages {
-            break;
-        }
-
-        let page = page_result?;
-        arena.reset();
-        let mut aggregator = PDFPageAggregator::new_with_imagewriter(
-            Some(laparams.clone()),
-            page_idx as i32 + 1,
-            Some(image_writer.clone()),
-            &mut arena,
-        );
-        let mut interpreter = PDFPageInterpreter::new(&mut rsrcmgr, &mut aggregator);
-        interpreter.process_page(&page, Some(doc));
-
-        let ltpage = aggregator.get_result().clone();
-        on_page(ltpage);
-        page_count += 1;
-    }
-
-    Ok(())
-}
-
 /// Process a single PDF file.
 fn process_file<W: Write>(
     path: &PathBuf,
@@ -420,22 +370,24 @@ fn process_file<W: Write>(
     }
 
     if let Some(ref output_dir) = args.output_dir {
-        let image_writer = Rc::new(RefCell::new(ImageWriter::new(output_dir)?));
+        let output_dir = output_dir.to_string_lossy();
+        let pages =
+            extract_pages_with_images_with_document(&doc, options.clone(), output_dir.as_ref())?;
         match output_type {
             OutputType::Text => {
                 let laparams = build_laparams(args)?;
                 let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
-                for_each_page_with_images(&doc, &options, image_writer, |page| {
+                for page in pages {
                     converter.receive_layout(page);
-                })?;
+                }
             }
             OutputType::Html => {
                 let laparams = build_laparams(args)?;
                 let mut converter =
                     HTMLConverter::with_options(writer, &args.codec, 1, laparams, args.scale, 1.0);
-                for_each_page_with_images(&doc, &options, image_writer, |page| {
+                for page in pages {
                     converter.receive_layout(page);
-                })?;
+                }
                 converter.close();
             }
             OutputType::Xml => {
@@ -447,17 +399,17 @@ fn process_file<W: Write>(
                     laparams,
                     args.strip_control,
                 );
-                for_each_page_with_images(&doc, &options, image_writer, |page| {
+                for page in pages {
                     converter.receive_layout(page);
-                })?;
+                }
                 converter.close();
             }
             OutputType::Tag => {
                 let laparams = build_laparams(args)?;
                 let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
-                for_each_page_with_images(&doc, &options, image_writer, |page| {
+                for page in pages {
                     converter.receive_layout(page);
-                })?;
+                }
             }
             OutputType::Hocr => {
                 let laparams = build_laparams(args)?;
@@ -468,9 +420,9 @@ fn process_file<W: Write>(
                     laparams,
                     args.strip_control,
                 );
-                for_each_page_with_images(&doc, &options, image_writer, |page| {
+                for page in pages {
                     converter.receive_layout(page);
-                })?;
+                }
                 converter.close();
             }
         }

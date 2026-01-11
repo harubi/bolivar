@@ -1,6 +1,5 @@
 # pdfminer.pdfpage compatibility shim
 
-from bolivar import PDFPage as _RustPDFPage
 
 
 class PDFPage:

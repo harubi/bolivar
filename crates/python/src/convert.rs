@@ -6,13 +6,14 @@
 use bolivar_core::parser::PSToken;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdftypes::{PDFObject, PDFStream};
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
+use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PySequenceMethods};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 use crate::PyPDFStream;
+use crate::document::{PyPSKeyword, PyPSLiteral};
 
 /// Global intern table for PSLiteral objects.
 pub static PSLITERAL_TABLE: OnceLock<Mutex<HashMap<Vec<u8>, Py<PyAny>>>> = OnceLock::new();
@@ -191,6 +192,89 @@ pub fn ps_name_to_bytes(name: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     Ok(s.into_bytes())
 }
 
+pub(crate) fn psliteral_name(obj: &Bound<'_, PyAny>) -> Option<String> {
+    if let Ok(lit) = obj.extract::<PyRef<'_, PyPSLiteral>>() {
+        return Some(String::from_utf8_lossy(&lit.name).to_string());
+    }
+    if let Ok(kwd) = obj.extract::<PyRef<'_, PyPSKeyword>>() {
+        return Some(String::from_utf8_lossy(&kwd.name).to_string());
+    }
+    if let Ok(name_attr) = obj.getattr("name") {
+        if let Ok(bytes) = name_attr.downcast::<PyBytes>() {
+            return Some(String::from_utf8_lossy(bytes.as_bytes()).to_string());
+        }
+        if let Ok(s) = name_attr.extract::<String>() {
+            return Some(s);
+        }
+    }
+    None
+}
+
+/// Convert a Python object to a PDFObject.
+pub fn py_to_pdf_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFObject> {
+    if obj.is_none() {
+        return Ok(PDFObject::Null);
+    }
+    if let Ok(py_stream) = obj.extract::<PyRef<'_, PyPDFStream>>() {
+        return Ok(PDFObject::Stream(Box::new(py_stream.stream.clone())));
+    }
+    if let Ok(b) = obj.extract::<bool>() {
+        return Ok(PDFObject::Bool(b));
+    }
+    if let Ok(i) = obj.extract::<i64>() {
+        return Ok(PDFObject::Int(i));
+    }
+    if let Ok(f) = obj.extract::<f64>() {
+        return Ok(PDFObject::Real(f));
+    }
+    if let Ok(bytes) = obj.downcast::<PyBytes>() {
+        return Ok(PDFObject::String(bytes.as_bytes().to_vec()));
+    }
+    if let Some(name) = psliteral_name(obj) {
+        return Ok(PDFObject::Name(name));
+    }
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(PDFObject::Name(s));
+    }
+    if let Ok(dict) = obj.downcast::<PyDict>() {
+        let mut map = HashMap::new();
+        for (k, v) in dict.iter() {
+            let key: String = k.extract()?;
+            let value = py_to_pdf_object(py, &v)?;
+            map.insert(key, value);
+        }
+        return Ok(PDFObject::Dict(map));
+    }
+    if let Ok(seq) = obj.downcast::<PySequence>() {
+        if obj.downcast::<PyBytes>().is_ok() {
+            return Err(PyTypeError::new_err("bytes are not a sequence"));
+        }
+        let mut items = Vec::new();
+        let len = seq.len()? as usize;
+        for idx in 0..len {
+            let item = seq.get_item(idx)?;
+            let value = py_to_pdf_object(py, &item)?;
+            items.push(value);
+        }
+        return Ok(PDFObject::Array(items));
+    }
+
+    Err(PyTypeError::new_err("unsupported PDF object type"))
+}
+
+/// Convert a Python object to a PDFObject, resolving references when possible.
+pub fn py_to_pdf_object_resolving_refs(
+    py: Python<'_>,
+    obj: &Bound<'_, PyAny>,
+) -> PyResult<PDFObject> {
+    if obj.hasattr("resolve")? {
+        if let Ok(resolved) = obj.call_method0("resolve") {
+            return py_to_pdf_object(py, &resolved);
+        }
+    }
+    py_to_pdf_object(py, obj)
+}
+
 /// Intern a PSLiteral for efficient reuse.
 pub fn intern_psliteral(py: Python<'_>, name: Vec<u8>) -> PyResult<Py<PyAny>> {
     let table = PSLITERAL_TABLE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -240,7 +324,7 @@ pub fn pstoken_to_py(py: Python<'_>, token: PSToken) -> PyResult<Py<PyAny>> {
         PSToken::Dict(map) => {
             let dict = PyDict::new(py);
             for (k, v) in map {
-                let key = intern_psliteral(py, k.into_bytes())?;
+                let key = k.into_pyobject(py)?.into_any();
                 let val = pstoken_to_py(py, v)?;
                 dict.set_item(key, val)?;
             }

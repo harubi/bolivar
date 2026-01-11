@@ -485,18 +485,15 @@ fn test_text_device_render_string_vertical() {
 
 #[test]
 fn test_tag_extractor_write() {
-    let mut buffer = Cursor::new(Vec::new());
+    let buffer = Cursor::new(Vec::new());
+    let mut extractor = TagExtractor::new(buffer, "utf-8");
 
-    {
-        let mut extractor = TagExtractor::new(&mut buffer, "utf-8");
+    // Simulate tag operations
+    extractor.begin_tag(&PSLiteral::new("P"), None);
+    extractor.write("Hello, World!");
+    extractor.end_tag();
 
-        // Simulate tag operations
-        extractor.begin_tag(&PSLiteral::new("P"), None);
-        extractor.write("Hello, World!");
-        extractor.end_tag();
-    }
-
-    let output = String::from_utf8(buffer.into_inner()).unwrap();
+    let output = String::from_utf8(extractor.into_inner().into_inner()).unwrap();
     assert!(output.contains("<P>"));
     assert!(output.contains("Hello, World!"));
     assert!(output.contains("</P>"));
@@ -504,19 +501,16 @@ fn test_tag_extractor_write() {
 
 #[test]
 fn test_tag_extractor_nested_tags() {
-    let mut buffer = Cursor::new(Vec::new());
+    let buffer = Cursor::new(Vec::new());
+    let mut extractor = TagExtractor::new(buffer, "utf-8");
 
-    {
-        let mut extractor = TagExtractor::new(&mut buffer, "utf-8");
+    extractor.begin_tag(&PSLiteral::new("Document"), None);
+    extractor.begin_tag(&PSLiteral::new("P"), None);
+    extractor.write("Nested content");
+    extractor.end_tag(); // </P>
+    extractor.end_tag(); // </Document>
 
-        extractor.begin_tag(&PSLiteral::new("Document"), None);
-        extractor.begin_tag(&PSLiteral::new("P"), None);
-        extractor.write("Nested content");
-        extractor.end_tag(); // </P>
-        extractor.end_tag(); // </Document>
-    }
-
-    let output = String::from_utf8(buffer.into_inner()).unwrap();
+    let output = String::from_utf8(extractor.into_inner().into_inner()).unwrap();
     assert!(output.contains("<Document>"));
     assert!(output.contains("<P>"));
     assert!(output.contains("Nested content"));
@@ -526,22 +520,19 @@ fn test_tag_extractor_nested_tags() {
 
 #[test]
 fn test_tag_extractor_do_tag() {
-    let mut buffer = Cursor::new(Vec::new());
+    let buffer = Cursor::new(Vec::new());
+    let mut extractor = TagExtractor::new(buffer, "utf-8");
+    // do_tag writes opening tag but doesn't add to stack
+    extractor.do_tag(&PSLiteral::new("BR"), None);
 
-    {
-        let mut extractor = TagExtractor::new(&mut buffer, "utf-8");
-        // do_tag writes opening tag but doesn't add to stack
-        extractor.do_tag(&PSLiteral::new("BR"), None);
-    }
-
-    let output = String::from_utf8(buffer.into_inner()).unwrap();
+    let output = String::from_utf8(extractor.into_inner().into_inner()).unwrap();
     assert!(output.contains("<BR>"));
 }
 
 #[test]
 fn test_tag_extractor_pageno() {
-    let mut buffer = Cursor::new(Vec::new());
-    let mut extractor = TagExtractor::new(&mut buffer, "utf-8");
+    let buffer = Cursor::new(Vec::new());
+    let mut extractor = TagExtractor::new(buffer, "utf-8");
 
     assert_eq!(extractor.pageno(), 0);
     extractor.increment_pageno();
@@ -550,42 +541,36 @@ fn test_tag_extractor_pageno() {
 
 #[test]
 fn test_tag_extractor_render_string() {
-    let mut buffer = Cursor::new(Vec::new());
+    let buffer = Cursor::new(Vec::new());
+    let mut extractor = TagExtractor::new(buffer, "utf-8");
+    let mut textstate = PDFTextState::new();
+    let gs = PDFGraphicState::new();
+    let ncs = PREDEFINED_COLORSPACE.get("DeviceGray").unwrap();
 
-    {
-        let mut extractor = TagExtractor::new(&mut buffer, "utf-8");
-        let mut textstate = PDFTextState::new();
-        let gs = PDFGraphicState::new();
-        let ncs = PREDEFINED_COLORSPACE.get("DeviceGray").unwrap();
+    // Create text sequence with ASCII text "Hello"
+    let seq: PDFTextSeq = vec![PDFTextSeqItem::Bytes(b"Hello".to_vec())];
 
-        // Create text sequence with ASCII text "Hello"
-        let seq: PDFTextSeq = vec![PDFTextSeqItem::Bytes(b"Hello".to_vec())];
+    PDFTextDevice::render_string(&mut extractor, &mut textstate, &seq, ncs, &gs);
 
-        PDFTextDevice::render_string(&mut extractor, &mut textstate, &seq, ncs, &gs);
-    }
-
-    let output = String::from_utf8(buffer.into_inner()).unwrap();
+    let output = String::from_utf8(extractor.into_inner().into_inner()).unwrap();
     // TagExtractor extracts ASCII text directly (stub implementation)
     assert!(output.contains("Hello"));
 }
 
 #[test]
 fn test_tag_extractor_render_string_escapes_special_chars() {
-    let mut buffer = Cursor::new(Vec::new());
+    let buffer = Cursor::new(Vec::new());
+    let mut extractor = TagExtractor::new(buffer, "utf-8");
+    let mut textstate = PDFTextState::new();
+    let gs = PDFGraphicState::new();
+    let ncs = PREDEFINED_COLORSPACE.get("DeviceGray").unwrap();
 
-    {
-        let mut extractor = TagExtractor::new(&mut buffer, "utf-8");
-        let mut textstate = PDFTextState::new();
-        let gs = PDFGraphicState::new();
-        let ncs = PREDEFINED_COLORSPACE.get("DeviceGray").unwrap();
+    // Create text sequence with special XML characters
+    let seq: PDFTextSeq = vec![PDFTextSeqItem::Bytes(b"<test>".to_vec())];
 
-        // Create text sequence with special XML characters
-        let seq: PDFTextSeq = vec![PDFTextSeqItem::Bytes(b"<test>".to_vec())];
+    PDFTextDevice::render_string(&mut extractor, &mut textstate, &seq, ncs, &gs);
 
-        PDFTextDevice::render_string(&mut extractor, &mut textstate, &seq, ncs, &gs);
-    }
-
-    let output = String::from_utf8(buffer.into_inner()).unwrap();
+    let output = String::from_utf8(extractor.into_inner().into_inner()).unwrap();
     // Should escape < and > for XML safety
     assert!(output.contains("&lt;"));
     assert!(output.contains("&gt;"));

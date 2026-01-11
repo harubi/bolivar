@@ -1283,7 +1283,10 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     }
                     _ => None,
                 };
-                if let Some(stream) = stream {
+                if let Some(mut stream) = stream {
+                    if let Some(doc) = doc {
+                        Self::resolve_jbig2_globals(&mut stream, doc);
+                    }
                     self.xobjmap.insert(xobjid.clone(), stream);
                 }
             }
@@ -1340,6 +1343,54 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 }
             }
             _ => None,
+        }
+    }
+
+    fn stream_has_jbig2_filter(stream: &PDFStream) -> bool {
+        match stream.get("Filter") {
+            Some(PDFObject::Name(name)) => name.eq_ignore_ascii_case("JBIG2Decode"),
+            Some(PDFObject::Array(arr)) => arr.iter().any(|obj| {
+                matches!(obj, PDFObject::Name(name) if name.eq_ignore_ascii_case("JBIG2Decode"))
+            }),
+            _ => false,
+        }
+    }
+
+    fn resolve_decode_parms(obj: PDFObject, doc: &crate::pdfdocument::PDFDocument) -> PDFObject {
+        match obj {
+            PDFObject::Ref(r) => match doc.resolve(&PDFObject::Ref(r.clone())) {
+                Ok(resolved) => Self::resolve_decode_parms(resolved, doc),
+                Err(_) => PDFObject::Ref(r),
+            },
+            PDFObject::Dict(mut dict) => {
+                if let Some(jbig2) = dict.get("JBIG2Globals").cloned() {
+                    let resolved = match jbig2 {
+                        PDFObject::Ref(r) => doc
+                            .resolve(&PDFObject::Ref(r.clone()))
+                            .unwrap_or(PDFObject::Ref(r)),
+                        other => other,
+                    };
+                    dict.insert("JBIG2Globals".to_string(), resolved);
+                }
+                PDFObject::Dict(dict)
+            }
+            PDFObject::Array(arr) => PDFObject::Array(
+                arr.into_iter()
+                    .map(|item| Self::resolve_decode_parms(item, doc))
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+
+    fn resolve_jbig2_globals(stream: &mut PDFStream, doc: &crate::pdfdocument::PDFDocument) {
+        if !Self::stream_has_jbig2_filter(stream) {
+            return;
+        }
+
+        if let Some(params) = stream.get("DecodeParms").cloned() {
+            let resolved = Self::resolve_decode_parms(params, doc);
+            stream.attrs.insert("DecodeParms".to_string(), resolved);
         }
     }
 

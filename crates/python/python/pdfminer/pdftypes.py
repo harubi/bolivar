@@ -1,6 +1,5 @@
 # pdfminer.pdftypes compatibility shim
 
-from typing import Any, Dict, List
 
 from bolivar._bolivar import PDFStream
 
