@@ -6,6 +6,7 @@
 mod codec;
 mod convert;
 mod document;
+mod font;
 mod layout;
 mod params;
 mod stream;
@@ -29,6 +30,7 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
     params::register(m)?;
     codec::register(m)?;
     document::register(m)?;
+    font::register(m)?;
     layout::register(m)?;
     stream::register(m)?;
     table::register(m)?;

@@ -27,6 +27,11 @@ static GLYPH_TO_CHAR: LazyLock<HashMap<&'static str, char>> = LazyLock::new(|| {
     map
 });
 
+/// Return the glyph name to Unicode map.
+pub fn glyphname2unicode() -> &'static HashMap<&'static str, char> {
+    &GLYPH_TO_CHAR
+}
+
 /// Check if a string contains only hexadecimal characters (case-insensitive)
 fn is_hex(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit())

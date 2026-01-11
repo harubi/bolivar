@@ -19,7 +19,7 @@ pub trait CMapBase {
 /// Identity CMap - 2-byte big-endian identity mapping.
 ///
 /// Each pair of bytes is interpreted as a big-endian 16-bit CID.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IdentityCMap {
     vertical: bool,
 }
@@ -46,7 +46,7 @@ impl CMapBase for IdentityCMap {
 /// Identity CMap for single-byte codes.
 ///
 /// Each byte is interpreted directly as a CID.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IdentityCMapByte {
     vertical: bool,
 }
@@ -68,7 +68,7 @@ impl CMapBase for IdentityCMapByte {
 }
 
 /// CMap with explicit code-to-CID mappings.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CMap {
     /// CMap attributes (CMapName, WMode, etc.)
     pub attrs: HashMap<String, String>,
@@ -84,7 +84,7 @@ pub struct CMap {
     ranges: Vec<CidRange>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CidRange {
     start: Vec<u8>,
     end: Vec<u8>,
@@ -131,6 +131,29 @@ impl CMap {
             end: end.to_vec(),
             cid_start,
         });
+    }
+
+    /// Return explicit code-to-CID mappings as (code_bytes, cid) pairs.
+    pub fn explicit_mappings(&self) -> Vec<(Vec<u8>, u32)> {
+        let mut out = Vec::new();
+        for (code, cid) in &self.code1_to_cid {
+            out.push((vec![*code], *cid));
+        }
+        for (code, cid) in &self.code2_to_cid {
+            out.push((code.to_be_bytes().to_vec(), *cid));
+        }
+        for (code, cid) in &self.code_to_cid {
+            out.push((code.clone(), *cid));
+        }
+        out
+    }
+
+    /// Return CID range mappings as (start_bytes, end_bytes, cid_start) tuples.
+    pub fn range_entries(&self) -> Vec<(Vec<u8>, Vec<u8>, u32)> {
+        self.ranges
+            .iter()
+            .map(|r| (r.start.clone(), r.end.clone(), r.cid_start))
+            .collect()
     }
 
     /// Look up a code in the mapping.
