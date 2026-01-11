@@ -346,6 +346,14 @@ impl Table {
         chars: &[CharObj],
         text_settings: &TextSettings,
     ) -> Vec<Vec<Option<String>>> {
+        self.extract_soa(chars, text_settings)
+    }
+
+    pub fn extract_soa(
+        &self,
+        chars: &[CharObj],
+        text_settings: &TextSettings,
+    ) -> Vec<Vec<Option<String>>> {
         let rows = self.rows();
 
         struct CellInfo {
@@ -366,6 +374,17 @@ impl Table {
                 }
             }
             cell_id_grid.push(row_ids);
+        }
+
+        let mut cell_x0: Vec<f64> = Vec::with_capacity(cell_infos.len());
+        let mut cell_x1: Vec<f64> = Vec::with_capacity(cell_infos.len());
+        let mut cell_top: Vec<f64> = Vec::with_capacity(cell_infos.len());
+        let mut cell_bottom: Vec<f64> = Vec::with_capacity(cell_infos.len());
+        for info in &cell_infos {
+            cell_x0.push(info.bbox.x0);
+            cell_x1.push(info.bbox.x1);
+            cell_top.push(info.bbox.top);
+            cell_bottom.push(info.bbox.bottom);
         }
 
         let mut cell_char_indices: Vec<Vec<CharId>> = vec![Vec::new(); cell_infos.len()];
@@ -436,13 +455,12 @@ impl Table {
                 }
                 match event.kind {
                     CellEventKind::Add => {
-                        let bbox = &cell_infos[event.cell_id].bbox;
                         active_pos[event.cell_id] = Some(active.len());
                         active.push(event.cell_id);
-                        active_x0.push(bbox.x0);
-                        active_x1.push(bbox.x1);
-                        active_top.push(bbox.top);
-                        active_bottom.push(bbox.bottom);
+                        active_x0.push(cell_x0[event.cell_id]);
+                        active_x1.push(cell_x1[event.cell_id]);
+                        active_top.push(cell_top[event.cell_id]);
+                        active_bottom.push(cell_bottom[event.cell_id]);
                     }
                     CellEventKind::Remove => {
                         if let Some(pos) = active_pos[event.cell_id].take() {
@@ -465,7 +483,6 @@ impl Table {
                 event_idx += 1;
             }
 
-            let ch = &chars[char_idx];
             let mut matches = 0usize;
             let mut i = 0usize;
             while i + 4 <= active.len() {
@@ -521,7 +538,7 @@ impl Table {
             }
             for &cell_id in &active[i..] {
                 let bbox = &cell_infos[cell_id].bbox;
-                if char_in_bbox(ch, bbox) {
+                if char_in_bbox_mid(h_mid, v_mid, bbox) {
                     cell_char_indices[cell_id].push(CharId(char_idx));
                     matches += 1;
                 }
@@ -616,8 +633,7 @@ pub(crate) fn char_in_bboxes_simd4(
 }
 
 /// Check if a character's center is inside a bounding box.
-fn char_in_bbox(c: &CharObj, bbox: &BBox) -> bool {
-    let v_mid = (c.top + c.bottom) / 2.0;
-    let h_mid = (c.x0 + c.x1) / 2.0;
+#[inline]
+fn char_in_bbox_mid(h_mid: f64, v_mid: f64, bbox: &BBox) -> bool {
     h_mid >= bbox.x0 && h_mid < bbox.x1 && v_mid >= bbox.top && v_mid < bbox.bottom
 }

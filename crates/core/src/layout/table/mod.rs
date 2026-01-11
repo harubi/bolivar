@@ -420,4 +420,54 @@ mod table_extraction_tests {
         let buckets = super::intersections::bucket_count_for_edges(&edges, 0.0);
         assert!(buckets > 0);
     }
+
+    #[test]
+    fn cell_matching_soa_matches_scalar() {
+        let cells = vec![
+            BBox {
+                x0: 0.0,
+                top: 0.0,
+                x1: 5.0,
+                bottom: 5.0,
+            },
+            BBox {
+                x0: 5.0,
+                top: 0.0,
+                x1: 10.0,
+                bottom: 5.0,
+            },
+        ];
+        let chars = vec![
+            CharObj {
+                text: "A".to_string(),
+                x0: 1.0,
+                x1: 2.0,
+                top: 1.0,
+                bottom: 2.0,
+                doctop: 1.0,
+                width: 1.0,
+                height: 1.0,
+                size: 1.0,
+                upright: true,
+            },
+            CharObj {
+                text: "B".to_string(),
+                x0: 6.0,
+                x1: 7.0,
+                top: 1.0,
+                bottom: 2.0,
+                doctop: 1.0,
+                width: 1.0,
+                height: 1.0,
+                size: 1.0,
+                upright: true,
+            },
+        ];
+        let out_a = super::grid::Table {
+            cells: cells.clone(),
+        }
+        .extract(&chars, &TextSettings::default());
+        let out_b = super::grid::Table { cells }.extract_soa(&chars, &TextSettings::default());
+        assert_eq!(out_a, out_b);
+    }
 }
