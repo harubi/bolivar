@@ -1,17 +1,20 @@
 # pdfminer.psparser compatibility shim (Rust-backed)
 
-from bolivar._bolivar import (
-    PSLiteral,
-    PSKeyword,
-)
-
-from . import psexceptions
+from bolivar._bolivar import KWD, LIT, PSBaseParser, PSKeyword, PSLiteral, PSStackParser
+import pdfminer.psexceptions as psexceptions
 
 PSException = psexceptions.PSException
 PSEOF = psexceptions.PSEOF
 PSSyntaxError = psexceptions.PSSyntaxError
 PSTypeError = psexceptions.PSTypeError
 PSValueError = psexceptions.PSValueError
+
+KEYWORD_PROC_BEGIN = KWD(b"{")
+KEYWORD_PROC_END = KWD(b"}")
+KEYWORD_ARRAY_BEGIN = KWD(b"[")
+KEYWORD_ARRAY_END = KWD(b"]")
+KEYWORD_DICT_BEGIN = KWD(b"<<")
+KEYWORD_DICT_END = KWD(b">>")
 
 
 def literal_name(x):
