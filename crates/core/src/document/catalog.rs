@@ -11,9 +11,10 @@
 use super::page::PageIndex;
 use super::security::{PDFSecurityHandler, create_security_handler};
 use crate::error::{PdfError, Result};
+use crate::font::encoding::{DiffEntry, EncodingDB};
 use crate::model::objects::PDFObject;
 use crate::parser::parser::PDFParser;
-use crate::simd::U8_LANES;
+use crate::simd::{U8_LANES, find_subslice_simd};
 use bytes::Bytes;
 use indexmap::IndexMap;
 use memmap2::Mmap;
@@ -24,8 +25,6 @@ use std::simd::prelude::*;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 const PNG_SIMD_LANES: usize = U8_LANES;
-const KEYWORD_SIMD_LANES: usize = U8_LANES;
-
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024;
 pub const DEFAULT_PAGE_CACHE_CAPACITY: usize = 64;
 
@@ -182,6 +181,7 @@ pub struct PDFDocument {
     info: Vec<HashMap<String, PDFObject>>,
     cache: Mutex<ObjectCache>,
     page_cache: Mutex<PageCache>,
+    font_encoding_cache: Mutex<HashMap<u32, Arc<HashMap<u8, String>>>>,
     objstm_index: RwLock<Option<HashMap<u32, (u32, usize)>>>,
     security_handler: Option<Box<dyn PDFSecurityHandler + Send + Sync>>,
     page_index: OnceLock<PageIndex>,
@@ -196,6 +196,7 @@ impl PDFDocument {
             info: Vec::new(),
             cache: Mutex::new(ObjectCache::new(cache_capacity)),
             page_cache: Mutex::new(PageCache::new(DEFAULT_PAGE_CACHE_CAPACITY)),
+            font_encoding_cache: Mutex::new(HashMap::new()),
             objstm_index: RwLock::new(None),
             security_handler: None,
             page_index: OnceLock::new(),
@@ -279,6 +280,69 @@ impl PDFDocument {
         let page = Arc::new(super::page::PDFPage::get_page_by_index(self, index)?);
         self.cache_page(index, Arc::clone(&page));
         Ok(page)
+    }
+
+    fn parse_encoding_differences(diff_obj: Option<&PDFObject>) -> Option<Vec<DiffEntry>> {
+        let arr = match diff_obj {
+            Some(PDFObject::Array(a)) => a,
+            _ => return None,
+        };
+
+        let mut result = Vec::with_capacity(arr.len());
+        for item in arr {
+            match item {
+                PDFObject::Int(n) => {
+                    if *n >= 0 && *n <= 255 {
+                        result.push(DiffEntry::Code(*n as u8));
+                    }
+                }
+                PDFObject::Name(name) => {
+                    result.push(DiffEntry::Name(name.clone()));
+                }
+                _ => {}
+            }
+        }
+
+        Some(result)
+    }
+
+    fn build_font_encoding(encoding: &PDFObject) -> Option<HashMap<u8, String>> {
+        match encoding {
+            PDFObject::Name(name) => Some(EncodingDB::get_encoding(name, None)),
+            PDFObject::Dict(dict) => {
+                let base_encoding = dict
+                    .get("BaseEncoding")
+                    .and_then(|obj| obj.as_name().ok())
+                    .unwrap_or("StandardEncoding");
+                let differences = Self::parse_encoding_differences(dict.get("Differences"));
+                Some(EncodingDB::get_encoding(
+                    base_encoding,
+                    differences.as_deref(),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn get_or_build_font_encoding(
+        &self,
+        objid: u32,
+        encoding: &PDFObject,
+    ) -> Option<Arc<HashMap<u8, String>>> {
+        if let Ok(cache) = self.font_encoding_cache.lock()
+            && let Some(entry) = cache.get(&objid)
+        {
+            return Some(Arc::clone(entry));
+        }
+
+        let map = Self::build_font_encoding(encoding)?;
+        let shared = Arc::new(map);
+
+        if let Ok(mut cache) = self.font_encoding_cache.lock() {
+            cache.insert(objid, Arc::clone(&shared));
+        }
+
+        Some(shared)
     }
 
     /// Returns the cached page index for O(1) page lookup.
@@ -365,32 +429,16 @@ impl PDFDocument {
             0
         };
         let hay = &data[search_start..];
-
-        type V = Simd<u8, { KEYWORD_SIMD_LANES }>;
-        let s_mask = V::splat(b's');
-        let mut found: Option<usize> = None;
-        let mut i = 0usize;
-
-        while i + KEYWORD_SIMD_LANES <= hay.len() {
-            let chunk = V::from_slice(&hay[i..i + KEYWORD_SIMD_LANES]);
-            let mut mask = chunk.simd_eq(s_mask).to_bitmask();
-            while mask != 0 {
-                let lane = mask.trailing_zeros() as usize;
-                let pos = i + lane;
-                if pos + needle.len() <= hay.len() && &hay[pos..pos + needle.len()] == needle {
-                    found = Some(search_start + pos);
-                }
-                mask &= mask - 1;
-            }
-            i += KEYWORD_SIMD_LANES;
+        let mut found = None;
+        let mut offset = 0usize;
+        while offset + needle.len() <= hay.len() {
+            let Some(pos) = find_subslice_simd(&hay[offset..], needle) else {
+                break;
+            };
+            let abs = offset + pos;
+            found = Some(search_start + abs);
+            offset = abs + 1;
         }
-
-        for pos in i..hay.len() {
-            if pos + needle.len() <= hay.len() && &hay[pos..pos + needle.len()] == needle {
-                found = Some(search_start + pos);
-            }
-        }
-
         found
     }
 
@@ -1660,46 +1708,13 @@ impl PDFDocument {
         if data.len() < needle.len() {
             return None;
         }
-
-        type V = Simd<u8, { KEYWORD_SIMD_LANES }>;
-        let e_mask = V::splat(b'e');
-        let mut i = 0usize;
-
-        while i + KEYWORD_SIMD_LANES <= data.len() {
-            let chunk = V::from_slice(&data[i..i + KEYWORD_SIMD_LANES]);
-            let mut mask = chunk.simd_eq(e_mask).to_bitmask();
-            while mask != 0 {
-                let lane = mask.trailing_zeros() as usize;
-                let pos = i + lane;
-                if pos + needle.len() <= data.len() && &data[pos..pos + needle.len()] == needle {
-                    let mut end = pos;
-                    while end > 0
-                        && (data[end - 1] == b' '
-                            || data[end - 1] == b'\n'
-                            || data[end - 1] == b'\r')
-                    {
-                        end -= 1;
-                    }
-                    return Some(end);
-                }
-                mask &= mask - 1;
-            }
-            i += KEYWORD_SIMD_LANES;
+        let pos = find_subslice_simd(data, needle)?;
+        let mut end = pos;
+        while end > 0 && (data[end - 1] == b' ' || data[end - 1] == b'\n' || data[end - 1] == b'\r')
+        {
+            end -= 1;
         }
-
-        for pos in i..data.len() {
-            if pos + needle.len() <= data.len() && &data[pos..pos + needle.len()] == needle {
-                let mut end = pos;
-                while end > 0
-                    && (data[end - 1] == b' ' || data[end - 1] == b'\n' || data[end - 1] == b'\r')
-                {
-                    end -= 1;
-                }
-                return Some(end);
-            }
-        }
-
-        None
+        Some(end)
     }
 
     fn find_endstream(data: &[u8]) -> Option<usize> {
@@ -2313,6 +2328,20 @@ mod tests {
         let _obj2 = doc.getobj_shared(2).unwrap();
         let obj1_again = doc.getobj_shared(1).unwrap();
         assert!(!Arc::ptr_eq(&obj1, &obj1_again));
+    }
+
+    #[test]
+    fn font_encoding_cache_reuses_entry() {
+        use std::sync::Arc;
+
+        let pdf = build_minimal_pdf_with_pages(1);
+        let doc = PDFDocument::new(pdf, "").unwrap();
+        let encoding = PDFObject::Name("WinAnsiEncoding".to_string());
+
+        let a = doc.get_or_build_font_encoding(42, &encoding).unwrap();
+        let b = doc.get_or_build_font_encoding(42, &encoding).unwrap();
+
+        assert!(Arc::ptr_eq(&a, &b));
     }
 
     #[test]

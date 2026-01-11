@@ -9,6 +9,7 @@ use super::cmap::{
 use super::truetype::create_unicode_map_from_ttf;
 use crate::pdftypes::{PDFObjRef, PDFObject};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Type alias for font width dictionaries.
 /// Maps CID (u32) to optional width (f64).
@@ -277,7 +278,7 @@ pub struct PDFCIDFont {
     /// Unicode map for CID to Unicode conversion (from ToUnicode stream)
     pub unicode_map: Option<DynUnicodeMap>,
     /// Simple encoding map for simple fonts (byte code → Unicode string)
-    pub cid2unicode: Option<HashMap<u8, String>>,
+    pub cid2unicode: Option<Arc<HashMap<u8, String>>>,
     /// Whether this is a vertical writing font
     pub vertical: bool,
     /// Default width for characters
@@ -304,7 +305,7 @@ impl PDFCIDFont {
     /// * `spec` - Font specification dictionary
     /// * `tounicode_data` - Optional decoded ToUnicode stream data
     pub fn new(spec: &HashMap<String, PDFObject>, tounicode_data: Option<&[u8]>) -> Self {
-        Self::new_with_ttf(spec, tounicode_data, None, false, None)
+        Self::new_with_ttf_and_cid2unicode(spec, tounicode_data, None, false, None, None)
     }
 
     /// Create a new PDFCIDFont from spec dictionary with optional TrueType font data.
@@ -321,6 +322,24 @@ impl PDFCIDFont {
         ttf_data: Option<&[u8]>,
         is_type0: bool,
         fallback_fontname: Option<String>,
+    ) -> Self {
+        Self::new_with_ttf_and_cid2unicode(
+            spec,
+            tounicode_data,
+            ttf_data,
+            is_type0,
+            fallback_fontname,
+            None,
+        )
+    }
+
+    pub fn new_with_ttf_and_cid2unicode(
+        spec: &HashMap<String, PDFObject>,
+        tounicode_data: Option<&[u8]>,
+        ttf_data: Option<&[u8]>,
+        is_type0: bool,
+        fallback_fontname: Option<String>,
+        cid2unicode_override: Option<Arc<HashMap<u8, String>>>,
     ) -> Self {
         let cmap = Self::get_cmap_from_spec(spec);
         let vertical = match &cmap {
@@ -393,7 +412,7 @@ impl PDFCIDFont {
         let cid2unicode = if is_type0 {
             None
         } else {
-            Self::build_cid2unicode(spec)
+            cid2unicode_override.or_else(|| Self::build_cid2unicode(spec))
         };
 
         // Parse widths from spec
@@ -485,7 +504,7 @@ impl PDFCIDFont {
     }
 
     /// Build cid2unicode map from font's Encoding entry.
-    fn build_cid2unicode(spec: &HashMap<String, PDFObject>) -> Option<HashMap<u8, String>> {
+    fn build_cid2unicode(spec: &HashMap<String, PDFObject>) -> Option<Arc<HashMap<u8, String>>> {
         use super::encoding::EncodingDB;
 
         let encoding_obj = spec.get("Encoding");
@@ -493,7 +512,7 @@ impl PDFCIDFont {
         match encoding_obj {
             Some(PDFObject::Name(name)) => {
                 // Simple encoding name
-                Some(EncodingDB::get_encoding(name, None))
+                Some(Arc::new(EncodingDB::get_encoding(name, None)))
             }
             Some(PDFObject::Dict(dict)) => {
                 // Encoding dictionary with BaseEncoding and/or Differences
@@ -504,13 +523,13 @@ impl PDFCIDFont {
 
                 let differences = Self::parse_differences(dict.get("Differences"));
 
-                Some(EncodingDB::get_encoding(
+                Some(Arc::new(EncodingDB::get_encoding(
                     base_encoding,
                     differences.as_deref(),
-                ))
+                )))
             }
             // If Encoding is missing, default to StandardEncoding for simple fonts
-            None => Some(EncodingDB::get_encoding("StandardEncoding", None)),
+            None => Some(Arc::new(EncodingDB::get_encoding("StandardEncoding", None))),
             _ => None,
         }
     }
@@ -774,5 +793,27 @@ impl PDFFont for PDFCIDFont {
 
     fn get_descent(&self) -> f64 {
         self.descent
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PDFCIDFont, PDFFont};
+    use crate::model::objects::PDFObject;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn cid2unicode_override_is_used() {
+        let mut spec = HashMap::new();
+        spec.insert("Subtype".to_string(), PDFObject::Name("Type1".to_string()));
+        let mut map = HashMap::new();
+        map.insert(65u8, "A".to_string());
+        let override_map = Some(Arc::new(map));
+
+        let font =
+            PDFCIDFont::new_with_ttf_and_cid2unicode(&spec, None, None, false, None, override_map);
+
+        assert_eq!(font.to_unichr(65), Some("A".to_string()));
     }
 }

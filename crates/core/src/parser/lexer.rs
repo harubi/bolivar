@@ -673,9 +673,6 @@ pub enum PSToken {
 /// Buffer size for reading (matches pdfminer.six)
 #[allow(dead_code)]
 const BUFSIZ: usize = 4096;
-const PS_SIMD_LANES: usize = U8_LANES;
-const PS_SIMD_FULL_MASK: u64 = (1u64 << PS_SIMD_LANES) - 1;
-
 /// PostScript base parser - performs tokenization
 enum PSData<'a> {
     Borrowed(&'a [u8]),
@@ -774,216 +771,6 @@ impl<'a> PSBaseParser<'a> {
         Self::is_whitespace(b) || Self::is_delimiter(b)
     }
 
-    fn find_keyword_end_simd(data: &[u8]) -> usize {
-        if data.is_empty() {
-            return 0;
-        }
-        let mut i = 0;
-        let prefix_len = data.len().min(8);
-        while i < prefix_len {
-            if Self::is_keyword_end(data[i]) {
-                return i;
-            }
-            i += 1;
-        }
-
-        if data.len() - i < PS_SIMD_LANES {
-            while i < data.len() {
-                if Self::is_keyword_end(data[i]) {
-                    return i;
-                }
-                i += 1;
-            }
-            return data.len();
-        }
-
-        type V = Simd<u8, { PS_SIMD_LANES }>;
-        let (prefix, middle, suffix) = data[i..].as_simd::<{ PS_SIMD_LANES }>();
-
-        let mut offset = i;
-        for (idx, &b) in prefix.iter().enumerate() {
-            if Self::is_keyword_end(b) {
-                return offset + idx;
-            }
-        }
-        offset += prefix.len();
-
-        let ws_space = V::splat(b' ');
-        let ws_tab = V::splat(b'\t');
-        let ws_lf = V::splat(b'\n');
-        let ws_cr = V::splat(b'\r');
-        let ws_ff = V::splat(0x0c);
-        let ws_nul = V::splat(0x00);
-
-        let d_paren_l = V::splat(b'(');
-        let d_paren_r = V::splat(b')');
-        let d_lt = V::splat(b'<');
-        let d_gt = V::splat(b'>');
-        let d_brack_l = V::splat(b'[');
-        let d_brack_r = V::splat(b']');
-        let d_brace_l = V::splat(b'{');
-        let d_brace_r = V::splat(b'}');
-        let d_slash = V::splat(b'/');
-        let d_pct = V::splat(b'%');
-
-        for chunk in middle.iter() {
-            let is_ws = chunk.simd_eq(ws_space)
-                | chunk.simd_eq(ws_tab)
-                | chunk.simd_eq(ws_lf)
-                | chunk.simd_eq(ws_cr)
-                | chunk.simd_eq(ws_ff)
-                | chunk.simd_eq(ws_nul);
-            let is_delim = chunk.simd_eq(d_paren_l)
-                | chunk.simd_eq(d_paren_r)
-                | chunk.simd_eq(d_lt)
-                | chunk.simd_eq(d_gt)
-                | chunk.simd_eq(d_brack_l)
-                | chunk.simd_eq(d_brack_r)
-                | chunk.simd_eq(d_brace_l)
-                | chunk.simd_eq(d_brace_r)
-                | chunk.simd_eq(d_slash)
-                | chunk.simd_eq(d_pct);
-            let mask = (is_ws | is_delim).to_bitmask();
-            if mask != 0 {
-                return offset + mask.trailing_zeros() as usize;
-            }
-            offset += PS_SIMD_LANES;
-        }
-
-        for (idx, &b) in suffix.iter().enumerate() {
-            if Self::is_keyword_end(b) {
-                return offset + idx;
-            }
-        }
-
-        data.len()
-    }
-
-    fn find_literal_special_simd(data: &[u8]) -> usize {
-        if data.is_empty() {
-            return 0;
-        }
-
-        let mut i = 0;
-        let prefix_len = data.len().min(8);
-        while i < prefix_len {
-            let b = data[i];
-            if b == b'(' || b == b')' || b == b'\\' {
-                return i;
-            }
-            i += 1;
-        }
-
-        if data.len() - i < PS_SIMD_LANES {
-            while i < data.len() {
-                let b = data[i];
-                if b == b'(' || b == b')' || b == b'\\' {
-                    return i;
-                }
-                i += 1;
-            }
-            return data.len();
-        }
-
-        type V = Simd<u8, { PS_SIMD_LANES }>;
-        let (prefix, middle, suffix) = data[i..].as_simd::<{ PS_SIMD_LANES }>();
-
-        let mut offset = i;
-        for (idx, &b) in prefix.iter().enumerate() {
-            if b == b'(' || b == b')' || b == b'\\' {
-                return offset + idx;
-            }
-        }
-        offset += prefix.len();
-
-        let open = V::splat(b'(');
-        let close = V::splat(b')');
-        let slash = V::splat(b'\\');
-
-        for chunk in middle.iter() {
-            let mask =
-                (chunk.simd_eq(open) | chunk.simd_eq(close) | chunk.simd_eq(slash)).to_bitmask();
-            if mask != 0 {
-                return offset + mask.trailing_zeros() as usize;
-            }
-            offset += PS_SIMD_LANES;
-        }
-
-        for (idx, &b) in suffix.iter().enumerate() {
-            if b == b'(' || b == b')' || b == b'\\' {
-                return offset + idx;
-            }
-        }
-
-        data.len()
-    }
-
-    fn find_first_non_ws_simd(data: &[u8]) -> usize {
-        if data.is_empty() {
-            return 0;
-        }
-
-        let mut i = 0;
-        let prefix_len = data.len().min(8);
-        while i < prefix_len {
-            if !Self::is_whitespace(data[i]) {
-                return i;
-            }
-            i += 1;
-        }
-
-        if data.len() - i < PS_SIMD_LANES {
-            while i < data.len() {
-                if !Self::is_whitespace(data[i]) {
-                    return i;
-                }
-                i += 1;
-            }
-            return data.len();
-        }
-
-        type V = Simd<u8, { PS_SIMD_LANES }>;
-        let (prefix, middle, suffix) = data[i..].as_simd::<{ PS_SIMD_LANES }>();
-
-        let mut offset = i;
-        for (idx, &b) in prefix.iter().enumerate() {
-            if !Self::is_whitespace(b) {
-                return offset + idx;
-            }
-        }
-        offset += prefix.len();
-
-        let ws_space = V::splat(b' ');
-        let ws_tab = V::splat(b'\t');
-        let ws_lf = V::splat(b'\n');
-        let ws_cr = V::splat(b'\r');
-        let ws_ff = V::splat(0x0c);
-        let ws_nul = V::splat(0x00);
-
-        for chunk in middle.iter() {
-            let is_ws = chunk.simd_eq(ws_space)
-                | chunk.simd_eq(ws_tab)
-                | chunk.simd_eq(ws_lf)
-                | chunk.simd_eq(ws_cr)
-                | chunk.simd_eq(ws_ff)
-                | chunk.simd_eq(ws_nul);
-            let mask = is_ws.to_bitmask();
-            if mask != PS_SIMD_FULL_MASK {
-                let non = (!mask) & PS_SIMD_FULL_MASK;
-                return offset + non.trailing_zeros() as usize;
-            }
-            offset += PS_SIMD_LANES;
-        }
-
-        for (idx, &b) in suffix.iter().enumerate() {
-            if !Self::is_whitespace(b) {
-                return offset + idx;
-            }
-        }
-
-        data.len()
-    }
-
     /// Skip whitespace and comments
     fn skip_whitespace(&mut self) {
         let data = self.data.as_slice();
@@ -1001,8 +788,7 @@ impl<'a> PSBaseParser<'a> {
             if !Self::is_whitespace(b) {
                 return;
             }
-            let offset = Self::find_first_non_ws_simd(&data[self.pos..]);
-            self.pos += offset.max(1);
+            self.pos += 1;
         }
     }
 
@@ -1165,16 +951,6 @@ impl<'a> PSBaseParser<'a> {
         let mut depth = 1;
 
         while pos < len && depth > 0 {
-            let offset = Self::find_literal_special_simd(&data[pos..]);
-            if offset > 0 {
-                let next = pos + offset;
-                result.extend_from_slice(&data[pos..next]);
-                pos = next;
-                if pos >= len {
-                    break;
-                }
-            }
-
             let c = data[pos];
             pos += 1;
             match c {
@@ -1250,8 +1026,9 @@ impl<'a> PSBaseParser<'a> {
     fn parse_keyword(&mut self) -> Result<PSToken> {
         let start = self.pos;
         let data = self.data.as_slice();
-        let offset = Self::find_keyword_end_simd(&data[self.pos..]);
-        self.pos += offset;
+        while self.pos < data.len() && !Self::is_keyword_end(data[self.pos]) {
+            self.pos += 1;
+        }
         let bytes = &data[start..self.pos];
 
         // Check for boolean literals
@@ -1341,9 +1118,6 @@ impl<'a> PSBaseParser<'a> {
 }
 
 impl<'a> ContentLexer<'a> {
-    const SIMD_LANES: usize = U8_LANES;
-    const SIMD_FULL_MASK: u64 = (1u64 << Self::SIMD_LANES) - 1;
-
     pub const fn new(data: &'a [u8]) -> Self {
         Self {
             data: PSData::Borrowed(data),
@@ -1533,16 +1307,6 @@ impl<'a> ContentLexer<'a> {
         let mut result = Vec::with_capacity(32);
 
         while pos < len && depth > 0 {
-            let offset = PSBaseParser::find_literal_special_simd(&data[pos..]);
-            if offset > 0 {
-                let next = pos + offset;
-                result.extend_from_slice(&data[pos..next]);
-                pos = next;
-                if pos >= len {
-                    break;
-                }
-            }
-
             let c = data[pos];
             pos += 1;
             match c {
@@ -1708,64 +1472,11 @@ impl<'a> ContentLexer<'a> {
         if data.is_empty() {
             return 0;
         }
-        let mut i = 0;
-        let prefix_len = data.len().min(8);
-        while i < prefix_len {
-            if !Self::is_whitespace(data[i]) {
-                return i;
-            }
-            i += 1;
-        }
-
-        if data.len() - i < Self::SIMD_LANES {
-            while i < data.len() {
-                if !Self::is_whitespace(data[i]) {
-                    return i;
-                }
-                i += 1;
-            }
-            return data.len();
-        }
-
-        type V = Simd<u8, { ContentLexer::SIMD_LANES }>;
-        let (prefix, middle, suffix) = data[i..].as_simd::<{ ContentLexer::SIMD_LANES }>();
-
-        let mut offset = i;
-        for (idx, &b) in prefix.iter().enumerate() {
+        for (idx, &b) in data.iter().enumerate() {
             if !Self::is_whitespace(b) {
-                return offset + idx;
+                return idx;
             }
         }
-        offset += prefix.len();
-
-        let ws_space = V::splat(b' ');
-        let ws_tab = V::splat(b'\t');
-        let ws_lf = V::splat(b'\n');
-        let ws_cr = V::splat(b'\r');
-        let ws_ff = V::splat(0x0c);
-        let ws_nul = V::splat(0x00);
-
-        for chunk in middle.iter() {
-            let is_ws = chunk.simd_eq(ws_space)
-                | chunk.simd_eq(ws_tab)
-                | chunk.simd_eq(ws_lf)
-                | chunk.simd_eq(ws_cr)
-                | chunk.simd_eq(ws_ff)
-                | chunk.simd_eq(ws_nul);
-            let mask = is_ws.to_bitmask();
-            if mask != Self::SIMD_FULL_MASK {
-                let non = (!mask) & Self::SIMD_FULL_MASK;
-                return offset + non.trailing_zeros() as usize;
-            }
-            offset += Self::SIMD_LANES;
-        }
-
-        for (idx, &b) in suffix.iter().enumerate() {
-            if !Self::is_whitespace(b) {
-                return offset + idx;
-            }
-        }
-
         data.len()
     }
 
@@ -1773,85 +1484,11 @@ impl<'a> ContentLexer<'a> {
         if data.is_empty() {
             return 0;
         }
-        let mut i = 0;
-        let prefix_len = data.len().min(8);
-        while i < prefix_len {
-            if Self::is_keyword_end(data[i]) {
-                return i;
-            }
-            i += 1;
-        }
-
-        if data.len() - i < Self::SIMD_LANES {
-            while i < data.len() {
-                if Self::is_keyword_end(data[i]) {
-                    return i;
-                }
-                i += 1;
-            }
-            return data.len();
-        }
-
-        type V = Simd<u8, { ContentLexer::SIMD_LANES }>;
-        let (prefix, middle, suffix) = data[i..].as_simd::<{ ContentLexer::SIMD_LANES }>();
-
-        let mut offset = i;
-        for (idx, &b) in prefix.iter().enumerate() {
+        for (idx, &b) in data.iter().enumerate() {
             if Self::is_keyword_end(b) {
-                return offset + idx;
+                return idx;
             }
         }
-        offset += prefix.len();
-
-        let ws_space = V::splat(b' ');
-        let ws_tab = V::splat(b'\t');
-        let ws_lf = V::splat(b'\n');
-        let ws_cr = V::splat(b'\r');
-        let ws_ff = V::splat(0x0c);
-        let ws_nul = V::splat(0x00);
-
-        let d_paren_l = V::splat(b'(');
-        let d_paren_r = V::splat(b')');
-        let d_lt = V::splat(b'<');
-        let d_gt = V::splat(b'>');
-        let d_brack_l = V::splat(b'[');
-        let d_brack_r = V::splat(b']');
-        let d_brace_l = V::splat(b'{');
-        let d_brace_r = V::splat(b'}');
-        let d_slash = V::splat(b'/');
-        let d_pct = V::splat(b'%');
-
-        for chunk in middle.iter() {
-            let is_ws = chunk.simd_eq(ws_space)
-                | chunk.simd_eq(ws_tab)
-                | chunk.simd_eq(ws_lf)
-                | chunk.simd_eq(ws_cr)
-                | chunk.simd_eq(ws_ff)
-                | chunk.simd_eq(ws_nul);
-            let is_delim = chunk.simd_eq(d_paren_l)
-                | chunk.simd_eq(d_paren_r)
-                | chunk.simd_eq(d_lt)
-                | chunk.simd_eq(d_gt)
-                | chunk.simd_eq(d_brack_l)
-                | chunk.simd_eq(d_brack_r)
-                | chunk.simd_eq(d_brace_l)
-                | chunk.simd_eq(d_brace_r)
-                | chunk.simd_eq(d_slash)
-                | chunk.simd_eq(d_pct);
-            let is_end = is_ws | is_delim;
-            let mask = is_end.to_bitmask();
-            if mask != 0 {
-                return offset + mask.trailing_zeros() as usize;
-            }
-            offset += Self::SIMD_LANES;
-        }
-
-        for (idx, &b) in suffix.iter().enumerate() {
-            if Self::is_keyword_end(b) {
-                return offset + idx;
-            }
-        }
-
         data.len()
     }
 }
@@ -2182,19 +1819,6 @@ mod tests {
     }
 
     #[test]
-    fn find_keyword_end_simd_matches_scalar() {
-        let data = b"hello/world";
-        let end = PSBaseParser::find_keyword_end_simd(data);
-        assert_eq!(end, 5);
-        let data = b"hello world";
-        let end = PSBaseParser::find_keyword_end_simd(data);
-        assert_eq!(end, 5);
-        let data = b"hello";
-        let end = PSBaseParser::find_keyword_end_simd(data);
-        assert_eq!(end, 5);
-    }
-
-    #[test]
     fn parse_number_fast_matches_parse() {
         let mut p = PSBaseParser::new(b"12 -3 4.5 -0.25");
         p.skip_whitespace();
@@ -2208,21 +1832,13 @@ mod tests {
     }
 
     #[test]
-    fn find_literal_special_simd_offsets() {
-        let data = b"abcdef";
-        assert_eq!(PSBaseParser::find_literal_special_simd(data), data.len());
-
-        let data = b"abc(def";
-        assert_eq!(PSBaseParser::find_literal_special_simd(data), 3);
-
-        let data = b"abc\\def";
-        assert_eq!(PSBaseParser::find_literal_special_simd(data), 3);
-
-        let data = b"abc)def";
-        assert_eq!(PSBaseParser::find_literal_special_simd(data), 3);
-
-        let data = b")tail";
-        assert_eq!(PSBaseParser::find_literal_special_simd(data), 0);
+    fn parse_string_nested_and_escapes() {
+        let mut p = PSBaseParser::new(b"(a(b\\)c\\n)d)");
+        let (_, tok) = p.next_token().unwrap().unwrap();
+        match tok {
+            PSToken::String(s) => assert_eq!(s, b"a(b)c\n)d"),
+            _ => panic!("expected string"),
+        }
     }
 
     #[test]
@@ -2231,12 +1847,5 @@ mod tests {
         let (decoded, pos) = decode_hex_string(data, 0).unwrap();
         assert_eq!(decoded, b"Hello world");
         assert_eq!(pos, data.len());
-    }
-
-    #[test]
-    fn find_first_non_ws_simd_skips_whitespace() {
-        let data = b" \t\r\n\x00\x0cA";
-        let offset = PSBaseParser::find_first_non_ws_simd(data);
-        assert_eq!(offset, 6);
     }
 }

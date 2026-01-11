@@ -15,6 +15,7 @@ use crate::pdftypes::{PDFObject, PDFStream};
 use crate::psparser::{Keyword, PSLiteral, PSToken};
 use bytes::Bytes;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 
 /// Token types produced by PDFContentParser.
 #[derive(Debug, Clone, PartialEq)]
@@ -1192,11 +1193,15 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
                 // Resolve Encoding reference if present (needed for Type1 fonts with custom encodings)
                 let mut final_spec = final_spec;
+                let mut cached_encoding: Option<Arc<HashMap<u8, String>>> = None;
                 if let Some(PDFObject::Ref(r)) = final_spec.get("Encoding").cloned()
                     && let Some(doc) = doc
-                    && let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r))
                 {
-                    final_spec.insert("Encoding".to_string(), resolved.as_ref().clone());
+                    let objid = r.objid;
+                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r)) {
+                        cached_encoding = doc.get_or_build_font_encoding(objid, resolved.as_ref());
+                        final_spec.insert("Encoding".to_string(), resolved.as_ref().clone());
+                    }
                 }
 
                 // Resolve Widths reference if present (needed for simple fonts)
@@ -1227,12 +1232,13 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 let ttf_data = Self::extract_fontfile2(&final_spec, doc);
 
                 // Create font with ToUnicode data and TrueType font data
-                let font = crate::pdffont::PDFCIDFont::new_with_ttf(
+                let font = crate::pdffont::PDFCIDFont::new_with_ttf_and_cid2unicode(
                     &final_spec,
                     tounicode_data.as_deref(),
                     ttf_data.as_deref(),
                     subtype == "Type0",
                     Some(fontid.clone()),
+                    cached_encoding,
                 );
                 self.fontmap
                     .insert(fontid.clone(), std::sync::Arc::new(font));
