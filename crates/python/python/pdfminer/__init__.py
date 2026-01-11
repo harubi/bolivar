@@ -8,20 +8,21 @@
 __version__ = "0.1.0"
 
 # Re-export submodules for convenient access
-from . import (
-    converter,
-    data_structures,
-    high_level,
-    layout,
-    pdfdocument,
-    pdfinterp,
-    pdfpage,
-    pdfparser,
-    pdftypes,
-    psparser,
-    utils,
-)
-from ._bolivar_patch import patch_pdfplumber
+import pdfminer.converter as converter
+import pdfminer.data_structures as data_structures
+import pdfminer.high_level as high_level
+import pdfminer.layout as layout
+import pdfminer.pdfdocument as pdfdocument
+import pdfminer.pdfinterp as pdfinterp
+import pdfminer.pdfpage as pdfpage
+import pdfminer.pdfparser as pdfparser
+import pdfminer.pdftypes as pdftypes
+import pdfminer.psparser as psparser
+import pdfminer.utils as utils
+import pdfminer._bolivar_patch as _bolivar_patch
+import bolivar._shim_registry as _shim_registry
+
+patch_pdfplumber = _bolivar_patch.patch_pdfplumber
 
 __all__ = [
     "converter",
@@ -37,5 +38,5 @@ __all__ = [
     "utils",
 ]
 
-# Default-on pdfplumber monkeypatch (env opt-out)
-patch_pdfplumber()
+# Default-on pdfplumber monkeypatch
+_shim_registry.apply_pdfplumber_patch()

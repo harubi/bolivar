@@ -20,13 +20,13 @@ def _ensure_sys_path(base: str) -> None:
     sys.path.insert(0, base)
 
 
-def _load_autoload_module(base: str):
-    path = os.path.join(base, "bolivar", "_autoload.py")
-    spec = importlib.util.spec_from_file_location("bolivar._autoload", path)
+def _load_registry_module(base: str):
+    path = os.path.join(base, "bolivar", "_shim_registry.py")
+    spec = importlib.util.spec_from_file_location("bolivar._shim_registry", path)
     if spec is None or spec.loader is None:
-        raise ImportError("bolivar._autoload not found")
+        raise ImportError("bolivar._shim_registry not found")
     module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("bolivar._autoload", module)
+    sys.modules.setdefault("bolivar._shim_registry", module)
     spec.loader.exec_module(module)
     return module
 
@@ -35,8 +35,8 @@ def install() -> bool:
     try:
         base = os.path.abspath(os.path.dirname(__file__))
         _ensure_sys_path(base)
-        module = _load_autoload_module(base)
-        module.install()
+        module = _load_registry_module(base)
+        module.install(base=base)
         return True
     except Exception as exc:
         _warn(exc)
