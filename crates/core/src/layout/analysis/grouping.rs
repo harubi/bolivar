@@ -16,6 +16,7 @@ use super::super::types::{
     TextLineElement, TextLineType,
 };
 use super::soa::RectSoA;
+use super::soa_layout::LayoutSoA;
 
 /// Groups character objects into text lines.
 ///
@@ -28,12 +29,17 @@ use super::soa::RectSoA;
 ///   - vertically aligned (valign): on same column, close enough vertically
 /// - Group characters into horizontal or vertical text lines accordingly
 pub fn group_objects(laparams: &LAParams, objs: &[LTChar]) -> Vec<TextLineType> {
-    let mut result = Vec::new();
     if objs.is_empty() {
-        return result;
+        return Vec::new();
     }
+    let soa = LayoutSoA::from_chars(objs);
+    group_objects_soa(laparams, objs, &soa)
+}
 
-    let (halign_flags, valign_flags) = group_objects_pair_flags_simd(laparams, objs);
+fn group_objects_soa(laparams: &LAParams, objs: &[LTChar], soa: &LayoutSoA) -> Vec<TextLineType> {
+    let mut result = Vec::new();
+
+    let (halign_flags, valign_flags) = group_objects_pair_flags_soa(laparams, soa);
     let mut current_line: Option<TextLineType> = None;
     let mut obj0_idx = 0usize;
 
@@ -104,30 +110,18 @@ pub fn group_objects(laparams: &LAParams, objs: &[LTChar]) -> Vec<TextLineType> 
     result
 }
 
-fn group_objects_pair_flags_simd(laparams: &LAParams, objs: &[LTChar]) -> (Vec<bool>, Vec<bool>) {
-    let len = objs.len();
+fn group_objects_pair_flags_soa(laparams: &LAParams, soa: &LayoutSoA) -> (Vec<bool>, Vec<bool>) {
+    let len = soa.len();
     if len < 2 {
         return (Vec::new(), Vec::new());
     }
 
-    let mut x0 = Vec::with_capacity(len);
-    let mut y0 = Vec::with_capacity(len);
-    let mut x1 = Vec::with_capacity(len);
-    let mut y1 = Vec::with_capacity(len);
     let mut width = Vec::with_capacity(len);
     let mut height = Vec::with_capacity(len);
 
-    for ch in objs {
-        let bx0 = ch.x0();
-        let by0 = ch.y0();
-        let bx1 = ch.x1();
-        let by1 = ch.y1();
-        x0.push(bx0);
-        y0.push(by0);
-        x1.push(bx1);
-        y1.push(by1);
-        width.push(bx1 - bx0);
-        height.push(by1 - by0);
+    for idx in 0..len {
+        width.push(soa.x1[idx] - soa.x0[idx]);
+        height.push(soa.bottom[idx] - soa.top[idx]);
     }
 
     let mut halign_flags = vec![false; len - 1];
@@ -141,14 +135,14 @@ fn group_objects_pair_flags_simd(laparams: &LAParams, objs: &[LTChar]) -> (Vec<b
     let char_margin = Simd::<f64, LANES>::splat(laparams.char_margin);
 
     while i + LANES < len {
-        let x0a = Simd::<f64, LANES>::from_slice(&x0[i..i + LANES]);
-        let y0a = Simd::<f64, LANES>::from_slice(&y0[i..i + LANES]);
-        let x1a = Simd::<f64, LANES>::from_slice(&x1[i..i + LANES]);
-        let y1a = Simd::<f64, LANES>::from_slice(&y1[i..i + LANES]);
-        let x0b = Simd::<f64, LANES>::from_slice(&x0[i + 1..i + 1 + LANES]);
-        let y0b = Simd::<f64, LANES>::from_slice(&y0[i + 1..i + 1 + LANES]);
-        let x1b = Simd::<f64, LANES>::from_slice(&x1[i + 1..i + 1 + LANES]);
-        let y1b = Simd::<f64, LANES>::from_slice(&y1[i + 1..i + 1 + LANES]);
+        let x0a = Simd::<f64, LANES>::from_slice(&soa.x0[i..i + LANES]);
+        let y0a = Simd::<f64, LANES>::from_slice(&soa.top[i..i + LANES]);
+        let x1a = Simd::<f64, LANES>::from_slice(&soa.x1[i..i + LANES]);
+        let y1a = Simd::<f64, LANES>::from_slice(&soa.bottom[i..i + LANES]);
+        let x0b = Simd::<f64, LANES>::from_slice(&soa.x0[i + 1..i + 1 + LANES]);
+        let y0b = Simd::<f64, LANES>::from_slice(&soa.top[i + 1..i + 1 + LANES]);
+        let x1b = Simd::<f64, LANES>::from_slice(&soa.x1[i + 1..i + 1 + LANES]);
+        let y1b = Simd::<f64, LANES>::from_slice(&soa.bottom[i + 1..i + 1 + LANES]);
         let w0 = Simd::<f64, LANES>::from_slice(&width[i..i + LANES]);
         let w1 = Simd::<f64, LANES>::from_slice(&width[i + 1..i + 1 + LANES]);
         let h0 = Simd::<f64, LANES>::from_slice(&height[i..i + LANES]);
@@ -201,15 +195,42 @@ fn group_objects_pair_flags_simd(laparams: &LAParams, objs: &[LTChar]) -> (Vec<b
     }
 
     for idx in i..(len - 1) {
-        let obj0 = &objs[idx];
-        let obj1 = &objs[idx + 1];
-        let halign = obj0.is_voverlap(obj1)
-            && obj0.height().min(obj1.height()) * laparams.line_overlap < obj0.voverlap(obj1)
-            && obj0.hdistance(obj1) < obj0.width().max(obj1.width()) * laparams.char_margin;
+        let ax0 = soa.x0[idx];
+        let ay0 = soa.top[idx];
+        let ax1 = soa.x1[idx];
+        let ay1 = soa.bottom[idx];
+        let bx0 = soa.x0[idx + 1];
+        let by0 = soa.top[idx + 1];
+        let bx1 = soa.x1[idx + 1];
+        let by1 = soa.bottom[idx + 1];
+
+        let is_voverlap = by0 <= ay1 && ay0 <= by1;
+        let is_hoverlap = bx0 <= ax1 && ax0 <= bx1;
+
+        let vdiff1 = (ay0 - by1).abs();
+        let vdiff2 = (ay1 - by0).abs();
+        let vmin = vdiff1.min(vdiff2);
+        let voverlap = if is_voverlap { vmin } else { 0.0 };
+        let vdistance = if is_voverlap { 0.0 } else { vmin };
+
+        let hdiff1 = (ax0 - bx1).abs();
+        let hdiff2 = (ax1 - bx0).abs();
+        let hmin = hdiff1.min(hdiff2);
+        let hoverlap = if is_hoverlap { hmin } else { 0.0 };
+        let hdistance = if is_hoverlap { 0.0 } else { hmin };
+
+        let min_height = height[idx].min(height[idx + 1]);
+        let max_width = width[idx].max(width[idx + 1]);
+        let halign = is_voverlap
+            && min_height * laparams.line_overlap < voverlap
+            && hdistance < max_width * laparams.char_margin;
+
+        let min_width = width[idx].min(width[idx + 1]);
+        let max_height = height[idx].max(height[idx + 1]);
         let valign = laparams.detect_vertical
-            && obj0.is_hoverlap(obj1)
-            && obj0.width().min(obj1.width()) * laparams.line_overlap < obj0.hoverlap(obj1)
-            && obj0.vdistance(obj1) < obj0.height().max(obj1.height()) * laparams.char_margin;
+            && is_hoverlap
+            && min_width * laparams.line_overlap < hoverlap
+            && vdistance < max_height * laparams.char_margin;
         halign_flags[idx] = halign;
         valign_flags[idx] = valign;
     }
@@ -220,6 +241,7 @@ fn group_objects_pair_flags_simd(laparams: &LAParams, objs: &[LTChar]) -> (Vec<b
 #[cfg(test)]
 mod group_objects_simd_tests {
     use super::*;
+    use crate::layout::analysis::soa_layout::LayoutSoA;
 
     #[test]
     fn group_objects_expected_lines() {
@@ -241,9 +263,24 @@ mod group_objects_simd_tests {
             LTChar::new((6.0, 0.0, 10.0, 5.0), "B", "F", 10.0, true, 4.0),
             LTChar::new((0.0, 10.0, 5.0, 15.0), "C", "F", 10.0, true, 5.0),
         ];
-        let (halign_flags, valign_flags) = group_objects_pair_flags_simd(&laparams, &objs);
+        let soa = LayoutSoA::from_chars(&objs);
+        let (halign_flags, valign_flags) = group_objects_pair_flags_soa(&laparams, &soa);
         assert!(halign_flags[0]);
         assert!(!valign_flags[0]);
+    }
+
+    #[test]
+    fn group_objects_soa_matches_scalar_ordering() {
+        let laparams = LAParams::default();
+        let objs = vec![
+            LTChar::new((0.0, 0.0, 5.0, 5.0), "A", "F", 10.0, true, 5.0),
+            LTChar::new((6.0, 0.0, 10.0, 5.0), "B", "F", 10.0, true, 4.0),
+            LTChar::new((0.0, 10.0, 5.0, 15.0), "C", "F", 10.0, true, 5.0),
+        ];
+        let soa = LayoutSoA::from_chars(&objs);
+        let out = group_objects_soa(&laparams, &objs, &soa);
+        let baseline = group_objects(&laparams, &objs);
+        assert_eq!(out.len(), baseline.len());
     }
 }
 
