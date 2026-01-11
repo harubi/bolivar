@@ -86,6 +86,7 @@ impl Default for AoSoABlock {
 pub(crate) struct ActiveBucket {
     blocks: Vec<AoSoABlock>,
     free: Vec<ActiveSlot>,
+    active_blocks: Vec<usize>,
     len: usize,
 }
 
@@ -94,11 +95,15 @@ impl ActiveBucket {
         if let Some(slot) = self.free.pop() {
             let lane = slot.lane as usize;
             let block = &mut self.blocks[slot.block];
+            let was_empty = block.mask == 0;
             block.tops[lane] = v.top;
             block.bottoms[lane] = v.bottom;
             block.x0s[lane] = v.x0;
             block.ids[lane] = v_idx;
             block.mask |= 1u8 << lane;
+            if was_empty {
+                self.active_blocks.push(slot.block);
+            }
             self.len += 1;
             return slot;
         }
@@ -109,25 +114,63 @@ impl ActiveBucket {
         block.x0s[0] = v.x0;
         block.ids[0] = v_idx;
         block.mask = 1;
+        let block_idx = self.blocks.len();
         let slot = ActiveSlot {
-            block: self.blocks.len(),
+            block: block_idx,
             lane: 0,
         };
         self.blocks.push(block);
+        self.active_blocks.push(block_idx);
+        for lane in (1..4).rev() {
+            self.free.push(ActiveSlot {
+                block: block_idx,
+                lane: lane as u8,
+            });
+        }
         self.len += 1;
         slot
     }
 
-    fn remove(&mut self, slot: ActiveSlot) {
+    fn remove(&mut self, slot: ActiveSlot) -> Option<(usize, usize)> {
         let lane = slot.lane as usize;
         if let Some(block) = self.blocks.get_mut(slot.block) {
             let bit = 1u8 << lane;
             if block.mask & bit != 0 {
                 block.mask &= !bit;
-                self.free.push(slot);
                 self.len = self.len.saturating_sub(1);
+                if block.mask != 0 {
+                    self.free.push(slot);
+                    return None;
+                }
+                let removed_block = slot.block;
+                self.free.retain(|entry| entry.block != removed_block);
+                if let Some(pos) = self
+                    .active_blocks
+                    .iter()
+                    .position(|&block_idx| block_idx == removed_block)
+                {
+                    self.active_blocks.swap_remove(pos);
+                }
+                let last_idx = self.blocks.len().saturating_sub(1);
+                if removed_block == last_idx {
+                    self.blocks.pop();
+                    return None;
+                }
+                self.blocks.swap_remove(removed_block);
+                for entry in &mut self.active_blocks {
+                    if *entry == last_idx {
+                        *entry = removed_block;
+                    }
+                }
+                for entry in &mut self.free {
+                    if entry.block == last_idx {
+                        entry.block = removed_block;
+                    }
+                }
+                return Some((last_idx, removed_block));
             }
         }
+        None
     }
 
     #[cfg(test)]
@@ -216,7 +259,20 @@ pub(crate) fn remove_active_entry(
         return;
     };
     if let Some(bucket) = active.get_mut(bucket_idx) {
-        bucket.remove(slot);
+        if let Some((_from, to)) = bucket.remove(slot) {
+            if let Some(block) = bucket.blocks.get(to) {
+                for lane in 0..4 {
+                    if block.mask & (1u8 << lane) != 0 {
+                        let moved_idx = block.ids[lane];
+                        if let Some((_, moved_slot)) =
+                            active_slots.get_mut(moved_idx).and_then(Option::as_mut)
+                        {
+                            moved_slot.block = to;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -367,10 +423,8 @@ pub fn edges_to_intersections(
                     continue;
                 };
                 for bucket in &active[start..=end] {
-                    for block in &bucket.blocks {
-                        if block.mask == 0 {
-                            continue;
-                        }
+                    for &block_idx in &bucket.active_blocks {
+                        let block = &bucket.blocks[block_idx];
                         let mask = match_v_edges_simd4(
                             block.tops,
                             block.bottoms,
@@ -424,4 +478,61 @@ pub fn edges_to_intersections(
         },
         intersections,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ActiveBucket, EdgeObj, Orientation};
+
+    fn make_v_edge(x: f64, top: f64, bottom: f64) -> EdgeObj {
+        EdgeObj {
+            x0: x,
+            x1: x,
+            top,
+            bottom,
+            width: 0.0,
+            height: bottom - top,
+            orientation: Some(Orientation::Vertical),
+            object_type: "test",
+        }
+    }
+
+    #[test]
+    fn aosoa_fills_blocks_before_new() {
+        let mut bucket = ActiveBucket::default();
+        let v = make_v_edge(1.0, 0.0, 10.0);
+        let s0 = bucket.insert(0, &v);
+        let s1 = bucket.insert(1, &v);
+        let s2 = bucket.insert(2, &v);
+        let s3 = bucket.insert(3, &v);
+
+        assert_eq!(bucket.blocks.len(), 1);
+        assert_eq!(bucket.blocks[0].mask, 0b1111);
+        assert_eq!(s0.block, 0);
+        assert_eq!(s1.block, 0);
+        assert_eq!(s2.block, 0);
+        assert_eq!(s3.block, 0);
+    }
+
+    #[test]
+    fn aosoa_removes_empty_block_and_updates_free() {
+        let mut bucket = ActiveBucket::default();
+        let v = make_v_edge(2.0, 0.0, 10.0);
+        let slots: Vec<_> = (0..6).map(|i| bucket.insert(i, &v)).collect();
+
+        assert_eq!(bucket.blocks.len(), 2);
+
+        bucket.remove(slots[5]);
+        for slot in slots.iter().take(4) {
+            bucket.remove(*slot);
+        }
+
+        assert_eq!(bucket.blocks.len(), 1);
+        assert!(
+            bucket
+                .free
+                .iter()
+                .all(|slot| slot.block < bucket.blocks.len())
+        );
+    }
 }
