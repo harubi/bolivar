@@ -207,6 +207,24 @@ def test_extract_tables_reuses_table_stream(monkeypatch):
     assert calls["count"] == 1
 
 
+def test_extract_tables_stream_cache_is_bounded(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        _ = pdf.pages[0].extract_tables()
+        _ = pdf.pages[1].extract_tables()
+        _ = pdf.pages[2].extract_tables()
+        streams = getattr(pdf, "_bolivar_table_streams", {})
+        assert streams, "expected table stream cache to be present"
+        stream = next(iter(streams.values()))
+        cache = getattr(stream, "_cache", {})
+        assert len(cache) <= 2
+
+
 def test_extract_tables_rejects_threads_kw(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(

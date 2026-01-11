@@ -106,19 +106,42 @@ def _apply_patch(module) -> bool:
             pass
         return repr(laparams)
 
+    _TABLE_STREAM_CACHE_LIMIT = 2
+
     class _BolivarTableStream:
-        def __init__(self, stream):
-            self._stream = iter(stream)
+        def __init__(self, stream_factory, cache_limit=_TABLE_STREAM_CACHE_LIMIT):
+            self._stream_factory = stream_factory
+            self._stream = iter(stream_factory())
             self._cache = {}
             self._done = False
             self._lock = threading.Lock()
+            self._max_index_seen = -1
+            self._cache_limit = max(int(cache_limit), 0)
+
+        def _evict_cache(self, newest_index):
+            if self._cache_limit <= 0:
+                self._cache.clear()
+                return
+            keep_from = newest_index - (self._cache_limit - 1)
+            for key in list(self._cache.keys()):
+                if key < keep_from:
+                    self._cache.pop(key, None)
+
+        def _get_from_fresh_stream(self, page_index):
+            stream = iter(self._stream_factory())
+            for idx, tables in stream:
+                if idx == page_index:
+                    return tables
+                if idx > page_index:
+                    break
+            return None
 
         def get(self, page_index):
             with self._lock:
                 if page_index in self._cache:
                     return self._cache[page_index]
-                if self._done:
-                    return None
+                if page_index < self._max_index_seen or self._done:
+                    return self._get_from_fresh_stream(page_index)
                 while page_index not in self._cache:
                     try:
                         idx, tables = next(self._stream)
@@ -126,6 +149,9 @@ def _apply_patch(module) -> bool:
                         self._done = True
                         break
                     self._cache[idx] = tables
+                    if idx > self._max_index_seen:
+                        self._max_index_seen = idx
+                    self._evict_cache(idx)
                 return self._cache.get(page_index)
 
     def _get_table_stream(pdf, doc, table_settings, geometries, page_numbers):
@@ -143,16 +169,19 @@ def _apply_patch(module) -> bool:
         if streams is not None and key in streams:
             return streams[key]
         rust_doc = getattr(doc, "_rust_doc", None) or doc
-        stream = extract_tables_stream_from_document(
-            rust_doc,
-            geometries,
-            table_settings=table_settings,
-            laparams=getattr(pdf, "laparams", None) if pdf is not None else None,
-            page_numbers=page_numbers,
-            maxpages=0,
-            caching=getattr(doc, "caching", True),
-        )
-        wrapped = _BolivarTableStream(stream)
+
+        def _stream_factory():
+            return extract_tables_stream_from_document(
+                rust_doc,
+                geometries,
+                table_settings=table_settings,
+                laparams=getattr(pdf, "laparams", None) if pdf is not None else None,
+                page_numbers=page_numbers,
+                maxpages=0,
+                caching=getattr(doc, "caching", True),
+            )
+
+        wrapped = _BolivarTableStream(_stream_factory)
         if streams is not None:
             streams[key] = wrapped
         return wrapped
