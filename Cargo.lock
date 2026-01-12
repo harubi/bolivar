@@ -169,6 +169,7 @@ dependencies = [
  "bolivar-core",
  "clap",
  "memmap2",
+ "serde",
  "serde_json",
 ]
 

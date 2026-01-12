@@ -5,7 +5,7 @@
 //!
 //! Port of pdfminer.six tools/pdf2txt.py
 
-use bolivar_core::api::stream::extract_tables_stream_from_doc;
+use bolivar_core::api::stream::extract_tables_stream_from_doc_with_settings;
 use bolivar_core::converter::{HOCRConverter, HTMLConverter, TextConverter, XMLConverter};
 use bolivar_core::error::{PdfError, Result};
 use bolivar_core::high_level::{
@@ -13,8 +13,10 @@ use bolivar_core::high_level::{
 };
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfdocument::PDFDocument;
+use bolivar_core::table::{ExplicitLine, TableProbePolicy, TableSettings, TextDir, TextSettings};
 use clap::{ArgAction, Parser, ValueEnum};
 use memmap2::Mmap;
+use serde::Deserialize;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
@@ -172,6 +174,330 @@ struct Args {
     /// Output format for table extraction (csv or json)
     #[arg(long = "table-format", value_enum, default_value = "csv")]
     table_format: TableFormat,
+
+    /// Table settings JSON file path
+    #[arg(long = "table-settings-json")]
+    table_settings_json: Option<PathBuf>,
+
+    /// Inline table settings JSON
+    #[arg(long = "table-settings")]
+    table_settings: Option<String>,
+
+    /// Table vertical strategy
+    #[arg(long = "table-vertical-strategy")]
+    table_vertical_strategy: Option<String>,
+
+    /// Table horizontal strategy
+    #[arg(long = "table-horizontal-strategy")]
+    table_horizontal_strategy: Option<String>,
+
+    /// Explicit vertical lines (comma-separated)
+    #[arg(long = "table-explicit-vertical-lines")]
+    table_explicit_vertical_lines: Option<String>,
+
+    /// Explicit horizontal lines (comma-separated)
+    #[arg(long = "table-explicit-horizontal-lines")]
+    table_explicit_horizontal_lines: Option<String>,
+
+    /// Snap X tolerance
+    #[arg(long = "table-snap-x-tolerance")]
+    table_snap_x_tolerance: Option<f64>,
+
+    /// Snap Y tolerance
+    #[arg(long = "table-snap-y-tolerance")]
+    table_snap_y_tolerance: Option<f64>,
+
+    /// Join X tolerance
+    #[arg(long = "table-join-x-tolerance")]
+    table_join_x_tolerance: Option<f64>,
+
+    /// Join Y tolerance
+    #[arg(long = "table-join-y-tolerance")]
+    table_join_y_tolerance: Option<f64>,
+
+    /// Intersection X tolerance
+    #[arg(long = "table-intersection-x-tolerance")]
+    table_intersection_x_tolerance: Option<f64>,
+
+    /// Intersection Y tolerance
+    #[arg(long = "table-intersection-y-tolerance")]
+    table_intersection_y_tolerance: Option<f64>,
+
+    /// Edge minimum length
+    #[arg(long = "table-edge-min-length")]
+    table_edge_min_length: Option<f64>,
+
+    /// Edge minimum length prefilter
+    #[arg(long = "table-edge-min-length-prefilter")]
+    table_edge_min_length_prefilter: Option<f64>,
+
+    /// Minimum words for vertical strategy
+    #[arg(long = "table-min-words-vertical")]
+    table_min_words_vertical: Option<usize>,
+
+    /// Minimum words for horizontal strategy
+    #[arg(long = "table-min-words-horizontal")]
+    table_min_words_horizontal: Option<usize>,
+}
+
+#[derive(Default, Deserialize)]
+struct TextSettingsPatch {
+    x_tolerance: Option<f64>,
+    y_tolerance: Option<f64>,
+    x_tolerance_ratio: Option<f64>,
+    y_tolerance_ratio: Option<f64>,
+    keep_blank_chars: Option<bool>,
+    use_text_flow: Option<bool>,
+    vertical_ttb: Option<bool>,
+    horizontal_ltr: Option<bool>,
+    line_dir: Option<String>,
+    char_dir: Option<String>,
+    line_dir_rotated: Option<String>,
+    char_dir_rotated: Option<String>,
+    split_at_punctuation: Option<String>,
+    expand_ligatures: Option<bool>,
+    layout: Option<bool>,
+}
+
+#[derive(Default, Deserialize)]
+struct TableSettingsPatch {
+    vertical_strategy: Option<String>,
+    horizontal_strategy: Option<String>,
+    explicit_vertical_lines: Option<Vec<f64>>,
+    explicit_horizontal_lines: Option<Vec<f64>>,
+    snap_x_tolerance: Option<f64>,
+    snap_y_tolerance: Option<f64>,
+    join_x_tolerance: Option<f64>,
+    join_y_tolerance: Option<f64>,
+    join_tolerance: Option<f64>,
+    intersection_x_tolerance: Option<f64>,
+    intersection_y_tolerance: Option<f64>,
+    edge_min_length: Option<f64>,
+    edge_min_length_prefilter: Option<f64>,
+    min_words_vertical: Option<usize>,
+    min_words_horizontal: Option<usize>,
+    text_settings: Option<TextSettingsPatch>,
+}
+
+fn parse_text_dir(value: &str) -> Result<TextDir> {
+    TextDir::from_str(value)
+        .ok_or_else(|| PdfError::DecodeError(format!("invalid text direction: {value}")))
+}
+
+fn apply_text_settings_patch(settings: &mut TextSettings, patch: TextSettingsPatch) -> Result<()> {
+    if let Some(v) = patch.x_tolerance {
+        settings.x_tolerance = v;
+    }
+    if let Some(v) = patch.y_tolerance {
+        settings.y_tolerance = v;
+    }
+    if let Some(v) = patch.x_tolerance_ratio {
+        settings.x_tolerance_ratio = Some(v);
+    }
+    if let Some(v) = patch.y_tolerance_ratio {
+        settings.y_tolerance_ratio = Some(v);
+    }
+    if let Some(v) = patch.keep_blank_chars {
+        settings.keep_blank_chars = v;
+    }
+    if let Some(v) = patch.use_text_flow {
+        settings.use_text_flow = v;
+    }
+    if let Some(v) = patch.vertical_ttb {
+        settings.vertical_ttb = v;
+    }
+    if let Some(v) = patch.horizontal_ltr {
+        settings.horizontal_ltr = v;
+    }
+    if let Some(v) = patch.line_dir {
+        settings.line_dir = parse_text_dir(&v)?;
+    }
+    if let Some(v) = patch.char_dir {
+        settings.char_dir = parse_text_dir(&v)?;
+    }
+    if let Some(v) = patch.line_dir_rotated {
+        settings.line_dir_rotated = Some(parse_text_dir(&v)?);
+    }
+    if let Some(v) = patch.char_dir_rotated {
+        settings.char_dir_rotated = Some(parse_text_dir(&v)?);
+    }
+    if let Some(v) = patch.split_at_punctuation {
+        settings.split_at_punctuation = v;
+    }
+    if let Some(v) = patch.expand_ligatures {
+        settings.expand_ligatures = v;
+    }
+    if let Some(v) = patch.layout {
+        settings.layout = v;
+    }
+    Ok(())
+}
+
+fn apply_table_settings_patch(
+    settings: &mut TableSettings,
+    patch: TableSettingsPatch,
+) -> Result<()> {
+    if let Some(v) = patch.vertical_strategy {
+        settings.vertical_strategy = v;
+    }
+    if let Some(v) = patch.horizontal_strategy {
+        settings.horizontal_strategy = v;
+    }
+    if let Some(lines) = patch.explicit_vertical_lines {
+        settings.explicit_vertical_lines = lines.into_iter().map(ExplicitLine::Coord).collect();
+    }
+    if let Some(lines) = patch.explicit_horizontal_lines {
+        settings.explicit_horizontal_lines = lines.into_iter().map(ExplicitLine::Coord).collect();
+    }
+    if let Some(v) = patch.snap_x_tolerance {
+        settings.snap_x_tolerance = v;
+    }
+    if let Some(v) = patch.snap_y_tolerance {
+        settings.snap_y_tolerance = v;
+    }
+    if let Some(v) = patch.join_tolerance {
+        settings.join_x_tolerance = v;
+        settings.join_y_tolerance = v;
+    }
+    if let Some(v) = patch.join_x_tolerance {
+        settings.join_x_tolerance = v;
+    }
+    if let Some(v) = patch.join_y_tolerance {
+        settings.join_y_tolerance = v;
+    }
+    if let Some(v) = patch.intersection_x_tolerance {
+        settings.intersection_x_tolerance = v;
+    }
+    if let Some(v) = patch.intersection_y_tolerance {
+        settings.intersection_y_tolerance = v;
+    }
+    if let Some(v) = patch.edge_min_length {
+        settings.edge_min_length = v;
+    }
+    if let Some(v) = patch.edge_min_length_prefilter {
+        settings.edge_min_length_prefilter = v;
+    }
+    if let Some(v) = patch.min_words_vertical {
+        settings.min_words_vertical = v;
+    }
+    if let Some(v) = patch.min_words_horizontal {
+        settings.min_words_horizontal = v;
+    }
+    if let Some(patch) = patch.text_settings {
+        apply_text_settings_patch(&mut settings.text_settings, patch)?;
+    }
+    Ok(())
+}
+
+fn parse_table_settings_json_str(input: &str) -> Result<TableSettingsPatch> {
+    serde_json::from_str(input)
+        .map_err(|e| PdfError::DecodeError(format!("table settings json error: {e}")))
+}
+
+fn parse_table_settings_json_file(path: &PathBuf) -> Result<TableSettingsPatch> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| PdfError::DecodeError(format!("table settings read error: {e}")))?;
+    parse_table_settings_json_str(&content)
+}
+
+fn parse_f64_list(input: &str) -> Result<Vec<f64>> {
+    let mut out = Vec::new();
+    for part in input.split(',') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let value = trimmed
+            .parse::<f64>()
+            .map_err(|e| PdfError::DecodeError(format!("invalid float value '{trimmed}': {e}")))?;
+        out.push(value);
+    }
+    Ok(out)
+}
+
+fn build_table_settings(args: &Args, json_file_override: Option<&str>) -> Result<TableSettings> {
+    let mut settings = TableSettings::default();
+    let mut has_override = false;
+
+    if let Some(override_str) = json_file_override {
+        has_override = true;
+        let patch = parse_table_settings_json_str(override_str)?;
+        apply_table_settings_patch(&mut settings, patch)?;
+    } else if let Some(ref path) = args.table_settings_json {
+        has_override = true;
+        let patch = parse_table_settings_json_file(path)?;
+        apply_table_settings_patch(&mut settings, patch)?;
+    }
+
+    if let Some(ref inline) = args.table_settings {
+        has_override = true;
+        let patch = parse_table_settings_json_str(inline)?;
+        apply_table_settings_patch(&mut settings, patch)?;
+    }
+
+    if let Some(ref v) = args.table_vertical_strategy {
+        has_override = true;
+        settings.vertical_strategy = v.clone();
+    }
+    if let Some(ref v) = args.table_horizontal_strategy {
+        has_override = true;
+        settings.horizontal_strategy = v.clone();
+    }
+    if let Some(ref v) = args.table_explicit_vertical_lines {
+        has_override = true;
+        let lines = parse_f64_list(v)?;
+        settings.explicit_vertical_lines = lines.into_iter().map(ExplicitLine::Coord).collect();
+    }
+    if let Some(ref v) = args.table_explicit_horizontal_lines {
+        has_override = true;
+        let lines = parse_f64_list(v)?;
+        settings.explicit_horizontal_lines = lines.into_iter().map(ExplicitLine::Coord).collect();
+    }
+    if let Some(v) = args.table_snap_x_tolerance {
+        has_override = true;
+        settings.snap_x_tolerance = v;
+    }
+    if let Some(v) = args.table_snap_y_tolerance {
+        has_override = true;
+        settings.snap_y_tolerance = v;
+    }
+    if let Some(v) = args.table_join_x_tolerance {
+        has_override = true;
+        settings.join_x_tolerance = v;
+    }
+    if let Some(v) = args.table_join_y_tolerance {
+        has_override = true;
+        settings.join_y_tolerance = v;
+    }
+    if let Some(v) = args.table_intersection_x_tolerance {
+        has_override = true;
+        settings.intersection_x_tolerance = v;
+    }
+    if let Some(v) = args.table_intersection_y_tolerance {
+        has_override = true;
+        settings.intersection_y_tolerance = v;
+    }
+    if let Some(v) = args.table_edge_min_length {
+        has_override = true;
+        settings.edge_min_length = v;
+    }
+    if let Some(v) = args.table_edge_min_length_prefilter {
+        has_override = true;
+        settings.edge_min_length_prefilter = v;
+    }
+    if let Some(v) = args.table_min_words_vertical {
+        has_override = true;
+        settings.min_words_vertical = v;
+    }
+    if let Some(v) = args.table_min_words_horizontal {
+        has_override = true;
+        settings.min_words_horizontal = v;
+    }
+    if has_override {
+        settings.probe_policy = TableProbePolicy::Never;
+    }
+
+    Ok(settings)
 }
 
 /// Parse `boxes_flow` value - either a float or "disabled".
@@ -296,7 +622,9 @@ fn process_file<W: Write>(
 
     // Handle table extraction mode
     if args.extract_tables {
-        let stream = extract_tables_stream_from_doc(Arc::clone(&doc), options)?;
+        let settings = build_table_settings(&args, None)?;
+        let stream =
+            extract_tables_stream_from_doc_with_settings(Arc::clone(&doc), options, settings)?;
 
         match args.table_format {
             TableFormat::Csv => {
@@ -532,4 +860,89 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     output.flush()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bolivar_core::table::{ExplicitLine, TableProbePolicy};
+
+    fn test_args_with_table_settings(_json_file: &str, _json_inline: &str) -> Args {
+        Args {
+            files: vec![PathBuf::from("dummy.pdf")],
+            version: (),
+            debug: false,
+            disable_caching: false,
+            page_numbers: None,
+            pagenos: None,
+            maxpages: 0,
+            password: String::new(),
+            rotation: 0,
+            no_laparams: false,
+            detect_vertical: false,
+            line_overlap: 0.5,
+            char_margin: 2.0,
+            word_margin: 0.1,
+            line_margin: 0.5,
+            boxes_flow: None,
+            all_texts: false,
+            outfile: "-".to_string(),
+            output_type: OutputType::Text,
+            codec: "utf-8".to_string(),
+            output_dir: None,
+            layoutmode: LayoutMode::Normal,
+            scale: 1.0,
+            strip_control: false,
+            extract_tables: false,
+            table_format: TableFormat::Csv,
+            table_settings_json: None,
+            table_settings: Some(_json_inline.to_string()),
+            table_vertical_strategy: None,
+            table_horizontal_strategy: None,
+            table_explicit_vertical_lines: None,
+            table_explicit_horizontal_lines: None,
+            table_snap_x_tolerance: None,
+            table_snap_y_tolerance: None,
+            table_join_x_tolerance: None,
+            table_join_y_tolerance: None,
+            table_intersection_x_tolerance: None,
+            table_intersection_y_tolerance: None,
+            table_edge_min_length: None,
+            table_edge_min_length_prefilter: None,
+            table_min_words_vertical: None,
+            table_min_words_horizontal: None,
+        }
+    }
+
+    #[test]
+    fn table_settings_merge_precedence() {
+        let json_file = r#"{"vertical_strategy":"explicit","snap_x_tolerance":9}"#;
+        let json_inline = r#"{"vertical_strategy":"lines","snap_x_tolerance":5}"#;
+        let mut args = test_args_with_table_settings(json_file, json_inline);
+        args.table_vertical_strategy = Some("text".to_string());
+        let settings = build_table_settings(&args, Some(json_file)).unwrap();
+        assert_eq!(settings.vertical_strategy, "text");
+        assert!((settings.snap_x_tolerance - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn table_settings_explicit_lines_parse() {
+        let mut args = test_args_with_table_settings("", "");
+        args.table_settings = None;
+        args.table_explicit_vertical_lines = Some("10, 20, 30".to_string());
+        let settings = build_table_settings(&args, None).unwrap();
+        assert_eq!(settings.explicit_vertical_lines.len(), 3);
+        assert!(matches!(
+            settings.explicit_vertical_lines[0],
+            ExplicitLine::Coord(v) if (v - 10.0).abs() < 1e-9
+        ));
+    }
+
+    #[test]
+    fn table_settings_override_disables_probe() {
+        let mut args = test_args_with_table_settings("", r#"{"snap_x_tolerance":8}"#);
+        args.table_settings_json = None;
+        let settings = build_table_settings(&args, None).unwrap();
+        assert_eq!(settings.probe_policy, TableProbePolicy::Never);
+    }
 }

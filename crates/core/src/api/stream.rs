@@ -314,6 +314,14 @@ pub fn extract_tables_stream_from_doc(
     )
 }
 
+pub fn extract_tables_stream_from_doc_with_settings(
+    doc: Arc<PDFDocument>,
+    options: ExtractOptions,
+    settings: TableSettings,
+) -> Result<TableStream> {
+    extract_tables_stream_from_doc_with_geometries_internal(doc, options, settings, None)
+}
+
 pub fn extract_tables_stream_from_doc_with_geometries(
     doc: Arc<PDFDocument>,
     options: ExtractOptions,
@@ -562,5 +570,18 @@ mod tests {
         if let Err(err) = err {
             assert!(err.to_string().contains("geometry count"));
         }
+    }
+
+    #[test]
+    fn tables_stream_with_settings_smoke() {
+        let pdf = build_minimal_pdf_with_pages(1);
+        let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
+        let options = ExtractOptions::default();
+        let settings = TableSettings::default();
+        let out = super::extract_tables_stream_from_doc_with_settings(doc, options, settings)
+            .unwrap()
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(out.len(), 1);
     }
 }
