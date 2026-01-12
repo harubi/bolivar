@@ -30,6 +30,7 @@ pub use finder::{
 
 #[cfg(test)]
 mod table_extraction_tests {
+    use super::geometry::transform_bboxes_batch;
     use super::grid::{cells_to_tables, intersections_to_cells};
     use super::intersections::edges_to_intersections;
     use super::intersections::{ActiveBucket, IntersectionIdx};
@@ -39,6 +40,7 @@ mod table_extraction_tests {
         bbox_key, key_point,
     };
     use crate::arena::PageArena;
+    use crate::utils::apply_matrix_rect;
     use std::collections::HashMap;
 
     fn make_v_edge(x: f64, top: f64, bottom: f64) -> EdgeObj {
@@ -313,6 +315,15 @@ mod table_extraction_tests {
         assert_eq!(tables.len(), 2);
         assert_eq!(tables[0].len(), 4);
         assert_eq!(tables[1].len(), 4);
+    }
+
+    #[test]
+    fn geometry_batch_transform_matches_scalar() {
+        let rects = vec![(0.0, 0.0, 1.0, 1.0), (1.0, 1.0, 2.0, 2.0)];
+        let m = (1.0, 0.0, 0.0, 1.0, 10.0, 20.0);
+        let out = transform_bboxes_batch(m, &rects);
+        let scalar: Vec<_> = rects.iter().map(|&r| apply_matrix_rect(m, r)).collect();
+        assert_eq!(out, scalar);
     }
 
     #[test]

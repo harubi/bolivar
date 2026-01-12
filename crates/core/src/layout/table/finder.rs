@@ -12,7 +12,7 @@ use super::edges::{
     clip_edge_to_bbox, curve_to_edges, filter_edges, merge_edges, rect_to_edges, words_to_edges_h,
     words_to_edges_v,
 };
-use super::geometry::to_top_left_bbox;
+use super::geometry::{to_top_left_bbox, to_top_left_bboxes_batch};
 use super::grid::{Table, cells_to_tables, intersections_to_cells};
 use super::intersections::edges_to_intersections;
 use super::text::{extract_text, extract_words};
@@ -67,6 +67,7 @@ fn collect_page_objects(
 ) -> (Vec<CharObj>, Vec<EdgeObj>) {
     let mut chars: Vec<CharObj> = Vec::new();
     let mut edges: Vec<EdgeObj> = Vec::new();
+    let mut rects: Vec<Rect> = Vec::new();
 
     fn visit_item(
         item: &LTItem,
@@ -75,6 +76,7 @@ fn collect_page_objects(
         arena: &mut PageArena,
         chars: &mut Vec<CharObj>,
         edges: &mut Vec<EdgeObj>,
+        rects: &mut Vec<Rect>,
     ) {
         match item {
             LTItem::Char(c) => {
@@ -107,16 +109,7 @@ fn collect_page_objects(
                 }
             }
             LTItem::Rect(r) => {
-                let bbox = to_top_left_bbox(r.x0(), r.y0(), r.x1(), r.y1(), geom);
-                for edge in rect_to_edges(bbox) {
-                    if let Some(crop) = crop_bbox {
-                        if let Some(edge) = clip_edge_to_bbox(edge, crop) {
-                            edges.push(edge);
-                        }
-                    } else {
-                        edges.push(edge);
-                    }
-                }
+                rects.push(r.bbox());
             }
             LTItem::Curve(c) => {
                 let mut pts = Vec::new();
@@ -174,12 +167,12 @@ fn collect_page_objects(
             }
             LTItem::Figure(fig) => {
                 for child in fig.iter() {
-                    visit_item(child, geom, crop_bbox, arena, chars, edges);
+                    visit_item(child, geom, crop_bbox, arena, chars, edges, rects);
                 }
             }
             LTItem::Page(p) => {
                 for child in p.iter() {
-                    visit_item(child, geom, crop_bbox, arena, chars, edges);
+                    visit_item(child, geom, crop_bbox, arena, chars, edges, rects);
                 }
             }
             _ => {}
@@ -198,7 +191,24 @@ fn collect_page_objects(
     };
 
     for item in page.iter() {
-        visit_item(item, geom, crop_bbox, arena, &mut chars, &mut edges);
+        visit_item(
+            item, geom, crop_bbox, arena, &mut chars, &mut edges, &mut rects,
+        );
+    }
+
+    if !rects.is_empty() {
+        let bboxes = to_top_left_bboxes_batch(&rects, geom);
+        for bbox in bboxes {
+            for edge in rect_to_edges(bbox) {
+                if let Some(crop) = crop_bbox {
+                    if let Some(edge) = clip_edge_to_bbox(edge, crop) {
+                        edges.push(edge);
+                    }
+                } else {
+                    edges.push(edge);
+                }
+            }
+        }
     }
 
     (chars, edges)

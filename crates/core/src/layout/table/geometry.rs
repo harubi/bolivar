@@ -4,6 +4,7 @@
 //! uses a top-left origin. These functions handle the conversion.
 
 use super::types::{BBox, PageGeometry};
+use crate::utils::{Matrix, Rect, apply_matrix_rects};
 
 /// Get the page height from the mediabox.
 pub fn page_height(geom: &PageGeometry) -> f64 {
@@ -26,4 +27,27 @@ pub fn to_top_left_bbox(x0: f64, y0: f64, x1: f64, y1: f64, geom: &PageGeometry)
         top,
         bottom,
     }
+}
+
+/// Applies a matrix to a slice of rectangles using batched transform.
+pub fn transform_bboxes_batch(m: Matrix, rects: &[Rect]) -> Vec<Rect> {
+    apply_matrix_rects(m, rects)
+}
+
+/// Convert a list of bottom-left rects to top-left bboxes in a single batch.
+pub fn to_top_left_bboxes_batch(rects: &[Rect], geom: &PageGeometry) -> Vec<BBox> {
+    if rects.is_empty() {
+        return Vec::new();
+    }
+    let (mb_x0, mb_top) = mb_offsets(geom);
+    let m = (1.0, 0.0, 0.0, -1.0, mb_x0, page_height(geom) + mb_top);
+    transform_bboxes_batch(m, rects)
+        .into_iter()
+        .map(|(x0, y0, x1, y1)| BBox {
+            x0,
+            x1,
+            top: y0,
+            bottom: y1,
+        })
+        .collect()
 }
