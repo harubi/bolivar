@@ -253,7 +253,7 @@ fn test_parse_token_across_stream_boundary() {
 
     assert!(
         matches!(
-            tokens.get(0),
+            tokens.first(),
             Some(ContentToken::Operand(PSToken::Int(123)))
         ),
         "Expected split number to be parsed as 123"
@@ -298,12 +298,12 @@ fn test_operands_before_operator() {
     assert_eq!(tokens.len(), 5);
 
     // First 4 should be numbers
-    for i in 0..4 {
+    for (i, token) in tokens.iter().take(4).enumerate() {
         assert!(
-            matches!(&tokens[i], ContentToken::Operand(PSToken::Int(_))),
+            matches!(token, ContentToken::Operand(PSToken::Int(_))),
             "Token {} should be integer, got {:?}",
             i,
-            tokens[i]
+            token
         );
     }
 
@@ -420,11 +420,11 @@ fn test_parse_real_numbers() {
     let tokens: Vec<ContentToken> = parser.collect();
 
     // First 4 should be real numbers
-    for i in 0..4 {
-        match &tokens[i] {
+    for (i, token) in tokens.iter().take(4).enumerate() {
+        match token {
             ContentToken::Operand(PSToken::Real(_)) => {}
             ContentToken::Operand(PSToken::Int(_)) => {} // 1.0 might parse as 1
-            _ => panic!("Token {} should be number, got {:?}", i, tokens[i]),
+            _ => panic!("Token {} should be number, got {:?}", i, token),
         }
     }
 }
@@ -720,12 +720,14 @@ use bolivar_core::pdfstate::PDFGraphicState;
 use bolivar_core::psparser::PSLiteral;
 use bolivar_core::utils::{MATRIX_IDENTITY, Matrix};
 
+type PageBegin = (u32, (f64, f64, f64, f64), Matrix);
+
 /// Mock device for testing - records operations called.
 #[derive(Debug, Default)]
 struct MockDevice {
     ctm: Option<Matrix>,
     paths_painted: Vec<(bool, bool, bool, Vec<PathSegment>)>,
-    pages_begun: Vec<(u32, (f64, f64, f64, f64), Matrix)>,
+    pages_begun: Vec<PageBegin>,
     pages_ended: Vec<u32>,
     /// Tracks begin_tag calls: (tag_name, has_props)
     tags_begun: Vec<(String, bool)>,
@@ -943,7 +945,7 @@ fn test_interpreter_do_w_sets_linewidth() {
 
 /// Test: J operator sets line cap.
 #[test]
-fn test_interpreter_do_J_sets_linecap() {
+fn test_interpreter_do_j_sets_linecap() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -969,7 +971,7 @@ fn test_interpreter_do_j_sets_linejoin() {
 
 /// Test: M operator sets miter limit.
 #[test]
-fn test_interpreter_do_M_sets_miterlimit() {
+fn test_interpreter_do_m_sets_miterlimit() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1169,7 +1171,7 @@ fn test_interpreter_do_re_rectangle() {
 
 /// Test: S operator strokes path.
 #[test]
-fn test_interpreter_do_S_stroke() {
+fn test_interpreter_do_s_stroke() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
 
@@ -1251,7 +1253,7 @@ fn test_interpreter_do_f_star_fill_evenodd() {
 
 /// Test: B operator fills and strokes path.
 #[test]
-fn test_interpreter_do_B_fill_stroke() {
+fn test_interpreter_do_b_fill_stroke() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1269,7 +1271,7 @@ fn test_interpreter_do_B_fill_stroke() {
 
 /// Test: B* operator fills and strokes with even-odd rule.
 #[test]
-fn test_interpreter_do_B_star_fill_stroke_evenodd() {
+fn test_interpreter_do_b_star_fill_stroke_evenodd() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1354,7 +1356,7 @@ fn test_interpreter_do_n_endpath() {
 /// Test: W operator sets clipping path (nonzero winding).
 /// Note: Clipping doesn't immediately paint; it sets up for subsequent operations.
 #[test]
-fn test_interpreter_do_W_clipping() {
+fn test_interpreter_do_w_clipping() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1370,7 +1372,7 @@ fn test_interpreter_do_W_clipping() {
 
 /// Test: W* operator sets clipping path (even-odd rule).
 #[test]
-fn test_interpreter_do_W_star_clipping_evenodd() {
+fn test_interpreter_do_w_star_clipping_evenodd() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1435,7 +1437,7 @@ fn test_interpreter_complete_path_sequence() {
 
 /// Test: BT operator resets text matrix and line matrix.
 #[test]
-fn test_interpreter_do_BT_resets_text_state() {
+fn test_interpreter_do_bt_resets_text_state() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1463,7 +1465,7 @@ fn test_interpreter_do_BT_resets_text_state() {
 
 /// Test: ET operator ends text object (no-op but should not panic).
 #[test]
-fn test_interpreter_do_ET_ends_text_object() {
+fn test_interpreter_do_et_ends_text_object() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1476,7 +1478,7 @@ fn test_interpreter_do_ET_ends_text_object() {
 
 /// Test: BT/ET pair preserves text state parameters (only matrices reset).
 #[test]
-fn test_interpreter_BT_preserves_text_parameters() {
+fn test_interpreter_bt_preserves_text_parameters() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1509,7 +1511,7 @@ fn test_interpreter_BT_preserves_text_parameters() {
 
 /// Test: Tc operator sets character spacing.
 #[test]
-fn test_interpreter_do_Tc_sets_charspace() {
+fn test_interpreter_do_tc_sets_charspace() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1522,7 +1524,7 @@ fn test_interpreter_do_Tc_sets_charspace() {
 
 /// Test: Tw operator sets word spacing.
 #[test]
-fn test_interpreter_do_Tw_sets_wordspace() {
+fn test_interpreter_do_tw_sets_wordspace() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1535,7 +1537,7 @@ fn test_interpreter_do_Tw_sets_wordspace() {
 
 /// Test: Tz operator sets horizontal scaling.
 #[test]
-fn test_interpreter_do_Tz_sets_scaling() {
+fn test_interpreter_do_tz_sets_scaling() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1548,7 +1550,7 @@ fn test_interpreter_do_Tz_sets_scaling() {
 
 /// Test: TL operator sets text leading (negated per Python implementation).
 #[test]
-fn test_interpreter_do_TL_sets_leading() {
+fn test_interpreter_do_tl_sets_leading() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1562,7 +1564,7 @@ fn test_interpreter_do_TL_sets_leading() {
 
 /// Test: Tf operator sets font and fontsize.
 #[test]
-fn test_interpreter_do_Tf_sets_font_and_size() {
+fn test_interpreter_do_tf_sets_font_and_size() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1576,7 +1578,7 @@ fn test_interpreter_do_Tf_sets_font_and_size() {
 
 /// Test: Tr operator sets text rendering mode.
 #[test]
-fn test_interpreter_do_Tr_sets_render_mode() {
+fn test_interpreter_do_tr_sets_render_mode() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1589,7 +1591,7 @@ fn test_interpreter_do_Tr_sets_render_mode() {
 
 /// Test: Ts operator sets text rise.
 #[test]
-fn test_interpreter_do_Ts_sets_rise() {
+fn test_interpreter_do_ts_sets_rise() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1602,7 +1604,7 @@ fn test_interpreter_do_Ts_sets_rise() {
 
 /// Test: Ts with negative value for subscript.
 #[test]
-fn test_interpreter_do_Ts_negative_for_subscript() {
+fn test_interpreter_do_ts_negative_for_subscript() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1619,7 +1621,7 @@ fn test_interpreter_do_Ts_negative_for_subscript() {
 
 /// Test: Td operator moves text position.
 #[test]
-fn test_interpreter_do_Td_moves_text_position() {
+fn test_interpreter_do_td_moves_text_position() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1638,7 +1640,7 @@ fn test_interpreter_do_Td_moves_text_position() {
 
 /// Test: Td with existing text matrix.
 #[test]
-fn test_interpreter_do_Td_with_existing_matrix() {
+fn test_interpreter_do_td_with_existing_matrix() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1661,7 +1663,7 @@ fn test_interpreter_do_Td_with_existing_matrix() {
 
 /// Test: TD operator moves text and sets leading.
 #[test]
-fn test_interpreter_do_TD_moves_and_sets_leading() {
+fn test_interpreter_do_td_moves_and_sets_leading() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1679,7 +1681,7 @@ fn test_interpreter_do_TD_moves_and_sets_leading() {
 
 /// Test: Tm operator sets text matrix directly.
 #[test]
-fn test_interpreter_do_Tm_sets_text_matrix() {
+fn test_interpreter_do_tm_sets_text_matrix() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1695,7 +1697,7 @@ fn test_interpreter_do_Tm_sets_text_matrix() {
 
 /// Test: T* operator moves to next line using leading.
 #[test]
-fn test_interpreter_do_T_star_moves_to_next_line() {
+fn test_interpreter_do_t_star_moves_to_next_line() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1717,7 +1719,7 @@ fn test_interpreter_do_T_star_moves_to_next_line() {
 
 /// Test: Multiple T* calls move down correctly.
 #[test]
-fn test_interpreter_do_T_star_multiple_lines() {
+fn test_interpreter_do_t_star_multiple_lines() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = MockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1786,7 +1788,7 @@ impl PDFDevice for TextMockDevice {
 
 /// Test: Tj operator shows text string.
 #[test]
-fn test_interpreter_do_Tj_shows_text() {
+fn test_interpreter_do_tj_shows_text() {
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = TextMockDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
@@ -1803,7 +1805,7 @@ fn test_interpreter_do_Tj_shows_text() {
 
 /// Test: TJ operator shows text with positioning.
 #[test]
-fn test_interpreter_do_TJ_shows_positioned_text() {
+fn test_interpreter_do_tj_shows_positioned_text() {
     use bolivar_core::pdfdevice::PDFTextSeqItem;
 
     let mut rsrcmgr = PDFResourceManager::new();
@@ -2005,7 +2007,6 @@ fn test_interpreter_emc_calls_end_tag() {
 // Pattern Color Space tests
 // ============================================================================
 
-use bolivar_core::pdfcolor::PREDEFINED_COLORSPACE;
 use bolivar_core::pdfstate::Color;
 
 /// Test: Color enum Pattern variants work correctly.
@@ -2074,14 +2075,10 @@ fn test_interpreter_scn_colored_pattern() {
     interp.init_state(MATRIX_IDENTITY);
 
     // Set colorspace to Pattern
-    let pattern_cs = PREDEFINED_COLORSPACE.get("Pattern").unwrap().clone();
     // We need to manually set the graphics state colorspace since there's no do_CS yet
     // Access graphicstate directly is not public, so we use a workaround:
     // The do_SC/do_sc methods check if scs/ncs is Pattern.
     // For this test, we'll create a scenario that tests the pattern handling logic
-
-    // Build args with just a pattern name (colored pattern)
-    let mut args = vec![PSToken::Literal("P1444".to_string())];
 
     // Manually set scs to Pattern for this test
     // Since we can't access graphicstate directly, we'll use a different approach
@@ -2167,7 +2164,6 @@ fn test_interpreter_scn_uncolored_pattern_cmyk() {
 #[test]
 fn test_parse_color_components_gray() {
     // Test that standard gray color parsing works
-    let args = vec![PSToken::Real(0.5)];
     // PDFPageInterpreter::parse_color_components is private, so test via do_SC
 
     let mut rsrcmgr = PDFResourceManager::new();

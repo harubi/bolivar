@@ -180,20 +180,12 @@ fn test_extract_pages_yields_ltpage() {
     // (This test validates the type system, actual behavior needs real PDF)
     let result = extract_pages(b"", None);
 
-    match result {
-        Ok(pages) => {
-            for page_result in pages {
-                match page_result {
-                    Ok(page) => {
-                        // Verify it has LTPage properties
-                        let _ = page.pageid;
-                        let _ = page.bbox();
-                    }
-                    Err(_) => {}
-                }
-            }
+    if let Ok(pages) = result {
+        for page in pages.flatten() {
+            // Verify it has LTPage properties
+            let _ = page.pageid;
+            let _ = page.bbox();
         }
-        Err(_) => {}
     }
 }
 
@@ -292,7 +284,7 @@ fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
     out.extend_from_slice(b"%PDF-1.4\n");
 
     let mut offsets: Vec<usize> = Vec::new();
-    let mut push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
+    let push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
         offsets.push(buf.len());
         buf.extend_from_slice(obj.as_bytes());
     };
@@ -361,9 +353,8 @@ fn test_extract_text_minimal_pdf() {
     let result = extract_text(MINIMAL_PDF, None);
 
     // Minimal PDF has no pages with content, should return empty string
-    match result {
-        Ok(text) => assert!(text.is_empty()),
-        Err(_) => {} // Parser limitations may cause this to fail
+    if let Ok(text) = result {
+        assert!(text.is_empty());
     }
 }
 
@@ -415,12 +406,9 @@ fn test_extract_pages_order_is_stable() {
 fn test_extract_pages_minimal_pdf() {
     let result = extract_pages(MINIMAL_PDF, None);
 
-    match result {
-        Ok(pages) => {
-            let count = pages.count();
-            assert_eq!(count, 0); // No pages with content
-        }
-        Err(_) => {} // Parser limitations
+    if let Ok(pages) = result {
+        let count = pages.count();
+        assert_eq!(count, 0); // No pages with content
     }
 }
 
@@ -440,9 +428,8 @@ fn test_extract_text_boxes_flow_none() {
 
     let result = extract_text(MINIMAL_PDF, Some(options));
     // Should not panic with boxes_flow=None
-    match result {
-        Ok(text) => assert!(text.is_empty()),
-        Err(_) => {}
+    if let Ok(text) = result {
+        assert!(text.is_empty());
     }
 }
 
@@ -457,9 +444,8 @@ fn test_extract_text_detect_vertical() {
     };
 
     let result = extract_text(MINIMAL_PDF, Some(options));
-    match result {
-        Ok(text) => assert!(text.is_empty()),
-        Err(_) => {}
+    if let Ok(text) = result {
+        assert!(text.is_empty());
     }
 }
 
@@ -474,9 +460,8 @@ fn test_extract_text_all_texts() {
     };
 
     let result = extract_text(MINIMAL_PDF, Some(options));
-    match result {
-        Ok(text) => assert!(text.is_empty()),
-        Err(_) => {}
+    if let Ok(text) = result {
+        assert!(text.is_empty());
     }
 }
 
@@ -523,7 +508,8 @@ fn fixture_path(name: &str) -> std::path::PathBuf {
 /// Helper to run extract_text with optional LAParams.
 fn run_with_string(sample_path: &str, laparams: Option<LAParams>) -> String {
     let path = fixture_path(sample_path);
-    let pdf_data = std::fs::read(&path).expect(&format!("Failed to read {}", path.display()));
+    let pdf_data = std::fs::read(&path)
+        .unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
 
     let options = ExtractOptions {
         laparams,
@@ -531,7 +517,7 @@ fn run_with_string(sample_path: &str, laparams: Option<LAParams>) -> String {
     };
 
     extract_text(&pdf_data, Some(options))
-        .expect(&format!("Failed to extract text from {}", sample_path))
+        .unwrap_or_else(|_| panic!("Failed to extract text from {}", sample_path))
 }
 
 /// Helper to run extract_text using file read (same as run_with_string for Rust).
@@ -886,7 +872,7 @@ fn test_debug_886() {
                     if let PDFObject::Stream(stream) = &resolved {
                         eprintln!("Stream attrs: {:?}", stream.attrs);
 
-                        match doc.decode_stream(&stream) {
+                        match doc.decode_stream(stream) {
                             Ok(data) => {
                                 eprintln!("\nDecoded ToUnicode ({} bytes):", data.len());
                                 eprintln!("{}", String::from_utf8_lossy(&data));

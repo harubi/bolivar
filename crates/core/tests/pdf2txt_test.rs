@@ -563,7 +563,7 @@ fn test_args_parser_boxes_flow_out_of_range() {
     let (code, _stdout, stderr) = run_pdf2txt(&["-F", "2.0", "test.pdf"]);
     // Should either reject at parse time or at runtime
     // The behavior depends on implementation
-    assert!(code != 0 || stderr.contains("range") || stderr.len() > 0);
+    assert!(code != 0 || stderr.contains("range") || !stderr.is_empty());
 }
 
 // ============================================================================
@@ -579,7 +579,7 @@ fn extract_images(fixture: &str, options: Option<&str>) -> (i32, Vec<String>) {
     // Create a unique temporary directory for image output
     let output_dir = std::env::temp_dir().join(format!(
         "pdf2txt_images_{}_{}",
-        fixture.replace('/', "_").replace('.', "_"),
+        fixture.replace(['/', '.'], "_"),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

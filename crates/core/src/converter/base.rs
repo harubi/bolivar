@@ -886,6 +886,12 @@ impl PDFEdgeProbe {
     }
 }
 
+impl Default for PDFEdgeProbe {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a> PDFPageAggregator<'a> {
     /// Create a new page aggregator.
     pub fn new(laparams: Option<LAParams>, pageno: i32, arena: &'a mut PageArena) -> Self {

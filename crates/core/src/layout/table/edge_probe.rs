@@ -3,6 +3,7 @@ use crate::pdfdocument::PDFDocument;
 use crate::pdfinterp::PDFPageInterpreter;
 use crate::pdfinterp::PDFResourceManager;
 use crate::pdfpage::PDFPage;
+#[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::types::{TableProbePolicy, TableSettings};

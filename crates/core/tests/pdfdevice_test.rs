@@ -277,7 +277,7 @@ fn test_text_device_render_char_default() {
         1.0,  // scaling
         0.0,  // rise
         65,   // cid for 'A'
-        &PREDEFINED_COLORSPACE.get("DeviceGray").unwrap(),
+        PREDEFINED_COLORSPACE.get("DeviceGray").unwrap(),
         &gs,
     );
 

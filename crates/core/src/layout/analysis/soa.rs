@@ -13,7 +13,7 @@ pub struct RectSoA {
 impl RectSoA {
     pub fn from_bboxes(bboxes: &[Rect]) -> Self {
         let len = bboxes.len();
-        let chunks = (len + LANES - 1) / LANES;
+        let chunks = len.div_ceil(LANES);
         let mut x0 = Vec::with_capacity(chunks);
         let mut y0 = Vec::with_capacity(chunks);
         let mut x1 = Vec::with_capacity(chunks);
@@ -65,11 +65,11 @@ impl RectSoA {
             let mask =
                 x0.simd_lt(qx1v) & nx1.simd_lt(qnx0v) & y0.simd_lt(qy1v) & ny1.simd_lt(qny0v);
             let lanes = mask.to_array();
-            for lane in 0..LANES {
+            for &hit in lanes.iter() {
                 if idx >= self.len {
                     return out;
                 }
-                if lanes[lane] {
+                if hit {
                     out.push(idx);
                 }
                 idx += 1;
@@ -108,7 +108,7 @@ mod tests {
             (4.0, 0.0, 5.0, 1.0),
         ];
         let soa = RectSoA::from_bboxes(&bboxes);
-        let expected_chunks = (5 + LANES - 1) / LANES;
+        let expected_chunks = 5_usize.div_ceil(LANES);
         assert_eq!(soa.x0.len(), expected_chunks);
     }
 }

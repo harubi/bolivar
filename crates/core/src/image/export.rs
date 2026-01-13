@@ -117,12 +117,11 @@ impl ImageWriter {
         if last_filter.is_some_and(is_jbig2_decode) {
             let mut globals: Vec<&PDFStream> = Vec::new();
             for (filter, params) in &filters {
-                if is_jbig2_decode(filter) {
-                    if let Some(params) = params
-                        && let Some(PDFObject::Stream(stream)) = params.get("JBIG2Globals")
-                    {
-                        globals.push(stream.as_ref());
-                    }
+                if is_jbig2_decode(filter)
+                    && let Some(params) = params
+                    && let Some(PDFObject::Stream(stream)) = params.get("JBIG2Globals")
+                {
+                    globals.push(stream.as_ref());
                 }
             }
 
@@ -166,39 +165,45 @@ impl ImageWriter {
         if bits == 8 && colorspace.iter().any(|c| is_device_gray_name(c)) {
             return save_bmp(
                 &mut self.seq,
-                &self.outdir,
-                name,
-                8,
-                width,
-                height,
-                1,
-                &data,
+                BmpSaveArgs {
+                    outdir: &self.outdir,
+                    name,
+                    bits: 8,
+                    width,
+                    height,
+                    bytes_per_pixel: 1,
+                    data: &data,
+                },
             );
         }
 
         if bits == 8 && colorspace.iter().any(|c| is_device_rgb_name(c)) {
             return save_bmp(
                 &mut self.seq,
-                &self.outdir,
-                name,
-                24,
-                width,
-                height,
-                3,
-                &data,
+                BmpSaveArgs {
+                    outdir: &self.outdir,
+                    name,
+                    bits: 24,
+                    width,
+                    height,
+                    bytes_per_pixel: 3,
+                    data: &data,
+                },
             );
         }
 
         if bits == 1 {
             return save_bmp(
                 &mut self.seq,
-                &self.outdir,
-                name,
-                1,
-                width,
-                height,
-                1,
-                &data,
+                BmpSaveArgs {
+                    outdir: &self.outdir,
+                    name,
+                    bits: 1,
+                    width,
+                    height,
+                    bytes_per_pixel: 1,
+                    data: &data,
+                },
             );
         }
 
@@ -288,43 +293,10 @@ fn predictor_overhead(
     0
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn expected_image_len(width: i32, height: i32, bits: i32, colorspace: &[String]) -> Option<usize> {
     expected_image_len_uncapped(width, height, bits, colorspace)
         .map(|len| len.min(MAX_IMAGE_DECODED_BYTES))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        MAX_IMAGE_DECODED_BYTES, apply_png_predictor, apply_png_predictor_scalar,
-        expected_image_len,
-    };
-
-    #[test]
-    fn expected_image_len_caps_large_images() {
-        let colorspace = vec!["DeviceRGB".to_string()];
-        let len = expected_image_len(10_000, 10_000, 8, &colorspace).unwrap();
-        assert_eq!(len, MAX_IMAGE_DECODED_BYTES);
-    }
-
-    #[test]
-    fn expected_image_len_small_images_unchanged() {
-        let colorspace = vec!["DeviceRGB".to_string()];
-        let len = expected_image_len(100, 100, 8, &colorspace).unwrap();
-        assert_eq!(len, 100 * 100 * 3);
-    }
-
-    #[test]
-    fn png_predictor_up_simd_matches_scalar() {
-        let data = [
-            2, 1, 2, 3, 4, // row1 (Up)
-            2, 4, 3, 2, 1, // row2 (Up)
-        ];
-        let scalar = apply_png_predictor_scalar(&data, 4, 1, 8).unwrap();
-        let simd = apply_png_predictor(&data, 4, 1, 8).unwrap();
-        assert_eq!(scalar, simd);
-    }
 }
 
 fn get_filters(stream: &PDFStream) -> Vec<(String, Option<HashMap<String, PDFObject>>)> {
@@ -622,17 +594,19 @@ const fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
     }
 }
 
-fn save_bmp(
-    seq: &mut usize,
-    outdir: &Path,
-    name: &str,
+struct BmpSaveArgs<'a> {
+    outdir: &'a Path,
+    name: &'a str,
     bits: i32,
     width: i32,
     height: i32,
     bytes_per_pixel: i32,
-    data: &[u8],
-) -> Result<String> {
-    let base = name
+    data: &'a [u8],
+}
+
+fn save_bmp(seq: &mut usize, args: BmpSaveArgs<'_>) -> Result<String> {
+    let base = args
+        .name
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect::<String>();
@@ -643,25 +617,25 @@ fn save_bmp(
     };
     *seq += 1;
     let filename = format!("{}_{}.bmp", base, *seq);
-    let path = outdir.join(&filename);
+    let path = args.outdir.join(&filename);
 
     let mut fp = File::create(&path)?;
-    let mut writer = BmpWriter::new(&mut fp, bits, width, height)?;
+    let mut writer = BmpWriter::new(&mut fp, args.bits, args.width, args.height)?;
 
-    let row_bytes = if bits == 1 {
-        ((width + 7) / 8) as usize
+    let row_bytes = if args.bits == 1 {
+        ((args.width + 7) / 8) as usize
     } else {
-        (width * bytes_per_pixel) as usize
+        (args.width * args.bytes_per_pixel) as usize
     };
     let line_size = align32(row_bytes as i32) as usize;
 
-    for y in 0..height {
+    for y in 0..args.height {
         let start = (y as usize) * row_bytes;
         let end = start + row_bytes;
         let mut line = vec![0u8; line_size];
-        if start < data.len() {
-            let copy_end = end.min(data.len());
-            line[..(copy_end - start)].copy_from_slice(&data[start..copy_end]);
+        if start < args.data.len() {
+            let copy_end = end.min(args.data.len());
+            line[..(copy_end - start)].copy_from_slice(&args.data[start..copy_end]);
         }
         writer.write_line(&mut fp, y, &line)?;
     }
@@ -758,5 +732,38 @@ impl BmpWriter {
         fp.seek(SeekFrom::Start(seek_pos))?;
         fp.write_all(data)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MAX_IMAGE_DECODED_BYTES, apply_png_predictor, apply_png_predictor_scalar,
+        expected_image_len,
+    };
+
+    #[test]
+    fn expected_image_len_caps_large_images() {
+        let colorspace = vec!["DeviceRGB".to_string()];
+        let len = expected_image_len(10_000, 10_000, 8, &colorspace).unwrap();
+        assert_eq!(len, MAX_IMAGE_DECODED_BYTES);
+    }
+
+    #[test]
+    fn expected_image_len_small_images_unchanged() {
+        let colorspace = vec!["DeviceRGB".to_string()];
+        let len = expected_image_len(100, 100, 8, &colorspace).unwrap();
+        assert_eq!(len, 100 * 100 * 3);
+    }
+
+    #[test]
+    fn png_predictor_up_simd_matches_scalar() {
+        let data = [
+            2, 1, 2, 3, 4, // row1 (Up)
+            2, 4, 3, 2, 1, // row2 (Up)
+        ];
+        let scalar = apply_png_predictor_scalar(&data, 4, 1, 8).unwrap();
+        let simd = apply_png_predictor(&data, 4, 1, 8).unwrap();
+        assert_eq!(scalar, simd);
     }
 }

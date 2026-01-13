@@ -1,4 +1,13 @@
-mod common;
+#[path = "common/criterion.rs"]
+mod bench_criterion;
+#[path = "common/fixtures.rs"]
+mod fixtures;
+#[path = "common/group_heavy.rs"]
+mod group_heavy;
+#[path = "common/group_light.rs"]
+mod group_light;
+#[path = "common/tier.rs"]
+mod bench_tier;
 
 use std::alloc::System;
 use std::hint::black_box;
@@ -13,9 +22,11 @@ use bolivar_core::high_level::{ExtractOptions, extract_text_with_document};
 use bolivar_core::layout::{LAParams, LTChar, LTLayoutContainer};
 use bolivar_core::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
 
-use common::{
-    BenchCriterion, GroupWeight, bench_config, bench_criterion, configure_group, load_fixtures,
-};
+use bench_criterion::{BenchCriterion, bench_criterion};
+use bench_tier::bench_tier;
+use fixtures::load_fixtures;
+use group_heavy::configure_group_heavy;
+use group_light::configure_group_light;
 
 #[global_allocator]
 static GLOBAL: LockedAllocator<System> = LockedAllocator::new(StatsAlloc::system());
@@ -38,11 +49,11 @@ fn report(label: &str, stats: Stats, iters: u64) {
 }
 
 fn bench_alloc_extract_text(c: &mut BenchCriterion) {
-    let cfg = bench_config();
+    let tier = bench_tier();
     let fixtures = load_fixtures(Some("text"));
 
     let mut group = c.benchmark_group("alloc_extract_text");
-    configure_group(&mut group, &cfg, GroupWeight::Heavy);
+    configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
         let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
@@ -72,9 +83,9 @@ fn bench_alloc_extract_text(c: &mut BenchCriterion) {
 }
 
 fn bench_alloc_group_textboxes(c: &mut BenchCriterion) {
-    let cfg = bench_config();
+    let tier = bench_tier();
     let mut group = c.benchmark_group("alloc_group_textboxes_exact");
-    configure_group(&mut group, &cfg, GroupWeight::Light);
+    configure_group_light(&mut group, tier);
 
     let laparams = LAParams::default();
     let container = LTLayoutContainer::new((0.0, 0.0, 612.0, 792.0));
@@ -116,12 +127,12 @@ fn bench_alloc_group_textboxes(c: &mut BenchCriterion) {
 }
 
 fn bench_alloc_extract_tables(c: &mut BenchCriterion) {
-    let cfg = bench_config();
+    let tier = bench_tier();
     let fixtures = load_fixtures(Some("tables"));
     let settings = TableSettings::default();
 
     let mut group = c.benchmark_group("alloc_extract_tables");
-    configure_group(&mut group, &cfg, GroupWeight::Heavy);
+    configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
         let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");

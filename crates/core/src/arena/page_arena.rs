@@ -101,6 +101,12 @@ impl PageArena {
     }
 }
 
+impl Default for PageArena {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a> ArenaContext<'a> {
     pub const fn bump(&self) -> &'a Bump {
         self.bump

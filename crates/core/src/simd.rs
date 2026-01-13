@@ -21,8 +21,6 @@ pub(crate) const F64_LANES: usize = 4;
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx")))]
 pub(crate) const F64_LANES: usize = 2;
 
-pub(crate) type SimdF64 = Simd<f64, F64_LANES>;
-
 // --- u8: AVX-512 = 64 lanes, AVX2 = 32 lanes, else = 16 lanes ---
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]

@@ -115,7 +115,7 @@ impl LayoutArena {
                 for element in elements {
                     match element {
                         TextLineElement::Char(ch) => {
-                            let id = self.push_char(ch);
+                            let id = self.push_char(*ch);
                             arena_elems.push(ArenaElem::Char(id));
                         }
                         TextLineElement::Anno(anno) => {
@@ -143,7 +143,7 @@ impl LayoutArena {
                 for element in elements {
                     match element {
                         TextLineElement::Char(ch) => {
-                            let id = self.push_char(ch);
+                            let id = self.push_char(*ch);
                             arena_elems.push(ArenaElem::Char(id));
                         }
                         TextLineElement::Anno(anno) => {
@@ -206,7 +206,9 @@ impl LayoutArena {
                     .elements
                     .iter()
                     .map(|e| match e {
-                        ArenaElem::Char(cid) => TextLineElement::Char(self.chars[cid.0].clone()),
+                        ArenaElem::Char(cid) => {
+                            TextLineElement::Char(Box::new(self.chars[cid.0].clone()))
+                        }
                         ArenaElem::Anno(aid) => TextLineElement::Anno(self.annos[aid.0].clone()),
                     })
                     .collect();
@@ -220,7 +222,9 @@ impl LayoutArena {
                     .elements
                     .iter()
                     .map(|e| match e {
-                        ArenaElem::Char(cid) => TextLineElement::Char(self.chars[cid.0].clone()),
+                        ArenaElem::Char(cid) => {
+                            TextLineElement::Char(Box::new(self.chars[cid.0].clone()))
+                        }
                         ArenaElem::Anno(aid) => TextLineElement::Anno(self.annos[aid.0].clone()),
                     })
                     .collect();
@@ -329,14 +333,14 @@ mod tests {
     fn arena_push_textline_roundtrip_preserves_text_and_bbox() {
         let mut line = LTTextLineHorizontal::new(0.1);
         line.set_bbox((0.0, 0.0, 10.0, 2.0));
-        line.add_element(TextLineElement::Char(LTChar::new(
+        line.add_element(TextLineElement::Char(Box::new(LTChar::new(
             (0.0, 0.0, 1.0, 2.0),
             "a",
             "F1",
             10.0,
             true,
             1.0,
-        )));
+        ))));
         line.add_element(TextLineElement::Anno(LTAnno::new(" ")));
 
         let mut arena = LayoutArena::new();

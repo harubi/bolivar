@@ -97,10 +97,10 @@ fn test_parse_null() {
 #[test]
 fn test_parse_bool() {
     let mut parser = PDFParser::new(b"true");
-    assert_eq!(parser.parse_object().unwrap().as_bool().unwrap(), true);
+    assert!(parser.parse_object().unwrap().as_bool().unwrap());
 
     let mut parser = PDFParser::new(b"false");
-    assert_eq!(parser.parse_object().unwrap().as_bool().unwrap(), false);
+    assert!(!parser.parse_object().unwrap().as_bool().unwrap());
 }
 #[allow(clippy::approx_constant)]
 #[test]

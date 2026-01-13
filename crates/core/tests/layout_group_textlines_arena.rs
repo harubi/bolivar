@@ -7,6 +7,8 @@ use bolivar_core::layout::params::LAParams;
 use bolivar_core::layout::types::{LTChar, TextBoxType};
 use bolivar_core::utils::HasBBox;
 
+type BoxSignature = (bool, (f64, f64, f64, f64), String);
+
 #[test]
 fn arena_group_textlines_parity() {
     let chars = vec![
@@ -32,7 +34,7 @@ fn arena_group_textlines_parity() {
     );
 }
 
-fn box_signatures(boxes: &[TextBoxType]) -> Vec<(bool, (f64, f64, f64, f64), String)> {
+fn box_signatures(boxes: &[TextBoxType]) -> Vec<BoxSignature> {
     boxes
         .iter()
         .map(|b| {

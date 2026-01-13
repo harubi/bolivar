@@ -287,25 +287,25 @@ impl InheritedNode {
     }
 
     fn apply_to(&self, dest: &mut HashMap<String, PDFObject>) {
-        if !dest.contains_key("Resources") {
-            if let Some(val) = self.resolve_resources() {
-                dest.insert("Resources".to_string(), val.clone());
-            }
+        if !dest.contains_key("Resources")
+            && let Some(val) = self.resolve_resources()
+        {
+            dest.insert("Resources".to_string(), val.clone());
         }
-        if !dest.contains_key("MediaBox") {
-            if let Some(val) = self.resolve_mediabox() {
-                dest.insert("MediaBox".to_string(), val.clone());
-            }
+        if !dest.contains_key("MediaBox")
+            && let Some(val) = self.resolve_mediabox()
+        {
+            dest.insert("MediaBox".to_string(), val.clone());
         }
-        if !dest.contains_key("CropBox") {
-            if let Some(val) = self.resolve_cropbox() {
-                dest.insert("CropBox".to_string(), val.clone());
-            }
+        if !dest.contains_key("CropBox")
+            && let Some(val) = self.resolve_cropbox()
+        {
+            dest.insert("CropBox".to_string(), val.clone());
         }
-        if !dest.contains_key("Rotate") {
-            if let Some(val) = self.resolve_rotate() {
-                dest.insert("Rotate".to_string(), val.clone());
-            }
+        if !dest.contains_key("Rotate")
+            && let Some(val) = self.resolve_rotate()
+        {
+            dest.insert("Rotate".to_string(), val.clone());
         }
     }
 }
@@ -351,10 +351,10 @@ impl PageIndex {
                 .as_dict()
                 .map_err(|_| PdfError::SyntaxError("Page object missing dict".into()))?;
             let mut mediabox_obj = dict.get("MediaBox");
-            if mediabox_obj.is_none() {
-                if let Some(inherited) = &page_ref.inherited {
-                    mediabox_obj = inherited.resolve_mediabox();
-                }
+            if mediabox_obj.is_none()
+                && let Some(inherited) = &page_ref.inherited
+            {
+                mediabox_obj = inherited.resolve_mediabox();
             }
             let mediabox = mediabox_obj
                 .and_then(|obj| PDFPage::parse_box_obj(obj, doc))

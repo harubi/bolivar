@@ -1,4 +1,15 @@
-mod common;
+#[path = "common/criterion.rs"]
+mod bench_criterion;
+#[path = "common/group_light.rs"]
+mod group_light;
+#[path = "common/rng.rs"]
+mod rng;
+#[path = "common/seed.rs"]
+mod bench_seed;
+#[path = "common/tier.rs"]
+mod bench_tier;
+#[path = "common/pages_throughput.rs"]
+mod pages_throughput;
 
 use std::hint::black_box;
 
@@ -6,10 +17,12 @@ use criterion::{BenchmarkId, criterion_group, criterion_main};
 
 use bolivar_core::utils::{HasBBox, Plane, Rect};
 
-use common::{
-    BenchCriterion, GroupWeight, XorShift64, bench_config, bench_criterion, configure_group,
-    pages_throughput,
-};
+use bench_criterion::{BenchCriterion, bench_criterion};
+use bench_seed::bench_seed;
+use bench_tier::{BenchTier, bench_tier};
+use group_light::configure_group_light;
+use rng::XorShift64;
+use pages_throughput::pages_throughput;
 
 #[derive(Clone, Copy)]
 struct BoxItem {
@@ -47,18 +60,19 @@ fn gen_boxes(seed: u64, n: usize) -> Vec<BoxItem> {
 }
 
 fn bench_plane_queries(c: &mut BenchCriterion) {
-    let cfg = bench_config();
-    let sizes: &[usize] = if cfg.tier == common::BenchTier::Quick {
+    let tier = bench_tier();
+    let seed = bench_seed();
+    let sizes: &[usize] = if tier == BenchTier::Quick {
         &[1_000, 5_000]
     } else {
         &[1_000, 5_000, 20_000]
     };
 
     let mut group = c.benchmark_group("micro_plane_queries");
-    configure_group(&mut group, &cfg, GroupWeight::Light);
+    configure_group_light(&mut group, tier);
 
     for &n in sizes {
-        let boxes = gen_boxes(cfg.seed ^ (n as u64), n);
+        let boxes = gen_boxes(seed ^ (n as u64), n);
         let mut plane = Plane::new((0.0, 0.0, 1000.0, 1000.0), 1);
         plane.extend(boxes);
         let query = (200.0, 200.0, 400.0, 400.0);
@@ -90,18 +104,19 @@ fn bench_plane_queries(c: &mut BenchCriterion) {
 }
 
 fn bench_plane_add_remove(c: &mut BenchCriterion) {
-    let cfg = bench_config();
-    let sizes: &[usize] = if cfg.tier == common::BenchTier::Quick {
+    let tier = bench_tier();
+    let seed = bench_seed();
+    let sizes: &[usize] = if tier == BenchTier::Quick {
         &[1_000]
     } else {
         &[1_000, 5_000]
     };
 
     let mut group = c.benchmark_group("micro_plane_add_remove");
-    configure_group(&mut group, &cfg, GroupWeight::Light);
+    configure_group_light(&mut group, tier);
 
     for &n in sizes {
-        let items = gen_boxes(cfg.seed ^ 0xBAD5EED, n);
+        let items = gen_boxes(seed ^ 0xBAD5EED, n);
         group.bench_with_input(BenchmarkId::new("extend", n), &items, |b, items| {
             b.iter(|| {
                 let mut plane = Plane::new((0.0, 0.0, 1000.0, 1000.0), 1);

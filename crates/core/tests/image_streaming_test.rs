@@ -39,7 +39,7 @@ fn test_image_decode_rejects_oversize() {
     );
 
     // 2x2 DeviceGray expects 4 bytes, but we compress 10 bytes.
-    let raw = zlib_compress(&vec![0u8; 10]);
+    let raw = zlib_compress(&[0u8; 10]);
     let stream = PDFStream::new(attrs, raw);
 
     let outdir = make_temp_dir("bolivar_image_test");
@@ -49,7 +49,7 @@ fn test_image_decode_rejects_oversize() {
         &stream,
         (Some(2), Some(2)),
         8,
-        &vec!["DeviceGray".to_string()],
+        &["DeviceGray".to_string()],
     );
 
     let _ = std::fs::remove_dir_all(&outdir);

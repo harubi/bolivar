@@ -57,10 +57,10 @@ fn build_page_order(doc: &PDFDocument, options: &ExtractOptions) -> Vec<usize> {
     let mut selected = 0usize;
 
     for page_idx in 0..page_count {
-        if let Some(ref nums) = options.page_numbers {
-            if !nums.contains(&page_idx) {
-                continue;
-            }
+        if let Some(ref nums) = options.page_numbers
+            && !nums.contains(&page_idx)
+        {
+            continue;
         }
         if options.maxpages > 0 && selected >= options.maxpages {
             break;

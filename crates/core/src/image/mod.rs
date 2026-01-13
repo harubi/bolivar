@@ -2,6 +2,6 @@
 //!
 //! This module provides BMP writing and image format handling for PDF images.
 
-pub mod image;
+mod export;
 
-pub use image::*;
+pub use export::*;

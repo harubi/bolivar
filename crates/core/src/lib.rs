@@ -37,7 +37,7 @@ pub use utils::data_structures;
 
 // Re-export parser modules for backwards compatibility
 pub use parser::lexer as psparser;
-pub use parser::parser as pdfparser;
+pub use parser::pdf_parser as pdfparser;
 
 // Re-export model modules for backwards compatibility
 pub use model::color as pdfcolor;

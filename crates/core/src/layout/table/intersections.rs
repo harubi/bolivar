@@ -244,6 +244,7 @@ fn bucket_range(
     Some((start.min(end), start.max(end)))
 }
 
+#[cfg(test)]
 pub(crate) fn bucket_count_for_edges(edges: &[EdgeObj], x_tol: f64) -> usize {
     bucket_params_for_edges(edges, x_tol)
         .map(|(_, _, count)| count)
@@ -258,19 +259,22 @@ pub(crate) fn remove_active_entry(
     let Some((bucket_idx, slot)) = active_slots.get_mut(v_idx).and_then(Option::take) else {
         return;
     };
-    if let Some(bucket) = active.get_mut(bucket_idx) {
-        if let Some((_from, to)) = bucket.remove(slot) {
-            if let Some(block) = bucket.blocks.get(to) {
-                for lane in 0..4 {
-                    if block.mask & (1u8 << lane) != 0 {
-                        let moved_idx = block.ids[lane];
-                        if let Some((_, moved_slot)) =
-                            active_slots.get_mut(moved_idx).and_then(Option::as_mut)
-                        {
-                            moved_slot.block = to;
-                        }
-                    }
-                }
+    let Some(bucket) = active.get_mut(bucket_idx) else {
+        return;
+    };
+    let Some((_from, to)) = bucket.remove(slot) else {
+        return;
+    };
+    let Some(block) = bucket.blocks.get(to) else {
+        return;
+    };
+    for lane in 0..4 {
+        if block.mask & (1u8 << lane) != 0 {
+            let moved_idx = block.ids[lane];
+            if let Some((_, moved_slot)) =
+                active_slots.get_mut(moved_idx).and_then(Option::as_mut)
+            {
+                moved_slot.block = to;
             }
         }
     }
@@ -435,8 +439,8 @@ pub fn edges_to_intersections(
                             y_tol,
                         );
                         let mut mask_bits = 0u8;
-                        for lane in 0..4 {
-                            if mask[lane] {
+                        for (lane, hit) in mask.iter().enumerate() {
+                            if *hit {
                                 mask_bits |= 1u8 << lane;
                             }
                         }

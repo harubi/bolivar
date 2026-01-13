@@ -260,7 +260,9 @@ fn test_roundtrip_single_segment() {
     {
         let mut cursor = Cursor::new(&mut output);
         let mut writer = Jbig2StreamWriter::new(&mut cursor);
-        writer.write_segments(&[original.clone()], false).unwrap();
+        writer
+            .write_segments(std::slice::from_ref(&original), false)
+            .unwrap();
     }
 
     // Read back
@@ -314,7 +316,9 @@ fn test_roundtrip_file_format() {
     {
         let mut cursor = Cursor::new(&mut output);
         let mut writer = Jbig2StreamWriter::new(&mut cursor);
-        writer.write_file(&[segment.clone()], false).unwrap();
+        writer
+            .write_file(std::slice::from_ref(&segment), false)
+            .unwrap();
     }
 
     // Verify header

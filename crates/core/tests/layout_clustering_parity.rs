@@ -4,8 +4,7 @@ use bolivar_core::layout::types::{LTTextBoxHorizontal, TextBoxType};
 
 #[test]
 fn exact_grouping_minimal_fixture() {
-    let mut box1 = LTTextBoxHorizontal::new();
-    let boxes = vec![TextBoxType::Horizontal(box1)];
+    let boxes = vec![TextBoxType::Horizontal(LTTextBoxHorizontal::new())];
     let groups = group_textboxes_exact(&LAParams::default(), &boxes);
 
     assert_eq!(groups.len(), 1);

@@ -5,12 +5,13 @@
 
 use crate::error::Result;
 
+type TokenChunks = (Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u8>);
+
 pub fn repair_bytes(input: &[u8]) -> Result<Vec<u8>> {
     let mut out = input.to_vec();
-    let mut changed = false;
-    changed |= fix_box(&mut out, b"/MediaBox");
-    changed |= fix_box(&mut out, b"/CropBox");
-    if changed { Ok(out) } else { Ok(out) }
+    let _ = fix_box(&mut out, b"/MediaBox");
+    let _ = fix_box(&mut out, b"/CropBox");
+    Ok(out)
 }
 
 fn fix_box(data: &mut [u8], key: &[u8]) -> bool {
@@ -80,7 +81,7 @@ fn reorder_box_content(content: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn parse_tokens(content: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>, Vec<u8>)> {
+fn parse_tokens(content: &[u8]) -> Option<TokenChunks> {
     let mut tokens = Vec::new();
     let mut seps = Vec::new();
     let mut sep = Vec::new();

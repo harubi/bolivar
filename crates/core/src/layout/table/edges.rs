@@ -3,6 +3,7 @@
 //! This module processes raw edges extracted from PDF content into
 //! clean, aligned edges suitable for table detection.
 
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 use ordered_float::OrderedFloat;
@@ -330,7 +331,7 @@ pub fn words_to_edges_v(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj
     clusters.extend(by_x1);
     clusters.extend(by_center);
 
-    clusters.sort_by(|a, b| b.len().cmp(&a.len()));
+    clusters.sort_by_key(|c| Reverse(c.len()));
     let large_clusters: Vec<Vec<WordObj>> = clusters
         .into_iter()
         .filter(|c| c.len() >= word_threshold)

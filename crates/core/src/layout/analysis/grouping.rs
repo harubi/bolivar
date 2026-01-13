@@ -572,7 +572,7 @@ pub fn add_char_to_horizontal_line(line: &mut LTTextLineHorizontal, ch: LTChar, 
     line.component.x1 = line.component.x1.max(ch.x1());
     line.component.y1 = line.component.y1.max(ch.y1());
 
-    line.elements.push(TextLineElement::Char(ch));
+    line.elements.push(TextLineElement::Char(Box::new(ch)));
 }
 
 /// Helper to add a character to a vertical line, inserting word spaces as needed.
@@ -589,7 +589,7 @@ pub fn add_char_to_vertical_line(line: &mut LTTextLineVertical, ch: LTChar, word
     line.component.x1 = line.component.x1.max(ch.x1());
     line.component.y1 = line.component.y1.max(ch.y1());
 
-    line.elements.push(TextLineElement::Char(ch));
+    line.elements.push(TextLineElement::Char(Box::new(ch)));
 }
 
 /// Groups text lines into text boxes based on neighbor relationships.
@@ -684,12 +684,11 @@ fn group_textlines_arena_soa(
             let nlid = line_ids[j];
             if arena_lines_aligned(arena, lid, nlid, d) {
                 members.push(j);
-                if let Some(existing_box_id) = line_to_box_id[j] {
-                    if let Some(existing_members) =
+                if let Some(existing_box_id) = line_to_box_id[j]
+                    && let Some(existing_members) =
                         box_contents.get_mut(existing_box_id).and_then(|m| m.take())
-                    {
-                        members.extend(existing_members);
-                    }
+                {
+                    members.extend(existing_members);
                 }
             }
         }
@@ -718,9 +717,9 @@ fn group_textlines_arena_soa(
     let mut result: Vec<BoxId> = Vec::new();
     let mut done: Vec<bool> = vec![false; next_box_id];
 
-    for i in 0..line_ids.len() {
-        let box_id = match line_to_box_id[i] {
-            Some(id) => id,
+    for box_id in line_to_box_id.iter().take(line_ids.len()) {
+        let box_id = match box_id {
+            Some(id) => *id,
             None => continue,
         };
 

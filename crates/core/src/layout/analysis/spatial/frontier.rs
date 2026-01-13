@@ -95,23 +95,27 @@ impl FrontierEntry {
     }
 }
 
+pub struct FrontierBestParams<'a> {
+    pub initial_nodes: &'a [SpatialNode],
+    pub dynamic_tree: &'a DynamicSpatialTree,
+    pub bboxes: &'a [Rect],
+    pub areas: &'a [f64],
+    pub py_ids: &'a [PyId],
+    pub done: &'a [bool],
+    pub best_heap: &'a mut BinaryHeap<BestEntry>,
+}
+
 /// Expand a frontier entry for the single-heap best-first algorithm.
 ///
 /// If both nodes are leaves, emits concrete pairs to the heap.
 /// Otherwise, splits the larger node and re-enqueues child frontiers.
 pub fn expand_frontier_best(
     entry: FrontierEntry,
-    initial_nodes: &[SpatialNode],
-    dynamic_tree: &DynamicSpatialTree,
-    bboxes: &[Rect],
-    areas: &[f64],
-    py_ids: &[PyId],
-    done: &[bool],
-    best_heap: &mut BinaryHeap<BestEntry>,
+    params: &mut FrontierBestParams<'_>,
 ) {
     let nodes = match entry.tree {
-        TreeKind::Initial => initial_nodes,
-        TreeKind::Dynamic => &dynamic_tree.nodes,
+        TreeKind::Initial => params.initial_nodes,
+        TreeKind::Dynamic => &params.dynamic_tree.nodes,
     };
     let node_a = &nodes[entry.node_a];
     let node_b = &nodes[entry.node_b];
@@ -121,21 +125,21 @@ pub fn expand_frontier_best(
         match entry.mode {
             PairMode::InitialIJ => {
                 if entry.node_a == entry.node_b {
-                    // Self-pair: emit (i, j) where py_ids[i] < py_ids[j]
+                    // Self-pair: emit (i, j) where params.py_ids[i] < params.py_ids[j]
                     for i in 0..node_a.element_indices.len() {
                         for j in (i + 1)..node_a.element_indices.len() {
                             let ei = node_a.element_indices[i];
                             let ej = node_a.element_indices[j];
-                            if done[ei] || done[ej] {
+                            if params.done[ei] || params.done[ej] {
                                 continue;
                             }
                             let d =
-                                dist_key_from_geom(bboxes[ei], areas[ei], bboxes[ej], areas[ej]);
-                            best_heap.push(BestEntry::Pair(GroupHeapEntry {
+                                dist_key_from_geom(params.bboxes[ei], params.areas[ei], params.bboxes[ej], params.areas[ej]);
+                            params.best_heap.push(BestEntry::Pair(GroupHeapEntry {
                                 skip_isany: false,
                                 dist: d,
-                                id1: py_ids[ei],
-                                id2: py_ids[ej],
+                                id1: params.py_ids[ei],
+                                id2: params.py_ids[ej],
                                 elem1_idx: ei,
                                 elem2_idx: ej,
                             }));
@@ -145,18 +149,18 @@ pub fn expand_frontier_best(
                     // Cross-pair: emit with i<j orientation
                     for &ei in &node_a.element_indices {
                         for &ej in &node_b.element_indices {
-                            if done[ei] || done[ej] {
+                            if params.done[ei] || params.done[ej] {
                                 continue;
                             }
                             let d =
-                                dist_key_from_geom(bboxes[ei], areas[ei], bboxes[ej], areas[ej]);
+                                dist_key_from_geom(params.bboxes[ei], params.areas[ei], params.bboxes[ej], params.areas[ej]);
                             // Maintain i<j orientation
-                            let (id1, id2, idx1, idx2) = if py_ids[ei] < py_ids[ej] {
-                                (py_ids[ei], py_ids[ej], ei, ej)
+                            let (id1, id2, idx1, idx2) = if params.py_ids[ei] < params.py_ids[ej] {
+                                (params.py_ids[ei], params.py_ids[ej], ei, ej)
                             } else {
-                                (py_ids[ej], py_ids[ei], ej, ei)
+                                (params.py_ids[ej], params.py_ids[ei], ej, ei)
                             };
-                            best_heap.push(BestEntry::Pair(GroupHeapEntry {
+                            params.best_heap.push(BestEntry::Pair(GroupHeapEntry {
                                 skip_isany: false,
                                 dist: d,
                                 id1,
@@ -174,27 +178,27 @@ pub fn expand_frontier_best(
             } => {
                 // GroupOther: emit (group_id, other_id) in that order - NO min/max
                 // node_a is the "group" side, node_b is "other" side
-                if !dynamic_tree.contains_elem(entry.node_a, group_idx) {
+                if !params.dynamic_tree.contains_elem(entry.node_a, group_idx) {
                     return;
                 }
-                if done[group_idx] {
+                if params.done[group_idx] {
                     return;
                 }
                 for &ej in &node_b.element_indices {
-                    if ej == group_idx || done[ej] {
+                    if ej == group_idx || params.done[ej] {
                         continue;
                     }
                     let d = dist_key_from_geom(
-                        bboxes[group_idx],
-                        areas[group_idx],
-                        bboxes[ej],
-                        areas[ej],
+                        params.bboxes[group_idx],
+                        params.areas[group_idx],
+                        params.bboxes[ej],
+                        params.areas[ej],
                     );
-                    best_heap.push(BestEntry::Pair(GroupHeapEntry {
+                    params.best_heap.push(BestEntry::Pair(GroupHeapEntry {
                         skip_isany: false,
                         dist: d,
                         id1: group_id,
-                        id2: py_ids[ej],
+                        id2: params.py_ids[ej],
                         elem1_idx: group_idx,
                         elem2_idx: ej,
                     }));
@@ -231,7 +235,7 @@ pub fn expand_frontier_best(
                             left,
                             left,
                         ) {
-                            best_heap.push(BestEntry::Frontier(e));
+                            params.best_heap.push(BestEntry::Frontier(e));
                         }
                         if let Some(e) = FrontierEntry::new_initial(
                             calc_dist_lower_bound(&right_node.stats, &right_node.stats),
@@ -240,7 +244,7 @@ pub fn expand_frontier_best(
                             right,
                             right,
                         ) {
-                            best_heap.push(BestEntry::Frontier(e));
+                            params.best_heap.push(BestEntry::Frontier(e));
                         }
                         if let Some(e) = FrontierEntry::new_initial(
                             calc_dist_lower_bound(&left_node.stats, &right_node.stats),
@@ -249,7 +253,7 @@ pub fn expand_frontier_best(
                             left,
                             right,
                         ) {
-                            best_heap.push(BestEntry::Frontier(e));
+                            params.best_heap.push(BestEntry::Frontier(e));
                         }
                     } else {
                         // Cross-pair split: push child pairs with other node
@@ -263,7 +267,7 @@ pub fn expand_frontier_best(
                                 child_idx,
                                 other_node_idx,
                             ) {
-                                best_heap.push(BestEntry::Frontier(e));
+                                params.best_heap.push(BestEntry::Frontier(e));
                             }
                         }
                     }
@@ -275,7 +279,7 @@ pub fn expand_frontier_best(
                     // GroupOther split: maintain mode
                     if split_is_a {
                         // Only keep the child that contains group_idx
-                        let group_child = if dynamic_tree.contains_elem(left, group_idx) {
+                        let group_child = if params.dynamic_tree.contains_elem(left, group_idx) {
                             left
                         } else {
                             right
@@ -290,7 +294,7 @@ pub fn expand_frontier_best(
                             group_child,
                             other_node_idx,
                         );
-                        best_heap.push(BestEntry::Frontier(e));
+                        params.best_heap.push(BestEntry::Frontier(e));
                     } else {
                         for &child_idx in &[left, right] {
                             let child_node = &nodes[child_idx];
@@ -306,7 +310,7 @@ pub fn expand_frontier_best(
                                 entry.node_a,
                                 child_idx,
                             );
-                            best_heap.push(BestEntry::Frontier(e));
+                            params.best_heap.push(BestEntry::Frontier(e));
                         }
                     }
                 }

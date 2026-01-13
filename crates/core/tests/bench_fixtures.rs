@@ -3,20 +3,11 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 #[derive(serde::Deserialize)]
-struct FixtureExpect {
-    min_pages: Option<usize>,
-    min_text_len: Option<usize>,
-    min_tables: Option<usize>,
-}
-
-#[derive(serde::Deserialize)]
 struct Fixture {
     id: String,
     path: String,
     tiers: Vec<String>,
     tags: Vec<String>,
-    expect: Option<FixtureExpect>,
-    bench_pages: Option<Vec<usize>>,
     sha256: Option<String>,
 }
 

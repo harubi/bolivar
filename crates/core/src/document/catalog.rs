@@ -13,7 +13,7 @@ use super::security::{PDFSecurityHandler, create_security_handler};
 use crate::error::{PdfError, Result};
 use crate::font::encoding::{DiffEntry, EncodingDB};
 use crate::model::objects::PDFObject;
-use crate::parser::parser::PDFParser;
+use crate::parser::pdf_parser::PDFParser;
 use crate::simd::U8_LANES;
 use bytes::Bytes;
 use indexmap::IndexMap;

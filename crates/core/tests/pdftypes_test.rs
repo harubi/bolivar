@@ -16,8 +16,8 @@ fn test_object_null() {
 
 #[test]
 fn test_object_bool() {
-    assert_eq!(PDFObject::Bool(true).as_bool().unwrap(), true);
-    assert_eq!(PDFObject::Bool(false).as_bool().unwrap(), false);
+    assert!(PDFObject::Bool(true).as_bool().unwrap());
+    assert!(!PDFObject::Bool(false).as_bool().unwrap());
     assert!(PDFObject::Null.as_bool().is_err());
 }
 

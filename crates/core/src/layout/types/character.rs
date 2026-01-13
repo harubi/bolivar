@@ -234,65 +234,6 @@ impl LTChar {
             .build()
     }
 
-    /// Creates a character with MCID and custom matrix.
-    pub fn with_mcid_matrix(
-        bbox: Rect,
-        text: &str,
-        fontname: &str,
-        size: f64,
-        upright: bool,
-        adv: f64,
-        matrix: Matrix,
-        mcid: Option<i32>,
-    ) -> Self {
-        Self::builder(bbox, text, fontname, size)
-            .upright(upright)
-            .adv(adv)
-            .matrix(matrix)
-            .mcid(mcid)
-            .build()
-    }
-
-    /// Creates a character with full marked content information.
-    pub fn with_marked_content(
-        bbox: Rect,
-        text: &str,
-        fontname: &str,
-        size: f64,
-        upright: bool,
-        adv: f64,
-        mcid: Option<i32>,
-        tag: Option<String>,
-    ) -> Self {
-        Self::builder(bbox, text, fontname, size)
-            .upright(upright)
-            .adv(adv)
-            .mcid(mcid)
-            .tag(tag)
-            .build()
-    }
-
-    /// Creates a character with marked content and custom matrix.
-    pub fn with_marked_content_matrix(
-        bbox: Rect,
-        text: &str,
-        fontname: &str,
-        size: f64,
-        upright: bool,
-        adv: f64,
-        matrix: Matrix,
-        mcid: Option<i32>,
-        tag: Option<String>,
-    ) -> Self {
-        Self::builder(bbox, text, fontname, size)
-            .upright(upright)
-            .adv(adv)
-            .matrix(matrix)
-            .mcid(mcid)
-            .tag(tag)
-            .build()
-    }
-
     /// Creates a character with full color information.
     #[allow(clippy::too_many_arguments)]
     pub fn with_colors(

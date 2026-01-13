@@ -20,6 +20,7 @@ use serde::Deserialize;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 /// Output type for the extracted content.
@@ -281,7 +282,7 @@ struct TableSettingsPatch {
 
 fn parse_text_dir(value: &str) -> Result<TextDir> {
     TextDir::from_str(value)
-        .ok_or_else(|| PdfError::DecodeError(format!("invalid text direction: {value}")))
+        .map_err(|_| PdfError::DecodeError(format!("invalid text direction: {value}")))
 }
 
 fn apply_text_settings_patch(settings: &mut TextSettings, patch: TextSettingsPatch) -> Result<()> {
@@ -622,7 +623,7 @@ fn process_file<W: Write>(
 
     // Handle table extraction mode
     if args.extract_tables {
-        let settings = build_table_settings(&args, None)?;
+        let settings = build_table_settings(args, None)?;
         let stream =
             extract_tables_stream_from_doc_with_settings(Arc::clone(&doc), options, settings)?;
 

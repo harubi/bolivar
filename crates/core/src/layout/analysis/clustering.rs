@@ -9,8 +9,8 @@ use crate::utils::{HasBBox, INF_F64, Plane, Rect};
 use super::super::params::LAParams;
 use super::super::types::{LTTextGroup, TextBoxType, TextGroupElement};
 use super::spatial::{
-    BestEntry, DynamicSpatialTree, FrontierEntry, PlaneElem, PyId, SpatialNode, bbox_union,
-    calc_dist_lower_bound, expand_frontier_best,
+    BestEntry, DynamicSpatialTree, FrontierBestParams, FrontierEntry, PlaneElem, PyId, SpatialNode,
+    bbox_union, calc_dist_lower_bound, expand_frontier_best,
 };
 
 /// Exact pdfminer-compatible grouping using a single-heap best-first algorithm.
@@ -89,16 +89,16 @@ pub fn group_textboxes_exact(_laparams: &LAParams, boxes: &[TextBoxType]) -> Vec
 
         match entry {
             BestEntry::Frontier(entry) => {
-                expand_frontier_best(
-                    entry,
-                    &initial_nodes,
-                    &dynamic_tree,
-                    &bboxes,
-                    &areas,
-                    &py_ids,
-                    &done,
-                    &mut best_heap,
-                );
+                let mut params = FrontierBestParams {
+                    initial_nodes: &initial_nodes,
+                    dynamic_tree: &dynamic_tree,
+                    bboxes: &bboxes,
+                    areas: &areas,
+                    py_ids: &py_ids,
+                    done: &done,
+                    best_heap: &mut best_heap,
+                };
+                expand_frontier_best(entry, &mut params);
             }
             BestEntry::Pair(mut best) => {
                 // Skip if either element is already merged

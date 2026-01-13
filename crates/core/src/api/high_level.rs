@@ -26,16 +26,21 @@ use crate::table::{
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct ThreadRecord {
     id: std::thread::ThreadId,
     in_pool: bool,
 }
 
+#[cfg(test)]
 static THREAD_LOG: OnceLock<Mutex<Vec<ThreadRecord>>> = OnceLock::new();
 
+#[cfg(test)]
 fn record_thread() {
     let log = THREAD_LOG.get_or_init(|| Mutex::new(Vec::new()));
     if let Ok(mut guard) = log.lock() {
@@ -47,18 +52,24 @@ fn record_thread() {
     }
 }
 
+#[cfg(not(test))]
+fn record_thread() {}
+
+#[cfg(test)]
 fn take_thread_log() -> Vec<ThreadRecord> {
     let log = THREAD_LOG.get_or_init(|| Mutex::new(Vec::new()));
     let mut guard = log.lock().unwrap();
     std::mem::take(&mut *guard)
 }
 
+#[cfg(test)]
 pub fn clear_thread_log() {
     let log = THREAD_LOG.get_or_init(|| Mutex::new(Vec::new()));
     let mut guard = log.lock().unwrap();
     guard.clear();
 }
 
+#[cfg(test)]
 pub fn take_thread_log_len() -> usize {
     take_thread_log().len()
 }
@@ -98,6 +109,7 @@ pub type Cell = Option<String>;
 pub type Row = Vec<Cell>;
 pub type Table = Vec<Row>;
 pub type PageTables = Vec<Table>;
+pub type DocumentTables = Vec<PageTables>;
 
 impl Default for ExtractOptions {
     fn default() -> Self {
@@ -139,8 +151,6 @@ pub fn extract_text(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result<
 
 /// Extract text from an already-parsed PDFDocument.
 pub fn extract_text_with_document(doc: &PDFDocument, options: ExtractOptions) -> Result<String> {
-    let options = options;
-
     // Use LAParams or create default
     let laparams = options.laparams.clone().unwrap_or_default();
 
@@ -472,7 +482,7 @@ pub fn extract_tables_with_document(
     doc: &PDFDocument,
     options: ExtractOptions,
     settings: &TableSettings,
-) -> Result<Vec<Vec<Vec<Vec<Option<String>>>>>> {
+) -> Result<DocumentTables> {
     let mut options = options;
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
@@ -486,7 +496,7 @@ pub fn extract_tables_with_document(
         .build()
         .map_err(|e| PdfError::DecodeError(e.to_string()))?;
 
-    let mut results: Vec<(usize, Vec<Vec<Vec<Option<String>>>>)> = pool.install(|| {
+    let mut results: Vec<(usize, PageTables)> = pool.install(|| {
         order
             .par_iter()
             .map(|&page_idx| {
@@ -527,7 +537,7 @@ pub fn extract_tables_with_document_geometries(
     options: ExtractOptions,
     settings: &TableSettings,
     geometries: &[PageGeometry],
-) -> Result<Vec<Vec<Vec<Vec<Option<String>>>>>> {
+) -> Result<DocumentTables> {
     let mut options = options;
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
@@ -548,7 +558,7 @@ pub fn extract_tables_with_document_geometries(
         .build()
         .map_err(|e| PdfError::DecodeError(e.to_string()))?;
 
-    let mut results: Vec<(usize, Vec<Vec<Vec<Option<String>>>>)> = pool.install(|| {
+    let mut results: Vec<(usize, PageTables)> = pool.install(|| {
         order
             .par_iter()
             .enumerate()
@@ -585,10 +595,10 @@ fn build_page_order(doc: &PDFDocument, options: &ExtractOptions) -> Vec<usize> {
     let mut selected = 0usize;
 
     for page_idx in 0..page_count {
-        if let Some(ref nums) = options.page_numbers {
-            if !nums.contains(&page_idx) {
-                continue;
-            }
+        if let Some(ref nums) = options.page_numbers
+            && !nums.contains(&page_idx)
+        {
+            continue;
         }
         if options.maxpages > 0 && selected >= options.maxpages {
             break;
@@ -761,7 +771,7 @@ mod tests {
             &mut out,
             format!(
                 "4 0 obj\n<< /Length {} >>\nstream\n{}\nendstream\nendobj\n",
-                stream.as_bytes().len(),
+                stream.len(),
                 stream
             ),
             &mut offsets,
@@ -866,8 +876,10 @@ mod tests {
         let pdf_data = build_minimal_pdf_with_pages(1);
         let doc = PDFDocument::new(&pdf_data, "").unwrap();
         let options = ExtractOptions::default();
-        let mut settings = TableSettings::default();
-        settings.probe_policy = TableProbePolicy::Always;
+        let settings = TableSettings {
+            probe_policy: TableProbePolicy::Always,
+            ..Default::default()
+        };
 
         crate::layout::table::edge_probe::take_probe_calls();
         let out = extract_tables_with_document(&doc, options, &settings).unwrap();

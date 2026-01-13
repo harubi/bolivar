@@ -16,6 +16,10 @@ use std::sync::Arc;
 /// None represents an invalid/missing width entry.
 pub type FontWidthDict = HashMap<u32, Option<f64>>;
 
+type VerticalDisp = (Option<f64>, f64);
+type VerticalDispMap = HashMap<u32, VerticalDisp>;
+type VerticalDispData = (VerticalDisp, VerticalDispMap);
+
 /// Character displacement for vertical fonts.
 /// For horizontal fonts: (width, 0.0)
 /// For vertical fonts: (vx, vy) where vx can be None (use fontsize * 0.5)
@@ -405,8 +409,6 @@ impl PDFCIDFont {
         // IdentityUnicodeMap is ONLY used when ToUnicode is a NAME containing "Identity".
         // When there's no ToUnicode (or ToUnicode stream is empty), unicode_map stays None,
         // causing to_unichr() to return None → renders as (cid:X).
-        let unicode_map = unicode_map;
-
         // Build cid2unicode from Encoding for simple fonts only (not Type0/CID fonts)
         // Type0 fonts use CMap for decoding, not Encoding entries
         let cid2unicode = if is_type0 {
@@ -466,7 +468,7 @@ impl PDFCIDFont {
     fn parse_vertical_disps(
         spec: &HashMap<String, PDFObject>,
         is_vertical: bool,
-    ) -> ((Option<f64>, f64), HashMap<u32, (Option<f64>, f64)>) {
+    ) -> VerticalDispData {
         if !is_vertical {
             // Horizontal font - use 0 displacement
             return ((None, 0.0), HashMap::new());

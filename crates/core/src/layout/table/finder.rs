@@ -130,10 +130,10 @@ fn collect_page_objects(
             LTItem::TextLine(line) => {
                 let mut push_chars = |elements: &mut dyn Iterator<Item = &TextLineElement>| {
                     for el in elements {
-                        if let TextLineElement::Char(c) = el {
-                            if let Some(obj) = char_to_charobj(c, geom, crop_bbox, arena) {
-                                chars.push(obj);
-                            }
+                        if let TextLineElement::Char(c) = el
+                            && let Some(obj) = char_to_charobj(c, geom, crop_bbox, arena)
+                        {
+                            chars.push(obj);
                         }
                     }
                 };
@@ -145,10 +145,10 @@ fn collect_page_objects(
             LTItem::TextBox(tb) => {
                 let mut push_line_chars = |elements: &mut dyn Iterator<Item = &TextLineElement>| {
                     for el in elements {
-                        if let TextLineElement::Char(c) = el {
-                            if let Some(obj) = char_to_charobj(c, geom, crop_bbox, arena) {
-                                chars.push(obj);
-                            }
+                        if let TextLineElement::Char(c) = el
+                            && let Some(obj) = char_to_charobj(c, geom, crop_bbox, arena)
+                        {
+                            chars.push(obj);
                         }
                     }
                 };

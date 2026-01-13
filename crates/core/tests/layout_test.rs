@@ -749,16 +749,12 @@ fn test_ltchar_tag_defaults_to_none() {
 
 #[test]
 fn test_ltchar_with_marked_content() {
-    let char1 = LTChar::with_marked_content(
-        (10.0, 10.0, 20.0, 20.0),
-        "A",
-        "Helvetica",
-        10.0,
-        true,
-        10.0,
-        Some(42),
-        Some("P".to_string()),
-    );
+    let char1 = LTChar::builder((10.0, 10.0, 20.0, 20.0), "A", "Helvetica", 10.0)
+        .upright(true)
+        .adv(10.0)
+        .mcid(Some(42))
+        .tag(Some("P".to_string()))
+        .build();
     assert_eq!(char1.mcid(), Some(42));
     assert_eq!(char1.tag(), Some("P".to_string()));
 }
@@ -769,7 +765,7 @@ fn test_ltchar_with_marked_content() {
 
 #[test]
 fn test_group_heap_entry_ordering() {
-    use bolivar_core::layout::{GroupHeapEntry, PyId};
+    use bolivar_core::layout::GroupHeapEntry;
     use std::collections::BinaryHeap;
 
     let e1 = GroupHeapEntry {
@@ -1127,8 +1123,10 @@ fn test_pdf_with_empty_characters_vertical() {
 
     let pdf_data = include_bytes!("fixtures/contrib/issue-449-vertical.pdf");
 
-    let mut laparams = LAParams::default();
-    laparams.detect_vertical = true;
+    let laparams = LAParams {
+        detect_vertical: true,
+        ..Default::default()
+    };
 
     let options = ExtractOptions {
         laparams: Some(laparams),

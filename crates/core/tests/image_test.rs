@@ -188,8 +188,7 @@ fn test_bmpwriter_8bit_color_table() {
 
 #[test]
 fn test_bmpwriter_write_line() {
-    let mut output = Vec::new();
-    output.resize(214, 0); // Pre-allocate for 24-bit, 10x5 image
+    let mut output = vec![0; 214]; // Pre-allocate for 24-bit, 10x5 image
     {
         let mut cursor = Cursor::new(&mut output);
         let mut writer = BmpWriter::new(&mut cursor, 24, 10, 5).unwrap();
@@ -209,8 +208,7 @@ fn test_bmpwriter_write_line() {
 
 #[test]
 fn test_bmpwriter_write_multiple_lines() {
-    let mut output = Vec::new();
-    output.resize(214, 0); // Pre-allocate for 24-bit, 10x5 image
+    let mut output = vec![0; 214]; // Pre-allocate for 24-bit, 10x5 image
     {
         let mut cursor = Cursor::new(&mut output);
         let mut writer = BmpWriter::new(&mut cursor, 24, 10, 5).unwrap();
@@ -240,8 +238,7 @@ fn test_bmpwriter_write_multiple_lines() {
 
 #[test]
 fn test_bmpwriter_1bit_complete_image() {
-    let mut output = Vec::new();
-    output.resize(78, 0); // 62 header + 16 data for 8x4 1-bit image
+    let mut output = vec![0; 78]; // 62 header + 16 data for 8x4 1-bit image
     {
         let mut cursor = Cursor::new(&mut output);
         let mut writer = BmpWriter::new(&mut cursor, 1, 8, 4).unwrap();
@@ -274,18 +271,17 @@ fn test_bmpwriter_1bit_complete_image() {
 
 #[test]
 fn test_bmpwriter_8bit_grayscale_image() {
-    let width = 4;
-    let height = 2;
+    let width: i32 = 4;
+    let height: i32 = 2;
     let linesize = align32(width) as usize;
-    let header_size = 14 + 40 + 256 * 4; // 1078
-    let data_size = linesize * height;
+    let header_size = 14_usize + 40 + 256 * 4; // 1078
+    let data_size = linesize * height as usize;
     let file_size = header_size + data_size;
 
-    let mut output = Vec::new();
-    output.resize(file_size, 0);
+    let mut output = vec![0; file_size];
     {
         let mut cursor = Cursor::new(&mut output);
-        let mut writer = BmpWriter::new(&mut cursor, 8, width as i32, height as i32).unwrap();
+        let mut writer = BmpWriter::new(&mut cursor, 8, width, height).unwrap();
 
         // Write gradient lines
         writer

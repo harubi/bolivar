@@ -17,7 +17,7 @@ pub use distance::{
     bbox_area, bbox_expand_area, bbox_union, calc_dist_lower_bound, dist_key_from_geom,
     f64_total_key,
 };
-pub use frontier::expand_frontier_best;
+pub use frontier::{FrontierBestParams, expand_frontier_best};
 pub use tree::{DynamicSpatialTree, SpatialNode};
 pub use types::{
     BestEntry, DistKey, FrontierEntry, GroupHeapEntry, NodeStats, PairMode, PlaneElem, PyId,

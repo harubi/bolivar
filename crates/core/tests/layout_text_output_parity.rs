@@ -10,7 +10,7 @@ use bolivar_core::layout::types::{
 static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
-    static COUNT_ENABLED: Cell<bool> = Cell::new(false);
+    static COUNT_ENABLED: Cell<bool> = const { Cell::new(false) };
 }
 
 struct CountingAlloc;
@@ -75,7 +75,7 @@ fn textline_get_text_allocation_budget() {
             true,
             10.0,
         );
-        line.add_element(TextLineElement::Char(ch));
+        line.add_element(TextLineElement::Char(Box::new(ch)));
     }
     line.analyze();
 

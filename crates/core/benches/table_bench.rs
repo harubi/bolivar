@@ -1,4 +1,15 @@
-mod common;
+#[path = "common/criterion.rs"]
+mod bench_criterion;
+#[path = "common/fixtures.rs"]
+mod fixtures;
+#[path = "common/group_heavy.rs"]
+mod group_heavy;
+#[path = "common/group_light.rs"]
+mod group_light;
+#[path = "common/tier.rs"]
+mod bench_tier;
+#[path = "common/bytes_throughput.rs"]
+mod bytes_throughput;
 
 use std::hint::black_box;
 
@@ -12,18 +23,20 @@ use bolivar_core::table::{
     extract_text_from_ltpage, extract_words_from_ltpage,
 };
 
-use common::{
-    BenchCriterion, GroupWeight, bench_config, bench_criterion, bytes_throughput, configure_group,
-    load_fixtures,
-};
+use bench_criterion::{BenchCriterion, bench_criterion};
+use bench_tier::bench_tier;
+use fixtures::load_fixtures;
+use group_heavy::configure_group_heavy;
+use group_light::configure_group_light;
+use bytes_throughput::bytes_throughput;
 
 fn bench_table_extract(c: &mut BenchCriterion) {
-    let cfg = bench_config();
+    let tier = bench_tier();
     let fixtures = load_fixtures(Some("tables"));
     let settings = TableSettings::default();
 
     let mut group = c.benchmark_group("table_extract_tables");
-    configure_group(&mut group, &cfg, GroupWeight::Heavy);
+    configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
         let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
@@ -69,12 +82,12 @@ fn bench_table_extract(c: &mut BenchCriterion) {
 }
 
 fn bench_text_extract(c: &mut BenchCriterion) {
-    let cfg = bench_config();
+    let tier = bench_tier();
     let fixtures = load_fixtures(Some("text"));
     let text_settings = TextSettings::default();
 
     let mut group = c.benchmark_group("table_extract_text");
-    configure_group(&mut group, &cfg, GroupWeight::Light);
+    configure_group_light(&mut group, tier);
 
     for fx in fixtures {
         let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");

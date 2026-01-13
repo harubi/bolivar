@@ -32,12 +32,12 @@ fn escape(s: &[u8]) -> String {
             _ => result.push(byte as char),
         }
     }
-    return result;
+    result
 }
 
 /// Escape a string for XML output.
 fn escape_str(s: &str) -> String {
-    return escape(s.as_bytes());
+    escape(s.as_bytes())
 }
 
 /// Stream codec for output.
@@ -125,7 +125,7 @@ fn dumpxml<W: Write>(out: &mut W, obj: &PDFObject, codec: StreamCodec) -> Result
             write!(out, r#"<ref id="{}" />"#, objref.objid)?;
         }
     }
-    return Ok(());
+    Ok(())
 }
 
 /// Dump all trailers from the document.
@@ -155,7 +155,7 @@ fn dumptrailers<W: Write>(out: &mut W, doc: &PDFDocument, show_fallback_xref: bo
         );
     }
 
-    return Ok(());
+    Ok(())
 }
 
 /// Dump all objects from the document.
@@ -196,7 +196,7 @@ fn dumpallobjs<W: Write>(
     dumptrailers(out, doc, show_fallback_xref)?;
 
     write!(out, "</pdf>")?;
-    return Ok(());
+    Ok(())
 }
 
 /// Dump outline/table of contents.
@@ -223,7 +223,7 @@ fn dumpoutline<W: Write>(out: &mut W, doc: &PDFDocument) -> Result<()> {
     }
 
     writeln!(out, "</outlines>")?;
-    return Ok(());
+    Ok(())
 }
 
 /// Dump a single outline item and its siblings.
@@ -300,7 +300,7 @@ fn dump_outline_item<W: Write>(
         dump_outline_item(out, doc, next, pages, level)?;
     }
 
-    return Ok(());
+    Ok(())
 }
 
 /// Resolve a destination to its full form.
@@ -312,21 +312,21 @@ fn resolve_dest(doc: &PDFDocument, dest: &PDFObject) -> Option<PDFObject> {
     match &resolved {
         PDFObject::String(s) => {
             // Named destination - look up via Names/Dests
-            return doc.get_dest(s).ok();
+            doc.get_dest(s).ok()
         }
         PDFObject::Name(name) => {
             // Named destination as name literal
-            return doc.get_dest(name.as_bytes()).ok();
+            doc.get_dest(name.as_bytes()).ok()
         }
         PDFObject::Dict(dict) => {
             // Destination dict with "D" key
             if let Some(d) = dict.get("D") {
-                return doc.resolve(d).ok();
+                doc.resolve(d).ok()
             } else {
-                return Some(resolved);
+                Some(resolved)
             }
         }
-        _ => return Some(resolved),
+        _ => Some(resolved),
     }
 }
 
@@ -341,14 +341,14 @@ fn resolve_dest_to_pageno(
     match &resolved {
         PDFObject::Array(arr) => {
             if arr.is_empty() {
-                return None;
+                None
+            } else if let PDFObject::Ref(objref) = &arr[0] {
+                pages.get(&objref.objid).copied()
+            } else {
+                None
             }
-            if let PDFObject::Ref(objref) = &arr[0] {
-                return pages.get(&objref.objid).copied();
-            }
-            return None;
         }
-        _ => return None,
+        _ => None,
     }
 }
 
@@ -366,7 +366,7 @@ fn extractembedded(doc: &PDFDocument, extractdir: &str) -> Result<()> {
         extract_embedded_files_from_tree(doc, &ef, extractdir)?;
     }
 
-    return Ok(());
+    Ok(())
 }
 
 /// Extract embedded files from a name tree.
@@ -413,7 +413,7 @@ fn extract_embedded_files_from_tree(
         }
     }
 
-    return Ok(());
+    Ok(())
 }
 
 /// Extract a single embedded file.
@@ -432,10 +432,9 @@ fn extract_single_embedded(
         filename.to_owned()
     };
 
-    let basename = std::path::Path::new(&basename).file_name().map_or_else(
-        || return basename.clone(),
-        |s| return s.to_string_lossy().to_string(),
-    );
+    let basename = std::path::Path::new(&basename)
+        .file_name()
+        .map_or_else(|| basename.clone(), |s| s.to_string_lossy().to_string());
 
     // Get EF dictionary
     let ef = match filespec.get("EF") {
@@ -449,7 +448,7 @@ fn extract_single_embedded(
     };
 
     // Get file stream reference
-    let file_ref = ef_dict.get("UF").or_else(|| return ef_dict.get("F"));
+    let file_ref = ef_dict.get("UF").or_else(|| ef_dict.get("F"));
     let file_ref = match file_ref {
         Some(r) => r,
         None => return Ok(()),
@@ -482,7 +481,7 @@ fn extract_single_embedded(
     let data = stream.get_data();
     std::fs::write(&path, data)?;
 
-    return Ok(());
+    Ok(())
 }
 
 /// Main PDF dump function.
@@ -533,7 +532,7 @@ fn dumppdf<W: Write>(
         writeln!(out)?;
     }
 
-    return Ok(());
+    Ok(())
 }
 
 /// A command line tool for dumping PDF internal structure as XML.
@@ -635,7 +634,7 @@ fn main() -> core::result::Result<(), Box<dyn core::error::Error>> {
     // Parse object IDs
     let objids: Vec<u32> = if let Some(ref objs) = args.objects {
         objs.split(',')
-            .filter_map(|s| return s.trim().parse().ok())
+            .filter_map(|s| s.trim().parse().ok())
             .collect()
     } else {
         Vec::new()
@@ -643,11 +642,11 @@ fn main() -> core::result::Result<(), Box<dyn core::error::Error>> {
 
     // Parse page numbers
     let pagenos: HashSet<usize> = if let Some(ref nums) = args.page_numbers {
-        nums.iter().map(|n| return n.saturating_sub(1)).collect()
+        nums.iter().map(|n| n.saturating_sub(1)).collect()
     } else if let Some(ref p) = args.pagenos {
         p.split(',')
-            .filter_map(|s| return s.trim().parse::<usize>().ok())
-            .map(|n| return n.saturating_sub(1))
+            .filter_map(|s| s.trim().parse::<usize>().ok())
+            .map(|n| n.saturating_sub(1))
             .collect()
     } else {
         HashSet::new()
@@ -692,5 +691,5 @@ fn main() -> core::result::Result<(), Box<dyn core::error::Error>> {
     }
 
     output.flush()?;
-    return Ok(());
+    Ok(())
 }

@@ -30,7 +30,7 @@ pub trait LTTextLine: HasBBox {
 /// Element in a text line - either a character or annotation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TextLineElement {
-    Char(LTChar),
+    Char(Box<LTChar>),
     Anno(LTAnno),
 }
 

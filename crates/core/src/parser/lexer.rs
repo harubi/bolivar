@@ -1569,8 +1569,8 @@ fn decode_hex_string(data: &[u8], start: usize) -> Result<(Vec<u8>, usize)> {
 
             let stop_index = stop_mask.trailing_zeros() as usize;
             let lanes = chunk.to_array();
-            for i in 0..stop_index {
-                if let Some(nibble) = hex_value(lanes[i]) {
+            for &lane in lanes.iter().take(stop_index) {
+                if let Some(nibble) = hex_value(lane) {
                     push_hex_nibble(&mut pending, &mut result, nibble);
                 }
             }

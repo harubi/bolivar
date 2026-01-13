@@ -1,4 +1,15 @@
-mod common;
+#[path = "common/criterion.rs"]
+mod bench_criterion;
+#[path = "common/group_heavy.rs"]
+mod group_heavy;
+#[path = "common/rng.rs"]
+mod rng;
+#[path = "common/seed.rs"]
+mod bench_seed;
+#[path = "common/tier.rs"]
+mod bench_tier;
+#[path = "common/pages_throughput.rs"]
+mod pages_throughput;
 
 use std::hint::black_box;
 
@@ -7,10 +18,12 @@ use criterion::{BenchmarkId, criterion_group, criterion_main};
 use bolivar_core::layout::{LAParams, LTChar, LTLayoutContainer};
 use bolivar_core::utils::Rect;
 
-use common::{
-    BenchCriterion, GroupWeight, XorShift64, bench_config, bench_criterion, configure_group,
-    pages_throughput,
-};
+use bench_criterion::{BenchCriterion, bench_criterion};
+use bench_seed::bench_seed;
+use bench_tier::{BenchTier, bench_tier};
+use group_heavy::configure_group_heavy;
+use rng::XorShift64;
+use pages_throughput::pages_throughput;
 
 const PAGE_BBOX: Rect = (0.0, 0.0, 612.0, 792.0);
 
@@ -59,18 +72,19 @@ fn generate_text_boxes(
 }
 
 fn bench_group_textboxes_exact(c: &mut BenchCriterion) {
-    let cfg = bench_config();
-    let sizes: &[usize] = if cfg.tier == common::BenchTier::Quick {
+    let tier = bench_tier();
+    let seed = bench_seed();
+    let sizes: &[usize] = if tier == BenchTier::Quick {
         &[120, 240]
     } else {
         &[120, 240, 480]
     };
 
     let mut group = c.benchmark_group("layout_group_textboxes_exact");
-    configure_group(&mut group, &cfg, GroupWeight::Heavy);
+    configure_group_heavy(&mut group, tier);
 
     for &n in sizes {
-        let (container, laparams, boxes) = generate_text_boxes(cfg.seed ^ (n as u64), n);
+        let (container, laparams, boxes) = generate_text_boxes(seed ^ (n as u64), n);
         group.throughput(pages_throughput(n));
         group.bench_with_input(BenchmarkId::new("exact", n), &boxes, |b, boxes| {
             b.iter(|| {

@@ -331,8 +331,10 @@ mod layout_analyzer_tests {
         let mut analyzer = get_analyzer(&mut arena);
         analyzer.set_cur_item((0.0, 0.0, 1000.0, 1000.0));
 
-        let mut graphicstate = PDFGraphicState::default();
-        graphicstate.dash = Some((vec![1.0, 1.0], 0.0));
+        let graphicstate = PDFGraphicState {
+            dash: Some((vec![1.0, 1.0], 0.0)),
+            ..Default::default()
+        };
 
         analyzer.paint_path(&graphicstate, false, false, false, &path);
         assert_eq!(analyzer.cur_item_len(), 1);
@@ -1044,10 +1046,12 @@ mod marked_content_tests {
         aggregator.begin_tag(&tag, Some(&props));
 
         // Create text state with minimal config
-        let mut textstate = PDFTextState::default();
-        textstate.fontsize = 12.0;
-        textstate.matrix = MATRIX_IDENTITY;
-        textstate.linematrix = (100.0, 700.0);
+        let mut textstate = PDFTextState {
+            fontsize: 12.0,
+            matrix: MATRIX_IDENTITY,
+            linematrix: (100.0, 700.0),
+            ..Default::default()
+        };
 
         // Render a simple ASCII character
         let seq: PDFTextSeq = vec![PDFTextSeqItem::Bytes(vec![65])]; // 'A'

@@ -1,4 +1,17 @@
-mod common;
+#[path = "common/criterion.rs"]
+mod bench_criterion;
+#[path = "common/fixtures.rs"]
+mod fixtures;
+#[path = "common/group_heavy.rs"]
+mod group_heavy;
+#[path = "common/group_light.rs"]
+mod group_light;
+#[path = "common/tier.rs"]
+mod bench_tier;
+#[path = "common/bytes_throughput.rs"]
+mod bytes_throughput;
+#[path = "common/pages_throughput.rs"]
+mod pages_throughput;
 
 use std::hint::black_box;
 
@@ -10,17 +23,20 @@ use bolivar_core::layout::LAParams;
 use bolivar_core::pdfpage::PDFPage;
 use bolivar_core::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
 
-use common::{
-    BenchCriterion, GroupWeight, bench_config, bench_criterion, bytes_throughput, configure_group,
-    load_fixtures, pages_throughput,
-};
+use bench_criterion::{BenchCriterion, bench_criterion};
+use bench_tier::bench_tier;
+use fixtures::load_fixtures;
+use group_heavy::configure_group_heavy;
+use group_light::configure_group_light;
+use bytes_throughput::bytes_throughput;
+use pages_throughput::pages_throughput;
 
 fn bench_parse_only(c: &mut BenchCriterion) {
-    let cfg = bench_config();
+    let tier = bench_tier();
     let fixtures = load_fixtures(None);
 
     let mut group = c.benchmark_group("e2e_parse_only");
-    configure_group(&mut group, &cfg, GroupWeight::Light);
+    configure_group_light(&mut group, tier);
 
     for fx in fixtures {
         group.throughput(bytes_throughput(fx.bytes.len()));
@@ -45,11 +61,11 @@ fn bench_parse_only(c: &mut BenchCriterion) {
 }
 
 fn bench_extract_text(c: &mut BenchCriterion) {
-    let cfg = bench_config();
+    let tier = bench_tier();
     let fixtures = load_fixtures(Some("text"));
 
     let mut group = c.benchmark_group("e2e_extract_text");
-    configure_group(&mut group, &cfg, GroupWeight::Heavy);
+    configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
         let options = ExtractOptions {
@@ -73,11 +89,11 @@ fn bench_extract_text(c: &mut BenchCriterion) {
 }
 
 fn bench_extract_pages_doc_reuse(c: &mut BenchCriterion) {
-    let cfg = bench_config();
+    let tier = bench_tier();
     let fixtures = load_fixtures(Some("layout"));
 
     let mut group = c.benchmark_group("e2e_extract_pages_doc_reuse");
-    configure_group(&mut group, &cfg, GroupWeight::Heavy);
+    configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
         let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
@@ -99,12 +115,12 @@ fn bench_extract_pages_doc_reuse(c: &mut BenchCriterion) {
 }
 
 fn bench_extract_tables_e2e(c: &mut BenchCriterion) {
-    let cfg = bench_config();
+    let tier = bench_tier();
     let fixtures = load_fixtures(Some("tables"));
     let settings = TableSettings::default();
 
     let mut group = c.benchmark_group("e2e_extract_tables");
-    configure_group(&mut group, &cfg, GroupWeight::Heavy);
+    configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
         let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");

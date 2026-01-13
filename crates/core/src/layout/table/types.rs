@@ -40,14 +40,16 @@ pub enum TextDir {
     Rtl,
 }
 
-impl TextDir {
-    pub fn from_str(s: &str) -> Option<Self> {
+impl std::str::FromStr for TextDir {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "ttb" => Some(Self::Ttb),
-            "btt" => Some(Self::Btt),
-            "ltr" => Some(Self::Ltr),
-            "rtl" => Some(Self::Rtl),
-            _ => None,
+            "ttb" => Ok(Self::Ttb),
+            "btt" => Ok(Self::Btt),
+            "ltr" => Ok(Self::Ltr),
+            "rtl" => Ok(Self::Rtl),
+            _ => Err(()),
         }
     }
 }
