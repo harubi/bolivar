@@ -12,42 +12,13 @@ use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PySequenceMethods};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
-use crate::PyPDFStream;
-use crate::document::{PyPSKeyword, PyPSLiteral};
+use crate::document::{PyPDFStream, PyPSKeyword, PyPSLiteral};
 
 /// Global intern table for PSLiteral objects.
 pub static PSLITERAL_TABLE: OnceLock<Mutex<HashMap<Vec<u8>, Py<PyAny>>>> = OnceLock::new();
 
 /// Global intern table for PSKeyword objects.
 pub static PSKEYWORD_TABLE: OnceLock<Mutex<HashMap<Vec<u8>, Py<PyAny>>>> = OnceLock::new();
-
-/// Convert a PDFObject to a string representation for Python.
-pub fn pdf_object_to_string(obj: &PDFObject) -> String {
-    match obj {
-        PDFObject::Null => "null".to_string(),
-        PDFObject::Bool(b) => b.to_string(),
-        PDFObject::Int(i) => i.to_string(),
-        PDFObject::Real(r) => r.to_string(),
-        PDFObject::Name(n) => n.clone(),
-        PDFObject::String(s) => {
-            // Try to decode as UTF-8, fall back to lossy
-            String::from_utf8(s.clone()).unwrap_or_else(|_| String::from_utf8_lossy(s).to_string())
-        }
-        PDFObject::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(pdf_object_to_string).collect();
-            format!("[{}]", items.join(", "))
-        }
-        PDFObject::Dict(dict) => {
-            let items: Vec<String> = dict
-                .iter()
-                .map(|(k, v)| format!("{}: {}", k, pdf_object_to_string(v)))
-                .collect();
-            format!("{{{}}}", items.join(", "))
-        }
-        PDFObject::Stream(_) => "<stream>".to_string(),
-        PDFObject::Ref(objref) => format!("{} {} R", objref.objid, objref.genno),
-    }
-}
 
 /// Convert a name to a PSLiteral Python object.
 pub fn name_to_psliteral(py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
@@ -200,7 +171,7 @@ pub(crate) fn psliteral_name(obj: &Bound<'_, PyAny>) -> Option<String> {
         return Some(String::from_utf8_lossy(&kwd.name).to_string());
     }
     if let Ok(name_attr) = obj.getattr("name") {
-        if let Ok(bytes) = name_attr.downcast::<PyBytes>() {
+        if let Ok(bytes) = name_attr.cast::<PyBytes>() {
             return Some(String::from_utf8_lossy(bytes.as_bytes()).to_string());
         }
         if let Ok(s) = name_attr.extract::<String>() {
@@ -227,7 +198,7 @@ pub fn py_to_pdf_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFO
     if let Ok(f) = obj.extract::<f64>() {
         return Ok(PDFObject::Real(f));
     }
-    if let Ok(bytes) = obj.downcast::<PyBytes>() {
+    if let Ok(bytes) = obj.cast::<PyBytes>() {
         return Ok(PDFObject::String(bytes.as_bytes().to_vec()));
     }
     if let Some(name) = psliteral_name(obj) {
@@ -236,7 +207,7 @@ pub fn py_to_pdf_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFO
     if let Ok(s) = obj.extract::<String>() {
         return Ok(PDFObject::Name(s));
     }
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = HashMap::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;
@@ -245,8 +216,8 @@ pub fn py_to_pdf_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFO
         }
         return Ok(PDFObject::Dict(map));
     }
-    if let Ok(seq) = obj.downcast::<PySequence>() {
-        if obj.downcast::<PyBytes>().is_ok() {
+    if let Ok(seq) = obj.cast::<PySequence>() {
+        if obj.cast::<PyBytes>().is_ok() {
             return Err(PyTypeError::new_err("bytes are not a sequence"));
         }
         let mut items = Vec::new();
@@ -282,12 +253,12 @@ pub fn intern_psliteral(py: Python<'_>, name: Vec<u8>) -> PyResult<Py<PyAny>> {
         if let Some(existing) = guard.get(&name) {
             return Ok(existing.clone_ref(py));
         }
-        let obj = Py::new(py, crate::PyPSLiteral { name: name.clone() })?.into_any();
+        let obj = Py::new(py, PyPSLiteral { name: name.clone() })?.into_any();
         guard.insert(name, obj.clone_ref(py));
         return Ok(obj);
     }
     // Fallback if mutex is poisoned.
-    Ok(Py::new(py, crate::PyPSLiteral { name })?.into_any())
+    Ok(Py::new(py, PyPSLiteral { name })?.into_any())
 }
 
 /// Intern a PSKeyword for efficient reuse.
@@ -297,11 +268,11 @@ pub fn intern_pskeyword(py: Python<'_>, name: Vec<u8>) -> PyResult<Py<PyAny>> {
         if let Some(existing) = guard.get(&name) {
             return Ok(existing.clone_ref(py));
         }
-        let obj = Py::new(py, crate::PyPSKeyword { name: name.clone() })?.into_any();
+        let obj = Py::new(py, PyPSKeyword { name: name.clone() })?.into_any();
         guard.insert(name, obj.clone_ref(py));
         return Ok(obj);
     }
-    Ok(Py::new(py, crate::PyPSKeyword { name })?.into_any())
+    Ok(Py::new(py, PyPSKeyword { name })?.into_any())
 }
 
 /// Convert a PSToken to a Python object.

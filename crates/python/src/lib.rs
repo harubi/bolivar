@@ -17,13 +17,6 @@ mod utils;
 
 use pyo3::prelude::*;
 
-// Re-export types from modules for internal use
-pub use convert::*;
-pub use document::*;
-pub use layout::*;
-pub use params::*;
-pub use table::*;
-
 /// Python module for bolivar PDF library.
 #[pymodule]
 fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {

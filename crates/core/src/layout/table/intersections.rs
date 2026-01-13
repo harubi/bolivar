@@ -271,8 +271,7 @@ pub(crate) fn remove_active_entry(
     for lane in 0..4 {
         if block.mask & (1u8 << lane) != 0 {
             let moved_idx = block.ids[lane];
-            if let Some((_, moved_slot)) =
-                active_slots.get_mut(moved_idx).and_then(Option::as_mut)
+            if let Some((_, moved_slot)) = active_slots.get_mut(moved_idx).and_then(Option::as_mut)
             {
                 moved_slot.block = to;
             }

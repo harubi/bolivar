@@ -45,7 +45,7 @@ fn insert_code2cid(
             current.set_item(byte, cid)?;
         } else {
             let next = match current.get_item(byte)? {
-                Some(obj) => obj.downcast::<PyDict>()?.clone(),
+                Some(obj) => obj.cast::<PyDict>()?.clone(),
                 None => {
                     let dict = PyDict::new(py);
                     current.set_item(byte, &dict)?;
@@ -474,7 +474,7 @@ impl PyEncodingDB {
     ) -> PyResult<Py<PyAny>> {
         let mut entries = Vec::new();
         if let Some(diff) = diff {
-            if let Ok(seq) = diff.downcast::<PySequence>() {
+            if let Ok(seq) = diff.cast::<PySequence>() {
                 let len = seq.len()?;
                 for idx in 0..len {
                     let item = seq.get_item(idx)?;
@@ -566,7 +566,7 @@ impl PyPDFFont {
     ) -> PyResult<Self> {
         let _ = descriptor; // descriptor is currently unused by the mock font
         let widths_dict = widths
-            .downcast::<PyDict>()
+            .cast::<PyDict>()
             .map_err(|_| PyTypeError::new_err("widths must be a dict"))?;
         let mut width_map: HashMap<u32, Option<f64>> = HashMap::new();
         for (k, v) in widths_dict.iter() {
@@ -618,7 +618,7 @@ impl PyPDFCIDFont {
         let _ = rsrcmgr; // unused for now
         let _ = strict;
         let spec_dict = spec
-            .downcast::<PyDict>()
+            .cast::<PyDict>()
             .map_err(|_| PyTypeError::new_err("spec must be a dict"))?;
         let mut map = HashMap::new();
         for (k, v) in spec_dict.iter() {
@@ -684,7 +684,7 @@ fn dyn_cmap_to_py(
 #[pyfunction]
 pub fn get_widths(py: Python<'_>, seq: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let seq = seq
-        .downcast::<PySequence>()
+        .cast::<PySequence>()
         .map_err(|_| PyTypeError::new_err("get_widths expects a sequence"))?;
     let mut objects = Vec::new();
     let len = seq.len()?;

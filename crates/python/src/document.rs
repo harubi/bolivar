@@ -329,15 +329,15 @@ impl PyPSKeyword {
 }
 
 /// LIT function - create an interned PSLiteral.
-#[pyfunction]
-pub fn LIT(py: Python<'_>, name: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+#[pyfunction(name = "LIT")]
+pub fn lit(py: Python<'_>, name: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let bytes = ps_name_to_bytes(name)?;
     intern_psliteral(py, bytes)
 }
 
 /// KWD function - create an interned PSKeyword.
-#[pyfunction]
-pub fn KWD(py: Python<'_>, name: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+#[pyfunction(name = "KWD")]
+pub fn kwd(py: Python<'_>, name: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let bytes = ps_name_to_bytes(name)?;
     intern_pskeyword(py, bytes)
 }
@@ -463,7 +463,7 @@ impl PyPDFStream {
             let value = py_to_pdf_object(py, &v)?;
             map.insert(key, value);
         }
-        let data = if let Ok(bytes) = rawdata.downcast::<PyBytes>() {
+        let data = if let Ok(bytes) = rawdata.cast::<PyBytes>() {
             bytes.as_bytes().to_vec()
         } else if let Ok(s) = rawdata.extract::<String>() {
             s.into_bytes()
@@ -996,8 +996,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPDFStream>()?;
     m.add_class::<PyPDFPage>()?;
     m.add_class::<PyNumberTree>()?;
-    m.add_function(wrap_pyfunction!(LIT, m)?)?;
-    m.add_function(wrap_pyfunction!(KWD, m)?)?;
+    m.add_function(wrap_pyfunction!(lit, m)?)?;
+    m.add_function(wrap_pyfunction!(kwd, m)?)?;
     m.add_function(wrap_pyfunction!(decode_text, m)?)?;
     m.add_function(wrap_pyfunction!(isnumber, m)?)?;
 

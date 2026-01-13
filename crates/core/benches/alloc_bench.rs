@@ -1,13 +1,13 @@
 #[path = "common/criterion.rs"]
 mod bench_criterion;
+#[path = "common/tier.rs"]
+mod bench_tier;
 #[path = "common/fixtures.rs"]
 mod fixtures;
 #[path = "common/group_heavy.rs"]
 mod group_heavy;
 #[path = "common/group_light.rs"]
 mod group_light;
-#[path = "common/tier.rs"]
-mod bench_tier;
 
 use std::alloc::System;
 use std::hint::black_box;

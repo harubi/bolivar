@@ -1,15 +1,15 @@
 #[path = "common/criterion.rs"]
 mod bench_criterion;
-#[path = "common/group_heavy.rs"]
-mod group_heavy;
-#[path = "common/rng.rs"]
-mod rng;
 #[path = "common/seed.rs"]
 mod bench_seed;
 #[path = "common/tier.rs"]
 mod bench_tier;
+#[path = "common/group_heavy.rs"]
+mod group_heavy;
 #[path = "common/pages_throughput.rs"]
 mod pages_throughput;
+#[path = "common/rng.rs"]
+mod rng;
 
 use std::hint::black_box;
 
@@ -22,8 +22,8 @@ use bench_criterion::{BenchCriterion, bench_criterion};
 use bench_seed::bench_seed;
 use bench_tier::{BenchTier, bench_tier};
 use group_heavy::configure_group_heavy;
-use rng::XorShift64;
 use pages_throughput::pages_throughput;
+use rng::XorShift64;
 
 const PAGE_BBOX: Rect = (0.0, 0.0, 612.0, 792.0);
 

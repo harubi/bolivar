@@ -508,8 +508,8 @@ fn fixture_path(name: &str) -> std::path::PathBuf {
 /// Helper to run extract_text with optional LAParams.
 fn run_with_string(sample_path: &str, laparams: Option<LAParams>) -> String {
     let path = fixture_path(sample_path);
-    let pdf_data = std::fs::read(&path)
-        .unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
+    let pdf_data =
+        std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read {}", path.display()));
 
     let options = ExtractOptions {
         laparams,

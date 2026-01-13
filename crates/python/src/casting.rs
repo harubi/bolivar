@@ -18,13 +18,13 @@ fn obj_to_pdf(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<PDFObject> {
     if let Ok(f) = obj.extract::<f64>() {
         return Some(PDFObject::Real(f));
     }
-    if let Ok(bytes) = obj.downcast::<PyBytes>() {
+    if let Ok(bytes) = obj.cast::<PyBytes>() {
         return Some(PDFObject::String(bytes.as_bytes().to_vec()));
     }
     if let Ok(s) = obj.extract::<String>() {
         return Some(PDFObject::String(s.into_bytes()));
     }
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = std::collections::HashMap::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract().ok()?;
@@ -33,8 +33,8 @@ fn obj_to_pdf(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<PDFObject> {
         }
         return Some(PDFObject::Dict(map));
     }
-    if let Ok(seq) = obj.downcast::<PySequence>() {
-        if obj.downcast::<PyBytes>().is_ok() {
+    if let Ok(seq) = obj.cast::<PySequence>() {
+        if obj.cast::<PyBytes>().is_ok() {
             return None;
         }
         let len = seq.len().ok()? as usize;

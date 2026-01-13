@@ -109,10 +109,7 @@ pub struct FrontierBestParams<'a> {
 ///
 /// If both nodes are leaves, emits concrete pairs to the heap.
 /// Otherwise, splits the larger node and re-enqueues child frontiers.
-pub fn expand_frontier_best(
-    entry: FrontierEntry,
-    params: &mut FrontierBestParams<'_>,
-) {
+pub fn expand_frontier_best(entry: FrontierEntry, params: &mut FrontierBestParams<'_>) {
     let nodes = match entry.tree {
         TreeKind::Initial => params.initial_nodes,
         TreeKind::Dynamic => &params.dynamic_tree.nodes,
@@ -133,8 +130,12 @@ pub fn expand_frontier_best(
                             if params.done[ei] || params.done[ej] {
                                 continue;
                             }
-                            let d =
-                                dist_key_from_geom(params.bboxes[ei], params.areas[ei], params.bboxes[ej], params.areas[ej]);
+                            let d = dist_key_from_geom(
+                                params.bboxes[ei],
+                                params.areas[ei],
+                                params.bboxes[ej],
+                                params.areas[ej],
+                            );
                             params.best_heap.push(BestEntry::Pair(GroupHeapEntry {
                                 skip_isany: false,
                                 dist: d,
@@ -152,8 +153,12 @@ pub fn expand_frontier_best(
                             if params.done[ei] || params.done[ej] {
                                 continue;
                             }
-                            let d =
-                                dist_key_from_geom(params.bboxes[ei], params.areas[ei], params.bboxes[ej], params.areas[ej]);
+                            let d = dist_key_from_geom(
+                                params.bboxes[ei],
+                                params.areas[ei],
+                                params.bboxes[ej],
+                                params.areas[ej],
+                            );
                             // Maintain i<j orientation
                             let (id1, id2, idx1, idx2) = if params.py_ids[ei] < params.py_ids[ej] {
                                 (params.py_ids[ei], params.py_ids[ej], ei, ej)

@@ -1316,9 +1316,9 @@ impl PyTagExtractor {
 
 fn py_textline_element_from_item(item: &PyLTItem) -> Option<bolivar_core::layout::TextLineElement> {
     match item {
-        PyLTItem::Char(c) => Some(bolivar_core::layout::TextLineElement::Char(
+        PyLTItem::Char(c) => Some(bolivar_core::layout::TextLineElement::Char(Box::new(
             py_ltchar_to_core(c),
-        )),
+        ))),
         PyLTItem::Anno(a) => Some(bolivar_core::layout::TextLineElement::Anno(
             bolivar_core::layout::LTAnno::new(&a.text),
         )),

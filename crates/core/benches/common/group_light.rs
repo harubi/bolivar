@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use criterion::measurement::Measurement;
 use criterion::BenchmarkGroup;
+use criterion::measurement::Measurement;
 
 use crate::bench_tier::BenchTier;
 

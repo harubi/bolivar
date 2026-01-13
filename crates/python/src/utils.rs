@@ -111,7 +111,7 @@ impl PyPlane {
     }
 
     fn extend(&mut self, objs: &Bound<'_, PyAny>) -> PyResult<()> {
-        let seq = objs.downcast::<PySequence>()?;
+        let seq = objs.cast::<PySequence>()?;
         let len = seq.len()? as usize;
         let mut items = Vec::with_capacity(len);
         for idx in 0..len {
