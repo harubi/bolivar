@@ -208,30 +208,26 @@ class LTChar(LTComponent):
             if hasattr(_rust_char, "stroking_color") and _rust_char.stroking_color:
                 gs.scolor = _normalize_gray(_rust_char.stroking_color)
             self.graphicstate = gs
-            if hasattr(_rust_char, "ncs"):
-                try:
-                    ncs_val = _rust_char.ncs
-                except Exception:
-                    ncs_val = None
-                if ncs_val:
-                    self.ncs = (
-                        ncs_val
-                        if isinstance(ncs_val, PSLiteral)
-                        else PSLiteral(ncs_val)
-                    )
-                    gs.ncs = self.ncs
-            if hasattr(_rust_char, "scs"):
-                try:
-                    scs_val = _rust_char.scs
-                except Exception:
-                    scs_val = None
-                if scs_val:
-                    gs.scs = (
-                        scs_val
-                        if isinstance(scs_val, PSLiteral)
-                        else PSLiteral(scs_val)
-                    )
-            # Don't set ncs/scs to None - pdfplumber uses hasattr() and .name
+            try:
+                ncs_val = _rust_char.ncs
+            except Exception:
+                ncs_val = None
+            self.ncs = (
+                ncs_val
+                if isinstance(ncs_val, PSLiteral)
+                else PSLiteral(ncs_val or "DeviceGray")
+            )
+            gs.ncs = self.ncs
+            try:
+                scs_val = _rust_char.scs
+            except Exception:
+                scs_val = None
+            self.scs = (
+                scs_val
+                if isinstance(scs_val, PSLiteral)
+                else PSLiteral(scs_val or "DeviceGray")
+            )
+            gs.scs = self.scs
         else:
             # Traditional pdfminer.six constructor
             self._rust_char = None
