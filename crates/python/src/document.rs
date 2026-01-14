@@ -858,7 +858,7 @@ impl PyPDFPage {
                     &self.doc,
                     &mut visited,
                     false,
-                    false,
+                    true,
                     self.py_doc.as_ref(),
                 )?;
                 attrs_dict.set_item(k, py_val)?;
