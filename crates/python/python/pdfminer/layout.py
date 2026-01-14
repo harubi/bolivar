@@ -760,6 +760,8 @@ class LTPage(LTContainer):
 
     def __iter__(self) -> Iterator[LTItem]:
         self._ensure_objs()
+        if self._rust_page is not None:
+            return iter(self._iter_layout(self._objs))
         return iter(self._objs)
 
     def _iter_layout(self, objs: List[LTItem]) -> Iterator[LTItem]:
