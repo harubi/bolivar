@@ -63,7 +63,17 @@ pub(crate) fn collect_table_objects_from_arena(
                 }
             }
             ArenaItem::Line(l) => {
-                let bbox = to_top_left_bbox(l.p0.0, l.p0.1, l.p1.0, l.p1.1, geom);
+                let (x0, x1) = if l.p0.0 <= l.p1.0 {
+                    (l.p0.0, l.p1.0)
+                } else {
+                    (l.p1.0, l.p0.0)
+                };
+                let (y0, y1) = if l.p0.1 <= l.p1.1 {
+                    (l.p0.1, l.p1.1)
+                } else {
+                    (l.p1.1, l.p0.1)
+                };
+                let bbox = to_top_left_bbox(x0, y0, x1, y1, geom);
                 let edge = EdgeObj {
                     x0: bbox.x0,
                     x1: bbox.x1,
@@ -87,7 +97,17 @@ pub(crate) fn collect_table_objects_from_arena(
                 }
             }
             ArenaItem::Rect(r) => {
-                let bbox = to_top_left_bbox(r.bbox.0, r.bbox.1, r.bbox.2, r.bbox.3, geom);
+                let (x0, x1) = if r.bbox.0 <= r.bbox.2 {
+                    (r.bbox.0, r.bbox.2)
+                } else {
+                    (r.bbox.2, r.bbox.0)
+                };
+                let (y0, y1) = if r.bbox.1 <= r.bbox.3 {
+                    (r.bbox.1, r.bbox.3)
+                } else {
+                    (r.bbox.3, r.bbox.1)
+                };
+                let bbox = to_top_left_bbox(x0, y0, x1, y1, geom);
                 for edge in rect_to_edges(bbox) {
                     if let Some(crop) = crop_bbox {
                         if let Some(edge) = clip_edge_to_bbox(edge, crop) {
