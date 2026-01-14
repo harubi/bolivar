@@ -10,7 +10,7 @@ use super::super::types::{
     IndexAssigner, LTChar, LTFigure, LTItem, LTLayoutContainer, LTPage, LTTextBox, LTTextGroup,
     TextBoxType, TextLineType,
 };
-use super::clustering::group_textboxes_exact;
+use super::clustering::{group_textboxes_exact, group_textboxes_exact_owned};
 use super::grouping::{group_objects, group_objects_arena, group_textlines, group_textlines_arena};
 use crate::layout::arena::LayoutArena;
 
@@ -112,7 +112,7 @@ impl LTLayoutContainer {
             });
         } else {
             // Hierarchical grouping (exact pdfminer-compatible)
-            let mut groups = group_textboxes_exact(laparams, &textboxes);
+            let mut groups = group_textboxes_exact_owned(laparams, textboxes);
 
             // Analyze and assign indices (analyze recursively sorts elements within groups)
             let mut assigner = IndexAssigner::new();

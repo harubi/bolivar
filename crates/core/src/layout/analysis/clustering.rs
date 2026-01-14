@@ -15,21 +15,34 @@ use super::spatial::{
 
 /// Exact pdfminer-compatible grouping using a single-heap best-first algorithm.
 pub fn group_textboxes_exact(_laparams: &LAParams, boxes: &[TextBoxType]) -> Vec<LTTextGroup> {
-    if boxes.is_empty() {
+    let elements = boxes.iter().cloned().map(TextGroupElement::Box).collect();
+    group_textboxes_exact_impl(elements)
+}
+
+pub(crate) fn group_textboxes_exact_owned(
+    _laparams: &LAParams,
+    boxes: Vec<TextBoxType>,
+) -> Vec<LTTextGroup> {
+    let elements = boxes.into_iter().map(TextGroupElement::Box).collect();
+    group_textboxes_exact_impl(elements)
+}
+
+fn group_textboxes_exact_impl(elements: Vec<TextGroupElement>) -> Vec<LTTextGroup> {
+    if elements.is_empty() {
         return Vec::new();
     }
 
     // 1. Build elements with py_ids in PARSE ORDER
-    let mut elements: Vec<TextGroupElement> = boxes
-        .iter()
-        .map(|b| TextGroupElement::Box(b.clone()))
-        .collect();
+    let mut elements: Vec<Option<TextGroupElement>> = elements.into_iter().map(Some).collect();
     let mut py_ids: Vec<PyId> = (0..elements.len() as PyId).collect();
     let mut next_py_id = elements.len() as PyId;
     let reserve_extra = elements.len().saturating_sub(1);
     elements.reserve_exact(reserve_extra);
     py_ids.reserve_exact(reserve_extra);
-    let mut bboxes: Vec<Rect> = elements.iter().map(|e| e.bbox()).collect();
+    let mut bboxes: Vec<Rect> = elements
+        .iter()
+        .map(|e| e.as_ref().expect("element missing").bbox())
+        .collect();
     let mut areas: Vec<f64> = bboxes.iter().map(|b| (b.2 - b.0) * (b.3 - b.1)).collect();
     bboxes.reserve_exact(reserve_extra);
     areas.reserve_exact(reserve_extra);
@@ -128,15 +141,10 @@ pub fn group_textboxes_exact(_laparams: &LAParams, boxes: &[TextBoxType]) -> Vec
                 done[best.elem1_idx] = true;
                 done[best.elem2_idx] = true;
 
-                let is_vertical = elements[best.elem1_idx].is_vertical()
-                    || elements[best.elem2_idx].is_vertical();
-                let group = LTTextGroup::new(
-                    vec![
-                        elements[best.elem1_idx].clone(),
-                        elements[best.elem2_idx].clone(),
-                    ],
-                    is_vertical,
-                );
+                let left = elements[best.elem1_idx].take().expect("missing elem1");
+                let right = elements[best.elem2_idx].take().expect("missing elem2");
+                let is_vertical = left.is_vertical() || right.is_vertical();
+                let group = LTTextGroup::new(vec![left, right], is_vertical);
                 let group_elem = TextGroupElement::Group(Box::new(group));
 
                 let new_idx = elements.len();
@@ -156,7 +164,7 @@ pub fn group_textboxes_exact(_laparams: &LAParams, boxes: &[TextBoxType]) -> Vec
                     bbox: new_bbox,
                     idx: new_idx,
                 });
-                elements.push(group_elem);
+                elements.push(Some(group_elem));
                 bboxes.push(new_bbox);
                 areas.push(new_area);
                 py_ids.push(new_py_id);
@@ -182,14 +190,13 @@ pub fn group_textboxes_exact(_laparams: &LAParams, boxes: &[TextBoxType]) -> Vec
 
     // Collect remaining elements as groups
     elements
-        .iter()
+        .into_iter()
         .enumerate()
         .filter(|(id, _)| !done[*id])
-        .map(|(_, elem)| match elem {
-            TextGroupElement::Group(g) => g.as_ref().clone(),
-            TextGroupElement::Box(b) => {
-                LTTextGroup::new(vec![TextGroupElement::Box(b.clone())], false)
-            }
+        .filter_map(|(_, elem)| elem)
+        .map(|elem| match elem {
+            TextGroupElement::Group(g) => *g,
+            TextGroupElement::Box(b) => LTTextGroup::new(vec![TextGroupElement::Box(b)], false),
         })
         .collect()
 }
