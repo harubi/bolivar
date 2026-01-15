@@ -352,16 +352,10 @@ class Page(Container):
 
     def process_object(self, obj: LTItem) -> T_obj:
         kind = re.sub(lt_pat, "", obj.__class__.__name__).lower()
-
-        def process_attr(item: Tuple[str, Any]) -> Optional[Tuple[str, Any]]:
-            k, v = item
-            if k in ALL_ATTRS:
-                res = resolve_all(v)
-                return (k, res)
-            else:
-                return None
-
-        attr = dict(filter(None, map(process_attr, obj.__dict__.items())))
+        attr = {}
+        for key in ALL_ATTRS:
+            if hasattr(obj, key):
+                attr[key] = resolve_all(getattr(obj, key))
 
         attr["object_type"] = kind
         attr["page_number"] = self.page_number

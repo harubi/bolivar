@@ -60,6 +60,36 @@ impl PyLTPage {
         self.bbox
     }
 
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
+    }
+
     fn __repr__(&self) -> String {
         format!("LTPage(pageid={}, bbox={:?})", self.pageid, self.bbox)
     }
@@ -530,6 +560,36 @@ impl PyLTChar {
         self.bbox
     }
 
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
+    }
+
     fn __repr__(&self) -> String {
         format!("LTChar({:?}, fontname={:?})", self.text, self.fontname)
     }
@@ -568,6 +628,48 @@ impl PyLTTextLineHorizontal {
     #[getter]
     fn bbox(&self) -> (f64, f64, f64, f64) {
         self.bbox
+    }
+
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
+    }
+
+    fn get_text(&self) -> String {
+        let mut out = String::new();
+        for item in &self.items {
+            match item {
+                PyLTItem::Char(c) => out.push_str(c.get_text()),
+                PyLTItem::Anno(a) => out.push_str(a.get_text()),
+                _ => {}
+            }
+        }
+        out
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
@@ -617,6 +719,48 @@ impl PyLTTextLineVertical {
         self.bbox
     }
 
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
+    }
+
+    fn get_text(&self) -> String {
+        let mut out = String::new();
+        for item in &self.items {
+            match item {
+                PyLTItem::Char(c) => out.push_str(c.get_text()),
+                PyLTItem::Anno(a) => out.push_str(a.get_text()),
+                _ => {}
+            }
+        }
+        out
+    }
+
     fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
         PyLTPageIter {
             items: slf.items.clone(),
@@ -657,6 +801,48 @@ impl PyLTTextBoxHorizontal {
         self.bbox
     }
 
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
+    }
+
+    fn get_text(&self) -> String {
+        let mut out = String::new();
+        for item in &self.items {
+            match item {
+                PyLTItem::TextLineH(line) => out.push_str(&line.get_text()),
+                PyLTItem::TextLineV(line) => out.push_str(&line.get_text()),
+                _ => {}
+            }
+        }
+        out
+    }
+
     fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
         PyLTPageIter {
             items: slf.items.clone(),
@@ -695,6 +881,48 @@ impl PyLTTextBoxVertical {
     #[getter]
     fn bbox(&self) -> (f64, f64, f64, f64) {
         self.bbox
+    }
+
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
+    }
+
+    fn get_text(&self) -> String {
+        let mut out = String::new();
+        for item in &self.items {
+            match item {
+                PyLTItem::TextLineH(line) => out.push_str(&line.get_text()),
+                PyLTItem::TextLineV(line) => out.push_str(&line.get_text()),
+                _ => {}
+            }
+        }
+        out
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
@@ -745,6 +973,36 @@ impl PyLTImage {
     fn bbox(&self) -> (f64, f64, f64, f64) {
         self.bbox
     }
+
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
+    }
 }
 
 /// Layout figure (Form XObject).
@@ -779,6 +1037,36 @@ impl PyLTFigure {
     #[getter]
     fn bbox(&self) -> (f64, f64, f64, f64) {
         self.bbox
+    }
+
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
@@ -888,6 +1176,36 @@ impl PyLTRect {
     #[getter]
     fn bbox(&self) -> (f64, f64, f64, f64) {
         self.bbox
+    }
+
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
     }
 
     fn __repr__(&self) -> String {
@@ -1006,6 +1324,36 @@ impl PyLTLine {
         self.bbox
     }
 
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
+    }
+
     /// Get points as list for pdfplumber compatibility
     #[getter]
     fn pts(&self) -> Vec<(f64, f64)> {
@@ -1120,6 +1468,36 @@ impl PyLTCurve {
     #[getter]
     fn bbox(&self) -> (f64, f64, f64, f64) {
         self.bbox
+    }
+
+    #[getter]
+    fn x0(&self) -> f64 {
+        self.bbox.0
+    }
+
+    #[getter]
+    fn y0(&self) -> f64 {
+        self.bbox.1
+    }
+
+    #[getter]
+    fn x1(&self) -> f64 {
+        self.bbox.2
+    }
+
+    #[getter]
+    fn y1(&self) -> f64 {
+        self.bbox.3
+    }
+
+    #[getter]
+    fn width(&self) -> f64 {
+        self.bbox.2 - self.bbox.0
+    }
+
+    #[getter]
+    fn height(&self) -> f64 {
+        self.bbox.3 - self.bbox.1
     }
 
     fn __repr__(&self) -> String {
