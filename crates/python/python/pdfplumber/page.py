@@ -407,6 +407,8 @@ class Page(Container):
                             and isinstance(candidate[0], (list, tuple))
                         ):
                             pts = candidate
+                        elif isinstance(candidate, (list, tuple)) and not candidate:
+                            pts = []
                         else:
                             pts = [candidate]
                     else:
