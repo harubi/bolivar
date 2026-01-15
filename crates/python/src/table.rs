@@ -21,7 +21,7 @@ use std::fs::File;
 
 use crate::document::{PdfInput, PyPDFDocument, PyPDFPage, pdf_input_from_py};
 use crate::layout::{PyLTPage, ltpage_to_py};
-use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings};
+use crate::params::{PyLAParams, parse_bbox, parse_page_geometries, parse_table_settings};
 
 /// Process a PDF page and return its layout.
 ///
@@ -534,13 +534,15 @@ pub fn extract_tables_core(
 pub fn extract_tables_from_page_objects(
     py: Python<'_>,
     objects: &Bound<'_, PyAny>,
-    page_bbox: (f64, f64, f64, f64),
-    mediabox: (f64, f64, f64, f64),
+    page_bbox: &Bound<'_, PyAny>,
+    mediabox: &Bound<'_, PyAny>,
     initial_doctop: f64,
     table_settings: Option<Py<PyAny>>,
     force_crop: bool,
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
+    let page_bbox = parse_bbox(page_bbox, "page_bbox")?;
+    let mediabox = parse_bbox(mediabox, "mediabox")?;
     let geom = PageGeometry {
         page_bbox,
         mediabox,
