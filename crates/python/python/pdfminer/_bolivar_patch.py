@@ -185,18 +185,16 @@ def _apply_patch(module) -> bool:
 
     if not already_patched:
 
-        def _extract_tables(self, table_settings=None):
-            if getattr(self, "filter_fn", None) is not None:
-                return extract_tables_from_page_filtered(self, table_settings)
-            page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
-            pdf = getattr(self, "pdf", None)
+        def extract_tables_from_page(page, table_settings=None):
+            page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
+            pdf = getattr(page, "pdf", None)
             doc = getattr(pdf, "doc", None) if pdf is not None else None
             if doc is None:
-                doc = getattr(self.page_obj, "doc", None)
+                doc = getattr(page.page_obj, "doc", None)
             if doc is None:
                 raise PdfminerException("pdf document missing")
             base_geoms = _get_base_geometries(pdf, doc)
-            geoms = _build_geometries(doc, page_index, self, base=base_geoms)
+            geoms = _build_geometries(doc, page_index, page, base=base_geoms)
             pages = getattr(pdf, "pages", None) if pdf is not None else None
             page_numbers = (
                 list(getattr(pages, "_page_numbers", [])) if pages is not None else None
@@ -204,6 +202,11 @@ def _apply_patch(module) -> bool:
             stream = _get_table_stream(pdf, doc, table_settings, geoms, page_numbers)
             tables = stream.get(page_index)
             return tables or []
+
+        def _extract_tables(self, table_settings=None):
+            if getattr(self, "filter_fn", None) is not None:
+                return extract_tables_from_page_filtered(self, table_settings)
+            return extract_tables_from_page(self, table_settings)
 
         def _table_cell_count(table):
             return sum(len(row) for row in table)
