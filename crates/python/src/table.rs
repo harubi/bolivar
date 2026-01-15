@@ -12,333 +12,16 @@ use bolivar_core::high_level::{
     extract_text_with_document as core_extract_text_with_document,
 };
 use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
-use bolivar_core::table::{
-    BBox, CharObj, EdgeObj, Orientation, PageGeometry, TableSettings, WordObj,
-    extract_table_from_objects, extract_tables_from_ltpage as core_extract_tables_from_ltpage,
-    extract_tables_from_objects, extract_text_from_ltpage, extract_words_from_ltpage,
-};
+use bolivar_core::table::{CharObj, EdgeObj, Orientation, PageGeometry, TableSettings};
 use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PySequence};
 use std::fs::File;
 
-use crate::convert::py_text_to_string;
 use crate::document::{PdfInput, PyPDFDocument, PyPDFPage, pdf_input_from_py};
-use crate::layout::{PyLTPage, ltpage_to_py, py_ltpage_to_core};
-use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings, parse_text_settings};
-
-/// Convert page objects (chars, lines, rects, curves) to CharObj and EdgeObj.
-pub fn page_objects_to_chars_edges(
-    _py: Python<'_>,
-    page: &Bound<'_, PyAny>,
-) -> PyResult<(Vec<CharObj>, Vec<EdgeObj>, PageGeometry, PageArena)> {
-    fn extract_bbox(obj: &Bound<'_, PyAny>, name: &str) -> PyResult<(f64, f64, f64, f64)> {
-        if let Ok(bbox) = obj.extract::<(f64, f64, f64, f64)>() {
-            return Ok(bbox);
-        }
-        let seq = obj
-            .cast::<PySequence>()
-            .map_err(|_| PyValueError::new_err(format!("{name} must be a 4-item sequence")))?;
-        if seq.len().unwrap_or(0) != 4 {
-            return Err(PyValueError::new_err(format!("{name} must have 4 items")));
-        }
-        let mut vals = [0.0; 4];
-        for i in 0..4 {
-            vals[i] = seq.get_item(i)?.extract::<f64>()?;
-        }
-        Ok((vals[0], vals[1], vals[2], vals[3]))
-    }
-
-    let bbox_obj = page.getattr("bbox")?;
-    let bbox = extract_bbox(&bbox_obj, "bbox")?;
-    let mediabox = match page.getattr("mediabox") {
-        Ok(v) => extract_bbox(&v, "mediabox").unwrap_or(bbox),
-        Err(_) => bbox,
-    };
-    let initial_doctop: f64 = page
-        .getattr("initial_doctop")
-        .ok()
-        .and_then(|v| v.extract().ok())
-        .unwrap_or(0.0);
-    let is_original: bool = page
-        .getattr("is_original")
-        .ok()
-        .and_then(|v| v.extract().ok())
-        .unwrap_or(true);
-
-    let geom = PageGeometry {
-        page_bbox: bbox,
-        mediabox,
-        initial_doctop,
-        force_crop: !is_original,
-    };
-
-    let mut arena = PageArena::new();
-    let mut chars: Vec<CharObj> = Vec::new();
-    let chars_obj = page.getattr("chars")?;
-    let chars_seq = chars_obj
-        .cast::<PySequence>()
-        .map_err(|_| PyValueError::new_err("page.chars must be a sequence"))?;
-    let chars_len = chars_seq.len().unwrap_or(0);
-    for i in 0..chars_len {
-        let item = chars_seq.get_item(i)?;
-        let dict = item
-            .cast::<PyDict>()
-            .map_err(|_| PyValueError::new_err("char must be a dict"))?;
-        let text_obj = dict
-            .get_item("text")?
-            .ok_or_else(|| PyValueError::new_err("char missing text"))?;
-        let text_value = py_text_to_string(&text_obj)?;
-        let text = arena.intern(&text_value);
-        let x0: f64 = dict
-            .get_item("x0")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let x1: f64 = dict
-            .get_item("x1")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let top: f64 = dict
-            .get_item("top")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let bottom: f64 = dict
-            .get_item("bottom")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let width = dict
-            .get_item("width")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or((x1 - x0).abs());
-        let height = dict
-            .get_item("height")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or((bottom - top).abs());
-        let size = dict
-            .get_item("size")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(height);
-        let doctop = dict
-            .get_item("doctop")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(top);
-        let upright = dict
-            .get_item("upright")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(true);
-        chars.push(CharObj {
-            text,
-            x0,
-            x1,
-            top,
-            bottom,
-            doctop,
-            width,
-            height,
-            size,
-            upright,
-        });
-    }
-
-    let mut edges: Vec<EdgeObj> = Vec::new();
-
-    let lines_obj = page.getattr("lines")?;
-    let lines_seq = lines_obj
-        .cast::<PySequence>()
-        .map_err(|_| PyValueError::new_err("page.lines must be a sequence"))?;
-    let lines_len = lines_seq.len().unwrap_or(0);
-    for i in 0..lines_len {
-        let item = lines_seq.get_item(i)?;
-        let dict = item
-            .cast::<PyDict>()
-            .map_err(|_| PyValueError::new_err("line must be a dict"))?;
-        let x0: f64 = dict
-            .get_item("x0")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let x1: f64 = dict
-            .get_item("x1")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let top: f64 = dict
-            .get_item("top")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let bottom: f64 = dict
-            .get_item("bottom")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let width = dict
-            .get_item("width")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or((x1 - x0).abs());
-        let height = dict
-            .get_item("height")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or((bottom - top).abs());
-        let orientation = if (top - bottom).abs() < f64::EPSILON {
-            Some(Orientation::Horizontal)
-        } else if (x0 - x1).abs() < f64::EPSILON {
-            Some(Orientation::Vertical)
-        } else {
-            None
-        };
-        edges.push(EdgeObj {
-            x0,
-            x1,
-            top,
-            bottom,
-            width,
-            height,
-            orientation,
-            object_type: "line",
-        });
-    }
-
-    let rects_obj = page.getattr("rects")?;
-    let rects_seq = rects_obj
-        .cast::<PySequence>()
-        .map_err(|_| PyValueError::new_err("page.rects must be a sequence"))?;
-    let rects_len = rects_seq.len().unwrap_or(0);
-    for i in 0..rects_len {
-        let item = rects_seq.get_item(i)?;
-        let dict = item
-            .cast::<PyDict>()
-            .map_err(|_| PyValueError::new_err("rect must be a dict"))?;
-        let x0: f64 = dict
-            .get_item("x0")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let x1: f64 = dict
-            .get_item("x1")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let top: f64 = dict
-            .get_item("top")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let bottom: f64 = dict
-            .get_item("bottom")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or(0.0);
-        let bbox = BBox {
-            x0,
-            x1,
-            top,
-            bottom,
-        };
-        edges.extend(vec![
-            EdgeObj {
-                x0: bbox.x0,
-                x1: bbox.x1,
-                top: bbox.top,
-                bottom: bbox.top,
-                width: bbox.x1 - bbox.x0,
-                height: 0.0,
-                orientation: Some(Orientation::Horizontal),
-                object_type: "rect_edge",
-            },
-            EdgeObj {
-                x0: bbox.x0,
-                x1: bbox.x1,
-                top: bbox.bottom,
-                bottom: bbox.bottom,
-                width: bbox.x1 - bbox.x0,
-                height: 0.0,
-                orientation: Some(Orientation::Horizontal),
-                object_type: "rect_edge",
-            },
-            EdgeObj {
-                x0: bbox.x0,
-                x1: bbox.x0,
-                top: bbox.top,
-                bottom: bbox.bottom,
-                width: 0.0,
-                height: bbox.bottom - bbox.top,
-                orientation: Some(Orientation::Vertical),
-                object_type: "rect_edge",
-            },
-            EdgeObj {
-                x0: bbox.x1,
-                x1: bbox.x1,
-                top: bbox.top,
-                bottom: bbox.bottom,
-                width: 0.0,
-                height: bbox.bottom - bbox.top,
-                orientation: Some(Orientation::Vertical),
-                object_type: "rect_edge",
-            },
-        ]);
-    }
-
-    let curves_obj = page.getattr("curves")?;
-    let curves_seq = curves_obj
-        .cast::<PySequence>()
-        .map_err(|_| PyValueError::new_err("page.curves must be a sequence"))?;
-    let curves_len = curves_seq.len().unwrap_or(0);
-    for i in 0..curves_len {
-        let item = curves_seq.get_item(i)?;
-        let dict = item
-            .cast::<PyDict>()
-            .map_err(|_| PyValueError::new_err("curve must be a dict"))?;
-        let pts_obj = dict.get_item("pts")?;
-        if let Some(pts_obj) = pts_obj
-            && let Ok(pts) = pts_obj.extract::<Vec<(f64, f64)>>()
-        {
-            for pair in pts.windows(2) {
-                let p0 = pair[0];
-                let p1 = pair[1];
-                let x0 = p0.0.min(p1.0);
-                let x1 = p0.0.max(p1.0);
-                let top = p0.1.min(p1.1);
-                let bottom = p0.1.max(p1.1);
-                let orientation = if (p0.0 - p1.0).abs() < f64::EPSILON {
-                    Some(Orientation::Vertical)
-                } else if (p0.1 - p1.1).abs() < f64::EPSILON {
-                    Some(Orientation::Horizontal)
-                } else {
-                    None
-                };
-                edges.push(EdgeObj {
-                    x0,
-                    x1,
-                    top,
-                    bottom,
-                    width: (x1 - x0).abs(),
-                    height: (bottom - top).abs(),
-                    orientation,
-                    object_type: "curve_edge",
-                });
-            }
-        }
-    }
-
-    Ok((chars, edges, geom, arena))
-}
-
-fn word_obj_to_py(py: Python<'_>, w: &WordObj) -> PyResult<Py<PyAny>> {
-    let d = PyDict::new(py);
-    d.set_item("text", &w.text)?;
-    d.set_item("x0", w.x0)?;
-    d.set_item("x1", w.x1)?;
-    d.set_item("top", w.top)?;
-    d.set_item("bottom", w.bottom)?;
-    d.set_item("doctop", w.doctop)?;
-    d.set_item("width", w.width)?;
-    d.set_item("height", w.height)?;
-    d.set_item("upright", if w.upright { 1 } else { 0 })?;
-    d.set_item(
-        "direction",
-        match w.direction {
-            bolivar_core::table::TextDir::Ttb => "ttb",
-            bolivar_core::table::TextDir::Btt => "btt",
-            bolivar_core::table::TextDir::Ltr => "ltr",
-            bolivar_core::table::TextDir::Rtl => "rtl",
-        },
-    )?;
-    Ok(d.into_any().unbind())
-}
+use crate::layout::{PyLTPage, ltpage_to_py};
+use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings};
 
 /// Process a PDF page and return its layout.
 ///
@@ -467,72 +150,6 @@ pub fn extract_tables_from_document(
     Ok(tables)
 }
 
-/// Extract tables from specific pages using per-page geometry.
-#[pyfunction]
-#[pyo3(signature = (doc, page_numbers, geometries, table_settings = None, laparams = None))]
-pub fn extract_tables_from_document_pages(
-    py: Python<'_>,
-    doc: &PyPDFDocument,
-    page_numbers: &Bound<'_, PyAny>,
-    geometries: &Bound<'_, PyAny>,
-    table_settings: Option<Py<PyAny>>,
-    laparams: Option<&PyLAParams>,
-) -> PyResult<Vec<Vec<Vec<Vec<Option<String>>>>>> {
-    let settings = parse_table_settings(py, table_settings)?;
-    let options = table_extract_options(laparams);
-    let seq = page_numbers
-        .cast::<PySequence>()
-        .map_err(|_| PyValueError::new_err("page_numbers must be a list/tuple"))?;
-    let len = seq.len().unwrap_or(0);
-    let mut pages = Vec::with_capacity(len as usize);
-    for idx in 0..len {
-        pages.push(seq.get_item(idx)?.extract::<usize>()?);
-    }
-    let geoms = parse_page_geometries(geometries)?;
-    let tables = py
-        .detach(|| {
-            let mut out = Vec::with_capacity(pages.len());
-            for (idx, page_index) in pages.iter().enumerate() {
-                let geom = &geoms[idx];
-                let page_tables =
-                    extract_tables_core_impl(&doc.inner, *page_index, geom, &options, &settings)?;
-                out.push(page_tables);
-            }
-            Ok::<_, String>(out)
-        })
-        .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {}", e)))?;
-
-    Ok(tables)
-}
-
-/// Extract tables from an existing LTPage using Rust table extraction.
-#[pyfunction]
-#[pyo3(signature = (ltpage, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, force_crop = false))]
-pub fn extract_tables_from_ltpage(
-    py: Python<'_>,
-    ltpage: &PyLTPage,
-    page_bbox: (f64, f64, f64, f64),
-    mediabox: (f64, f64, f64, f64),
-    initial_doctop: f64,
-    table_settings: Option<Py<PyAny>>,
-    force_crop: bool,
-) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
-    let settings = parse_table_settings(py, table_settings)?;
-    let geom = PageGeometry {
-        page_bbox,
-        mediabox,
-        initial_doctop,
-        force_crop,
-    };
-    if let Some(core_page) = ltpage.core_ref() {
-        let tables = py.detach(|| core_extract_tables_from_ltpage(core_page, &geom, &settings));
-        return Ok(tables);
-    }
-    let core_page = py_ltpage_to_core(ltpage);
-    let tables = py.detach(|| core_extract_tables_from_ltpage(&core_page, &geom, &settings));
-    Ok(tables)
-}
-
 fn table_extract_options(laparams: Option<&PyLAParams>) -> ExtractOptions {
     ExtractOptions {
         password: String::new(),
@@ -541,6 +158,312 @@ fn table_extract_options(laparams: Option<&PyLAParams>) -> ExtractOptions {
         caching: true,
         laparams: laparams.map(|p| p.clone().into()),
     }
+}
+
+fn dict_f64(dict: &Bound<'_, PyDict>, key: &str) -> Option<f64> {
+    dict.get_item(key)
+        .ok()
+        .flatten()
+        .and_then(|v| v.extract::<f64>().ok())
+}
+
+fn dict_bool(dict: &Bound<'_, PyDict>, key: &str) -> Option<bool> {
+    dict.get_item(key)
+        .ok()
+        .flatten()
+        .and_then(|v| v.extract::<bool>().ok())
+}
+
+fn dict_text(dict: &Bound<'_, PyDict>, key: &str) -> Option<String> {
+    let value = dict.get_item(key).ok().flatten()?;
+    if let Ok(s) = value.extract::<String>() {
+        return Some(s);
+    }
+    if let Ok(bytes) = value.cast::<PyBytes>() {
+        return Some(String::from_utf8_lossy(bytes.as_bytes()).to_string());
+    }
+    None
+}
+
+fn char_from_dict(
+    arena: &mut PageArena,
+    dict: &Bound<'_, PyDict>,
+    default_doctop: f64,
+) -> Option<CharObj> {
+    let text = dict_text(dict, "text")?;
+    let x0 = dict_f64(dict, "x0")?;
+    let x1 = dict_f64(dict, "x1")?;
+    let top = dict_f64(dict, "top")?;
+    let bottom = dict_f64(dict, "bottom")?;
+    let doctop = dict_f64(dict, "doctop").unwrap_or(default_doctop + top);
+    let width = dict_f64(dict, "width").unwrap_or((x1 - x0).abs());
+    let height = dict_f64(dict, "height").unwrap_or((bottom - top).abs());
+    let size = dict_f64(dict, "size").unwrap_or(0.0);
+    let upright = dict_bool(dict, "upright").unwrap_or(true);
+    Some(CharObj {
+        text: arena.intern(&text),
+        x0,
+        x1,
+        top,
+        bottom,
+        doctop,
+        width,
+        height,
+        size,
+        upright,
+    })
+}
+
+fn line_edge_from_dict(dict: &Bound<'_, PyDict>) -> Option<EdgeObj> {
+    let x0 = dict_f64(dict, "x0")?;
+    let x1 = dict_f64(dict, "x1")?;
+    let top = dict_f64(dict, "top")?;
+    let bottom = dict_f64(dict, "bottom")?;
+    let width = dict_f64(dict, "width").unwrap_or((x1 - x0).abs());
+    let height = dict_f64(dict, "height").unwrap_or((bottom - top).abs());
+    let orientation = if (top - bottom).abs() < f64::EPSILON {
+        Some(Orientation::Horizontal)
+    } else {
+        Some(Orientation::Vertical)
+    };
+    Some(EdgeObj {
+        x0,
+        x1,
+        top,
+        bottom,
+        width,
+        height,
+        orientation,
+        object_type: "line",
+    })
+}
+
+fn rect_edges_from_dict(dict: &Bound<'_, PyDict>) -> Option<Vec<EdgeObj>> {
+    let x0 = dict_f64(dict, "x0")?;
+    let x1 = dict_f64(dict, "x1")?;
+    let top = dict_f64(dict, "top")?;
+    let bottom = dict_f64(dict, "bottom")?;
+    let width = (x1 - x0).abs();
+    let height = (bottom - top).abs();
+    Some(vec![
+        EdgeObj {
+            x0,
+            x1,
+            top,
+            bottom: top,
+            width,
+            height: 0.0,
+            orientation: Some(Orientation::Horizontal),
+            object_type: "rect_edge",
+        },
+        EdgeObj {
+            x0,
+            x1,
+            top: bottom,
+            bottom,
+            width,
+            height: 0.0,
+            orientation: Some(Orientation::Horizontal),
+            object_type: "rect_edge",
+        },
+        EdgeObj {
+            x0,
+            x1: x0,
+            top,
+            bottom,
+            width: 0.0,
+            height,
+            orientation: Some(Orientation::Vertical),
+            object_type: "rect_edge",
+        },
+        EdgeObj {
+            x0: x1,
+            x1,
+            top,
+            bottom,
+            width: 0.0,
+            height,
+            orientation: Some(Orientation::Vertical),
+            object_type: "rect_edge",
+        },
+    ])
+}
+
+fn curve_points_to_edges(points: &[(f64, f64)], object_type: &'static str) -> Vec<EdgeObj> {
+    let mut edges = Vec::new();
+    for pair in points.windows(2) {
+        let p0 = pair[0];
+        let p1 = pair[1];
+        let x0 = p0.0.min(p1.0);
+        let x1 = p0.0.max(p1.0);
+        let top = p0.1.min(p1.1);
+        let bottom = p0.1.max(p1.1);
+        let orientation = if (p0.0 - p1.0).abs() < f64::EPSILON {
+            Some(Orientation::Vertical)
+        } else if (p0.1 - p1.1).abs() < f64::EPSILON {
+            Some(Orientation::Horizontal)
+        } else {
+            None
+        };
+        edges.push(EdgeObj {
+            x0,
+            x1,
+            top,
+            bottom,
+            width: (x1 - x0).abs(),
+            height: (bottom - top).abs(),
+            orientation,
+            object_type,
+        });
+    }
+    edges
+}
+
+fn points_from_obj(obj: &Bound<'_, PyAny>) -> Vec<(f64, f64)> {
+    if let Ok(points) = obj.extract::<Vec<(f64, f64)>>() {
+        return points;
+    }
+    let Ok(seq) = obj.cast::<PySequence>() else {
+        return Vec::new();
+    };
+    let len = seq.len().unwrap_or(0);
+    let mut out = Vec::new();
+    for i in 0..len {
+        let item = match seq.get_item(i) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if let Ok(pt) = item.extract::<(f64, f64)>() {
+            out.push(pt);
+            continue;
+        }
+        let Ok(seg) = item.cast::<PySequence>() else {
+            continue;
+        };
+        let seg_len = seg.len().unwrap_or(0);
+        for j in 0..seg_len {
+            let seg_item = match seg.get_item(j) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if j == 0 {
+                if seg_item.extract::<String>().is_ok() || seg_item.cast::<PyBytes>().is_ok() {
+                    continue;
+                }
+            }
+            if let Ok(pt) = seg_item.extract::<(f64, f64)>() {
+                out.push(pt);
+            }
+        }
+    }
+    out
+}
+
+fn curve_edges_from_dict(dict: &Bound<'_, PyDict>) -> Option<Vec<EdgeObj>> {
+    if let Some(pts_obj) = dict.get_item("pts").ok().flatten() {
+        let points = points_from_obj(&pts_obj);
+        if points.len() >= 2 {
+            return Some(curve_points_to_edges(&points, "curve_edge"));
+        }
+    }
+    if let Some(path_obj) = dict.get_item("path").ok().flatten() {
+        let points = points_from_obj(&path_obj);
+        if points.len() >= 2 {
+            return Some(curve_points_to_edges(&points, "curve_edge"));
+        }
+    }
+    None
+}
+
+fn append_chars_from_list(
+    list: &Bound<'_, PyAny>,
+    initial_doctop: f64,
+    arena: &mut PageArena,
+    out: &mut Vec<CharObj>,
+) -> PyResult<()> {
+    let seq = list
+        .cast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("char objects must be a list/tuple"))?;
+    let len = seq.len().unwrap_or(0);
+    for i in 0..len {
+        let item = seq.get_item(i)?;
+        if let Ok(dict) = item.cast::<PyDict>() {
+            if let Some(obj) = char_from_dict(arena, &dict, initial_doctop) {
+                out.push(obj);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn append_line_edges(list: &Bound<'_, PyAny>, out: &mut Vec<EdgeObj>) -> PyResult<()> {
+    let seq = list
+        .cast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("line objects must be a list/tuple"))?;
+    let len = seq.len().unwrap_or(0);
+    for i in 0..len {
+        let item = seq.get_item(i)?;
+        if let Ok(dict) = item.cast::<PyDict>() {
+            if let Some(edge) = line_edge_from_dict(&dict) {
+                out.push(edge);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn append_rect_edges(list: &Bound<'_, PyAny>, out: &mut Vec<EdgeObj>) -> PyResult<()> {
+    let seq = list
+        .cast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("rect objects must be a list/tuple"))?;
+    let len = seq.len().unwrap_or(0);
+    for i in 0..len {
+        let item = seq.get_item(i)?;
+        if let Ok(dict) = item.cast::<PyDict>() {
+            if let Some(edges) = rect_edges_from_dict(&dict) {
+                out.extend(edges);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn append_curve_edges(list: &Bound<'_, PyAny>, out: &mut Vec<EdgeObj>) -> PyResult<()> {
+    let seq = list
+        .cast::<PySequence>()
+        .map_err(|_| PyValueError::new_err("curve objects must be a list/tuple"))?;
+    let len = seq.len().unwrap_or(0);
+    for i in 0..len {
+        let item = seq.get_item(i)?;
+        if let Ok(dict) = item.cast::<PyDict>() {
+            if let Some(edges) = curve_edges_from_dict(&dict) {
+                out.extend(edges);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn objects_to_chars_edges(
+    objects: &Bound<'_, PyDict>,
+    geom: &PageGeometry,
+    arena: &mut PageArena,
+) -> PyResult<(Vec<CharObj>, Vec<EdgeObj>)> {
+    let mut chars = Vec::new();
+    let mut edges = Vec::new();
+    if let Some(list) = objects.get_item("char")? {
+        append_chars_from_list(&list, geom.initial_doctop, arena, &mut chars)?;
+    }
+    if let Some(list) = objects.get_item("line")? {
+        append_line_edges(&list, &mut edges)?;
+    }
+    if let Some(list) = objects.get_item("rect")? {
+        append_rect_edges(&list, &mut edges)?;
+    }
+    if let Some(list) = objects.get_item("curve")? {
+        append_curve_edges(&list, &mut edges)?;
+    }
+    Ok((chars, edges))
 }
 
 fn extract_tables_core_impl(
@@ -605,104 +528,33 @@ pub fn extract_tables_core(
     )
 }
 
-/// Extract tables from a page using Rust table extraction.
-#[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, force_crop = false))]
-pub fn extract_tables_from_page(
+/// Extract tables from page objects.
+#[pyfunction(name = "_extract_tables_from_page_objects")]
+#[pyo3(signature = (objects, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, force_crop = false))]
+pub fn extract_tables_from_page_objects(
     py: Python<'_>,
-    doc: &PyPDFDocument,
-    page_index: usize,
+    objects: &Bound<'_, PyAny>,
     page_bbox: (f64, f64, f64, f64),
     mediabox: (f64, f64, f64, f64),
     initial_doctop: f64,
     table_settings: Option<Py<PyAny>>,
-    laparams: Option<&PyLAParams>,
     force_crop: bool,
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
-    extract_tables_core_internal(
-        py,
-        doc,
-        page_index,
+    let settings = parse_table_settings(py, table_settings)?;
+    let geom = PageGeometry {
         page_bbox,
         mediabox,
         initial_doctop,
-        table_settings,
-        laparams,
         force_crop,
-    )
-}
-
-/// Extract a single table from a page using Rust table extraction.
-#[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, force_crop = false))]
-pub fn extract_table_from_page(
-    py: Python<'_>,
-    doc: &PyPDFDocument,
-    page_index: usize,
-    page_bbox: (f64, f64, f64, f64),
-    mediabox: (f64, f64, f64, f64),
-    initial_doctop: f64,
-    table_settings: Option<Py<PyAny>>,
-    laparams: Option<&PyLAParams>,
-    force_crop: bool,
-) -> PyResult<Option<Vec<Vec<Option<String>>>>> {
-    let page_tables = extract_tables_core_internal(
-        py,
-        doc,
-        page_index,
-        page_bbox,
-        mediabox,
-        initial_doctop,
-        table_settings,
-        laparams,
-        force_crop,
-    )?;
-    if page_tables.is_empty() {
-        return Ok(None);
-    }
-    let mut best = 0usize;
-    for (idx, table) in page_tables.iter().enumerate().skip(1) {
-        if table.iter().map(|row| row.len()).sum::<usize>()
-            > page_tables[best].iter().map(|row| row.len()).sum::<usize>()
-        {
-            best = idx;
-        }
-    }
-    Ok(Some(page_tables[best].clone()))
-}
-
-/// Extract tables from a filtered/cropped pdfplumber Page using Rust table extraction.
-#[pyfunction]
-#[pyo3(signature = (page, table_settings = None))]
-pub fn extract_tables_from_page_filtered(
-    py: Python<'_>,
-    page: &Bound<'_, PyAny>,
-    table_settings: Option<Py<PyAny>>,
-) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
-    let settings = parse_table_settings(py, table_settings)?;
-    let (chars, edges, geom, arena) = page_objects_to_chars_edges(py, page)?;
-    py.detach(move || {
-        Ok(extract_tables_from_objects(
-            chars, edges, &geom, &settings, &arena,
-        ))
-    })
-}
-
-/// Extract a single table from a filtered/cropped pdfplumber Page using Rust table extraction.
-#[pyfunction]
-#[pyo3(signature = (page, table_settings = None))]
-pub fn extract_table_from_page_filtered(
-    py: Python<'_>,
-    page: &Bound<'_, PyAny>,
-    table_settings: Option<Py<PyAny>>,
-) -> PyResult<Option<Vec<Vec<Option<String>>>>> {
-    let settings = parse_table_settings(py, table_settings)?;
-    let (chars, edges, geom, arena) = page_objects_to_chars_edges(py, page)?;
-    py.detach(move || {
-        Ok(extract_table_from_objects(
-            chars, edges, &geom, &settings, &arena,
-        ))
-    })
+    };
+    let dict = objects
+        .cast::<PyDict>()
+        .map_err(|_| PyValueError::new_err("page objects must be a dict"))?;
+    let mut arena = PageArena::new();
+    let (chars, edges) = objects_to_chars_edges(dict, &geom, &mut arena)?;
+    Ok(bolivar_core::table::extract_tables_from_objects(
+        chars, edges, &geom, &settings, &arena,
+    ))
 }
 
 /// Repair a PDF and return the repaired bytes.
@@ -713,87 +565,6 @@ pub fn repair_pdf(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>
         .detach(|| bolivar_core::document::repair::repair_bytes(&bytes))
         .map_err(|e| PyValueError::new_err(format!("repair failed: {e}")))?;
     Ok(PyBytes::new(py, &repaired).into_any().unbind())
-}
-
-/// Extract words from a page using Rust text extraction.
-#[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, force_crop = false))]
-pub fn extract_words_from_page(
-    py: Python<'_>,
-    doc: &PyPDFDocument,
-    page_index: usize,
-    page_bbox: (f64, f64, f64, f64),
-    mediabox: (f64, f64, f64, f64),
-    initial_doctop: f64,
-    text_settings: Option<Py<PyAny>>,
-    laparams: Option<&PyLAParams>,
-    force_crop: bool,
-) -> PyResult<Vec<Py<PyAny>>> {
-    let settings = parse_text_settings(py, text_settings)?;
-    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
-        laparams: la,
-    };
-    let pages = py
-        .detach(|| core_extract_pages_with_document(&doc.inner, options))
-        .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
-    let ltpage = pages
-        .get(page_index)
-        .ok_or_else(|| PyValueError::new_err("page_index out of range"))?;
-    let geom = PageGeometry {
-        page_bbox,
-        mediabox,
-        initial_doctop,
-        force_crop,
-    };
-    let words = py.detach(|| extract_words_from_ltpage(ltpage, &geom, settings));
-    let mut out = Vec::with_capacity(words.len());
-    for w in &words {
-        out.push(word_obj_to_py(py, w)?);
-    }
-    Ok(out)
-}
-
-/// Extract text from a page using Rust text extraction.
-#[pyfunction]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, text_settings = None, laparams = None, force_crop = false))]
-pub fn extract_text_from_page(
-    py: Python<'_>,
-    doc: &PyPDFDocument,
-    page_index: usize,
-    page_bbox: (f64, f64, f64, f64),
-    mediabox: (f64, f64, f64, f64),
-    initial_doctop: f64,
-    text_settings: Option<Py<PyAny>>,
-    laparams: Option<&PyLAParams>,
-    force_crop: bool,
-) -> PyResult<String> {
-    let settings = parse_text_settings(py, text_settings)?;
-    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
-        laparams: la,
-    };
-    let pages = py
-        .detach(|| core_extract_pages_with_document(&doc.inner, options))
-        .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
-    let ltpage = pages
-        .get(page_index)
-        .ok_or_else(|| PyValueError::new_err("page_index out of range"))?;
-    let geom = PageGeometry {
-        page_bbox,
-        mediabox,
-        initial_doctop,
-        force_crop,
-    };
-    Ok(py.detach(|| extract_text_from_ltpage(ltpage, &geom, settings)))
 }
 
 /// Extract text from PDF bytes.
@@ -1026,15 +797,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_document, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_tables_from_document_pages, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_tables_from_ltpage, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_core, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_tables_from_page, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_table_from_page, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_tables_from_page_filtered, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_table_from_page_filtered, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tables_from_page_objects, m)?)?;
     m.add_function(wrap_pyfunction!(repair_pdf, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_words_from_page, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_text_from_page, m)?)?;
     Ok(())
 }

@@ -25,11 +25,8 @@ def _apply_patch(module) -> bool:
 
     already_patched = getattr(page_mod.Page.extract_tables, "_bolivar_patched", False)
 
-    from bolivar import (
-        extract_tables_from_page_filtered,
-        extract_table_from_page_filtered,
-        extract_tables_stream_from_document,
-    )
+    from bolivar import extract_tables_stream_from_document
+    from bolivar._bolivar import _extract_tables_from_page_objects
     from pdfplumber.utils.exceptions import PdfminerException
 
     def _page_geom(page):
@@ -186,6 +183,15 @@ def _apply_patch(module) -> bool:
     if not already_patched:
 
         def extract_tables_from_page(page, table_settings=None):
+            if not getattr(page, "is_original", True):
+                return _extract_tables_from_page_objects(
+                    page.objects,
+                    page.bbox,
+                    page.mediabox,
+                    page.initial_doctop,
+                    table_settings=table_settings,
+                    force_crop=not getattr(page, "is_original", True),
+                )
             page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
             pdf = getattr(page, "pdf", None)
             doc = getattr(pdf, "doc", None) if pdf is not None else None
@@ -204,16 +210,12 @@ def _apply_patch(module) -> bool:
             return tables or []
 
         def _extract_tables(self, table_settings=None):
-            if getattr(self, "filter_fn", None) is not None:
-                return extract_tables_from_page_filtered(self, table_settings)
             return extract_tables_from_page(self, table_settings)
 
         def _table_cell_count(table):
             return sum(len(row) for row in table)
 
         def _extract_table(self, table_settings=None):
-            if getattr(self, "filter_fn", None) is not None:
-                return extract_table_from_page_filtered(self, table_settings)
             tables = _extract_tables(self, table_settings=table_settings)
             if not tables:
                 return None

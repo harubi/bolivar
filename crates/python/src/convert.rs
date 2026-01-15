@@ -340,17 +340,6 @@ pub fn pdf_object_to_py_simple(py: Python<'_>, obj: &PDFObject) -> PyResult<Py<P
     }
 }
 
-/// Convert Python text to a String.
-pub fn py_text_to_string(obj: &Bound<'_, PyAny>) -> PyResult<String> {
-    if let Ok(s) = obj.extract::<String>() {
-        return Ok(s);
-    }
-    if let Ok(bytes) = obj.extract::<Vec<u8>>() {
-        return Ok(String::from_utf8_lossy(&bytes).to_string());
-    }
-    Ok(obj.str()?.to_string())
-}
-
 /// Convert Python Any to a HashMap<String, String>.
 pub fn py_any_to_string_map(obj: &Bound<'_, PyAny>) -> PyResult<HashMap<String, String>> {
     obj.extract()

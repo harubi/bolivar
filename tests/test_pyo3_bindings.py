@@ -144,27 +144,22 @@ class TestLTPage:
 def test_extract_tables_binding_exists():
     import bolivar
 
-    assert hasattr(bolivar, "extract_tables_from_page")
-    assert hasattr(bolivar, "extract_words_from_page")
-    assert hasattr(bolivar, "extract_text_from_page")
+    assert hasattr(bolivar, "_extract_tables_core")
+    assert hasattr(bolivar, "extract_tables_stream_from_document")
+    assert not hasattr(bolivar, "extract_tables_from_page")
+    assert not hasattr(bolivar, "extract_table_from_page")
+    assert not hasattr(bolivar, "extract_tables_from_document_pages")
+    assert not hasattr(bolivar, "extract_tables_from_ltpage")
+    assert not hasattr(bolivar, "extract_tables_from_page_filtered")
+    assert not hasattr(bolivar, "extract_table_from_page_filtered")
+    assert not hasattr(bolivar, "extract_words_from_page")
+    assert not hasattr(bolivar, "extract_text_from_page")
 
 
 def test_extract_tables_from_document_pages_preserves_order():
     import bolivar
 
-    pdf_path = FIXTURES_DIR / "pdfplumber" / "pdffill-demo.pdf"
-    pdf_bytes = pdf_path.read_bytes()
-    doc = bolivar.PDFDocument(pdf_bytes)
-
-    pages = list(doc.get_pages())
-    page_numbers = [2, 0]
-    geoms = [
-        (pages[2].mediabox, pages[2].mediabox, pages[2].mediabox[3] * 2, False),
-        (pages[0].mediabox, pages[0].mediabox, 0.0, False),
-    ]
-
-    tables = bolivar.extract_tables_from_document_pages(doc, page_numbers, geoms)
-    assert len(tables) == 2
+    assert not hasattr(bolivar, "extract_tables_from_document_pages")
 
 
 def test_threads_kw_rejected_in_python_bindings():
@@ -179,7 +174,7 @@ def test_threads_kw_rejected_in_python_bindings():
     assert bbox is not None
 
     with pytest.raises(TypeError):
-        bolivar.extract_tables_from_page(
+        bolivar._extract_tables_core(
             doc,
             page_index,
             bbox,
@@ -220,7 +215,7 @@ def test_high_level_memoryview():
 
 def test_extract_tables_settings_affects_output():
     import pdfplumber
-    from bolivar import extract_tables_from_page
+    from bolivar import _extract_tables_core
 
     pdf_path = ROOT / "references/pdfplumber/tests/pdfs/senate-expenditures.pdf"
     with pdfplumber.open(pdf_path) as pdf:
@@ -232,7 +227,7 @@ def test_extract_tables_settings_affects_output():
             "min_words_vertical": 20,
         }
 
-        t = extract_tables_from_page(
+        t = _extract_tables_core(
             page.page_obj.doc._rust_doc,
             page_index,
             page.bbox,
@@ -240,7 +235,7 @@ def test_extract_tables_settings_affects_output():
             page.initial_doctop,
             base_settings,
         )
-        t_tol = extract_tables_from_page(
+        t_tol = _extract_tables_core(
             page.page_obj.doc._rust_doc,
             page_index,
             page.bbox,

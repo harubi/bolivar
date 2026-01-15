@@ -178,26 +178,6 @@ pub fn apply_text_settings_from_dict(
     Ok(())
 }
 
-/// Parse text settings from a Python object.
-pub fn parse_text_settings(
-    py: Python<'_>,
-    text_settings: Option<Py<PyAny>>,
-) -> PyResult<TextSettings> {
-    let mut settings = TextSettings::default();
-    let Some(obj) = text_settings else {
-        return Ok(settings);
-    };
-    let obj = obj.bind(py);
-    if obj.is_none() {
-        return Ok(settings);
-    }
-    let dict = obj
-        .cast::<PyDict>()
-        .map_err(|_| PyValueError::new_err("text_settings must be a dict when provided"))?;
-    apply_text_settings_from_dict(&mut settings, dict)?;
-    Ok(settings)
-}
-
 /// Parse explicit lines from a Python object.
 fn parse_explicit_lines(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Vec<ExplicitLine>> {
     if obj.is_none() {
