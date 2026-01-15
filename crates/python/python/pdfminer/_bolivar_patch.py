@@ -27,7 +27,6 @@ def _apply_patch(module) -> bool:
 
     from bolivar import (
         extract_tables_from_page_filtered,
-        extract_tables_from_page,
         extract_table_from_page_filtered,
         extract_tables_stream_from_document,
     )
@@ -203,7 +202,6 @@ def _apply_patch(module) -> bool:
                 list(getattr(pages, "_page_numbers", [])) if pages is not None else None
             )
             stream = _get_table_stream(pdf, doc, table_settings, geoms, page_numbers)
-            _unused = extract_tables_from_page
             tables = stream.get(page_index)
             return tables or []
 

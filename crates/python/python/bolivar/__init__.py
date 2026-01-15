@@ -19,6 +19,7 @@ from bolivar._bolivar import (
     process_page,
     process_pages,
     extract_tables_stream_from_document,
+    _extract_tables_core,
     extract_tables_from_document,
     extract_tables_from_document_pages,
     extract_tables_from_ltpage,

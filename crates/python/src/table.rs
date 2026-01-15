@@ -13,9 +13,9 @@ use bolivar_core::high_level::{
 };
 use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
 use bolivar_core::table::{
-    BBox, CharObj, EdgeObj, Orientation, PageGeometry, WordObj, extract_table_from_objects,
-    extract_tables_from_ltpage as core_extract_tables_from_ltpage, extract_tables_from_objects,
-    extract_text_from_ltpage, extract_words_from_ltpage,
+    BBox, CharObj, EdgeObj, Orientation, PageGeometry, TableSettings, WordObj,
+    extract_table_from_objects, extract_tables_from_ltpage as core_extract_tables_from_ltpage,
+    extract_tables_from_objects, extract_text_from_ltpage, extract_words_from_ltpage,
 };
 use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
@@ -479,14 +479,7 @@ pub fn extract_tables_from_document_pages(
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<Vec<Vec<Vec<Option<String>>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
-    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
-        laparams: la,
-    };
+    let options = table_extract_options(laparams);
     let seq = page_numbers
         .cast::<PySequence>()
         .map_err(|_| PyValueError::new_err("page_numbers must be a list/tuple"))?;
@@ -501,14 +494,8 @@ pub fn extract_tables_from_document_pages(
             let mut out = Vec::with_capacity(pages.len());
             for (idx, page_index) in pages.iter().enumerate() {
                 let geom = &geoms[idx];
-                let page_tables = core_extract_tables_for_page_indexed(
-                    &doc.inner,
-                    *page_index,
-                    geom,
-                    options.clone(),
-                    &settings,
-                )
-                .map_err(|e| format!("Failed to extract tables: {}", e))?;
+                let page_tables =
+                    extract_tables_core_impl(&doc.inner, *page_index, geom, &options, &settings)?;
                 out.push(page_tables);
             }
             Ok::<_, String>(out)
@@ -546,6 +533,78 @@ pub fn extract_tables_from_ltpage(
     Ok(tables)
 }
 
+fn table_extract_options(laparams: Option<&PyLAParams>) -> ExtractOptions {
+    ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching: true,
+        laparams: laparams.map(|p| p.clone().into()),
+    }
+}
+
+fn extract_tables_core_impl(
+    doc: &PDFDocument,
+    page_index: usize,
+    geom: &PageGeometry,
+    options: &ExtractOptions,
+    settings: &TableSettings,
+) -> Result<Vec<Vec<Vec<Option<String>>>>, String> {
+    core_extract_tables_for_page_indexed(doc, page_index, geom, options.clone(), settings)
+        .map_err(|e| format!("Failed to extract tables: {}", e))
+}
+
+fn extract_tables_core_internal(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    page_index: usize,
+    page_bbox: (f64, f64, f64, f64),
+    mediabox: (f64, f64, f64, f64),
+    initial_doctop: f64,
+    table_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    force_crop: bool,
+) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
+    let settings = parse_table_settings(py, table_settings)?;
+    let options = table_extract_options(laparams);
+    let geom = PageGeometry {
+        page_bbox,
+        mediabox,
+        initial_doctop,
+        force_crop,
+    };
+    let tables =
+        py.detach(|| extract_tables_core_impl(&doc.inner, page_index, &geom, &options, &settings));
+    tables.map_err(PyValueError::new_err)
+}
+
+/// Extract tables from a page using Rust table extraction.
+#[pyfunction(name = "_extract_tables_core")]
+#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, force_crop = false))]
+pub fn extract_tables_core(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    page_index: usize,
+    page_bbox: (f64, f64, f64, f64),
+    mediabox: (f64, f64, f64, f64),
+    initial_doctop: f64,
+    table_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    force_crop: bool,
+) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
+    extract_tables_core_internal(
+        py,
+        doc,
+        page_index,
+        page_bbox,
+        mediabox,
+        initial_doctop,
+        table_settings,
+        laparams,
+        force_crop,
+    )
+}
+
 /// Extract tables from a page using Rust table extraction.
 #[pyfunction]
 #[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, force_crop = false))]
@@ -560,26 +619,17 @@ pub fn extract_tables_from_page(
     laparams: Option<&PyLAParams>,
     force_crop: bool,
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
-    let settings = parse_table_settings(py, table_settings)?;
-    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
-        laparams: la,
-    };
-    let geom = PageGeometry {
+    extract_tables_core_internal(
+        py,
+        doc,
+        page_index,
         page_bbox,
         mediabox,
         initial_doctop,
+        table_settings,
+        laparams,
         force_crop,
-    };
-    let tables: Result<_, String> = py.detach(|| {
-        core_extract_tables_for_page_indexed(&doc.inner, page_index, &geom, options, &settings)
-            .map_err(|e| format!("Failed to extract tables: {}", e))
-    });
-    tables.map_err(|e| PyValueError::new_err(e))
+    )
 }
 
 /// Extract a single table from a page using Rust table extraction.
@@ -596,39 +646,29 @@ pub fn extract_table_from_page(
     laparams: Option<&PyLAParams>,
     force_crop: bool,
 ) -> PyResult<Option<Vec<Vec<Option<String>>>>> {
-    let settings = parse_table_settings(py, table_settings)?;
-    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
-        laparams: la,
-    };
-    let geom = PageGeometry {
+    let page_tables = extract_tables_core_internal(
+        py,
+        doc,
+        page_index,
         page_bbox,
         mediabox,
         initial_doctop,
+        table_settings,
+        laparams,
         force_crop,
-    };
-    let table: Result<_, String> = py.detach(|| {
-        let page_tables =
-            core_extract_tables_for_page_indexed(&doc.inner, page_index, &geom, options, &settings)
-                .map_err(|e| format!("Failed to extract tables: {}", e))?;
-        if page_tables.is_empty() {
-            return Ok(None);
+    )?;
+    if page_tables.is_empty() {
+        return Ok(None);
+    }
+    let mut best = 0usize;
+    for (idx, table) in page_tables.iter().enumerate().skip(1) {
+        if table.iter().map(|row| row.len()).sum::<usize>()
+            > page_tables[best].iter().map(|row| row.len()).sum::<usize>()
+        {
+            best = idx;
         }
-        let mut best = 0usize;
-        for (idx, table) in page_tables.iter().enumerate().skip(1) {
-            if table.iter().map(|row| row.len()).sum::<usize>()
-                > page_tables[best].iter().map(|row| row.len()).sum::<usize>()
-            {
-                best = idx;
-            }
-        }
-        Ok(Some(page_tables[best].clone()))
-    });
-    table.map_err(|e| PyValueError::new_err(e))
+    }
+    Ok(Some(page_tables[best].clone()))
 }
 
 /// Extract tables from a filtered/cropped pdfplumber Page using Rust table extraction.
@@ -985,6 +1025,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_tables_from_document, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_document_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_ltpage, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tables_core, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_table_from_page, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page_filtered, m)?)?;
