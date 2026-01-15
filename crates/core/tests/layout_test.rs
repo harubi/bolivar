@@ -990,6 +990,27 @@ fn test_spatial_node_internal_has_no_indices() {
     assert_eq!(arena[root].element_count(), 20);
 }
 
+#[test]
+fn test_spatial_tree_handles_nan() {
+    use bolivar_core::layout::{PyId, SpatialNode};
+    use bolivar_core::utils::Rect;
+
+    let bboxes: Vec<(Rect, PyId)> = (0..9)
+        .map(|i| {
+            let x0 = if i == 4 { f64::NAN } else { i as f64 };
+            let x1 = x0 + 0.5;
+            ((x0, 0.0, x1, 1.0), i as PyId)
+        })
+        .collect();
+
+    let result = std::panic::catch_unwind(|| {
+        let mut arena = Vec::new();
+        SpatialNode::build(&bboxes, &mut arena);
+    });
+
+    assert!(result.is_ok(), "Spatial tree should tolerate NaN bboxes");
+}
+
 // ============================================================================
 // group_textboxes_exact tests - exact pdfminer-compatible grouping
 // ============================================================================

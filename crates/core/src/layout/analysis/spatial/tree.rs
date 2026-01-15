@@ -68,13 +68,13 @@ impl SpatialNode {
                 sorted.sort_by(|&a, &b| {
                     let ca = (elements[a].0.0 + elements[a].0.2) / 2.0;
                     let cb = (elements[b].0.0 + elements[b].0.2) / 2.0;
-                    ca.partial_cmp(&cb).unwrap()
+                    ca.total_cmp(&cb)
                 });
             } else {
                 sorted.sort_by(|&a, &b| {
                     let ca = (elements[a].0.1 + elements[a].0.3) / 2.0;
                     let cb = (elements[b].0.1 + elements[b].0.3) / 2.0;
-                    ca.partial_cmp(&cb).unwrap()
+                    ca.total_cmp(&cb)
                 });
             }
 
@@ -182,13 +182,13 @@ impl DynamicSpatialTree {
                 sorted.sort_by(|&a, &b| {
                     let ca = (elements[a].0.0 + elements[a].0.2) / 2.0;
                     let cb = (elements[b].0.0 + elements[b].0.2) / 2.0;
-                    ca.partial_cmp(&cb).unwrap()
+                    ca.total_cmp(&cb)
                 });
             } else {
                 sorted.sort_by(|&a, &b| {
                     let ca = (elements[a].0.1 + elements[a].0.3) / 2.0;
                     let cb = (elements[b].0.1 + elements[b].0.3) / 2.0;
-                    ca.partial_cmp(&cb).unwrap()
+                    ca.total_cmp(&cb)
                 });
             }
 
@@ -292,13 +292,13 @@ impl DynamicSpatialTree {
             sorted.sort_by(|&a, &b| {
                 let ca = (elements[a].0.0 + elements[a].0.2) / 2.0;
                 let cb = (elements[b].0.0 + elements[b].0.2) / 2.0;
-                ca.partial_cmp(&cb).unwrap()
+                ca.total_cmp(&cb)
             });
         } else {
             sorted.sort_by(|&a, &b| {
                 let ca = (elements[a].0.1 + elements[a].0.3) / 2.0;
                 let cb = (elements[b].0.1 + elements[b].0.3) / 2.0;
-                ca.partial_cmp(&cb).unwrap()
+                ca.total_cmp(&cb)
             });
         }
 

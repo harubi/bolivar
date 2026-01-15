@@ -43,6 +43,8 @@ impl PyBufferOwner {
 
 impl AsRef<[u8]> for PyBufferOwner {
     fn as_ref(&self) -> &[u8] {
+        // Safety: PyBufferOwner owns the PyBuffer, so the backing memory is
+        // valid for the lifetime of &self and len_bytes reflects the buffer size.
         unsafe {
             slice::from_raw_parts(self.buffer.buf_ptr().cast::<u8>(), self.buffer.len_bytes())
         }
@@ -581,6 +583,7 @@ impl PyPDFDocument {
     ) -> PyResult<Self> {
         let file = File::open(path)
             .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
+        // Safety: the file handle remains open for the duration of the map.
         let mmap = unsafe { Mmap::map(&file) }
             .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
         let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
@@ -598,6 +601,7 @@ impl PyPDFDocument {
     ///     List of PDFPage objects
     fn get_pages(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Vec<PyPDFPage>> {
         let mut pages = Vec::new();
+        // Safety: slf is a valid, live Python object for the duration of this call.
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
         for (idx, page_result) in
             bolivar_core::pdfpage::PDFPage::create_pages(&slf.inner).enumerate()
@@ -642,6 +646,7 @@ impl PyPDFDocument {
 
     /// Get a single page by index.
     fn get_page(slf: PyRef<'_, Self>, py: Python<'_>, index: usize) -> PyResult<PyPDFPage> {
+        // Safety: slf is a valid, live Python object for the duration of this call.
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
         let page = slf
             .inner
@@ -657,6 +662,7 @@ impl PyPDFDocument {
     #[getter]
     fn info(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
         let mut out = Vec::new();
+        // Safety: slf is a valid, live Python object for the duration of this call.
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
         for dict in slf.inner.info().iter() {
             let py_dict = PyDict::new(py);
@@ -682,6 +688,7 @@ impl PyPDFDocument {
     #[getter]
     fn xrefs(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
         let mut out = Vec::new();
+        // Safety: slf is a valid, live Python object for the duration of this call.
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
         for (_fallback, trailer) in slf.inner.get_trailers() {
             let py_dict = PyDict::new(py);
@@ -724,6 +731,7 @@ impl PyPDFDocument {
     fn catalog(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let py_dict = PyDict::new(py);
         let catalog = slf.inner.catalog().clone();
+        // Safety: slf is a valid, live Python object for the duration of this call.
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
         for (k, v) in catalog.iter() {
             let mut visited = HashSet::new();
@@ -753,6 +761,7 @@ impl PyPDFDocument {
             .getobj(objid)
             .map_err(|e| PyValueError::new_err(format!("Failed to resolve object: {}", e)))?;
         let mut visited = HashSet::new();
+        // Safety: slf is a valid, live Python object for the duration of this call.
         let py_doc = unsafe { Py::<PyAny>::from_borrowed_ptr(py, slf.as_ptr()) };
         let py_obj = pdf_object_to_py_internal(
             py,

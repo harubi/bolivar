@@ -2250,6 +2250,7 @@ mod tests {
 
         let path = format!("{}/tests/fixtures/simple1.pdf", env!("CARGO_MANIFEST_DIR"));
         let file = File::open(path).unwrap();
+        // Safety: the file handle remains open for the duration of the map.
         let mmap = unsafe { Mmap::map(&file) }.unwrap();
         let doc = PDFDocument::new_from_mmap(mmap, "").unwrap();
         match doc.data {
@@ -2278,6 +2279,7 @@ mod tests {
             .position(|window| window == needle)
             .expect("stream marker not found");
         let stream_start = stream_pos + needle.len();
+        // Safety: stream_start was computed within the bounds of `pdf`.
         let expected_ptr = unsafe { base_ptr.add(stream_start) };
 
         assert_eq!(raw.as_ptr(), expected_ptr);
@@ -2303,6 +2305,7 @@ mod tests {
             .position(|window| window == needle)
             .expect("stream marker not found");
         let stream_start = stream_pos + needle.len();
+        // Safety: stream_start was computed within the bounds of `pdf`.
         let expected_ptr = unsafe { base_ptr.add(stream_start) };
 
         assert_eq!(decoded.as_ptr(), expected_ptr);

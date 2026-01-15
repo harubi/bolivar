@@ -845,6 +845,7 @@ pub fn extract_text_from_path(
 ) -> PyResult<String> {
     let file = File::open(path)
         .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
+    // Safety: the file handle remains open for the duration of the map.
     let mmap = unsafe { Mmap::map(&file) }
         .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
     let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
@@ -950,6 +951,7 @@ pub fn extract_pages_from_path(
 ) -> PyResult<Vec<PyLTPage>> {
     let file = File::open(path)
         .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
+    // Safety: the file handle remains open for the duration of the map.
     let mmap = unsafe { Mmap::map(&file) }
         .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
     let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
@@ -989,6 +991,7 @@ pub fn extract_pages_with_images_from_path(
 ) -> PyResult<Vec<PyLTPage>> {
     let file = File::open(path)
         .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
+    // Safety: the file handle remains open for the duration of the map.
     let mmap = unsafe { Mmap::map(&file) }
         .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
     let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
