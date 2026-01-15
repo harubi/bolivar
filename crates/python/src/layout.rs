@@ -5,7 +5,7 @@
 
 use bolivar_core::utils::HasBBox;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyTuple};
 use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -352,6 +352,62 @@ fn set_bbox_attrs(obj: &Bound<'_, PyAny>, bbox: (f64, f64, f64, f64)) -> PyResul
 fn instance_dict<'py>(obj: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyDict>> {
     let dict_obj = obj.getattr("__dict__")?;
     Ok(dict_obj.cast::<PyDict>()?.clone())
+}
+
+fn bbox_from_pts(pts: &[(f64, f64)]) -> (f64, f64, f64, f64) {
+    if pts.is_empty() {
+        return (0.0, 0.0, 0.0, 0.0);
+    }
+    let mut x0 = pts[0].0;
+    let mut y0 = pts[0].1;
+    let mut x1 = pts[0].0;
+    let mut y1 = pts[0].1;
+    for (x, y) in pts.iter().copied().skip(1) {
+        if x < x0 {
+            x0 = x;
+        }
+        if y < y0 {
+            y0 = y;
+        }
+        if x > x1 {
+            x1 = x;
+        }
+        if y > y1 {
+            y1 = y;
+        }
+    }
+    (x0, y0, x1, y1)
+}
+
+fn parse_color(py: Python<'_>, value: Option<Py<PyAny>>) -> PyResult<Option<Vec<f64>>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let bound = value.bind(py);
+    if bound.is_none() {
+        return Ok(None);
+    }
+    if let Ok(vec) = bound.extract::<Vec<f64>>() {
+        return Ok(Some(vec));
+    }
+    if let Ok(val) = bound.extract::<f64>() {
+        return Ok(Some(vec![val]));
+    }
+    Ok(None)
+}
+
+fn parse_dashing(py: Python<'_>, value: Option<Py<PyAny>>) -> PyResult<Option<(Vec<f64>, f64)>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let bound = value.bind(py);
+    if bound.is_none() {
+        return Ok(None);
+    }
+    if let Ok((pattern, phase)) = bound.extract::<(Vec<f64>, f64)>() {
+        return Ok(Some((pattern, phase)));
+    }
+    Ok(None)
 }
 
 /// Layout character - a single character with position and font info.
@@ -796,6 +852,38 @@ impl PyLTRect {
 
 #[pymethods]
 impl PyLTRect {
+    #[new]
+    #[pyo3(signature = (linewidth, pts, stroke = false, fill = false, evenodd = false, stroking_color = None, non_stroking_color = None, dashing = None))]
+    fn new(
+        py: Python<'_>,
+        linewidth: f64,
+        pts: Vec<(f64, f64)>,
+        stroke: bool,
+        fill: bool,
+        evenodd: bool,
+        stroking_color: Option<Py<PyAny>>,
+        non_stroking_color: Option<Py<PyAny>>,
+        dashing: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let _ = evenodd;
+        let bbox = bbox_from_pts(&pts);
+        let stroking_color = parse_color(py, stroking_color)?;
+        let non_stroking_color = parse_color(py, non_stroking_color)?;
+        let dashing_style = parse_dashing(py, dashing)?;
+        Ok(Self {
+            bbox,
+            linewidth,
+            stroke,
+            fill,
+            non_stroking_color,
+            stroking_color,
+            original_path: None,
+            dashing_style,
+            mcid: None,
+            tag: None,
+        })
+    }
+
     /// Get bounding box as (x0, y0, x1, y1)
     #[getter]
     fn bbox(&self) -> (f64, f64, f64, f64) {
@@ -873,6 +961,45 @@ impl PyLTLine {
 
 #[pymethods]
 impl PyLTLine {
+    #[new]
+    #[pyo3(signature = (linewidth, pts, stroke = false, fill = false, evenodd = false, stroking_color = None, non_stroking_color = None, dashing = None))]
+    fn new(
+        py: Python<'_>,
+        linewidth: f64,
+        pts: Vec<(f64, f64)>,
+        stroke: bool,
+        fill: bool,
+        evenodd: bool,
+        stroking_color: Option<Py<PyAny>>,
+        non_stroking_color: Option<Py<PyAny>>,
+        dashing: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let _ = evenodd;
+        let (p0, p1) = match pts.as_slice() {
+            [p0, p1, ..] => (*p0, *p1),
+            [p0] => (*p0, *p0),
+            [] => ((0.0, 0.0), (0.0, 0.0)),
+        };
+        let bbox = bbox_from_pts(&[p0, p1]);
+        let stroking_color = parse_color(py, stroking_color)?;
+        let non_stroking_color = parse_color(py, non_stroking_color)?;
+        let dashing_style = parse_dashing(py, dashing)?;
+        Ok(Self {
+            bbox,
+            p0,
+            p1,
+            linewidth,
+            stroke,
+            fill,
+            non_stroking_color,
+            stroking_color,
+            original_path: None,
+            dashing_style,
+            mcid: None,
+            tag: None,
+        })
+    }
+
     /// Get bounding box as (x0, y0, x1, y1)
     #[getter]
     fn bbox(&self) -> (f64, f64, f64, f64) {
@@ -956,6 +1083,39 @@ impl PyLTCurve {
 
 #[pymethods]
 impl PyLTCurve {
+    #[new]
+    #[pyo3(signature = (linewidth, pts, stroke = false, fill = false, evenodd = false, stroking_color = None, non_stroking_color = None, dashing = None))]
+    fn new(
+        py: Python<'_>,
+        linewidth: f64,
+        pts: Vec<(f64, f64)>,
+        stroke: bool,
+        fill: bool,
+        evenodd: bool,
+        stroking_color: Option<Py<PyAny>>,
+        non_stroking_color: Option<Py<PyAny>>,
+        dashing: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let bbox = bbox_from_pts(&pts);
+        let stroking_color = parse_color(py, stroking_color)?;
+        let non_stroking_color = parse_color(py, non_stroking_color)?;
+        let dashing_style = parse_dashing(py, dashing)?;
+        Ok(Self {
+            bbox,
+            pts,
+            linewidth,
+            stroke,
+            fill,
+            evenodd,
+            non_stroking_color,
+            stroking_color,
+            original_path: None,
+            dashing_style,
+            mcid: None,
+            tag: None,
+        })
+    }
+
     /// Get bounding box as (x0, y0, x1, y1)
     #[getter]
     fn bbox(&self) -> (f64, f64, f64, f64) {

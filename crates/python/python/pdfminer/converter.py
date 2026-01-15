@@ -48,11 +48,9 @@ class PDFPageAggregator:
     def _receive_layout(self, rust_ltpage):
         """Receive layout from Rust (internal API).
 
-        Wraps the Rust LTPage in a Python-compatible LTPage.
+        Receives the Rust LTPage directly.
         """
-        # Wrap Rust LTPage in our shim LTPage
-        wrapped = LTPage(rust_ltpage)
-        self.receive_layout(wrapped)
+        self.receive_layout(rust_ltpage)
 
     def get_result(self):
         """Get the current page's layout result."""

@@ -402,10 +402,27 @@ class Page(Container):
         elif isinstance(obj, (LTCurve,)):
             attr["pts"] = list(map(self.point2coord, attr["pts"]))
 
-            # Ignoring typing because type signature for obj.original_path
-            # appears to be incorrect
+            def _iter_path_segments(path):
+                for segment in path or []:
+                    if len(segment) == 2:
+                        cmd = segment[0]
+                        candidate = segment[1]
+                        if (
+                            isinstance(candidate, (list, tuple))
+                            and candidate
+                            and isinstance(candidate[0], (list, tuple))
+                        ):
+                            pts = candidate
+                        else:
+                            pts = [candidate]
+                    else:
+                        cmd, *pts = segment
+                    yield cmd, pts
+
+            # Ignoring typing because obj.original_path may be nested or flattened.
             attr["path"] = [
-                (cmd, *map(self.point2coord, pts)) for cmd, *pts in obj.original_path
+                (cmd, *map(self.point2coord, pts))
+                for cmd, pts in _iter_path_segments(obj.original_path)
             ]  # type: ignore  # noqa: E501
 
             attr["dash"] = obj.dashing_style
