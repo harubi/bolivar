@@ -33,47 +33,20 @@ class PDFPage:
             self.cropbox = self.mediabox  # Default to mediabox
 
         self.rotate = rust_page.rotate
-        self.resources = rust_page.resources if hasattr(rust_page, "resources") else {}
+        self.resources = rust_page.resources
         self.label = rust_page.label
 
         # Get annotations from Rust page
-        self.annots = rust_page.annots if hasattr(rust_page, "annots") else None
+        self.annots = rust_page.annots
         self.beads = None  # Reading order chain
 
         # Optional box types - get from Rust if available
-        self.bleedbox = (
-            list(rust_page.bleedbox)
-            if hasattr(rust_page, "bleedbox") and rust_page.bleedbox
-            else None
-        )
-        self.trimbox = (
-            list(rust_page.trimbox)
-            if hasattr(rust_page, "trimbox") and rust_page.trimbox
-            else None
-        )
-        self.artbox = (
-            list(rust_page.artbox)
-            if hasattr(rust_page, "artbox") and rust_page.artbox
-            else None
-        )
+        self.bleedbox = list(rust_page.bleedbox) if rust_page.bleedbox else None
+        self.trimbox = list(rust_page.trimbox) if rust_page.trimbox else None
+        self.artbox = list(rust_page.artbox) if rust_page.artbox else None
 
-        # Populate attrs dict from Rust when available
-        if hasattr(rust_page, "attrs"):
-            self.attrs = rust_page.attrs
-        else:
-            self.attrs = {
-                "MediaBox": self.mediabox,
-                "CropBox": self.cropbox,
-                "Rotate": self.rotate,
-                "Annots": self.annots,
-                "B": self.beads,
-            }
-            if self.bleedbox:
-                self.attrs["BleedBox"] = self.bleedbox
-            if self.trimbox:
-                self.attrs["TrimBox"] = self.trimbox
-            if self.artbox:
-                self.attrs["ArtBox"] = self.artbox
+        # Populate attrs dict from Rust (single source of truth)
+        self.attrs = rust_page.attrs
 
     @classmethod
     def create_pages(cls, document, caching=True, check_extractable=True):

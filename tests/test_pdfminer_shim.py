@@ -187,6 +187,25 @@ class TestPDFPage:
             else:
                 assert isinstance(contents, PDFStream)
 
+    def test_page_attrs_require_rust_source(self):
+        """PDFPage should require Rust attrs as the single source of truth."""
+        from pdfminer.pdfpage import PDFPage
+
+        class DummyPage:
+            pageid = 1
+            mediabox = (0.0, 0.0, 1.0, 1.0)
+            cropbox = None
+            rotate = 0
+            resources = {}
+            label = None
+            annots = None
+            bleedbox = None
+            trimbox = None
+            artbox = None
+
+        with pytest.raises(AttributeError):
+            PDFPage(DummyPage(), object())
+
     def test_page_has_pageid(self):
         """PDFPage has pageid attribute"""
         from pdfminer.pdfparser import PDFParser
