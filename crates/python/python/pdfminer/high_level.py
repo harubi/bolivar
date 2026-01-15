@@ -185,4 +185,4 @@ def extract_pages(
         pages = _extract_pages(
             value, password, page_numbers, maxpages, caching, laparams
         )
-    return iter(pages)
+    return (LTPage(page) for page in pages)

@@ -50,7 +50,7 @@ class PDFPageAggregator:
 
         Receives the Rust LTPage directly.
         """
-        self.receive_layout(rust_ltpage)
+        self.receive_layout(LTPage(rust_ltpage))
 
     def get_result(self):
         """Get the current page's layout result."""

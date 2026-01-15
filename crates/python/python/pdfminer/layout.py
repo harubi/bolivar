@@ -12,7 +12,7 @@ from bolivar._bolivar import (
     LTFigure,
     LTImage,
     LTLine,
-    LTPage,
+    LTPage as _RustLTPage,
     LTRect,
     LTTextBoxHorizontal,
     LTTextBoxVertical,
@@ -68,6 +68,64 @@ class LTTextLine(LTTextContainer):
 
 class LTTextBox(LTTextContainer):
     """Marker base class for text boxes."""
+
+
+def _wrap_rust_item(item):
+    return item
+
+
+def _iter_flatten(item):
+    yield _wrap_rust_item(item)
+    if isinstance(item, LTContainer):
+        for child in item:
+            yield from _iter_flatten(child)
+
+
+class LTPage(LTLayoutContainer):
+    def __init__(self, page):
+        if isinstance(page, LTPage):
+            page = page._page
+        if not isinstance(page, _RustLTPage):
+            raise TypeError("LTPage expects a rust LTPage")
+        self._page = page
+        self.pageid = page.pageid
+        self.rotate = page.rotate
+        self.bbox = page.bbox
+
+    @property
+    def x0(self):
+        return self.bbox[0]
+
+    @property
+    def y0(self):
+        return self.bbox[1]
+
+    @property
+    def x1(self):
+        return self.bbox[2]
+
+    @property
+    def y1(self):
+        return self.bbox[3]
+
+    @property
+    def width(self):
+        return self.x1 - self.x0
+
+    @property
+    def height(self):
+        return self.y1 - self.y0
+
+    @property
+    def _objs(self):
+        return [_wrap_rust_item(obj) for obj in self._page]
+
+    def __iter__(self):
+        for item in self._page:
+            yield from _iter_flatten(item)
+
+    def __len__(self):
+        return len(self._page)
 
 
 _ITEM_TYPES = (
@@ -131,6 +189,8 @@ def _container_objs(self):
 
 
 for _cls in _CONTAINER_TYPES:
+    if _cls is LTPage:
+        continue
     setattr(_cls, "_objs", property(_container_objs))
 
 
