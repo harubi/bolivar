@@ -52,6 +52,42 @@ description = "Build all crates (release)"
 command = "cargo"
 args = ["build", "--release"]
 
+[tasks.build-uniffi]
+category = "Rust"
+description = "Build UniFFI shared library (release)"
+command = "cargo"
+args = ["build", "-p", "bolivar-uniffi", "--release"]
+
+[tasks.gen-kotlin]
+category = "Rust"
+description = "Generate Kotlin bindings from UniFFI UDL and release library"
+script = '''
+set -euo pipefail
+
+case "$(uname -s)" in
+  Darwin) lib_path="target/release/libbolivar_uniffi.dylib" ;;
+  Linux) lib_path="target/release/libbolivar_uniffi.so" ;;
+  MINGW*|MSYS*|CYGWIN*) lib_path="target/release/bolivar_uniffi.dll" ;;
+  *) echo "Unsupported platform: $(uname -s)" >&2; exit 1 ;;
+esac
+
+if [ ! -f "$lib_path" ]; then
+  echo "Missing UniFFI native library at $lib_path. Run cargo make build-uniffi first." >&2
+  exit 1
+fi
+
+mkdir -p crates/uniffi/kotlin
+find crates/uniffi/kotlin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
+cargo run -p bolivar-uniffi --bin uniffi-bindgen -- \
+  generate \
+  --library "$lib_path" \
+  --language kotlin \
+  --out-dir crates/uniffi/kotlin \
+  --no-format
+'''
+dependencies = ["build-uniffi"]
+
 [tasks.test]
 category = "Rust"
 description = "Run all Rust tests"

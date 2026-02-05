@@ -1,0 +1,27 @@
+[package]
+name = "bolivar-uniffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "UniFFI bindings for bolivar PDF library"
+
+[lib]
+name = "bolivar_uniffi"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
+[dependencies]
+bolivar-core = { path = "../core" }
+thiserror.workspace = true
+tokio = { version = "1.40", features = ["rt-multi-thread"] }
+uniffi = { version = "0.31.0", features = ["cli"] }
+
+[build-dependencies]
+uniffi = { version = "0.31.0", features = ["build"] }
+
+[dev-dependencies]
+pollster = "0.4"

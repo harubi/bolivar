@@ -1,0 +1,3 @@
+[bindings.kotlin]
+package_name = "io.bolivar"
+cdylib_name = "bolivar_uniffi"

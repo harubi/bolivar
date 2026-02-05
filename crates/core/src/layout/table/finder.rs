@@ -426,6 +426,102 @@ impl<'a> TableFinder<'a> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableCellMetadata {
+    pub row_index: usize,
+    pub column_index: usize,
+    pub row_span: usize,
+    pub column_span: usize,
+    pub bbox: BBox,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableMetadata {
+    pub bbox: BBox,
+    pub row_count: usize,
+    pub column_count: usize,
+    pub cells: Vec<TableCellMetadata>,
+}
+
+fn span_for_axis(axis_starts: &[f64], start_idx: usize, end_value: f64) -> usize {
+    const EPS: f64 = 1e-6;
+    let mut span = 0usize;
+    for value in axis_starts.iter().skip(start_idx) {
+        if *value < end_value - EPS {
+            span += 1;
+        } else {
+            break;
+        }
+    }
+    span.max(1)
+}
+
+fn table_to_metadata(
+    table: &Table,
+    chars: &[CharObj],
+    text_settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+) -> TableMetadata {
+    let rows = table.rows();
+    let row_count = rows.len();
+    let column_count = rows.first().map(|row| row.cells.len()).unwrap_or(0);
+    let text_grid = table.extract(chars, text_settings, arena);
+
+    let mut row_starts: Vec<f64> = Vec::with_capacity(row_count);
+    for (row_idx, row) in rows.iter().enumerate() {
+        let top = row
+            .cells
+            .iter()
+            .flatten()
+            .next()
+            .map(|bbox| bbox.top)
+            .unwrap_or(row_idx as f64);
+        row_starts.push(top);
+    }
+
+    let mut column_starts: Vec<f64> = Vec::with_capacity(column_count);
+    for col_idx in 0..column_count {
+        let mut start = None;
+        for row in &rows {
+            if let Some(Some(bbox)) = row.cells.get(col_idx) {
+                start = Some(bbox.x0);
+                break;
+            }
+        }
+        column_starts.push(start.unwrap_or(col_idx as f64));
+    }
+
+    let mut cells = Vec::new();
+    for (row_idx, row) in rows.iter().enumerate() {
+        for (col_idx, maybe_bbox) in row.cells.iter().enumerate() {
+            let Some(bbox) = maybe_bbox else {
+                continue;
+            };
+            let text = text_grid
+                .get(row_idx)
+                .and_then(|text_row| text_row.get(col_idx))
+                .and_then(|value| value.clone())
+                .unwrap_or_default();
+            cells.push(TableCellMetadata {
+                row_index: row_idx,
+                column_index: col_idx,
+                row_span: span_for_axis(&row_starts, row_idx, bbox.bottom),
+                column_span: span_for_axis(&column_starts, col_idx, bbox.x1),
+                bbox: *bbox,
+                text,
+            });
+        }
+    }
+
+    TableMetadata {
+        bbox: table.bbox(),
+        row_count,
+        column_count,
+        cells,
+    }
+}
+
 /// Extract all tables from a page as nested vectors of cell text.
 pub fn extract_tables_from_ltpage(
     page: &LTPage,
@@ -448,6 +544,31 @@ pub fn extract_tables_from_ltpage(
     tables
         .iter()
         .map(|t| t.extract(&finder.chars, &settings.text_settings, finder.arena))
+        .collect()
+}
+
+/// Extract all tables from a page with per-cell metadata.
+pub fn extract_tables_with_metadata_from_ltpage(
+    page: &LTPage,
+    geom: &PageGeometry,
+    settings: &TableSettings,
+) -> Vec<TableMetadata> {
+    let mut arena = PageArena::new();
+    arena.reset();
+    let finder = TableFinder::new(page, geom, settings.clone(), &mut arena);
+    let mut tables = finder.find_tables();
+    if geom.force_crop {
+        let crop = BBox {
+            x0: geom.page_bbox.0,
+            top: geom.page_bbox.1,
+            x1: geom.page_bbox.2,
+            bottom: geom.page_bbox.3,
+        };
+        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
+    }
+    tables
+        .iter()
+        .map(|t| table_to_metadata(t, &finder.chars, &settings.text_settings, finder.arena))
         .collect()
 }
 
@@ -474,6 +595,32 @@ pub fn extract_tables_from_objects(
     tables
         .iter()
         .map(|t| t.extract(&finder.chars, &settings.text_settings, finder.arena))
+        .collect()
+}
+
+/// Extract all tables from precomputed characters/edges with per-cell metadata.
+pub fn extract_tables_with_metadata_from_objects(
+    chars: Vec<CharObj>,
+    edges: Vec<EdgeObj>,
+    geom: &PageGeometry,
+    settings: &TableSettings,
+    arena: &impl ArenaLookup,
+) -> Vec<TableMetadata> {
+    let arena: &dyn ArenaLookup = arena;
+    let finder = TableFinder::from_objects(chars, edges, geom, settings.clone(), arena);
+    let mut tables = finder.find_tables();
+    if geom.force_crop {
+        let crop = BBox {
+            x0: geom.page_bbox.0,
+            top: geom.page_bbox.1,
+            x1: geom.page_bbox.2,
+            bottom: geom.page_bbox.3,
+        };
+        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
+    }
+    tables
+        .iter()
+        .map(|t| table_to_metadata(t, &finder.chars, &settings.text_settings, finder.arena))
         .collect()
 }
 
@@ -621,10 +768,11 @@ pub fn extract_text_from_ltpage(
 #[cfg(test)]
 mod tests {
     use super::collect_page_objects;
+    use super::{Table, table_to_metadata};
     use crate::arena::PageArena;
     use crate::arena::types::{ArenaChar, ArenaItem, ArenaLine, ArenaPage, ArenaRect};
     use crate::layout::table::collect_table_objects_from_arena;
-    use crate::layout::table::types::PageGeometry;
+    use crate::layout::table::types::{BBox, CharObj, PageGeometry, TextSettings};
     use crate::utils::Rect;
 
     #[test]
@@ -704,5 +852,159 @@ mod tests {
             lt_arena.resolve(chars_lt[0].text),
             ctx.resolve(chars_arena[0].text)
         );
+    }
+
+    #[test]
+    fn table_metadata_reports_rowspan() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let table = Table {
+            cells: vec![
+                BBox {
+                    x0: 0.0,
+                    top: 0.0,
+                    x1: 5.0,
+                    bottom: 20.0,
+                },
+                BBox {
+                    x0: 5.0,
+                    top: 0.0,
+                    x1: 10.0,
+                    bottom: 10.0,
+                },
+                BBox {
+                    x0: 5.0,
+                    top: 10.0,
+                    x1: 10.0,
+                    bottom: 20.0,
+                },
+            ],
+        };
+
+        let chars = vec![
+            CharObj {
+                text: arena.intern("A"),
+                x0: 1.0,
+                x1: 2.0,
+                top: 9.0,
+                bottom: 11.0,
+                doctop: 9.0,
+                width: 1.0,
+                height: 2.0,
+                size: 10.0,
+                upright: true,
+            },
+            CharObj {
+                text: arena.intern("B"),
+                x0: 6.0,
+                x1: 7.0,
+                top: 4.0,
+                bottom: 6.0,
+                doctop: 4.0,
+                width: 1.0,
+                height: 2.0,
+                size: 10.0,
+                upright: true,
+            },
+            CharObj {
+                text: arena.intern("C"),
+                x0: 6.0,
+                x1: 7.0,
+                top: 14.0,
+                bottom: 16.0,
+                doctop: 14.0,
+                width: 1.0,
+                height: 2.0,
+                size: 10.0,
+                upright: true,
+            },
+        ];
+
+        let metadata = table_to_metadata(&table, &chars, &TextSettings::default(), &arena);
+        let spanning = metadata
+            .cells
+            .iter()
+            .find(|cell| cell.row_index == 0 && cell.column_index == 0)
+            .expect("top-left cell");
+        assert_eq!(spanning.row_span, 2);
+        assert_eq!(spanning.column_span, 1);
+    }
+
+    #[test]
+    fn table_metadata_reports_colspan() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let table = Table {
+            cells: vec![
+                BBox {
+                    x0: 0.0,
+                    top: 0.0,
+                    x1: 10.0,
+                    bottom: 10.0,
+                },
+                BBox {
+                    x0: 0.0,
+                    top: 10.0,
+                    x1: 5.0,
+                    bottom: 20.0,
+                },
+                BBox {
+                    x0: 5.0,
+                    top: 10.0,
+                    x1: 10.0,
+                    bottom: 20.0,
+                },
+            ],
+        };
+
+        let chars = vec![
+            CharObj {
+                text: arena.intern("A"),
+                x0: 4.0,
+                x1: 6.0,
+                top: 4.0,
+                bottom: 6.0,
+                doctop: 4.0,
+                width: 2.0,
+                height: 2.0,
+                size: 10.0,
+                upright: true,
+            },
+            CharObj {
+                text: arena.intern("B"),
+                x0: 1.0,
+                x1: 2.0,
+                top: 14.0,
+                bottom: 16.0,
+                doctop: 14.0,
+                width: 1.0,
+                height: 2.0,
+                size: 10.0,
+                upright: true,
+            },
+            CharObj {
+                text: arena.intern("C"),
+                x0: 6.0,
+                x1: 7.0,
+                top: 14.0,
+                bottom: 16.0,
+                doctop: 14.0,
+                width: 1.0,
+                height: 2.0,
+                size: 10.0,
+                upright: true,
+            },
+        ];
+
+        let metadata = table_to_metadata(&table, &chars, &TextSettings::default(), &arena);
+        let spanning = metadata
+            .cells
+            .iter()
+            .find(|cell| cell.row_index == 0 && cell.column_index == 0)
+            .expect("top-left cell");
+        assert_eq!(spanning.row_span, 1);
+        assert_eq!(spanning.column_span, 2);
     }
 }

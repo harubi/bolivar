@@ -24,8 +24,10 @@ pub(crate) use collector::collect_table_objects_from_arena;
 
 // Re-export public API functions
 pub use finder::{
-    extract_table_from_ltpage, extract_table_from_objects, extract_tables_from_ltpage,
-    extract_tables_from_objects, extract_text_from_ltpage, extract_words_from_ltpage,
+    TableCellMetadata, TableMetadata, extract_table_from_ltpage, extract_table_from_objects,
+    extract_tables_from_ltpage, extract_tables_from_objects,
+    extract_tables_with_metadata_from_ltpage, extract_tables_with_metadata_from_objects,
+    extract_text_from_ltpage, extract_words_from_ltpage,
 };
 
 #[cfg(test)]
