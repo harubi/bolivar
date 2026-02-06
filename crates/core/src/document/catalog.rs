@@ -1797,6 +1797,14 @@ impl PDFDocument {
         self.get_page_count()
     }
 
+    /// Returns the number of pages found by traversing the page tree.
+    ///
+    /// Unlike [`page_count`](Self::page_count) which reads the declared
+    /// `/Pages /Count` integer, this walks the actual page tree objects.
+    pub fn page_tree_len(&self) -> usize {
+        self.page_index().len()
+    }
+
     /// Get mediaboxes for all pages in the document.
     pub fn page_mediaboxes(&self) -> Result<Vec<[f64; 4]>> {
         self.page_index().mediaboxes(self)

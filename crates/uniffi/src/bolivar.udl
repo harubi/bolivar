@@ -64,57 +64,108 @@ namespace bolivar {
     string extract_text_from_bytes(bytes pdf_data, string? password);
 
     [Throws=BolivarError]
+    string extract_text_from_bytes_with_page_range(bytes pdf_data, string? password, sequence<u32>? page_numbers, u32? max_pages);
+
+    [Throws=BolivarError]
     string extract_text_from_path(string path, string? password);
+
+    [Throws=BolivarError]
+    string extract_text_from_path_with_page_range(string path, string? password, sequence<u32>? page_numbers, u32? max_pages);
 
     [Async, Throws=BolivarError]
     string extract_text_from_bytes_async(bytes pdf_data, string? password);
 
     [Async, Throws=BolivarError]
+    string extract_text_from_bytes_with_page_range_async(bytes pdf_data, string? password, sequence<u32>? page_numbers, u32? max_pages);
+
+    [Async, Throws=BolivarError]
     string extract_text_from_path_async(string path, string? password);
+
+    [Async, Throws=BolivarError]
+    string extract_text_from_path_with_page_range_async(string path, string? password, sequence<u32>? page_numbers, u32? max_pages);
 
     [Throws=BolivarError]
     sequence<PageSummary> extract_page_summaries_from_bytes(bytes pdf_data, string? password);
 
     [Throws=BolivarError]
+    sequence<PageSummary> extract_page_summaries_from_bytes_with_page_range(bytes pdf_data, string? password, sequence<u32>? page_numbers, u32? max_pages);
+
+    [Throws=BolivarError]
     sequence<PageSummary> extract_page_summaries_from_path(string path, string? password);
+
+    [Throws=BolivarError]
+    sequence<PageSummary> extract_page_summaries_from_path_with_page_range(string path, string? password, sequence<u32>? page_numbers, u32? max_pages);
 
     [Async, Throws=BolivarError]
     sequence<PageSummary> extract_page_summaries_from_bytes_async(bytes pdf_data, string? password);
 
     [Async, Throws=BolivarError]
+    sequence<PageSummary> extract_page_summaries_from_bytes_with_page_range_async(bytes pdf_data, string? password, sequence<u32>? page_numbers, u32? max_pages);
+
+    [Async, Throws=BolivarError]
     sequence<PageSummary> extract_page_summaries_from_path_async(string path, string? password);
+
+    [Async, Throws=BolivarError]
+    sequence<PageSummary> extract_page_summaries_from_path_with_page_range_async(string path, string? password, sequence<u32>? page_numbers, u32? max_pages);
 
     [Throws=BolivarError]
     sequence<LayoutPage> extract_layout_pages_from_bytes(bytes pdf_data, string? password);
 
     [Throws=BolivarError]
+    sequence<LayoutPage> extract_layout_pages_from_bytes_with_page_range(bytes pdf_data, string? password, sequence<u32>? page_numbers, u32? max_pages);
+
+    [Throws=BolivarError]
     sequence<LayoutPage> extract_layout_pages_from_path(string path, string? password);
+
+    [Throws=BolivarError]
+    sequence<LayoutPage> extract_layout_pages_from_path_with_page_range(string path, string? password, sequence<u32>? page_numbers, u32? max_pages);
 
     [Async, Throws=BolivarError]
     sequence<LayoutPage> extract_layout_pages_from_bytes_async(bytes pdf_data, string? password);
 
     [Async, Throws=BolivarError]
+    sequence<LayoutPage> extract_layout_pages_from_bytes_with_page_range_async(bytes pdf_data, string? password, sequence<u32>? page_numbers, u32? max_pages);
+
+    [Async, Throws=BolivarError]
     sequence<LayoutPage> extract_layout_pages_from_path_async(string path, string? password);
+
+    [Async, Throws=BolivarError]
+    sequence<LayoutPage> extract_layout_pages_from_path_with_page_range_async(string path, string? password, sequence<u32>? page_numbers, u32? max_pages);
 
     [Throws=BolivarError]
     sequence<Table> extract_tables_from_bytes(bytes pdf_data, string? password);
 
     [Throws=BolivarError]
+    sequence<Table> extract_tables_from_bytes_with_page_range(bytes pdf_data, string? password, sequence<u32>? page_numbers, u32? max_pages);
+
+    [Throws=BolivarError]
     sequence<Table> extract_tables_from_path(string path, string? password);
+
+    [Throws=BolivarError]
+    sequence<Table> extract_tables_from_path_with_page_range(string path, string? password, sequence<u32>? page_numbers, u32? max_pages);
 
     [Async, Throws=BolivarError]
     sequence<Table> extract_tables_from_bytes_async(bytes pdf_data, string? password);
 
     [Async, Throws=BolivarError]
+    sequence<Table> extract_tables_from_bytes_with_page_range_async(bytes pdf_data, string? password, sequence<u32>? page_numbers, u32? max_pages);
+
+    [Async, Throws=BolivarError]
     sequence<Table> extract_tables_from_path_async(string path, string? password);
+
+    [Async, Throws=BolivarError]
+    sequence<Table> extract_tables_from_path_with_page_range_async(string path, string? password, sequence<u32>? page_numbers, u32? max_pages);
 };
 
 [Error]
 enum BolivarError {
     "InvalidPath",
+    "InvalidArgument",
     "IoNotFound",
     "IoPermissionDenied",
     "IoError",
+    "SyntaxError",
+    "EncryptionError",
     "PdfError",
     "DecodeError",
     "RuntimeError",

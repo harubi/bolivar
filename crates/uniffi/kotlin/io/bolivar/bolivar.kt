@@ -646,33 +646,65 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_bytes_async(
     ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_bytes_with_page_range(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_bytes_with_page_range_async(
+    ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_path(
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_path_async(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_path_with_page_range(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_path_with_page_range_async(
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_bytes(
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_bytes_async(
     ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_bytes_with_page_range(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_bytes_with_page_range_async(
+    ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_path(
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_path_async(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_path_with_page_range(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_path_with_page_range_async(
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_tables_from_bytes(
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_tables_from_bytes_async(
     ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_tables_from_bytes_with_page_range(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_tables_from_bytes_with_page_range_async(
+    ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_tables_from_path(
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_tables_from_path_async(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_tables_from_path_with_page_range(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_tables_from_path_with_page_range_async(
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_text_from_bytes(
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_text_from_bytes_async(
     ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_text_from_bytes_with_page_range(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_text_from_bytes_with_page_range_async(
+    ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_text_from_path(
     ): Short
     external fun uniffi_bolivar_uniffi_checksum_func_extract_text_from_path_async(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_text_from_path_with_page_range(
+    ): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_extract_text_from_path_with_page_range_async(
     ): Short
     external fun ffi_bolivar_uniffi_uniffi_contract_version(
     ): Int
@@ -688,143 +720,175 @@ internal object UniffiLib {
         
     }
     external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_bytes(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_bytes_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_path(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_path_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_bytes(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_bytes_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_path(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_path_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_bytes(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_bytes_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_path(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_path_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_bytes(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_bytes_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
-    ): Long
-    external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_path(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_path_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
-    ): Long
-    external fun ffi_bolivar_uniffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun ffi_bolivar_uniffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun ffi_bolivar_uniffi_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
-    external fun ffi_bolivar_uniffi_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun ffi_bolivar_uniffi_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_u8(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_u8(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
-    external fun ffi_bolivar_uniffi_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_i8(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_i8(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
-    external fun ffi_bolivar_uniffi_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_u16(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_u16(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Short
-    external fun ffi_bolivar_uniffi_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_i16(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_i16(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Short
-    external fun ffi_bolivar_uniffi_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_u32(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_u32(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Int
-    external fun ffi_bolivar_uniffi_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_i32(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_i32(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Int
-    external fun ffi_bolivar_uniffi_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_u64(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_u64(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Long
-    external fun ffi_bolivar_uniffi_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_i64(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_i64(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Long
-    external fun ffi_bolivar_uniffi_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_f32(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_f32(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Float
-    external fun ffi_bolivar_uniffi_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_f64(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_f64(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Double
-    external fun ffi_bolivar_uniffi_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_rust_buffer(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_rust_buffer(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun ffi_bolivar_uniffi_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_cancel_void(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_free_void(`handle`: Long,
-    ): Unit
-    external fun ffi_bolivar_uniffi_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): Unit
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_bytes_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_bytes_with_page_range(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_bytes_with_page_range_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_path(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_path_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_path_with_page_range(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_path_with_page_range_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_bytes(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_bytes_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_bytes_with_page_range(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_bytes_with_page_range_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_path(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_path_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_path_with_page_range(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_path_with_page_range_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_bytes(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_bytes_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_bytes_with_page_range(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_bytes_with_page_range_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_path(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_path_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_path_with_page_range(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_tables_from_path_with_page_range_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_bytes(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_bytes_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_bytes_with_page_range(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_bytes_with_page_range_async(`pdfData`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_path(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_path_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,
+): Long
+external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_path_with_page_range(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun uniffi_bolivar_uniffi_fn_func_extract_text_from_path_with_page_range_async(`path`: RustBuffer.ByValue,`password`: RustBuffer.ByValue,`pageNumbers`: RustBuffer.ByValue,`maxPages`: RustBuffer.ByValue,
+): Long
+external fun ffi_bolivar_uniffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun ffi_bolivar_uniffi_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun ffi_bolivar_uniffi_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
+external fun ffi_bolivar_uniffi_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun ffi_bolivar_uniffi_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_u8(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_u8(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun ffi_bolivar_uniffi_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_i8(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_i8(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Byte
+external fun ffi_bolivar_uniffi_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_u16(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_u16(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Short
+external fun ffi_bolivar_uniffi_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_i16(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_i16(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Short
+external fun ffi_bolivar_uniffi_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_u32(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_u32(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+external fun ffi_bolivar_uniffi_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_i32(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_i32(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Int
+external fun ffi_bolivar_uniffi_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_u64(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_u64(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun ffi_bolivar_uniffi_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_i64(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_i64(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Long
+external fun ffi_bolivar_uniffi_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_f32(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_f32(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Float
+external fun ffi_bolivar_uniffi_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_f64(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_f64(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Double
+external fun ffi_bolivar_uniffi_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_rust_buffer(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_rust_buffer(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): RustBuffer.ByValue
+external fun ffi_bolivar_uniffi_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_cancel_void(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_free_void(`handle`: Long,
+): Unit
+external fun ffi_bolivar_uniffi_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+): Unit
 
-        
+    
 }
 
 private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
@@ -844,10 +908,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_bytes_async() != 60451.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_bytes_with_page_range() != 6958.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_bytes_with_page_range_async() != 8259.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_path() != 35475.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_path_async() != 26054.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_path_with_page_range() != 60937.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_layout_pages_from_path_with_page_range_async() != 63867.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_bytes() != 46149.toShort()) {
@@ -856,10 +932,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_bytes_async() != 46598.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_bytes_with_page_range() != 21079.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_bytes_with_page_range_async() != 17310.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_path() != 39623.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_path_async() != 5140.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_path_with_page_range() != 49557.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_page_summaries_from_path_with_page_range_async() != 7251.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_tables_from_bytes() != 12007.toShort()) {
@@ -868,10 +956,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_tables_from_bytes_async() != 20394.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_tables_from_bytes_with_page_range() != 62186.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_tables_from_bytes_with_page_range_async() != 7692.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_tables_from_path() != 58588.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_tables_from_path_async() != 33777.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_tables_from_path_with_page_range() != 34149.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_tables_from_path_with_page_range_async() != 48101.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_text_from_bytes() != 50262.toShort()) {
@@ -880,10 +980,22 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_text_from_bytes_async() != 36477.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_text_from_bytes_with_page_range() != 23274.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_text_from_bytes_with_page_range_async() != 43068.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_text_from_path() != 34515.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_bolivar_uniffi_checksum_func_extract_text_from_path_async() != 48616.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_text_from_path_with_page_range() != 4566.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_func_extract_text_from_path_with_page_range_async() != 26123.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1581,11 +1693,17 @@ sealed class BolivarException(message: String): kotlin.Exception(message) {
         
         class InvalidPath(message: String) : BolivarException(message)
         
+        class InvalidArgument(message: String) : BolivarException(message)
+        
         class IoNotFound(message: String) : BolivarException(message)
         
         class IoPermissionDenied(message: String) : BolivarException(message)
         
         class IoException(message: String) : BolivarException(message)
+        
+        class SyntaxException(message: String) : BolivarException(message)
+        
+        class EncryptionException(message: String) : BolivarException(message)
         
         class PdfException(message: String) : BolivarException(message)
         
@@ -1607,12 +1725,15 @@ public object FfiConverterTypeBolivarError : FfiConverterRustBuffer<BolivarExcep
         
             return when(buf.getInt()) {
             1 -> BolivarException.InvalidPath(FfiConverterString.read(buf))
-            2 -> BolivarException.IoNotFound(FfiConverterString.read(buf))
-            3 -> BolivarException.IoPermissionDenied(FfiConverterString.read(buf))
-            4 -> BolivarException.IoException(FfiConverterString.read(buf))
-            5 -> BolivarException.PdfException(FfiConverterString.read(buf))
-            6 -> BolivarException.DecodeException(FfiConverterString.read(buf))
-            7 -> BolivarException.RuntimeException(FfiConverterString.read(buf))
+            2 -> BolivarException.InvalidArgument(FfiConverterString.read(buf))
+            3 -> BolivarException.IoNotFound(FfiConverterString.read(buf))
+            4 -> BolivarException.IoPermissionDenied(FfiConverterString.read(buf))
+            5 -> BolivarException.IoException(FfiConverterString.read(buf))
+            6 -> BolivarException.SyntaxException(FfiConverterString.read(buf))
+            7 -> BolivarException.EncryptionException(FfiConverterString.read(buf))
+            8 -> BolivarException.PdfException(FfiConverterString.read(buf))
+            9 -> BolivarException.DecodeException(FfiConverterString.read(buf))
+            10 -> BolivarException.RuntimeException(FfiConverterString.read(buf))
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
         
@@ -1628,33 +1749,77 @@ public object FfiConverterTypeBolivarError : FfiConverterRustBuffer<BolivarExcep
                 buf.putInt(1)
                 Unit
             }
-            is BolivarException.IoNotFound -> {
+            is BolivarException.InvalidArgument -> {
                 buf.putInt(2)
                 Unit
             }
-            is BolivarException.IoPermissionDenied -> {
+            is BolivarException.IoNotFound -> {
                 buf.putInt(3)
                 Unit
             }
-            is BolivarException.IoException -> {
+            is BolivarException.IoPermissionDenied -> {
                 buf.putInt(4)
                 Unit
             }
-            is BolivarException.PdfException -> {
+            is BolivarException.IoException -> {
                 buf.putInt(5)
                 Unit
             }
-            is BolivarException.DecodeException -> {
+            is BolivarException.SyntaxException -> {
                 buf.putInt(6)
                 Unit
             }
-            is BolivarException.RuntimeException -> {
+            is BolivarException.EncryptionException -> {
                 buf.putInt(7)
+                Unit
+            }
+            is BolivarException.PdfException -> {
+                buf.putInt(8)
+                Unit
+            }
+            is BolivarException.DecodeException -> {
+                buf.putInt(9)
+                Unit
+            }
+            is BolivarException.RuntimeException -> {
+                buf.putInt(10)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
     }
 
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalUInt: FfiConverterRustBuffer<kotlin.UInt?> {
+    override fun read(buf: ByteBuffer): kotlin.UInt? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterUInt.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.UInt?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterUInt.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.UInt?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterUInt.write(value, buf)
+        }
+    }
 }
 
 
@@ -1685,6 +1850,66 @@ public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?>
         } else {
             buf.put(1)
             FfiConverterString.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalSequenceUInt: FfiConverterRustBuffer<List<kotlin.UInt>?> {
+    override fun read(buf: ByteBuffer): List<kotlin.UInt>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterSequenceUInt.read(buf)
+    }
+
+    override fun allocationSize(value: List<kotlin.UInt>?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterSequenceUInt.allocationSize(value)
+        }
+    }
+
+    override fun write(value: List<kotlin.UInt>?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterSequenceUInt.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceUInt: FfiConverterRustBuffer<List<kotlin.UInt>> {
+    override fun read(buf: ByteBuffer): List<kotlin.UInt> {
+        val len = buf.getInt()
+        return List<kotlin.UInt>(len) {
+            FfiConverterUInt.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.UInt>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterUInt.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.UInt>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterUInt.write(it, buf)
         }
     }
 }
@@ -1918,6 +2143,32 @@ public object FfiConverterSequenceTypeTableCell: FfiConverterRustBuffer<List<Tab
     )
     }
 
+    @Throws(BolivarException::class) fun `extractLayoutPagesFromBytesWithPageRange`(`pdfData`: kotlin.ByteArray, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?): List<LayoutPage> {
+            return FfiConverterSequenceTypeLayoutPage.lift(
+    uniffiRustCallWithError(BolivarException) { _status ->
+    UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_bytes_with_page_range(
+    
+        FfiConverterByteArray.lower(`pdfData`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),_status)
+}
+    )
+    }
+    
+
+    @Throws(BolivarException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `extractLayoutPagesFromBytesWithPageRangeAsync`(`pdfData`: kotlin.ByteArray, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?) : List<LayoutPage> {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_bytes_with_page_range_async(FfiConverterByteArray.lower(`pdfData`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),),
+        { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeLayoutPage.lift(it) },
+        // Error FFI converter
+        BolivarException.ErrorHandler,
+    )
+    }
+
     @Throws(BolivarException::class) fun `extractLayoutPagesFromPath`(`path`: kotlin.String, `password`: kotlin.String?): List<LayoutPage> {
             return FfiConverterSequenceTypeLayoutPage.lift(
     uniffiRustCallWithError(BolivarException) { _status ->
@@ -1934,6 +2185,32 @@ public object FfiConverterSequenceTypeTableCell: FfiConverterRustBuffer<List<Tab
      suspend fun `extractLayoutPagesFromPathAsync`(`path`: kotlin.String, `password`: kotlin.String?) : List<LayoutPage> {
         return uniffiRustCallAsync(
         UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_path_async(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),),
+        { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeLayoutPage.lift(it) },
+        // Error FFI converter
+        BolivarException.ErrorHandler,
+    )
+    }
+
+    @Throws(BolivarException::class) fun `extractLayoutPagesFromPathWithPageRange`(`path`: kotlin.String, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?): List<LayoutPage> {
+            return FfiConverterSequenceTypeLayoutPage.lift(
+    uniffiRustCallWithError(BolivarException) { _status ->
+    UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_path_with_page_range(
+    
+        FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),_status)
+}
+    )
+    }
+    
+
+    @Throws(BolivarException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `extractLayoutPagesFromPathWithPageRangeAsync`(`path`: kotlin.String, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?) : List<LayoutPage> {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_layout_pages_from_path_with_page_range_async(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),),
         { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
         { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
         { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
@@ -1970,6 +2247,32 @@ public object FfiConverterSequenceTypeTableCell: FfiConverterRustBuffer<List<Tab
     )
     }
 
+    @Throws(BolivarException::class) fun `extractPageSummariesFromBytesWithPageRange`(`pdfData`: kotlin.ByteArray, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?): List<PageSummary> {
+            return FfiConverterSequenceTypePageSummary.lift(
+    uniffiRustCallWithError(BolivarException) { _status ->
+    UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_bytes_with_page_range(
+    
+        FfiConverterByteArray.lower(`pdfData`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),_status)
+}
+    )
+    }
+    
+
+    @Throws(BolivarException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `extractPageSummariesFromBytesWithPageRangeAsync`(`pdfData`: kotlin.ByteArray, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?) : List<PageSummary> {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_bytes_with_page_range_async(FfiConverterByteArray.lower(`pdfData`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),),
+        { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypePageSummary.lift(it) },
+        // Error FFI converter
+        BolivarException.ErrorHandler,
+    )
+    }
+
     @Throws(BolivarException::class) fun `extractPageSummariesFromPath`(`path`: kotlin.String, `password`: kotlin.String?): List<PageSummary> {
             return FfiConverterSequenceTypePageSummary.lift(
     uniffiRustCallWithError(BolivarException) { _status ->
@@ -1986,6 +2289,32 @@ public object FfiConverterSequenceTypeTableCell: FfiConverterRustBuffer<List<Tab
      suspend fun `extractPageSummariesFromPathAsync`(`path`: kotlin.String, `password`: kotlin.String?) : List<PageSummary> {
         return uniffiRustCallAsync(
         UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_path_async(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),),
+        { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypePageSummary.lift(it) },
+        // Error FFI converter
+        BolivarException.ErrorHandler,
+    )
+    }
+
+    @Throws(BolivarException::class) fun `extractPageSummariesFromPathWithPageRange`(`path`: kotlin.String, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?): List<PageSummary> {
+            return FfiConverterSequenceTypePageSummary.lift(
+    uniffiRustCallWithError(BolivarException) { _status ->
+    UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_path_with_page_range(
+    
+        FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),_status)
+}
+    )
+    }
+    
+
+    @Throws(BolivarException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `extractPageSummariesFromPathWithPageRangeAsync`(`path`: kotlin.String, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?) : List<PageSummary> {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_page_summaries_from_path_with_page_range_async(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),),
         { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
         { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
         { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
@@ -2022,6 +2351,32 @@ public object FfiConverterSequenceTypeTableCell: FfiConverterRustBuffer<List<Tab
     )
     }
 
+    @Throws(BolivarException::class) fun `extractTablesFromBytesWithPageRange`(`pdfData`: kotlin.ByteArray, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?): List<Table> {
+            return FfiConverterSequenceTypeTable.lift(
+    uniffiRustCallWithError(BolivarException) { _status ->
+    UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_tables_from_bytes_with_page_range(
+    
+        FfiConverterByteArray.lower(`pdfData`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),_status)
+}
+    )
+    }
+    
+
+    @Throws(BolivarException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `extractTablesFromBytesWithPageRangeAsync`(`pdfData`: kotlin.ByteArray, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?) : List<Table> {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_tables_from_bytes_with_page_range_async(FfiConverterByteArray.lower(`pdfData`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),),
+        { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeTable.lift(it) },
+        // Error FFI converter
+        BolivarException.ErrorHandler,
+    )
+    }
+
     @Throws(BolivarException::class) fun `extractTablesFromPath`(`path`: kotlin.String, `password`: kotlin.String?): List<Table> {
             return FfiConverterSequenceTypeTable.lift(
     uniffiRustCallWithError(BolivarException) { _status ->
@@ -2038,6 +2393,32 @@ public object FfiConverterSequenceTypeTableCell: FfiConverterRustBuffer<List<Tab
      suspend fun `extractTablesFromPathAsync`(`path`: kotlin.String, `password`: kotlin.String?) : List<Table> {
         return uniffiRustCallAsync(
         UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_tables_from_path_async(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),),
+        { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypeTable.lift(it) },
+        // Error FFI converter
+        BolivarException.ErrorHandler,
+    )
+    }
+
+    @Throws(BolivarException::class) fun `extractTablesFromPathWithPageRange`(`path`: kotlin.String, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?): List<Table> {
+            return FfiConverterSequenceTypeTable.lift(
+    uniffiRustCallWithError(BolivarException) { _status ->
+    UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_tables_from_path_with_page_range(
+    
+        FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),_status)
+}
+    )
+    }
+    
+
+    @Throws(BolivarException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `extractTablesFromPathWithPageRangeAsync`(`path`: kotlin.String, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?) : List<Table> {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_tables_from_path_with_page_range_async(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),),
         { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
         { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
         { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
@@ -2074,6 +2455,32 @@ public object FfiConverterSequenceTypeTableCell: FfiConverterRustBuffer<List<Tab
     )
     }
 
+    @Throws(BolivarException::class) fun `extractTextFromBytesWithPageRange`(`pdfData`: kotlin.ByteArray, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(BolivarException) { _status ->
+    UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_text_from_bytes_with_page_range(
+    
+        FfiConverterByteArray.lower(`pdfData`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),_status)
+}
+    )
+    }
+    
+
+    @Throws(BolivarException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `extractTextFromBytesWithPageRangeAsync`(`pdfData`: kotlin.ByteArray, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?) : kotlin.String {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_text_from_bytes_with_page_range_async(FfiConverterByteArray.lower(`pdfData`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),),
+        { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BolivarException.ErrorHandler,
+    )
+    }
+
     @Throws(BolivarException::class) fun `extractTextFromPath`(`path`: kotlin.String, `password`: kotlin.String?): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCallWithError(BolivarException) { _status ->
@@ -2090,6 +2497,32 @@ public object FfiConverterSequenceTypeTableCell: FfiConverterRustBuffer<List<Tab
      suspend fun `extractTextFromPathAsync`(`path`: kotlin.String, `password`: kotlin.String?) : kotlin.String {
         return uniffiRustCallAsync(
         UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_text_from_path_async(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),),
+        { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        BolivarException.ErrorHandler,
+    )
+    }
+
+    @Throws(BolivarException::class) fun `extractTextFromPathWithPageRange`(`path`: kotlin.String, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCallWithError(BolivarException) { _status ->
+    UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_text_from_path_with_page_range(
+    
+        FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),_status)
+}
+    )
+    }
+    
+
+    @Throws(BolivarException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+     suspend fun `extractTextFromPathWithPageRangeAsync`(`path`: kotlin.String, `password`: kotlin.String?, `pageNumbers`: List<kotlin.UInt>?, `maxPages`: kotlin.UInt?) : kotlin.String {
+        return uniffiRustCallAsync(
+        UniffiLib.uniffi_bolivar_uniffi_fn_func_extract_text_from_path_with_page_range_async(FfiConverterString.lower(`path`),FfiConverterOptionalString.lower(`password`),FfiConverterOptionalSequenceUInt.lower(`pageNumbers`),FfiConverterOptionalUInt.lower(`maxPages`),),
         { future, callback, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_poll_rust_buffer(future, callback, continuation) },
         { future, continuation -> UniffiLib.ffi_bolivar_uniffi_rust_future_complete_rust_buffer(future, continuation) },
         { future -> UniffiLib.ffi_bolivar_uniffi_rust_future_free_rust_buffer(future) },

@@ -5,10 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use bolivar_uniffi::{
     BolivarError, extract_layout_pages_from_bytes, extract_layout_pages_from_bytes_async,
     extract_layout_pages_from_path, extract_page_summaries_from_bytes,
-    extract_page_summaries_from_bytes_async, extract_page_summaries_from_path,
-    extract_tables_from_bytes, extract_tables_from_bytes_async, extract_tables_from_path,
+    extract_page_summaries_from_bytes_async, extract_page_summaries_from_bytes_with_page_range,
+    extract_page_summaries_from_path, extract_tables_from_bytes, extract_tables_from_bytes_async,
+    extract_tables_from_bytes_with_page_range, extract_tables_from_path,
     extract_tables_from_path_async, extract_text_from_bytes, extract_text_from_bytes_async,
     extract_text_from_path, extract_text_from_path_async,
+    extract_text_from_path_with_page_range,
 };
 mod common;
 use common::build_minimal_pdf_with_pages;
@@ -296,6 +298,33 @@ fn extract_tables_rich_metadata_sync_and_async_match() {
 }
 
 #[test]
+fn extract_tables_with_page_range_applies_filters() {
+    let fixture_path = table_fixture_path();
+    let fixture_bytes = std::fs::read(&fixture_path).expect("read table fixture");
+
+    // Extract tables from all pages (baseline)
+    let all_tables =
+        extract_tables_from_bytes(fixture_bytes.clone(), None).expect("all tables");
+    assert!(!all_tables.is_empty(), "fixture should have tables");
+
+    // Extract with page_numbers=[1], max_pages=1 — should return subset
+    let filtered = extract_tables_from_bytes_with_page_range(
+        fixture_bytes,
+        None,
+        Some(vec![1]),
+        Some(1),
+    )
+    .expect("filtered tables");
+
+    // All returned tables should be on page 1
+    for table in &filtered {
+        assert_eq!(table.page_number, 1);
+    }
+    // Filtered count should be <= total count
+    assert!(filtered.len() <= all_tables.len());
+}
+
+#[test]
 fn extract_layout_pages_multiline_preserves_line_separator() {
     let pdf = build_single_page_multiline_text_pdf("Hello", "World");
     let pages = extract_layout_pages_from_bytes(pdf, None).expect("layout pages");
@@ -321,4 +350,29 @@ fn extract_text_from_path_rejects_invalid_path_inputs() {
     let err = extract_text_from_path("content://example/document/1".to_string(), None)
         .expect_err("uri-like path should fail");
     assert!(matches!(err, BolivarError::InvalidPath));
+}
+
+#[test]
+fn extract_page_summaries_with_page_range_applies_filters() {
+    let pdf = build_minimal_pdf_with_pages(3);
+    let pages =
+        extract_page_summaries_from_bytes_with_page_range(pdf, None, Some(vec![2, 3]), Some(1))
+            .expect("summaries with page range");
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0].page_number, 2);
+}
+
+#[test]
+fn extract_with_page_range_rejects_zero_page_number() {
+    let pdf = build_minimal_pdf_with_pages(2);
+    let path = write_temp_pdf(&pdf);
+    let err = extract_text_from_path_with_page_range(
+        path.to_string_lossy().to_string(),
+        None,
+        Some(vec![0]),
+        None,
+    )
+    .expect_err("page numbers are 1-based");
+    assert!(matches!(err, BolivarError::InvalidArgument));
+    let _ = std::fs::remove_file(path);
 }

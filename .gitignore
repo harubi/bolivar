@@ -460,3 +460,8 @@ Cargo.lock
 /check.py
 /check_*.py
 /AGENTS.md
+
+# UniFFI JVM local build artifacts
+crates/uniffi/jvm/.gradle/
+crates/uniffi/jvm/.kotlin/
+crates/uniffi/jvm/build/
