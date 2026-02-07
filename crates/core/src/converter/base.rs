@@ -847,6 +847,184 @@ fn approx_eq(a: f64, b: f64) -> bool {
     (a - b).abs() < 1e-6
 }
 
+fn path_segments_to_path_ops(path: &[PathSegment]) -> Vec<PathOp> {
+    path.iter()
+        .map(|seg| match seg {
+            PathSegment::MoveTo(x, y) => ('m', vec![*x, *y]),
+            PathSegment::LineTo(x, y) => ('l', vec![*x, *y]),
+            PathSegment::CurveTo(x1, y1, x2, y2, x3, y3) => {
+                ('c', vec![*x1, *y1, *x2, *y2, *x3, *y3])
+            }
+            PathSegment::ClosePath => ('h', vec![]),
+        })
+        .collect()
+}
+
+fn render_char_without_font(
+    analyzer: &mut PDFLayoutAnalyzer<'_>,
+    char_matrix: Matrix,
+    fontsize: f64,
+    scaling: f64,
+    rise: f64,
+    cid: u32,
+    graphicstate: &PDFGraphicState,
+    fallback_fontname: Option<&str>,
+) -> f64 {
+    let text = if (0x20..0x7f).contains(&cid) {
+        char::from_u32(cid)
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| format!("(cid:{})", cid))
+    } else {
+        format!("(cid:{})", cid)
+    };
+
+    let char_width = fontsize * scaling * 0.6;
+    let descent = -fontsize * 0.25;
+    let local_bbox = (0.0, descent + rise, char_width, descent + rise + fontsize);
+    let bbox = apply_matrix_rect(char_matrix, local_bbox);
+
+    let (a, b, c, d, _, _) = char_matrix;
+    let upright = (a * d * scaling > 0.0) && (b * c <= 0.0);
+
+    let mcid = analyzer.current_mcid();
+    let tag = analyzer.current_tag_key();
+    let ncolor = analyzer.arena.intern_color(&graphicstate.ncolor.to_vec());
+    let scolor = analyzer.arena.intern_color(&graphicstate.scolor.to_vec());
+    let fontname = fallback_fontname.unwrap_or("unknown");
+    let text_key = analyzer.arena.intern(&text);
+    let fontname_key = analyzer.arena.intern(fontname);
+    let ncs_name = Some(analyzer.arena.intern(&graphicstate.ncs.name));
+    let scs_name = Some(analyzer.arena.intern(&graphicstate.scs.name));
+    let item = ArenaChar {
+        bbox,
+        text: text_key,
+        fontname: fontname_key,
+        size: bbox.3 - bbox.1,
+        upright,
+        adv: char_width,
+        matrix: char_matrix,
+        mcid,
+        tag,
+        ncs_name,
+        scs_name,
+        ncolor,
+        scolor,
+    };
+
+    if let Some(ref mut container) = analyzer.cur_item {
+        container.add(ArenaItem::Char(item));
+    }
+
+    char_width
+}
+
+fn render_text_sequence(
+    analyzer: &mut PDFLayoutAnalyzer<'_>,
+    textstate: &mut PDFTextState,
+    seq: &PDFTextSeq,
+    graphicstate: &PDFGraphicState,
+) {
+    if textstate.render == 3 || textstate.render == 7 {
+        return;
+    }
+
+    let ctm = analyzer.ctm;
+    let matrix = mult_matrix(textstate.matrix, ctm);
+    let fontsize = textstate.fontsize;
+    let scaling = textstate.scaling * 0.01;
+    let charspace = textstate.charspace * scaling;
+    let wordspace = textstate.wordspace * scaling;
+    let rise = textstate.rise;
+    let dxscale = 0.001 * fontsize * scaling;
+
+    let (mut x, mut y) = textstate.linematrix;
+    let mut needcharspace = false;
+
+    let font = textstate.font.clone();
+    let fallback_fontname = textstate.fontname.clone();
+    let is_vertical = font.as_ref().map(|f| f.is_vertical()).unwrap_or(false);
+
+    for item in seq {
+        match item {
+            PDFTextSeqItem::Number(n) => {
+                if is_vertical {
+                    y -= n * dxscale;
+                } else {
+                    x -= n * dxscale;
+                }
+                needcharspace = true;
+            }
+            PDFTextSeqItem::Bytes(data) => {
+                let cids: Vec<u32> = if let Some(ref font) = font {
+                    font.decode(data)
+                } else {
+                    data.iter().map(|&b| b as u32).collect()
+                };
+
+                for cid in cids {
+                    if needcharspace {
+                        if is_vertical {
+                            y += charspace;
+                        } else {
+                            x += charspace;
+                        }
+                    }
+
+                    let char_matrix = (
+                        matrix.0,
+                        matrix.1,
+                        matrix.2,
+                        matrix.3,
+                        matrix.0.mul_add(x, matrix.2 * y) + matrix.4,
+                        matrix.1.mul_add(x, matrix.3 * y) + matrix.5,
+                    );
+
+                    let adv = if let Some(ref font) = font {
+                        analyzer.render_char(
+                            char_matrix,
+                            font.as_ref(),
+                            fontsize,
+                            scaling,
+                            rise,
+                            cid,
+                            &graphicstate.ncs,
+                            graphicstate,
+                        )
+                    } else {
+                        render_char_without_font(
+                            analyzer,
+                            char_matrix,
+                            fontsize,
+                            scaling,
+                            rise,
+                            cid,
+                            graphicstate,
+                            fallback_fontname.as_deref(),
+                        )
+                    };
+
+                    if is_vertical {
+                        y += adv;
+                    } else {
+                        x += adv;
+                    }
+
+                    if cid == 32 && wordspace != 0.0 {
+                        if is_vertical {
+                            y += wordspace;
+                        } else {
+                            x += wordspace;
+                        }
+                    }
+                    needcharspace = true;
+                }
+            }
+        }
+    }
+
+    textstate.linematrix = (x, y);
+}
+
 // ============================================================================
 // PDFPageAggregator
 // ============================================================================
@@ -994,18 +1172,7 @@ impl<'a> PDFDevice for PDFPageAggregator<'a> {
         evenodd: bool,
         path: &[PathSegment],
     ) {
-        // Convert PathSegment to PathOp format used by analyzer
-        let path_ops: Vec<PathOp> = path
-            .iter()
-            .map(|seg| match seg {
-                PathSegment::MoveTo(x, y) => ('m', vec![*x, *y]),
-                PathSegment::LineTo(x, y) => ('l', vec![*x, *y]),
-                PathSegment::CurveTo(x1, y1, x2, y2, x3, y3) => {
-                    ('c', vec![*x1, *y1, *x2, *y2, *x3, *y3])
-                }
-                PathSegment::ClosePath => ('h', vec![]),
-            })
-            .collect();
+        let path_ops = path_segments_to_path_ops(path);
         self.analyzer
             .paint_path(graphicstate, stroke, fill, evenodd, &path_ops);
     }
@@ -1021,213 +1188,7 @@ impl<'a> PDFDevice for PDFPageAggregator<'a> {
         _ncs: &PDFColorSpace,
         graphicstate: &PDFGraphicState,
     ) {
-        // Skip invisible text (render mode 3 or 7 which includes clipping)
-        // Modes: 0=fill, 1=stroke, 2=fill+stroke, 3=invisible,
-        // 4-7 add clipping to modes 0-3
-        if textstate.render == 3 || textstate.render == 7 {
-            return;
-        }
-
-        // Process text sequence and render characters
-        let ctm = self.analyzer.ctm;
-        let matrix = mult_matrix(textstate.matrix, ctm);
-        let fontsize = textstate.fontsize;
-        let scaling = textstate.scaling * 0.01;
-        let charspace = textstate.charspace * scaling;
-        let wordspace = textstate.wordspace * scaling;
-        let rise = textstate.rise;
-        let dxscale = 0.001 * fontsize * scaling;
-
-        let (mut x, mut y) = textstate.linematrix;
-        let mut needcharspace = false;
-
-        // Get font if available for proper CID decoding
-        let font = textstate.font.clone();
-
-        // Check if font is vertical writing mode
-        // Python: dispatches to render_string_horizontal or render_string_vertical
-        let is_vertical = font.as_ref().map(|f| f.is_vertical()).unwrap_or(false);
-
-        for item in seq {
-            match item {
-                PDFTextSeqItem::Number(n) => {
-                    // Adjustment in text space
-                    // Python: x -= obj * dxscale (horizontal) or y -= obj * dxscale (vertical)
-                    if is_vertical {
-                        y -= n * dxscale;
-                    } else {
-                        x -= n * dxscale;
-                    }
-                    needcharspace = true;
-                }
-                PDFTextSeqItem::Bytes(data) => {
-                    // Use font to decode bytes to CIDs, then convert CIDs to Unicode
-                    let cids: Vec<u32> = if let Some(ref font) = font {
-                        font.decode(data)
-                    } else {
-                        // Fallback: treat each byte as a CID
-                        data.iter().map(|&b| b as u32).collect()
-                    };
-
-                    for cid in cids {
-                        if needcharspace {
-                            // Python: x += charspace (horizontal) or y += charspace (vertical)
-                            if is_vertical {
-                                y += charspace;
-                            } else {
-                                x += charspace;
-                            }
-                        }
-
-                        // Get character text using font's to_unichr
-                        let text = if let Some(ref font) = font {
-                            font.to_unichr(cid)
-                                .unwrap_or_else(|| self.analyzer.handle_undefined_char(cid))
-                        } else {
-                            // Fallback for no font: try ASCII, else (cid:X)
-                            if (0x20..0x7f).contains(&cid) {
-                                char::from_u32(cid)
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_else(|| format!("(cid:{})", cid))
-                            } else {
-                                format!("(cid:{})", cid)
-                            }
-                        };
-                        // Get char_disp and compute advancement
-                        // Python: textdisp = font.char_disp(cid), adv = textwidth * fontsize * scaling
-                        let char_disp = if let Some(ref font) = font {
-                            font.char_disp(cid)
-                        } else {
-                            CharDisp::Horizontal(0.6) // Fallback
-                        };
-
-                        let char_width = if let Some(ref font) = font {
-                            font.char_width(cid) * fontsize * scaling
-                        } else {
-                            fontsize * scaling * 0.6 // Approximate width
-                        };
-
-                        // Compute character matrix using translate_matrix pattern
-                        // Python: utils.translate_matrix(matrix, (x, y))
-                        let char_matrix = (
-                            matrix.0,
-                            matrix.1,
-                            matrix.2,
-                            matrix.3,
-                            matrix.0.mul_add(x, matrix.2 * y) + matrix.4,
-                            matrix.1.mul_add(x, matrix.3 * y) + matrix.5,
-                        );
-
-                        // Compute bounding box - match Python's formula exactly
-                        // Python distinguishes vertical vs horizontal fonts
-                        let local_bbox = match char_disp {
-                            CharDisp::Vertical(vx_opt, vy) => {
-                                // Python: if vx is None: vx = fontsize * 0.5
-                                //         else: vx = vx * fontsize * 0.001
-                                //         vy = (1000 - vy) * fontsize * 0.001
-                                //         bbox = (-vx, vy + rise + self.adv, -vx + fontsize, vy + rise)
-                                let vx = match vx_opt {
-                                    Some(v) => v * fontsize * 0.001,
-                                    None => fontsize * 0.5,
-                                };
-                                let vy_scaled = (1000.0 - vy) * fontsize * 0.001;
-                                (
-                                    -vx,
-                                    vy_scaled + rise + char_width,
-                                    -vx + fontsize,
-                                    vy_scaled + rise,
-                                )
-                            }
-                            CharDisp::Horizontal(_) => {
-                                // Python: descent = font.get_descent() * fontsize
-                                //         bbox = (0, descent + rise, self.adv, descent + rise + fontsize)
-                                let descent = if let Some(ref font) = font {
-                                    font.get_descent() * fontsize
-                                } else {
-                                    -fontsize * 0.25 // Fallback
-                                };
-                                (0.0, descent + rise, char_width, descent + rise + fontsize)
-                            }
-                        };
-
-                        // Apply matrix transformation to get final bbox
-                        // Must transform all 4 corners for rotated/scaled matrices
-                        let bbox = apply_matrix_rect(char_matrix, local_bbox);
-
-                        // Compute upright flag
-                        let (a, b, c, d, _, _) = char_matrix;
-                        let upright = (a * d * scaling > 0.0) && (b * c <= 0.0);
-
-                        // Compute size: width for vertical, height for horizontal
-                        let size = if is_vertical {
-                            bbox.2 - bbox.0 // width
-                        } else {
-                            bbox.3 - bbox.1 // height
-                        };
-
-                        let mcid = self.analyzer.current_mcid();
-                        let tag = self.analyzer.current_tag_key();
-                        let ncolor = self
-                            .analyzer
-                            .arena
-                            .intern_color(&graphicstate.ncolor.to_vec());
-                        let scolor = self
-                            .analyzer
-                            .arena
-                            .intern_color(&graphicstate.scolor.to_vec());
-                        let fontname = font
-                            .as_ref()
-                            .and_then(|f| f.fontname())
-                            .or(textstate.fontname.as_deref())
-                            .unwrap_or("unknown");
-                        let text_key = self.analyzer.arena.intern(&text);
-                        let fontname_key = self.analyzer.arena.intern(fontname);
-                        let ncs_name = Some(self.analyzer.arena.intern(&graphicstate.ncs.name));
-                        let scs_name = Some(self.analyzer.arena.intern(&graphicstate.scs.name));
-                        let item = ArenaChar {
-                            bbox,
-                            text: text_key,
-                            fontname: fontname_key,
-                            size,
-                            upright,
-                            adv: char_width,
-                            matrix: char_matrix,
-                            mcid,
-                            tag,
-                            ncs_name,
-                            scs_name,
-                            ncolor,
-                            scolor,
-                        };
-
-                        if let Some(ref mut container) = self.analyzer.cur_item {
-                            container.add(ArenaItem::Char(item));
-                        }
-
-                        // Advance position
-                        // Python: x += render_char(...) (horizontal) or y += render_char(...) (vertical)
-                        if is_vertical {
-                            y += char_width;
-                        } else {
-                            x += char_width;
-                        }
-
-                        // Word spacing for space character (CID 32)
-                        if cid == 32 && wordspace != 0.0 {
-                            if is_vertical {
-                                y += wordspace;
-                            } else {
-                                x += wordspace;
-                            }
-                        }
-                        needcharspace = true;
-                    }
-                }
-            }
-        }
-
-        // Update text state line matrix
-        textstate.linematrix = (x, y);
+        render_text_sequence(&mut self.analyzer, textstate, seq, graphicstate);
     }
 
     fn begin_tag(
@@ -1278,17 +1239,7 @@ impl<'a> PDFDevice for PDFTableCollector<'a> {
         evenodd: bool,
         path: &[PathSegment],
     ) {
-        let path_ops: Vec<PathOp> = path
-            .iter()
-            .map(|seg| match seg {
-                PathSegment::MoveTo(x, y) => ('m', vec![*x, *y]),
-                PathSegment::LineTo(x, y) => ('l', vec![*x, *y]),
-                PathSegment::CurveTo(x1, y1, x2, y2, x3, y3) => {
-                    ('c', vec![*x1, *y1, *x2, *y2, *x3, *y3])
-                }
-                PathSegment::ClosePath => ('h', vec![]),
-            })
-            .collect();
+        let path_ops = path_segments_to_path_ops(path);
         self.analyzer
             .paint_path(graphicstate, stroke, fill, evenodd, &path_ops);
     }
@@ -1304,180 +1255,7 @@ impl<'a> PDFDevice for PDFTableCollector<'a> {
         _ncs: &PDFColorSpace,
         graphicstate: &PDFGraphicState,
     ) {
-        if textstate.render == 3 || textstate.render == 7 {
-            return;
-        }
-
-        let ctm = self.analyzer.ctm;
-        let matrix = mult_matrix(textstate.matrix, ctm);
-        let fontsize = textstate.fontsize;
-        let scaling = textstate.scaling * 0.01;
-        let charspace = textstate.charspace * scaling;
-        let wordspace = textstate.wordspace * scaling;
-        let rise = textstate.rise;
-        let dxscale = 0.001 * fontsize * scaling;
-
-        let (mut x, mut y) = textstate.linematrix;
-        let mut needcharspace = false;
-
-        let font = textstate.font.clone();
-
-        let is_vertical = font.as_ref().map(|f| f.is_vertical()).unwrap_or(false);
-
-        for item in seq {
-            match item {
-                PDFTextSeqItem::Number(n) => {
-                    if is_vertical {
-                        y -= n * dxscale;
-                    } else {
-                        x -= n * dxscale;
-                    }
-                    needcharspace = true;
-                }
-                PDFTextSeqItem::Bytes(data) => {
-                    let cids: Vec<u32> = if let Some(ref font) = font {
-                        font.decode(data)
-                    } else {
-                        data.iter().map(|&b| b as u32).collect()
-                    };
-
-                    for cid in cids {
-                        if needcharspace {
-                            if is_vertical {
-                                y += charspace;
-                            } else {
-                                x += charspace;
-                            }
-                        }
-
-                        let text = if let Some(ref font) = font {
-                            font.to_unichr(cid)
-                                .unwrap_or_else(|| self.analyzer.handle_undefined_char(cid))
-                        } else {
-                            if (0x20..0x7f).contains(&cid) {
-                                char::from_u32(cid)
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_else(|| format!("(cid:{})", cid))
-                            } else {
-                                format!("(cid:{})", cid)
-                            }
-                        };
-
-                        let char_disp = if let Some(ref font) = font {
-                            font.char_disp(cid)
-                        } else {
-                            CharDisp::Horizontal(0.6)
-                        };
-
-                        let char_width = if let Some(ref font) = font {
-                            font.char_width(cid) * fontsize * scaling
-                        } else {
-                            fontsize * scaling * 0.6
-                        };
-
-                        let char_matrix = (
-                            matrix.0,
-                            matrix.1,
-                            matrix.2,
-                            matrix.3,
-                            matrix.0.mul_add(x, matrix.2 * y) + matrix.4,
-                            matrix.1.mul_add(x, matrix.3 * y) + matrix.5,
-                        );
-
-                        let local_bbox = match char_disp {
-                            CharDisp::Vertical(vx_opt, vy) => {
-                                let vx = match vx_opt {
-                                    Some(v) => v * fontsize * 0.001,
-                                    None => fontsize * 0.5,
-                                };
-                                let vy_scaled = (1000.0 - vy) * fontsize * 0.001;
-                                (
-                                    -vx,
-                                    vy_scaled + rise + char_width,
-                                    -vx + fontsize,
-                                    vy_scaled + rise,
-                                )
-                            }
-                            CharDisp::Horizontal(_) => {
-                                let descent = if let Some(ref font) = font {
-                                    font.get_descent() * fontsize
-                                } else {
-                                    -fontsize * 0.25
-                                };
-                                (0.0, descent + rise, char_width, descent + rise + fontsize)
-                            }
-                        };
-
-                        let bbox = apply_matrix_rect(char_matrix, local_bbox);
-
-                        let (a, b, c, d, _, _) = char_matrix;
-                        let upright = (a * d * scaling > 0.0) && (b * c <= 0.0);
-
-                        let size = if is_vertical {
-                            bbox.2 - bbox.0
-                        } else {
-                            bbox.3 - bbox.1
-                        };
-
-                        let mcid = self.analyzer.current_mcid();
-                        let tag = self.analyzer.current_tag_key();
-                        let ncolor = self
-                            .analyzer
-                            .arena
-                            .intern_color(&graphicstate.ncolor.to_vec());
-                        let scolor = self
-                            .analyzer
-                            .arena
-                            .intern_color(&graphicstate.scolor.to_vec());
-                        let fontname = font
-                            .as_ref()
-                            .and_then(|f| f.fontname())
-                            .or(textstate.fontname.as_deref())
-                            .unwrap_or("unknown");
-                        let text_key = self.analyzer.arena.intern(&text);
-                        let fontname_key = self.analyzer.arena.intern(fontname);
-                        let ncs_name = Some(self.analyzer.arena.intern(&graphicstate.ncs.name));
-                        let scs_name = Some(self.analyzer.arena.intern(&graphicstate.scs.name));
-                        let item = ArenaChar {
-                            bbox,
-                            text: text_key,
-                            fontname: fontname_key,
-                            size,
-                            upright,
-                            adv: char_width,
-                            matrix: char_matrix,
-                            mcid,
-                            tag,
-                            ncs_name,
-                            scs_name,
-                            ncolor,
-                            scolor,
-                        };
-
-                        if let Some(ref mut container) = self.analyzer.cur_item {
-                            container.add(ArenaItem::Char(item));
-                        }
-
-                        if is_vertical {
-                            y += char_width;
-                        } else {
-                            x += char_width;
-                        }
-
-                        if cid == 32 && wordspace != 0.0 {
-                            if is_vertical {
-                                y += wordspace;
-                            } else {
-                                x += wordspace;
-                            }
-                        }
-                        needcharspace = true;
-                    }
-                }
-            }
-        }
-
-        textstate.linematrix = (x, y);
+        render_text_sequence(&mut self.analyzer, textstate, seq, graphicstate);
     }
 }
 
@@ -1557,5 +1335,56 @@ impl<W: Write> PDFConverter<W> {
     /// Check if output is text (not binary).
     pub const fn is_text_stream<T>(_stream: &T) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod shared_converter_helper_tests {
+    use super::*;
+    use crate::arena::PageArena;
+    use crate::pdfstate::PDFTextState;
+    use crate::utils::MATRIX_IDENTITY;
+
+    #[test]
+    fn path_segments_to_path_ops_converts_variants() {
+        let path = vec![
+            PathSegment::MoveTo(1.0, 2.0),
+            PathSegment::LineTo(3.0, 4.0),
+            PathSegment::CurveTo(5.0, 6.0, 7.0, 8.0, 9.0, 10.0),
+            PathSegment::ClosePath,
+        ];
+
+        let got = path_segments_to_path_ops(&path);
+        let expected: Vec<PathOp> = vec![
+            ('m', vec![1.0, 2.0]),
+            ('l', vec![3.0, 4.0]),
+            ('c', vec![5.0, 6.0, 7.0, 8.0, 9.0, 10.0]),
+            ('h', vec![]),
+        ];
+
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn render_text_sequence_without_font_uses_fallback_and_advances_cursor() {
+        let mut arena = PageArena::new();
+        let mut analyzer = PDFLayoutAnalyzer::new(None, 1, arena.context());
+        analyzer.set_ctm(MATRIX_IDENTITY);
+        analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
+
+        let mut textstate = PDFTextState {
+            fontsize: 10.0,
+            matrix: MATRIX_IDENTITY,
+            linematrix: (5.0, 7.0),
+            ..Default::default()
+        };
+        let seq = vec![PDFTextSeqItem::Bytes(vec![65])];
+        let graphicstate = PDFGraphicState::default();
+
+        render_text_sequence(&mut analyzer, &mut textstate, &seq, &graphicstate);
+
+        assert_eq!(analyzer.cur_item_len(), 1);
+        assert!((textstate.linematrix.0 - 11.0).abs() < 1e-9);
+        assert!((textstate.linematrix.1 - 7.0).abs() < 1e-9);
     }
 }
