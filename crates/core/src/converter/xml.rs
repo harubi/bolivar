@@ -7,7 +7,7 @@ use std::io::Write;
 
 use crate::layout::{
     LAParams, LTItem, LTPage, LTTextBox, LTTextGroup, TextBoxType, TextGroupElement,
-    TextLineElement, TextLineType,
+    TextLineElement, TextLineType, reorder_text_per_line,
 };
 use crate::utils::{HasBBox, bbox2str, enc};
 
@@ -200,14 +200,10 @@ impl<W: Write> XMLConverter<W> {
                 // Render children (characters and annotations)
                 match tl {
                     TextLineType::Horizontal(h) => {
-                        for elem in h.iter() {
-                            self.render_textline_element(elem);
-                        }
+                        self.render_textline_elements_with_bidi(h.iter());
                     }
                     TextLineType::Vertical(v) => {
-                        for elem in v.iter() {
-                            self.render_textline_element(elem);
-                        }
+                        self.render_textline_elements_with_bidi(v.iter());
                     }
                 }
 
@@ -233,9 +229,7 @@ impl<W: Write> XMLConverter<W> {
                             let line_xml =
                                 format!("<textline bbox=\"{}\">\n", bbox2str(line.bbox()));
                             self.write(&line_xml);
-                            for elem in line.iter() {
-                                self.render_textline_element(elem);
-                            }
+                            self.render_textline_elements_with_bidi(line.iter());
                             self.write("</textline>\n");
                         }
                     }
@@ -244,9 +238,7 @@ impl<W: Write> XMLConverter<W> {
                             let line_xml =
                                 format!("<textline bbox=\"{}\">\n", bbox2str(line.bbox()));
                             self.write(&line_xml);
-                            for elem in line.iter() {
-                                self.render_textline_element(elem);
-                            }
+                            self.render_textline_elements_with_bidi(line.iter());
                             self.write("</textline>\n");
                         }
                     }
@@ -279,6 +271,57 @@ impl<W: Write> XMLConverter<W> {
                 self.write(&xml);
             }
             _ => {}
+        }
+    }
+
+    fn render_textline_elements_with_bidi<'a, I>(&mut self, elements: I)
+    where
+        I: IntoIterator<Item = &'a TextLineElement>,
+    {
+        fn text_of_element(elem: &TextLineElement) -> &str {
+            match elem {
+                TextLineElement::Char(c) => c.get_text(),
+                TextLineElement::Anno(a) => a.get_text(),
+            }
+        }
+
+        let elements: Vec<&TextLineElement> = elements.into_iter().collect();
+        if elements.is_empty() {
+            return;
+        }
+
+        // Keep trailing newlines at the end; only consider content before them.
+        let mut split = elements.len();
+        while split > 0 {
+            match elements[split - 1] {
+                TextLineElement::Anno(a) if a.get_text() == "\n" => split -= 1,
+                _ => break,
+            }
+        }
+        let (content, suffix) = elements.split_at(split);
+
+        let mut content_text = String::new();
+        for elem in content {
+            content_text.push_str(text_of_element(elem));
+        }
+
+        let reordered = reorder_text_per_line(&content_text);
+        let reversed: String = content_text.chars().rev().collect();
+        let render_reversed =
+            !content_text.is_empty() && reordered != content_text && reordered == reversed;
+
+        if render_reversed {
+            for elem in content.iter().rev() {
+                self.render_textline_element(elem);
+            }
+        } else {
+            for elem in content {
+                self.render_textline_element(elem);
+            }
+        }
+
+        for elem in suffix {
+            self.render_textline_element(elem);
         }
     }
 

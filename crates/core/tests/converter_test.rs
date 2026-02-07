@@ -933,6 +933,23 @@ mod xml_converter_tests {
         assert!(result.contains("<page id=\"1\""));
         assert!(result.contains("</page>"));
     }
+
+    #[test]
+    fn test_xml_converter_reorders_rtl_simple_textline() {
+        let mut output: Vec<u8> = Vec::new();
+        {
+            let mut converter = XMLConverter::new(&mut output, "utf-8", 1, None);
+            converter.receive_layout(sample_rtl_page());
+            converter.close();
+        }
+        let result = String::from_utf8(output).expect("utf8");
+
+        let idx_g = result.find(">\u{05D2}</text>").expect("gimel");
+        let idx_b = result.find(">\u{05D1}</text>").expect("bet");
+        let idx_a = result.find(">\u{05D0}</text>").expect("alef");
+
+        assert!(idx_g < idx_b && idx_b < idx_a);
+    }
 }
 
 // ============================================================================
