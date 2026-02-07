@@ -56,6 +56,70 @@ fn sample_rtl_page() -> LTPage {
     page
 }
 
+fn sample_mixed_bidi_page() -> LTPage {
+    let mut line = LTTextLineHorizontal::new(0.1);
+    line.set_bbox((0.0, 0.0, 20.0, 10.0));
+    line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+        (0.0, 0.0, 1.0, 1.0),
+        "a",
+        "F",
+        10.0,
+        true,
+        1.0,
+    ))));
+    line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+        (1.0, 0.0, 2.0, 1.0),
+        "b",
+        "F",
+        10.0,
+        true,
+        1.0,
+    ))));
+    line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+        (2.0, 0.0, 3.0, 1.0),
+        "c",
+        "F",
+        10.0,
+        true,
+        1.0,
+    ))));
+    line.add_element(TextLineElement::Anno(bolivar_core::layout::LTAnno::new(
+        " ",
+    )));
+    line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+        (4.0, 0.0, 5.0, 1.0),
+        "\u{05D0}",
+        "F",
+        10.0,
+        true,
+        1.0,
+    ))));
+    line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+        (5.0, 0.0, 6.0, 1.0),
+        "\u{05D1}",
+        "F",
+        10.0,
+        true,
+        1.0,
+    ))));
+    line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+        (6.0, 0.0, 7.0, 1.0),
+        "\u{05D2}",
+        "F",
+        10.0,
+        true,
+        1.0,
+    ))));
+    line.analyze();
+
+    let mut boxh = LTTextBoxHorizontal::new();
+    boxh.add(line);
+
+    let mut page = LTPage::new(1, (0.0, 0.0, 612.0, 792.0), 0.0);
+    page.add(LTItem::TextBox(TextBoxType::Horizontal(boxh)));
+    page
+}
+
 // ============================================================================
 // PDFLayoutAnalyzer Tests
 // ============================================================================
@@ -949,6 +1013,29 @@ mod xml_converter_tests {
         let idx_a = result.find(">\u{05D0}</text>").expect("alef");
 
         assert!(idx_g < idx_b && idx_b < idx_a);
+    }
+
+    #[test]
+    fn test_xml_converter_reorders_mixed_bidi_textline() {
+        let mut output: Vec<u8> = Vec::new();
+        {
+            let mut converter = XMLConverter::new(&mut output, "utf-8", 1, None);
+            converter.receive_layout(sample_mixed_bidi_page());
+            converter.close();
+        }
+        let result = String::from_utf8(output).expect("utf8");
+
+        let idx_a_ltr = result.find(">a</text>").expect("a");
+        let idx_b_ltr = result.find(">b</text>").expect("b");
+        let idx_c_ltr = result.find(">c</text>").expect("c");
+        let idx_space = result.find("> </text>").expect("space");
+        let idx_g_rtl = result.find(">\u{05D2}</text>").expect("gimel");
+        let idx_b_rtl = result.find(">\u{05D1}</text>").expect("bet");
+        let idx_a_rtl = result.find(">\u{05D0}</text>").expect("alef");
+
+        assert!(idx_a_ltr < idx_b_ltr && idx_b_ltr < idx_c_ltr);
+        assert!(idx_c_ltr < idx_space);
+        assert!(idx_space < idx_g_rtl && idx_g_rtl < idx_b_rtl && idx_b_rtl < idx_a_rtl);
     }
 }
 

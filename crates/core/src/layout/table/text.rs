@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use crate::arena::ArenaLookup;
+use crate::layout::bidi::reorder_text_per_line;
 
 use super::clustering::{bbox_from_chars, cluster_objects};
 use super::types::{CharId, CharObj, TextDir, TextSettings, WordObj};
@@ -15,6 +16,16 @@ const DEFAULT_Y_DENSITY: f64 = 13.0;
 
 fn char_text<'a>(obj: &CharObj, arena: &'a dyn ArenaLookup) -> &'a str {
     arena.resolve(obj.text)
+}
+
+fn maybe_reorder_bidi_default(text: String, settings: &TextSettings) -> String {
+    if settings.horizontal_ltr
+        && settings.line_dir == TextDir::Ttb
+        && settings.char_dir == TextDir::Ltr
+    {
+        return reorder_text_per_line(&text);
+    }
+    text
 }
 
 /// Get the line cluster key for a word based on text direction.
@@ -67,6 +78,7 @@ pub fn merge_chars(
         .iter()
         .map(|c| expand_ligature(char_text(c, arena), settings.expand_ligatures))
         .collect::<String>();
+    let text = maybe_reorder_bidi_default(text, settings);
 
     WordObj {
         text,
@@ -472,7 +484,7 @@ fn extract_text_layout_refs(
         }
     }
 
-    out
+    maybe_reorder_bidi_default(out, settings)
 }
 
 /// Convert lines to text string with proper direction handling.
@@ -571,7 +583,10 @@ fn extract_text_refs(
         line_texts.push(line_str);
     }
 
-    textmap_to_string(line_texts, line_dir_render, char_dir_render)
+    maybe_reorder_bidi_default(
+        textmap_to_string(line_texts, line_dir_render, char_dir_render),
+        settings,
+    )
 }
 
 /// Extract text from specific character indices.

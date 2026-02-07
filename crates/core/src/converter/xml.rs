@@ -3,6 +3,7 @@
 //! Port of XMLConverter from pdfminer.six converter.py
 
 use regex::Regex;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 
 use crate::layout::{
@@ -306,13 +307,66 @@ impl<W: Write> XMLConverter<W> {
         }
 
         let reordered = reorder_text_per_line(&content_text);
-        let reversed: String = content_text.chars().rev().collect();
-        let render_reversed =
-            !content_text.is_empty() && reordered != content_text && reordered == reversed;
+        if reordered != content_text {
+            // For 1-char elements, map visual-order characters back to original
+            // elements so mixed-direction lines keep consistent XML ordering.
+            let mut buckets: HashMap<char, VecDeque<&TextLineElement>> = HashMap::new();
+            let mut can_map_per_char = true;
+            for elem in content {
+                let mut chars = text_of_element(elem).chars();
+                match (chars.next(), chars.next()) {
+                    (Some(ch), None) => {
+                        buckets.entry(ch).or_default().push_back(elem);
+                    }
+                    _ => {
+                        can_map_per_char = false;
+                        break;
+                    }
+                }
+            }
 
-        if render_reversed {
-            for elem in content.iter().rev() {
-                self.render_textline_element(elem);
+            if can_map_per_char {
+                let mut reordered_elements: Vec<&TextLineElement> =
+                    Vec::with_capacity(content.len());
+                for ch in reordered.chars() {
+                    let Some(queue) = buckets.get_mut(&ch) else {
+                        can_map_per_char = false;
+                        break;
+                    };
+                    let Some(elem) = queue.pop_front() else {
+                        can_map_per_char = false;
+                        break;
+                    };
+                    reordered_elements.push(elem);
+                }
+
+                if can_map_per_char && reordered_elements.len() == content.len() {
+                    for elem in reordered_elements {
+                        self.render_textline_element(elem);
+                    }
+                } else {
+                    let reversed: String = content_text.chars().rev().collect();
+                    if !content_text.is_empty() && reordered == reversed {
+                        for elem in content.iter().rev() {
+                            self.render_textline_element(elem);
+                        }
+                    } else {
+                        for elem in content {
+                            self.render_textline_element(elem);
+                        }
+                    }
+                }
+            } else {
+                let reversed: String = content_text.chars().rev().collect();
+                if !content_text.is_empty() && reordered == reversed {
+                    for elem in content.iter().rev() {
+                        self.render_textline_element(elem);
+                    }
+                } else {
+                    for elem in content {
+                        self.render_textline_element(elem);
+                    }
+                }
             }
         } else {
             for elem in content {

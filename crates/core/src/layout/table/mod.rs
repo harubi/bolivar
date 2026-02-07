@@ -36,10 +36,10 @@ mod table_extraction_tests {
     use super::grid::{cells_to_tables, intersections_to_cells};
     use super::intersections::edges_to_intersections;
     use super::intersections::{ActiveBucket, IntersectionIdx};
-    use super::text::extract_words;
+    use super::text::{extract_text, extract_text_from_char_ids_layout, extract_words};
     use super::types::{
-        BBox, BBoxKey, CharObj, EdgeObj, HEdgeId, KeyPoint, Orientation, TextSettings, VEdgeId,
-        bbox_key, key_point,
+        BBox, BBoxKey, CharId, CharObj, EdgeObj, HEdgeId, KeyPoint, Orientation, TextSettings,
+        VEdgeId, bbox_key, key_point,
     };
     use crate::arena::PageArena;
     use crate::utils::apply_matrix_rect;
@@ -366,6 +366,167 @@ mod table_extraction_tests {
 
         assert_eq!(words.len(), 1);
         assert_eq!(words[0].text, "Hi");
+    }
+
+    #[test]
+    fn table_extraction_text_extraction_reorders_rtl_by_default() {
+        let mut arena = PageArena::new();
+        arena.reset();
+        let text_a = arena.intern("\u{05D0}");
+        let text_b = arena.intern("\u{05D1}");
+        let text_g = arena.intern("\u{05D2}");
+        let chars = vec![
+            CharObj {
+                text: text_a,
+                x0: 0.0,
+                x1: 1.0,
+                top: 0.0,
+                bottom: 10.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 10.0,
+                size: 10.0,
+                upright: true,
+            },
+            CharObj {
+                text: text_b,
+                x0: 1.0,
+                x1: 2.0,
+                top: 0.0,
+                bottom: 10.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 10.0,
+                size: 10.0,
+                upright: true,
+            },
+            CharObj {
+                text: text_g,
+                x0: 2.0,
+                x1: 3.0,
+                top: 0.0,
+                bottom: 10.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 10.0,
+                size: 10.0,
+                upright: true,
+            },
+        ];
+
+        let settings = TextSettings::default();
+        let text = extract_text(&chars, &settings, &arena);
+        assert_eq!(text, "\u{05D2}\u{05D1}\u{05D0}");
+    }
+
+    #[test]
+    fn table_extraction_layout_text_reorders_rtl_by_default() {
+        let mut arena = PageArena::new();
+        arena.reset();
+        let text_a = arena.intern("\u{05D0}");
+        let text_b = arena.intern("\u{05D1}");
+        let text_g = arena.intern("\u{05D2}");
+        let chars = vec![
+            CharObj {
+                text: text_a,
+                x0: 0.0,
+                x1: 1.0,
+                top: 0.0,
+                bottom: 10.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 10.0,
+                size: 10.0,
+                upright: true,
+            },
+            CharObj {
+                text: text_b,
+                x0: 1.0,
+                x1: 2.0,
+                top: 0.0,
+                bottom: 10.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 10.0,
+                size: 10.0,
+                upright: true,
+            },
+            CharObj {
+                text: text_g,
+                x0: 2.0,
+                x1: 3.0,
+                top: 0.0,
+                bottom: 10.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 10.0,
+                size: 10.0,
+                upright: true,
+            },
+        ];
+        let ids = vec![CharId(0), CharId(1), CharId(2)];
+        let settings = TextSettings::default();
+        let layout_bbox = BBox {
+            x0: 0.0,
+            top: 0.0,
+            x1: 0.0,
+            bottom: 0.0,
+        };
+
+        let text = extract_text_from_char_ids_layout(&chars, &ids, &settings, &layout_bbox, &arena);
+        assert_eq!(text, "\u{05D2}\u{05D1}\u{05D0}");
+    }
+
+    #[test]
+    fn table_extraction_word_extraction_reorders_rtl_by_default() {
+        let mut arena = PageArena::new();
+        arena.reset();
+        let text_a = arena.intern("\u{05D0}");
+        let text_b = arena.intern("\u{05D1}");
+        let text_g = arena.intern("\u{05D2}");
+        let chars = vec![
+            CharObj {
+                text: text_a,
+                x0: 0.0,
+                x1: 1.0,
+                top: 0.0,
+                bottom: 10.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 10.0,
+                size: 10.0,
+                upright: true,
+            },
+            CharObj {
+                text: text_b,
+                x0: 1.0,
+                x1: 2.0,
+                top: 0.0,
+                bottom: 10.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 10.0,
+                size: 10.0,
+                upright: true,
+            },
+            CharObj {
+                text: text_g,
+                x0: 2.0,
+                x1: 3.0,
+                top: 0.0,
+                bottom: 10.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 10.0,
+                size: 10.0,
+                upright: true,
+            },
+        ];
+
+        let settings = TextSettings::default();
+        let words = extract_words(&chars, &settings, &arena);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].text, "\u{05D2}\u{05D1}\u{05D0}");
     }
 
     #[test]
