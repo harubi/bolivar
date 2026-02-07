@@ -583,10 +583,9 @@ fn extract_text_refs(
         line_texts.push(line_str);
     }
 
-    maybe_reorder_bidi_default(
-        textmap_to_string(line_texts, line_dir_render, char_dir_render),
-        settings,
-    )
+    // `merge_chars` already applies default bidi reordering at word level.
+    // Reordering the full line again here can invert pure-RTL words back.
+    textmap_to_string(line_texts, line_dir_render, char_dir_render)
 }
 
 /// Extract text from specific character indices.
