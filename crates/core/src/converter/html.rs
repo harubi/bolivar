@@ -8,7 +8,7 @@ use std::io::Write;
 
 use crate::layout::{
     LAParams, LTChar, LTItem, LTPage, LTTextBox, LTTextGroup, TextBoxType, TextGroupElement,
-    TextLineElement, TextLineType,
+    TextLineElement, TextLineType, reorder_text_per_line,
 };
 use crate::utils::{HasBBox, Rect, enc, make_compat_str};
 
@@ -625,9 +625,10 @@ impl<W: Write> HOCRConverter<W> {
             if self.working_font.contains("Bold") {
                 bold_and_italic_styles.push_str("font-weight: bold; ");
             }
+            let reordered_text = reorder_text_per_line(self.working_text.trim());
             // Escape font name and text content to prevent XSS
             let escaped_font = enc(&self.working_font);
-            let escaped_text = enc(self.working_text.trim());
+            let escaped_text = enc(&reordered_text);
             let output = format!(
                 "<span style='font:\"{}\"; font-size:{}; {}' class='ocrx_word' title='{}; x_font {}; x_fsize {}'>{}</span>",
                 escaped_font,

@@ -1730,4 +1730,16 @@ mod hocr_converter_tests {
             "Empty codec should not include charset attribute in html tag"
         );
     }
+
+    #[test]
+    fn test_hocr_converter_reorders_rtl_word_content() {
+        let mut output: Vec<u8> = Vec::new();
+        {
+            let mut converter = HOCRConverter::new(&mut output, "utf-8", 1, None);
+            converter.receive_layout(sample_rtl_page());
+            converter.close();
+        }
+        let result = String::from_utf8(output).expect("utf8");
+        assert!(result.contains("\u{05D2}\u{05D1}\u{05D0}"));
+    }
 }
