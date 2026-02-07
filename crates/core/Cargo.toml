@@ -26,6 +26,7 @@ regex.workspace = true
 rustc-hash.workspace = true
 thiserror.workspace = true
 unicode-normalization.workspace = true
+unicode-bidi.workspace = true
 weezl.workspace = true
 rstar.workspace = true
 ordered-float.workspace = true

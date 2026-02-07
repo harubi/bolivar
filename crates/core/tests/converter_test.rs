@@ -644,6 +644,46 @@ mod binary_detector_tests {
 
 mod text_converter_tests {
     use super::*;
+    use bolivar_core::layout::{
+        LTChar, LTItem, LTTextBoxHorizontal, LTTextLineHorizontal, TextBoxType, TextLineElement,
+    };
+
+    fn sample_rtl_page() -> LTPage {
+        let mut line = LTTextLineHorizontal::new(0.1);
+        line.set_bbox((0.0, 0.0, 10.0, 10.0));
+        line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+            (0.0, 0.0, 1.0, 1.0),
+            "\u{05D0}",
+            "F",
+            10.0,
+            true,
+            1.0,
+        ))));
+        line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+            (1.0, 0.0, 2.0, 1.0),
+            "\u{05D1}",
+            "F",
+            10.0,
+            true,
+            1.0,
+        ))));
+        line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+            (2.0, 0.0, 3.0, 1.0),
+            "\u{05D2}",
+            "F",
+            10.0,
+            true,
+            1.0,
+        ))));
+        line.analyze();
+
+        let mut boxh = LTTextBoxHorizontal::new();
+        boxh.add(line);
+
+        let mut page = LTPage::new(1, (0.0, 0.0, 612.0, 792.0), 0.0);
+        page.add(LTItem::TextBox(TextBoxType::Horizontal(boxh)));
+        page
+    }
 
     #[test]
     fn test_text_converter_creation() {
@@ -680,6 +720,29 @@ mod text_converter_tests {
         let result = String::from_utf8(output).unwrap();
         assert!(result.contains("Page 1"));
         assert!(result.contains('\x0c')); // form feed
+    }
+
+    #[test]
+    fn test_text_converter_reorders_rtl_by_default() {
+        let mut output: Vec<u8> = Vec::new();
+        {
+            let mut converter =
+                TextConverter::new(&mut output, "utf-8", 1, Some(LAParams::default()), false);
+            converter.receive_layout(sample_rtl_page());
+        }
+        let result = String::from_utf8(output).expect("utf8");
+        assert!(result.contains("\u{05D2}\u{05D1}\u{05D0}\n\n"));
+    }
+
+    #[test]
+    fn test_text_converter_reorders_rtl_without_laparams() {
+        let mut output: Vec<u8> = Vec::new();
+        {
+            let mut converter = TextConverter::new(&mut output, "utf-8", 1, None, false);
+            converter.receive_layout(sample_rtl_page());
+        }
+        let result = String::from_utf8(output).expect("utf8");
+        assert!(result.contains("\u{05D2}\u{05D1}\u{05D0}\n\n"));
     }
 }
 

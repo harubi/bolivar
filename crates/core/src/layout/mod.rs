@@ -7,12 +7,14 @@
 
 pub mod analysis;
 pub mod arena;
+pub mod bidi;
 pub mod params;
 pub mod table;
 pub mod types;
 
 // Re-export all public types for convenience
 pub use analysis::*;
+pub use bidi::*;
 pub use params::*;
 pub use table::*;
 pub use types::*;
