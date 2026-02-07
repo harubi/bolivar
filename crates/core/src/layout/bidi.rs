@@ -63,4 +63,28 @@ mod tests {
         assert!(got.starts_with("abc\n"));
         assert!(got.ends_with('\n'));
     }
+
+    #[test]
+    fn arabic_visual_line_reorders_to_logical_and_keeps_digits() {
+        let line = "1120280977 :ﻊﺟﺮﻤﻟﺍ ﻢﻗﺭ";
+        assert_eq!(reorder_text_per_line(line), "ﺭﻗﻢ ﺍﻟﻤﺮﺟﻊ: 1120280977");
+    }
+
+    #[test]
+    fn arabic_visual_words_reorder_to_logical() {
+        let line = "ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ";
+        assert_eq!(reorder_text_per_line(line), "ﻛﺸﻒ ﺍﻟﺤﺴﺎﺏ");
+    }
+
+    #[test]
+    fn hebrew_visual_line_reorders_to_logical_and_keeps_digits() {
+        let line = "1120280977 :םולש";
+        assert_eq!(reorder_text_per_line(line), "שלום: 1120280977");
+    }
+
+    #[test]
+    fn urdu_visual_line_reorders_to_logical_and_keeps_digits() {
+        let line = "1120280977 :ہلاوح ربمن";
+        assert_eq!(reorder_text_per_line(line), "نمبر حوالہ: 1120280977");
+    }
 }

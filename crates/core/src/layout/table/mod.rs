@@ -118,6 +118,29 @@ mod table_extraction_tests {
         intersections
     }
 
+    fn chars_from_visual_line(arena: &mut PageArena, visual: &str) -> Vec<CharObj> {
+        visual
+            .chars()
+            .enumerate()
+            .map(|(i, ch)| {
+                let text = arena.intern(&ch.to_string());
+                let x = i as f64;
+                CharObj {
+                    text,
+                    x0: x,
+                    x1: x + 1.0,
+                    top: 0.0,
+                    bottom: 10.0,
+                    doctop: 0.0,
+                    width: 1.0,
+                    height: 10.0,
+                    size: 10.0,
+                    upright: true,
+                }
+            })
+            .collect()
+    }
+
     #[test]
     fn table_extraction_non_consecutive() {
         let edges = vec![
@@ -527,6 +550,90 @@ mod table_extraction_tests {
         let words = extract_words(&chars, &settings, &arena);
         assert_eq!(words.len(), 1);
         assert_eq!(words[0].text, "\u{05D2}\u{05D1}\u{05D0}");
+    }
+
+    #[test]
+    fn table_extraction_text_reorders_arabic_visual_line_to_logical() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let visual = "1120280977 :ﻊﺟﺮﻤﻟﺍ ﻢﻗﺭ";
+        let expected = "ﺭﻗﻢ ﺍﻟﻤﺮﺟﻊ: 1120280977";
+        let chars = chars_from_visual_line(&mut arena, visual);
+
+        let settings = TextSettings::default();
+        let text = extract_text(&chars, &settings, &arena);
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn table_extraction_text_reorders_arabic_visual_words_to_logical() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let visual = "ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ";
+        let expected = "ﻛﺸﻒ ﺍﻟﺤﺴﺎﺏ";
+        let chars = chars_from_visual_line(&mut arena, visual);
+
+        let settings = TextSettings::default();
+        let text = extract_text(&chars, &settings, &arena);
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn table_extraction_text_reorders_hebrew_visual_line_to_logical() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let visual = "1120280977 :םולש";
+        let expected = "שלום: 1120280977";
+        let chars = chars_from_visual_line(&mut arena, visual);
+
+        let settings = TextSettings::default();
+        let text = extract_text(&chars, &settings, &arena);
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn table_extraction_text_reorders_urdu_visual_line_to_logical() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let visual = "1120280977 :ہلاوح ربمن";
+        let expected = "نمبر حوالہ: 1120280977";
+        let chars = chars_from_visual_line(&mut arena, visual);
+
+        let settings = TextSettings::default();
+        let text = extract_text(&chars, &settings, &arena);
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn table_extraction_text_preserves_ltr_run_order_in_hebrew_mixed_line() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let visual = "SYDALYT ALCETRINE - םולש";
+        let expected = "שלום - SYDALYT ALCETRINE";
+        let chars = chars_from_visual_line(&mut arena, visual);
+
+        let settings = TextSettings::default();
+        let text = extract_text(&chars, &settings, &arena);
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn table_extraction_text_preserves_ltr_run_order_in_urdu_mixed_line() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let visual = "SYDALYT ALCETRINE - ہیفرم ربمن";
+        let expected = "نمبر مرفیہ - SYDALYT ALCETRINE";
+        let chars = chars_from_visual_line(&mut arena, visual);
+
+        let settings = TextSettings::default();
+        let text = extract_text(&chars, &settings, &arena);
+        assert_eq!(text, expected);
     }
 
     #[test]

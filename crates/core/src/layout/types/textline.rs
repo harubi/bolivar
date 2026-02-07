@@ -35,23 +35,42 @@ pub enum TextLineElement {
     Anno(LTAnno),
 }
 
+fn element_text(element: &TextLineElement) -> &str {
+    match element {
+        TextLineElement::Char(c) => c.get_text(),
+        TextLineElement::Anno(a) => a.get_text(),
+    }
+}
+
 fn collect_text_from_elements(elements: &[TextLineElement]) -> String {
     let mut total_len = 0;
     for e in elements {
-        total_len += match e {
-            TextLineElement::Char(c) => c.get_text().len(),
-            TextLineElement::Anno(a) => a.get_text().len(),
-        };
+        total_len += element_text(e).len();
     }
 
     let mut out = String::with_capacity(total_len);
     for e in elements {
-        match e {
-            TextLineElement::Char(c) => out.push_str(c.get_text()),
-            TextLineElement::Anno(a) => out.push_str(a.get_text()),
-        }
+        out.push_str(element_text(e));
     }
     out
+}
+
+fn collect_reordered_text(elements: &[TextLineElement]) -> String {
+    reorder_text_per_line(&collect_text_from_elements(elements))
+}
+
+fn elements_are_blank_or_whitespace(elements: &[TextLineElement]) -> bool {
+    let mut has_any = false;
+    for e in elements {
+        let s = element_text(e);
+        if !s.is_empty() {
+            has_any = true;
+        }
+        if s.chars().any(|c| !c.is_whitespace()) {
+            return false;
+        }
+    }
+    has_any
 }
 
 /// Horizontal text line.
@@ -155,28 +174,14 @@ impl LTTextLine for LTTextLineHorizontal {
     }
 
     fn get_text(&self) -> String {
-        reorder_text_per_line(&collect_text_from_elements(&self.elements))
+        collect_reordered_text(&self.elements)
     }
 
     fn is_empty(&self) -> bool {
         if self.component.is_empty() {
             return true;
         }
-
-        let mut has_any = false;
-        for e in &self.elements {
-            let s = match e {
-                TextLineElement::Char(c) => c.get_text(),
-                TextLineElement::Anno(a) => a.get_text(),
-            };
-            if !s.is_empty() {
-                has_any = true;
-            }
-            if s.chars().any(|c| !c.is_whitespace()) {
-                return false;
-            }
-        }
-        has_any
+        elements_are_blank_or_whitespace(&self.elements)
     }
 
     fn set_bbox(&mut self, bbox: Rect) {
@@ -289,28 +294,14 @@ impl LTTextLine for LTTextLineVertical {
     }
 
     fn get_text(&self) -> String {
-        reorder_text_per_line(&collect_text_from_elements(&self.elements))
+        collect_reordered_text(&self.elements)
     }
 
     fn is_empty(&self) -> bool {
         if self.component.is_empty() {
             return true;
         }
-
-        let mut has_any = false;
-        for e in &self.elements {
-            let s = match e {
-                TextLineElement::Char(c) => c.get_text(),
-                TextLineElement::Anno(a) => a.get_text(),
-            };
-            if !s.is_empty() {
-                has_any = true;
-            }
-            if s.chars().any(|c| !c.is_whitespace()) {
-                return false;
-            }
-        }
-        has_any
+        elements_are_blank_or_whitespace(&self.elements)
     }
 
     fn set_bbox(&mut self, bbox: Rect) {
