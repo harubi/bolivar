@@ -8,7 +8,7 @@ use std::io::Write;
 
 use crate::layout::{
     LAParams, LTChar, LTItem, LTPage, LTTextBox, LTTextGroup, TextBoxType, TextGroupElement,
-    TextLineElement, TextLineType,
+    TextLineElement, TextLineType, reorder_text_per_line,
 };
 use crate::utils::{HasBBox, Rect, enc, make_compat_str};
 
@@ -454,6 +454,7 @@ impl<W: Write> HTMLConverter<W> {
                         TextBoxType::Horizontal(h) => h.get_text(),
                         TextBoxType::Vertical(v) => v.get_text(),
                     };
+                    let text = reorder_text_per_line(&text);
                     self.write_text(&text);
                     self.end_div("textbox");
                 }
