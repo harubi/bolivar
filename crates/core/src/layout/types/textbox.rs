@@ -5,8 +5,16 @@ use std::hash::Hash;
 use crate::utils::{HasBBox, INF_F64, Rect};
 
 use super::component::LTComponent;
-use super::textline::{Axis, LTTextLineHorizontal, LTTextLineVertical, TextLineElement};
+use super::textline::{Axis, LTTextLine, LTTextLineHorizontal, LTTextLineVertical};
 use crate::layout::params::LAParams;
+
+fn collect_text_from_lines<T: LTTextLine>(lines: &[T]) -> String {
+    let mut out = String::new();
+    for line in lines {
+        out.push_str(&line.get_text());
+    }
+    out
+}
 
 /// Trait for text box types.
 pub trait LTTextBox {
@@ -76,26 +84,7 @@ impl Default for LTTextBoxHorizontal {
 
 impl LTTextBox for LTTextBoxHorizontal {
     fn get_text(&self) -> String {
-        let mut total_len = 0;
-        for line in &self.lines {
-            for e in line.iter() {
-                total_len += match e {
-                    TextLineElement::Char(c) => c.get_text().len(),
-                    TextLineElement::Anno(a) => a.get_text().len(),
-                };
-            }
-        }
-
-        let mut out = String::with_capacity(total_len);
-        for line in &self.lines {
-            for e in line.iter() {
-                match e {
-                    TextLineElement::Char(c) => out.push_str(c.get_text()),
-                    TextLineElement::Anno(a) => out.push_str(a.get_text()),
-                }
-            }
-        }
-        out
+        collect_text_from_lines(&self.lines)
     }
 
     fn get_writing_mode(&self) -> &'static str {
@@ -182,26 +171,7 @@ impl Default for LTTextBoxVertical {
 
 impl LTTextBox for LTTextBoxVertical {
     fn get_text(&self) -> String {
-        let mut total_len = 0;
-        for line in &self.lines {
-            for e in line.iter() {
-                total_len += match e {
-                    TextLineElement::Char(c) => c.get_text().len(),
-                    TextLineElement::Anno(a) => a.get_text().len(),
-                };
-            }
-        }
-
-        let mut out = String::with_capacity(total_len);
-        for line in &self.lines {
-            for e in line.iter() {
-                match e {
-                    TextLineElement::Char(c) => out.push_str(c.get_text()),
-                    TextLineElement::Anno(a) => out.push_str(a.get_text()),
-                }
-            }
-        }
-        out
+        collect_text_from_lines(&self.lines)
     }
 
     fn get_writing_mode(&self) -> &'static str {

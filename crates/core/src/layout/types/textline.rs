@@ -4,6 +4,7 @@
 
 use std::hash::Hash;
 
+use crate::layout::bidi::reorder_text_per_line;
 use crate::utils::{HasBBox, INF_F64, Plane, Rect};
 
 use super::character::{LTAnno, LTChar};
@@ -32,6 +33,25 @@ pub trait LTTextLine: HasBBox {
 pub enum TextLineElement {
     Char(Box<LTChar>),
     Anno(LTAnno),
+}
+
+fn collect_text_from_elements(elements: &[TextLineElement]) -> String {
+    let mut total_len = 0;
+    for e in elements {
+        total_len += match e {
+            TextLineElement::Char(c) => c.get_text().len(),
+            TextLineElement::Anno(a) => a.get_text().len(),
+        };
+    }
+
+    let mut out = String::with_capacity(total_len);
+    for e in elements {
+        match e {
+            TextLineElement::Char(c) => out.push_str(c.get_text()),
+            TextLineElement::Anno(a) => out.push_str(a.get_text()),
+        }
+    }
+    out
 }
 
 /// Horizontal text line.
@@ -135,22 +155,7 @@ impl LTTextLine for LTTextLineHorizontal {
     }
 
     fn get_text(&self) -> String {
-        let mut total_len = 0;
-        for e in &self.elements {
-            total_len += match e {
-                TextLineElement::Char(c) => c.get_text().len(),
-                TextLineElement::Anno(a) => a.get_text().len(),
-            };
-        }
-
-        let mut out = String::with_capacity(total_len);
-        for e in &self.elements {
-            match e {
-                TextLineElement::Char(c) => out.push_str(c.get_text()),
-                TextLineElement::Anno(a) => out.push_str(a.get_text()),
-            }
-        }
-        out
+        reorder_text_per_line(&collect_text_from_elements(&self.elements))
     }
 
     fn is_empty(&self) -> bool {
@@ -284,22 +289,7 @@ impl LTTextLine for LTTextLineVertical {
     }
 
     fn get_text(&self) -> String {
-        let mut total_len = 0;
-        for e in &self.elements {
-            total_len += match e {
-                TextLineElement::Char(c) => c.get_text().len(),
-                TextLineElement::Anno(a) => a.get_text().len(),
-            };
-        }
-
-        let mut out = String::with_capacity(total_len);
-        for e in &self.elements {
-            match e {
-                TextLineElement::Char(c) => out.push_str(c.get_text()),
-                TextLineElement::Anno(a) => out.push_str(a.get_text()),
-            }
-        }
-        out
+        reorder_text_per_line(&collect_text_from_elements(&self.elements))
     }
 
     fn is_empty(&self) -> bool {
@@ -448,5 +438,37 @@ mod tests {
 
         assert_eq!(h.axis(), Axis::Horizontal);
         assert_eq!(v.axis(), Axis::Vertical);
+    }
+
+    #[test]
+    fn horizontal_get_text_reorders_rtl_runs() {
+        let mut line = LTTextLineHorizontal::new(0.1);
+        line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+            (0.0, 0.0, 1.0, 1.0),
+            "\u{05D0}",
+            "F",
+            10.0,
+            true,
+            1.0,
+        ))));
+        line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+            (1.0, 0.0, 2.0, 1.0),
+            "\u{05D1}",
+            "F",
+            10.0,
+            true,
+            1.0,
+        ))));
+        line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+            (2.0, 0.0, 3.0, 1.0),
+            "\u{05D2}",
+            "F",
+            10.0,
+            true,
+            1.0,
+        ))));
+        line.analyze();
+
+        assert_eq!(line.get_text(), "\u{05D2}\u{05D1}\u{05D0}\n");
     }
 }

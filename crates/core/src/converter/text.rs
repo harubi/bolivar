@@ -4,10 +4,7 @@
 
 use std::io::Write;
 
-use crate::layout::{
-    LAParams, LTItem, LTPage, LTTextBox, LTTextLine, TextBoxType, TextLineType,
-    reorder_text_per_line,
-};
+use crate::layout::{LAParams, LTItem, LTPage, LTTextBox, LTTextLine, TextBoxType, TextLineType};
 
 /// Text Converter - outputs plain text.
 ///
@@ -66,10 +63,6 @@ impl<W: Write> TextConverter<W> {
         let _ = self.outfp.flush();
     }
 
-    fn maybe_reorder_bidi(&self, text: &str) -> String {
-        reorder_text_per_line(text)
-    }
-
     /// Receive and render a layout page.
     pub fn receive_layout(&mut self, ltpage: LTPage) {
         if self.showpageno {
@@ -97,7 +90,6 @@ impl<W: Write> TextConverter<W> {
                     TextBoxType::Horizontal(h) => h.get_text(),
                     TextBoxType::Vertical(v) => v.get_text(),
                 };
-                let text = self.maybe_reorder_bidi(&text);
                 self.write_text(&text);
                 self.write_text("\n");
             }
@@ -106,7 +98,6 @@ impl<W: Write> TextConverter<W> {
                     TextLineType::Horizontal(h) => h.get_text(),
                     TextLineType::Vertical(v) => v.get_text(),
                 };
-                let text = self.maybe_reorder_bidi(&text);
                 self.write_text(&text);
             }
             LTItem::Char(c) => {
