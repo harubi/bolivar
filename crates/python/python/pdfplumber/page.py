@@ -353,6 +353,14 @@ class Page(Container):
     def process_object(self, obj: LTItem) -> T_obj:
         kind = re.sub(lt_pat, "", obj.__class__.__name__).lower()
         attr = {}
+
+        def _normalize_color_value(value):
+            if isinstance(value, list):
+                return tuple(value)
+            if isinstance(value, tuple):
+                return value
+            return (value,)
+
         for key in ALL_ATTRS:
             if hasattr(obj, key):
                 attr[key] = resolve_all(getattr(obj, key))
@@ -382,12 +390,12 @@ class Page(Container):
             # directly expose .stroking_color and .non_stroking_color
             # for LTChar objects (unlike, e.g., LTRect objects).
             gs = obj.graphicstate
-            attr["stroking_color"] = (
-                gs.scolor if isinstance(gs.scolor, tuple) else (gs.scolor,)
-            )
-            attr["non_stroking_color"] = (
-                gs.ncolor if isinstance(gs.ncolor, tuple) else (gs.ncolor,)
-            )
+            attr["stroking_color"] = _normalize_color_value(gs.scolor)
+            attr["non_stroking_color"] = _normalize_color_value(gs.ncolor)
+            if attr["stroking_color"] == (0.0,):
+                attr["stroking_color"] = (0,)
+            # For LTChar parity, do not emit an scs field.
+            attr.pop("scs", None)
 
             # Handle (rare) byte-encoded fontnames
             if isinstance(attr["fontname"], bytes):  # pragma: nocover
@@ -422,6 +430,13 @@ class Page(Container):
             ]  # type: ignore  # noqa: E501
 
             attr["dash"] = obj.dashing_style
+
+        for color_key in ("stroking_color", "non_stroking_color"):
+            if color_key in attr and isinstance(attr[color_key], list):
+                attr[color_key] = tuple(attr[color_key])
+
+        if kind == "image":
+            attr.setdefault("stream", None)
 
         # As noted in #1181, `pdfminer.six` adjusts objects'
         # coordinates relative to the MediaBox:
