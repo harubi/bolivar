@@ -860,16 +860,28 @@ fn path_segments_to_path_ops(path: &[PathSegment]) -> Vec<PathOp> {
         .collect()
 }
 
-fn render_char_without_font(
-    analyzer: &mut PDFLayoutAnalyzer<'_>,
+struct FallbackCharRender<'a> {
     char_matrix: Matrix,
     fontsize: f64,
     scaling: f64,
     rise: f64,
     cid: u32,
+    fallback_fontname: Option<&'a str>,
+}
+
+fn render_char_without_font(
+    analyzer: &mut PDFLayoutAnalyzer<'_>,
     graphicstate: &PDFGraphicState,
-    fallback_fontname: Option<&str>,
+    render: FallbackCharRender<'_>,
 ) -> f64 {
+    let FallbackCharRender {
+        char_matrix,
+        fontsize,
+        scaling,
+        rise,
+        cid,
+        fallback_fontname,
+    } = render;
     let text = if (0x20..0x7f).contains(&cid) {
         char::from_u32(cid)
             .map(|c| c.to_string())
@@ -993,13 +1005,15 @@ fn render_text_sequence(
                     } else {
                         render_char_without_font(
                             analyzer,
-                            char_matrix,
-                            fontsize,
-                            scaling,
-                            rise,
-                            cid,
                             graphicstate,
-                            fallback_fontname.as_deref(),
+                            FallbackCharRender {
+                                char_matrix,
+                                fontsize,
+                                scaling,
+                                rise,
+                                cid,
+                                fallback_fontname: fallback_fontname.as_deref(),
+                            },
                         )
                     };
 
