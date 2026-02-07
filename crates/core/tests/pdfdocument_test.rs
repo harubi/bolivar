@@ -17,6 +17,37 @@ const PAGELABELS_PDF: &[u8] = include_bytes!("fixtures/contrib/pagelabels.pdf");
 const ANNOTATIONS_PDF: &[u8] = include_bytes!("fixtures/contrib/issue-1082-annotations.pdf");
 const IMAGE_STRUCTURE_PDF: &[u8] =
     include_bytes!("../../../references/pdfplumber/tests/pdfs/image_structure.pdf");
+const OBJSTM_DICT_SEGMENT: &[u8] = b"/First 60/Filter/FlateDecode/Length 382";
+
+fn replace_once_fixed_len(input: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
+    assert_eq!(
+        needle.len(),
+        replacement.len(),
+        "replacement must preserve PDF byte length for stable xref offsets"
+    );
+    let pos = input
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .expect("needle not found in fixture PDF");
+    let mut out = input.to_vec();
+    out[pos..pos + needle.len()].copy_from_slice(replacement);
+    out
+}
+
+fn assert_objstm_lookup_fails_without_panic(pdf_bytes: &[u8]) {
+    let doc = PDFDocument::new(pdf_bytes, "").expect("Failed to parse mutated PDF");
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| doc.getobj(11)));
+    assert!(
+        outcome.is_ok(),
+        "Expected getobj(11) to return an error, not panic"
+    );
+    let result = outcome.expect("panic already checked");
+    assert!(
+        matches!(result, Err(PdfError::ObjectNotFound(11))),
+        "Expected ObjectNotFound(11), got {:?}",
+        result
+    );
+}
 
 /// Test that requesting object ID 0 raises PDFObjectNotFound.
 /// Port of: test_get_zero_objid_raises_pdfobjectnotfound
@@ -136,6 +167,36 @@ fn test_getobj_struct_tree_root_from_objstm() {
     let typ = dict.get("Type").expect("Type missing in StructTreeRoot");
     let name = typ.as_name().expect("Type should be a name");
     assert_eq!(name, "StructTreeRoot");
+}
+
+#[test]
+fn test_getobj_objstm_negative_first_does_not_panic() {
+    let pdf = replace_once_fixed_len(
+        IMAGE_STRUCTURE_PDF,
+        OBJSTM_DICT_SEGMENT,
+        b"/First -1/Filter/FlateDecode/Length 382",
+    );
+    assert_objstm_lookup_fails_without_panic(&pdf);
+}
+
+#[test]
+fn test_getobj_objstm_first_beyond_data_len_does_not_panic() {
+    let pdf = replace_once_fixed_len(
+        IMAGE_STRUCTURE_PDF,
+        OBJSTM_DICT_SEGMENT,
+        b"/First 999/Filter/FlateDecode/Length 38",
+    );
+    assert_objstm_lookup_fails_without_panic(&pdf);
+}
+
+#[test]
+fn test_getobj_objstm_object_offset_beyond_data_len_does_not_panic() {
+    let pdf = replace_once_fixed_len(
+        IMAGE_STRUCTURE_PDF,
+        OBJSTM_DICT_SEGMENT,
+        b"/First 760/Filter/FlateDecode/Length 38",
+    );
+    assert_objstm_lookup_fails_without_panic(&pdf);
 }
 
 // === Encryption Integration Tests ===

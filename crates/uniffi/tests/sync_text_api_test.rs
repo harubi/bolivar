@@ -9,8 +9,7 @@ use bolivar_uniffi::{
     extract_page_summaries_from_path, extract_tables_from_bytes, extract_tables_from_bytes_async,
     extract_tables_from_bytes_with_page_range, extract_tables_from_path,
     extract_tables_from_path_async, extract_text_from_bytes, extract_text_from_bytes_async,
-    extract_text_from_path, extract_text_from_path_async,
-    extract_text_from_path_with_page_range,
+    extract_text_from_path, extract_text_from_path_async, extract_text_from_path_with_page_range,
 };
 mod common;
 use common::build_minimal_pdf_with_pages;
@@ -303,18 +302,13 @@ fn extract_tables_with_page_range_applies_filters() {
     let fixture_bytes = std::fs::read(&fixture_path).expect("read table fixture");
 
     // Extract tables from all pages (baseline)
-    let all_tables =
-        extract_tables_from_bytes(fixture_bytes.clone(), None).expect("all tables");
+    let all_tables = extract_tables_from_bytes(fixture_bytes.clone(), None).expect("all tables");
     assert!(!all_tables.is_empty(), "fixture should have tables");
 
     // Extract with page_numbers=[1], max_pages=1 — should return subset
-    let filtered = extract_tables_from_bytes_with_page_range(
-        fixture_bytes,
-        None,
-        Some(vec![1]),
-        Some(1),
-    )
-    .expect("filtered tables");
+    let filtered =
+        extract_tables_from_bytes_with_page_range(fixture_bytes, None, Some(vec![1]), Some(1))
+            .expect("filtered tables");
 
     // All returned tables should be on page 1
     for table in &filtered {

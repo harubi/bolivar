@@ -40,9 +40,15 @@ fn _bolivar(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::table::{extract_pages_from_path, extract_text, extract_text_from_path};
     use pyo3::types::PyBytes;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use std::sync::Once;
+
+    static PY_INIT: Once = Once::new();
+
+    fn ensure_python_initialized() {
+        PY_INIT.call_once(Python::initialize);
+    }
 
     fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
         let mut out = Vec::new();
@@ -130,6 +136,7 @@ mod tests {
 
     #[test]
     fn test_extract_text_from_path_matches_bytes() {
+        ensure_python_initialized();
         let pdf_data = build_minimal_pdf_with_pages(1);
         let path = write_temp_pdf(&pdf_data);
 
@@ -154,6 +161,7 @@ mod tests {
 
     #[test]
     fn test_extract_pages_from_path_len() {
+        ensure_python_initialized();
         let pdf_data = build_minimal_pdf_with_pages(2);
         let path = write_temp_pdf(&pdf_data);
 

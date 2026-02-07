@@ -1523,14 +1523,46 @@ impl PDFDocument {
         let data = self.decode_stream(stream)?;
 
         // Get N (number of objects) and First (offset of first object)
-        let n = stream
+        let n_i64 = stream
             .get("N")
             .ok_or_else(|| PdfError::SyntaxError("missing N in ObjStm".into()))?
-            .as_int()? as usize;
-        let first = stream
+            .as_int()?;
+        if n_i64 < 0 {
+            return Err(PdfError::SyntaxError(format!(
+                "invalid N in ObjStm: {}",
+                n_i64
+            )));
+        }
+        let n = usize::try_from(n_i64)
+            .map_err(|_| PdfError::SyntaxError(format!("N out of range in ObjStm: {}", n_i64)))?;
+
+        let first_i64 = stream
             .get("First")
             .ok_or_else(|| PdfError::SyntaxError("missing First in ObjStm".into()))?
-            .as_int()? as usize;
+            .as_int()?;
+        if first_i64 < 0 {
+            return Err(PdfError::SyntaxError(format!(
+                "invalid First in ObjStm: {}",
+                first_i64
+            )));
+        }
+        let first = usize::try_from(first_i64).map_err(|_| {
+            PdfError::SyntaxError(format!("First out of range in ObjStm: {}", first_i64))
+        })?;
+        if first > data.len() {
+            return Err(PdfError::SyntaxError(format!(
+                "First {} exceeds ObjStm data length {}",
+                first,
+                data.len()
+            )));
+        }
+        if n > data.len() {
+            return Err(PdfError::SyntaxError(format!(
+                "N {} exceeds ObjStm data length {}",
+                n,
+                data.len()
+            )));
+        }
 
         if index >= n {
             return Err(PdfError::SyntaxError(format!("index {} >= N {}", index, n)));
@@ -1541,12 +1573,34 @@ impl PDFDocument {
         let mut offsets = Vec::with_capacity(n);
         for _ in 0..n {
             let _obj_id = header_parser.parse_object()?.as_int()?;
-            let offset = header_parser.parse_object()?.as_int()? as usize;
+            let offset_i64 = header_parser.parse_object()?.as_int()?;
+            if offset_i64 < 0 {
+                return Err(PdfError::SyntaxError(format!(
+                    "negative ObjStm object offset: {}",
+                    offset_i64
+                )));
+            }
+            let offset = usize::try_from(offset_i64).map_err(|_| {
+                PdfError::SyntaxError(format!("ObjStm offset out of range: {}", offset_i64))
+            })?;
             offsets.push(offset);
         }
 
         // Get the offset for our object
-        let obj_offset = first + offsets.get(index).copied().unwrap_or(0);
+        let rel_offset = offsets.get(index).copied().unwrap_or(0);
+        let obj_offset = first.checked_add(rel_offset).ok_or_else(|| {
+            PdfError::SyntaxError(format!(
+                "ObjStm offset overflow: first {} + offset {}",
+                first, rel_offset
+            ))
+        })?;
+        if obj_offset > data.len() {
+            return Err(PdfError::SyntaxError(format!(
+                "ObjStm object offset {} exceeds data length {}",
+                obj_offset,
+                data.len()
+            )));
+        }
 
         // Parse the object
         let mut obj_parser = PDFParser::new(&data[obj_offset..]);

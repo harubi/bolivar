@@ -4,8 +4,9 @@
 //! layout element types for exposing PDF layout analysis results to Python.
 
 use bolivar_core::utils::HasBBox;
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyList, PyTuple};
 use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -438,6 +439,84 @@ fn parse_dashing(py: Python<'_>, value: Option<Py<PyAny>>) -> PyResult<Option<(V
         return Ok(Some((pattern, phase)));
     }
     Ok(None)
+}
+
+fn original_path_to_py(
+    py: Python<'_>,
+    original_path: &Option<Vec<(char, Vec<(f64, f64)>)>>,
+) -> PyResult<Py<PyAny>> {
+    let Some(segments) = original_path else {
+        return Ok(py.None());
+    };
+
+    let mut py_segments = Vec::with_capacity(segments.len());
+    for (cmd, points) in segments {
+        let mut items = Vec::with_capacity(1 + points.len());
+        items.push(cmd.to_string().into_pyobject(py)?.into_any().unbind());
+        for point in points {
+            items.push(point.into_pyobject(py)?.into_any().unbind());
+        }
+        let tuple = PyTuple::new(py, items)?;
+        py_segments.push(tuple.into_any().unbind());
+    }
+
+    let list = PyList::new(py, py_segments)?;
+    Ok(list.into_any().unbind())
+}
+
+fn parse_original_path(
+    py: Python<'_>,
+    value: Option<Py<PyAny>>,
+) -> PyResult<Option<Vec<(char, Vec<(f64, f64)>)>>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.bind(py);
+    if value.is_none() {
+        return Ok(None);
+    }
+
+    let mut parsed = Vec::new();
+    let segments: Vec<Py<PyAny>> = value.extract()?;
+    for segment in segments {
+        let parts: Vec<Py<PyAny>> = segment.bind(py).extract()?;
+        if parts.is_empty() {
+            return Err(PyTypeError::new_err(
+                "original_path segment must contain at least a command",
+            ));
+        }
+
+        let command = parts[0].bind(py).extract::<String>()?;
+        let mut chars = command.chars();
+        let cmd = chars
+            .next()
+            .ok_or_else(|| PyTypeError::new_err("original_path command cannot be empty"))?;
+        if chars.next().is_some() {
+            return Err(PyTypeError::new_err(
+                "original_path command must be a single character",
+            ));
+        }
+
+        let points = if parts.len() == 1 {
+            Vec::new()
+        } else if parts.len() == 2 {
+            let second = parts[1].bind(py);
+            if let Ok(points) = second.extract::<Vec<(f64, f64)>>() {
+                points
+            } else {
+                vec![second.extract::<(f64, f64)>()?]
+            }
+        } else {
+            let mut points = Vec::with_capacity(parts.len() - 1);
+            for point in parts.iter().skip(1) {
+                points.push(point.bind(py).extract::<(f64, f64)>()?);
+            }
+            points
+        };
+
+        parsed.push((cmd, points));
+    }
+    Ok(Some(parsed))
 }
 
 /// Layout character - a single character with position and font info.
@@ -1103,10 +1182,9 @@ pub struct PyLTRect {
     #[pyo3(get)]
     pub stroking_color: Option<Vec<f64>>,
     /// Original path operations: list of (cmd, points) tuples
-    #[pyo3(get)]
     pub original_path: Option<Vec<(char, Vec<(f64, f64)>)>>,
     /// Dashing style: (pattern, phase)
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub dashing_style: Option<(Vec<f64>, f64)>,
     /// Marked Content ID
     #[pyo3(get)]
@@ -1170,6 +1248,17 @@ impl PyLTRect {
             mcid: None,
             tag: None,
         })
+    }
+
+    #[getter]
+    fn original_path(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        original_path_to_py(py, &self.original_path)
+    }
+
+    #[setter]
+    fn set_original_path(&mut self, py: Python<'_>, value: Option<Py<PyAny>>) -> PyResult<()> {
+        self.original_path = parse_original_path(py, value)?;
+        Ok(())
     }
 
     /// Get bounding box as (x0, y0, x1, y1)
@@ -1241,10 +1330,9 @@ pub struct PyLTLine {
     #[pyo3(get)]
     pub stroking_color: Option<Vec<f64>>,
     /// Original path operations
-    #[pyo3(get)]
     pub original_path: Option<Vec<(char, Vec<(f64, f64)>)>>,
     /// Dashing style: (pattern, phase)
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub dashing_style: Option<(Vec<f64>, f64)>,
     /// Marked Content ID
     #[pyo3(get)]
@@ -1316,6 +1404,17 @@ impl PyLTLine {
             mcid: None,
             tag: None,
         })
+    }
+
+    #[getter]
+    fn original_path(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        original_path_to_py(py, &self.original_path)
+    }
+
+    #[setter]
+    fn set_original_path(&mut self, py: Python<'_>, value: Option<Py<PyAny>>) -> PyResult<()> {
+        self.original_path = parse_original_path(py, value)?;
+        Ok(())
     }
 
     /// Get bounding box as (x0, y0, x1, y1)
@@ -1393,10 +1492,9 @@ pub struct PyLTCurve {
     #[pyo3(get)]
     pub stroking_color: Option<Vec<f64>>,
     /// Original path operations
-    #[pyo3(get)]
     pub original_path: Option<Vec<(char, Vec<(f64, f64)>)>>,
     /// Dashing style: (pattern, phase)
-    #[pyo3(get)]
+    #[pyo3(get, set)]
     pub dashing_style: Option<(Vec<f64>, f64)>,
     /// Marked Content ID
     #[pyo3(get)]
@@ -1462,6 +1560,17 @@ impl PyLTCurve {
             mcid: None,
             tag: None,
         })
+    }
+
+    #[getter]
+    fn original_path(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        original_path_to_py(py, &self.original_path)
+    }
+
+    #[setter]
+    fn set_original_path(&mut self, py: Python<'_>, value: Option<Py<PyAny>>) -> PyResult<()> {
+        self.original_path = parse_original_path(py, value)?;
+        Ok(())
     }
 
     /// Get bounding box as (x0, y0, x1, y1)
