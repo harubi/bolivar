@@ -557,7 +557,13 @@ class Page(Container):
         )
 
     def extract_text(self, **kwargs: Any) -> str:
-        return self.get_textmap(**tuplify_list_kwargs(kwargs)).as_string
+        defaults: Dict[str, Any] = {"layout_bbox": self.bbox}
+        full_kwargs = tuplify_list_kwargs(kwargs)
+        if "layout_width_chars" not in full_kwargs:
+            defaults.update({"layout_width": self.width})
+        if "layout_height_chars" not in full_kwargs:
+            defaults.update({"layout_height": self.height})
+        return utils.extract_text(self.chars, **{**defaults, **full_kwargs})
 
     def extract_text_simple(self, **kwargs: Any) -> str:
         return utils.extract_text_simple(self.chars, **kwargs)

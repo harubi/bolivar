@@ -748,7 +748,7 @@ impl PyLTTextLineHorizontal {
                 _ => {}
             }
         }
-        out
+        bolivar_core::layout::reorder_text_for_output(&out)
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
@@ -837,7 +837,7 @@ impl PyLTTextLineVertical {
                 _ => {}
             }
         }
-        out
+        bolivar_core::layout::reorder_text_for_output(&out)
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {

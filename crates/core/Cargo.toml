@@ -33,10 +33,11 @@ ordered-float.workspace = true
 geo-index.workspace = true
 rayon.workspace = true
 memmap2.workspace = true
+rustversion.workspace = true
 
 [features]
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86")))'.dev-dependencies]
 criterion-perf-events = { workspace = true }
 perfcnt = { workspace = true }
 

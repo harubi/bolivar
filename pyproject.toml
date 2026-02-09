@@ -29,7 +29,11 @@ module-name = "bolivar._bolivar"
 profile = "release"
 features = ["pyo3/extension-module"]
 python-packages = ["bolivar", "pdfminer", "pdfplumber", "sitecustomize"]
-include = ["crates/python/python/bolivar_autoload.pth", "rust-toolchain.toml"]
+include = [
+    "crates/python/python/bolivar_autoload.py",
+    "crates/python/python/bolivar_autoload.pth",
+    "rust-toolchain.toml",
+]
 
 [dependency-groups]
 bench = [

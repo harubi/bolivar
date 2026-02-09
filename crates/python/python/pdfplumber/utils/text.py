@@ -3,6 +3,7 @@ import itertools
 import logging
 import re
 import string
+import unicodedata
 from operator import itemgetter
 from typing import (
     Any,
@@ -40,6 +41,53 @@ LIGATURES = {
     "ﬆ": "st",
     "ﬅ": "st",
 }
+
+
+def _contains_rtl_char(ch: str) -> bool:
+    return (
+        ("\u0590" <= ch <= "\u05ff")
+        or ("\u0600" <= ch <= "\u06ff")
+        or ("\u0750" <= ch <= "\u077f")
+        or ("\u0870" <= ch <= "\u089f")
+        or ("\u08a0" <= ch <= "\u08ff")
+        or ("\ufb1d" <= ch <= "\ufdff")
+        or ("\ufe70" <= ch <= "\ufeff")
+        or ("\U00010e60" <= ch <= "\U00010e7f")
+        or ("\U0001ee00" <= ch <= "\U0001eeff")
+    )
+
+
+def _contains_arabic_presentation_forms(text: str) -> bool:
+    return any(
+        ("\ufb50" <= ch <= "\ufdff") or ("\ufe70" <= ch <= "\ufeff") for ch in text
+    )
+
+
+def _text_contains_rtl(text: str) -> bool:
+    return any(_contains_rtl_char(ch) for ch in text)
+
+
+def _reorder_text_for_output_with_core(text: str) -> str:
+    try:
+        from bolivar._bolivar import reorder_text_for_output
+    except Exception:
+        if _contains_arabic_presentation_forms(text):
+            return unicodedata.normalize("NFKC", text)
+        return text
+    try:
+        return reorder_text_for_output(text)
+    except Exception:
+        if _contains_arabic_presentation_forms(text):
+            return unicodedata.normalize("NFKC", text)
+        return text
+
+
+def _normalize_rtl_output_text(text: str) -> str:
+    if not text:
+        return text
+    if not _contains_arabic_presentation_forms(text) and not _text_contains_rtl(text):
+        return text
+    return _reorder_text_for_output_with_core(text)
 
 
 def get_line_cluster_key(line_dir: T_dir) -> Callable[[T_obj], T_num]:
@@ -729,13 +777,15 @@ def extract_text(
     chars = to_list(chars)
     if len(chars) == 0:
         return ""
+    auto_rtl = kwargs.pop("auto_rtl", True)
 
     if kwargs.get("layout"):
         textmap_kwargs = {
             **kwargs,
             **{"line_dir_render": line_dir_render, "char_dir_render": char_dir_render},
         }
-        return chars_to_textmap(chars, **textmap_kwargs).as_string
+        out = chars_to_textmap(chars, **textmap_kwargs).as_string
+        return _normalize_rtl_output_text(out) if auto_rtl else out
     else:
         extractor = WordExtractor(
             **{k: kwargs[k] for k in WORD_EXTRACTOR_KWARGS if k in kwargs}
@@ -756,7 +806,7 @@ def extract_text(
             y_tolerance if line_dir_render in ("ttb", "btt") else x_tolerance,
         )
 
-        return TextMap(
+        out = TextMap(
             [
                 (char, None)
                 for char in (
@@ -766,6 +816,7 @@ def extract_text(
             line_dir_render=line_dir_render,
             char_dir_render=char_dir_render,
         ).as_string
+        return _normalize_rtl_output_text(out) if auto_rtl else out
 
 
 def collate_line(

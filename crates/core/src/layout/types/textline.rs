@@ -4,7 +4,7 @@
 
 use std::hash::Hash;
 
-use crate::layout::bidi::reorder_text_per_line;
+use crate::layout::bidi::reorder_text_for_output;
 use crate::utils::{HasBBox, INF_F64, Plane, Rect};
 
 use super::character::{LTAnno, LTChar};
@@ -56,7 +56,7 @@ fn collect_text_from_elements(elements: &[TextLineElement]) -> String {
 }
 
 fn collect_reordered_text(elements: &[TextLineElement]) -> String {
-    reorder_text_per_line(&collect_text_from_elements(elements))
+    reorder_text_for_output(&collect_text_from_elements(elements))
 }
 
 fn elements_are_blank_or_whitespace(elements: &[TextLineElement]) -> bool {

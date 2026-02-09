@@ -4,6 +4,8 @@
 
 use crate::error::Result;
 use crate::simd::{SimdU8, U8_LANES};
+#[rustversion::since(1.95)]
+use std::simd::Select;
 use std::simd::prelude::*;
 
 const LANES: usize = U8_LANES;

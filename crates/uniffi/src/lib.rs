@@ -4,8 +4,8 @@ use bolivar_core::high_level::{
     ExtractOptions, extract_pages as core_extract_pages, extract_text as core_extract_text,
 };
 use bolivar_core::layout::{
-    LTItem, LTPage, LTTextBox as CoreLTTextBox, LTTextLineHorizontal, LTTextLineVertical,
-    TextBoxType,
+    LTItem, LTPage, LTTextBox as CoreLTTextBox, LTTextLine, LTTextLineHorizontal,
+    LTTextLineVertical, TextBoxType,
 };
 use bolivar_core::layout::{TextLineElement, TextLineType};
 use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
@@ -277,12 +277,10 @@ fn usize_to_u32(value: usize) -> u32 {
 }
 
 fn line_text_chars_from_horizontal(line: &LTTextLineHorizontal) -> (String, Vec<LayoutChar>) {
-    let mut text = String::new();
     let mut chars = Vec::new();
     for element in line.iter() {
         match element {
             TextLineElement::Char(ch) => {
-                text.push_str(ch.get_text());
                 chars.push(LayoutChar {
                     text: ch.get_text().to_string(),
                     bbox: bbox_from_rect((ch.x0(), ch.y0(), ch.x1(), ch.y1())),
@@ -291,19 +289,17 @@ fn line_text_chars_from_horizontal(line: &LTTextLineHorizontal) -> (String, Vec<
                     upright: ch.upright(),
                 });
             }
-            TextLineElement::Anno(anno) => text.push_str(anno.get_text()),
+            TextLineElement::Anno(_) => {}
         }
     }
-    (text, chars)
+    (line.get_text(), chars)
 }
 
 fn line_text_chars_from_vertical(line: &LTTextLineVertical) -> (String, Vec<LayoutChar>) {
-    let mut text = String::new();
     let mut chars = Vec::new();
     for element in line.iter() {
         match element {
             TextLineElement::Char(ch) => {
-                text.push_str(ch.get_text());
                 chars.push(LayoutChar {
                     text: ch.get_text().to_string(),
                     bbox: bbox_from_rect((ch.x0(), ch.y0(), ch.x1(), ch.y1())),
@@ -312,10 +308,10 @@ fn line_text_chars_from_vertical(line: &LTTextLineVertical) -> (String, Vec<Layo
                     upright: ch.upright(),
                 });
             }
-            TextLineElement::Anno(anno) => text.push_str(anno.get_text()),
+            TextLineElement::Anno(_) => {}
         }
     }
-    (text, chars)
+    (line.get_text(), chars)
 }
 
 fn layout_line_from_textline(textline: &TextLineType) -> LayoutLine {
@@ -892,6 +888,7 @@ uniffi::include_scaffolding!("bolivar");
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bolivar_core::layout::{LTChar, LTTextLineHorizontal, TextLineElement, TextLineType};
     use bolivar_core::pdfpage::PDFPage;
     use std::collections::HashMap;
     mod common {
@@ -1013,6 +1010,26 @@ mod tests {
         assert_eq!(converted.y0, 80.0);
         assert_eq!(converted.x1, 20.0);
         assert_eq!(converted.y1, 160.0);
+    }
+
+    #[test]
+    fn layout_line_text_normalizes_arabic_presentation_forms() {
+        let mut line = LTTextLineHorizontal::new(0.1);
+        let visual = ["ﺏ", "ﺎ", "ﺴ", "ﺤ", "ﻟ", "ﺍ", " ", "ﻒ", "ﺸ", "ﻛ"];
+        for (idx, glyph) in visual.into_iter().enumerate() {
+            line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+                (idx as f64, 0.0, idx as f64 + 1.0, 1.0),
+                glyph,
+                "F",
+                10.0,
+                true,
+                1.0,
+            ))));
+        }
+        line.analyze();
+
+        let layout_line = layout_line_from_textline(&TextLineType::Horizontal(line));
+        assert_eq!(layout_line.text, "كشف الحساب\n");
     }
 
     #[test]

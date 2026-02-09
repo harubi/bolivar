@@ -72,7 +72,7 @@ def test_autoload_prefers_bolivar_with_reference_path():
     assert lines[-1] == "True"
 
 
-def test_sitecustomize_warns_on_failure():
+def test_sitecustomize_falls_back_when_bolivar_autoload_import_fails():
     with tempfile.TemporaryDirectory() as temp_dir:
         shadow_dir = Path(temp_dir) / "shadow"
         shadow_dir.mkdir(parents=True, exist_ok=True)
@@ -89,7 +89,62 @@ def test_sitecustomize_warns_on_failure():
             text=True,
             env=env,
         )
+        assert result.stdout.strip() == "ok"
+        assert "bolivar autoload failed" not in result.stderr.lower()
+
+
+def test_sitecustomize_warns_when_all_autoload_paths_fail():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        shadow_dir = Path(temp_dir) / "shadow"
+        shadow_dir.mkdir(parents=True, exist_ok=True)
+        _write_file(
+            shadow_dir / "bolivar_autoload.py",
+            "raise ImportError('shadowed bolivar_autoload')\n",
+        )
+        _make_shadow_package(
+            shadow_dir,
+            "bolivar",
+            "raise ImportError('shadowed bolivar package')\n",
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = f"{shadow_dir}:{PYTHON_SHIM}"
+        result = subprocess.run(
+            [sys.executable, "-c", "print('ok')"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
         assert "bolivar autoload failed" in result.stderr.lower()
+
+
+def test_bolivar_autoload_module_falls_back_to_shim_registry():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        shadow_dir = Path(temp_dir) / "shadow"
+        shadow_dir.mkdir(parents=True, exist_ok=True)
+        _write_file(
+            shadow_dir / "bolivar_autoload.py",
+            "raise ImportError('shadowed bolivar_autoload')\n",
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = f"{shadow_dir}:{PYTHON_SHIM}"
+        code = (
+            "from bolivar import _autoload; "
+            "print(_autoload.install()); "
+            "import pdfplumber; "
+            "print(getattr(pdfplumber.page.Page.extract_tables, '_bolivar_patched', False))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        assert lines, "expected subprocess output"
+        assert lines[0] == "True"
+        assert lines[1] == "True"
 
 
 def test_autoload_pth_works_without_pythonpath():

@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::arena::ArenaLookup;
-use crate::layout::bidi::reorder_text_per_line;
+use crate::layout::bidi::reorder_text_for_output;
 
 use super::clustering::{bbox_from_chars, cluster_objects};
 use super::types::{CharId, CharObj, TextDir, TextSettings, WordObj};
@@ -84,7 +84,7 @@ fn maybe_reorder_bidi_default(text: String, settings: &TextSettings) -> String {
         && settings.line_dir == TextDir::Ttb
         && settings.char_dir == TextDir::Ltr
     {
-        return reorder_text_per_line(&text);
+        return reorder_text_for_output(&text);
     }
     text
 }

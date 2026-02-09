@@ -5,6 +5,8 @@
 
 use crate::simd::F64_LANES;
 use crate::utils::{INF_F64, Rect};
+#[rustversion::since(1.95)]
+use std::simd::Select;
 
 use super::super::arena::{
     AnnoId, ArenaElem, ArenaTextBox, ArenaTextLine, ArenaTextLineHorizontal, ArenaTextLineVertical,

@@ -4,7 +4,7 @@ members = ["crates/*"]
 default-members = ["crates/core", "crates/cli"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/harubi/bolivar"
@@ -55,6 +55,7 @@ criterion-perf-events = "0.4"
 hex = "0.4"
 insta = "1.46"
 perfcnt = "0.8"
+rustversion = "1.0"
 
 [profile.release]
 debug = true

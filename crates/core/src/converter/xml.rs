@@ -8,7 +8,7 @@ use std::io::Write;
 
 use crate::layout::{
     LAParams, LTItem, LTPage, LTTextBox, LTTextGroup, TextBoxType, TextGroupElement,
-    TextLineElement, TextLineType, reorder_text_per_line,
+    TextLineElement, TextLineType, normalize_presentation_forms_for_output, reorder_text_per_line,
 };
 use crate::utils::{HasBBox, bbox2str, enc};
 
@@ -255,12 +255,14 @@ impl<W: Write> XMLConverter<W> {
                     c.size()
                 );
                 self.write(&xml);
-                self.write_text(c.get_text());
+                let normalized = normalize_presentation_forms_for_output(c.get_text());
+                self.write_text(&normalized);
                 self.write("</text>\n");
             }
             LTItem::Anno(a) => {
                 self.write("<text>");
-                self.write_text(a.get_text());
+                let normalized = normalize_presentation_forms_for_output(a.get_text());
+                self.write_text(&normalized);
                 self.write("</text>\n");
             }
             LTItem::Image(img) => {
@@ -390,12 +392,14 @@ impl<W: Write> XMLConverter<W> {
                     c.size()
                 );
                 self.write(&xml);
-                self.write_text(c.get_text());
+                let normalized = normalize_presentation_forms_for_output(c.get_text());
+                self.write_text(&normalized);
                 self.write("</text>\n");
             }
             TextLineElement::Anno(a) => {
                 self.write("<text>");
-                self.write_text(a.get_text());
+                let normalized = normalize_presentation_forms_for_output(a.get_text());
+                self.write_text(&normalized);
                 self.write("</text>\n");
             }
         }

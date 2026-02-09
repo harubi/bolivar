@@ -3,6 +3,7 @@
 //! Exposes matrix math, Plane, formatting helpers, and unpad_aes.
 
 use bolivar_core::codec::unpad_aes as core_unpad_aes;
+use bolivar_core::layout::reorder_text_for_output as core_reorder_text_for_output;
 use bolivar_core::utils::{
     HasBBox, Matrix, Plane as CorePlane, Point, Rect, apply_matrix_pt as core_apply_matrix_pt,
     apply_matrix_rect as core_apply_matrix_rect, format_int_alpha as core_format_int_alpha,
@@ -46,6 +47,11 @@ fn format_int_roman(value: u32) -> String {
 #[pyfunction]
 fn shorten_str(s: &str, size: usize) -> String {
     core_shorten_str(s, size)
+}
+
+#[pyfunction]
+fn reorder_text_for_output(text: &str) -> String {
+    core_reorder_text_for_output(text)
 }
 
 #[pyfunction]
@@ -210,6 +216,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(format_int_alpha, m)?)?;
     m.add_function(wrap_pyfunction!(format_int_roman, m)?)?;
     m.add_function(wrap_pyfunction!(shorten_str, m)?)?;
+    m.add_function(wrap_pyfunction!(reorder_text_for_output, m)?)?;
     m.add_function(wrap_pyfunction!(unpad_aes, m)?)?;
     m.add_class::<PyPlane>()?;
     Ok(())

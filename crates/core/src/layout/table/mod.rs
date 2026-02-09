@@ -558,7 +558,7 @@ mod table_extraction_tests {
         arena.reset();
 
         let visual = "1120280977 :ﻊﺟﺮﻤﻟﺍ ﻢﻗﺭ";
-        let expected = "ﺭﻗﻢ ﺍﻟﻤﺮﺟﻊ: 1120280977";
+        let expected = "رقم المرجع: 1120280977";
         let chars = chars_from_visual_line(&mut arena, visual);
 
         let settings = TextSettings::default();
@@ -572,7 +572,7 @@ mod table_extraction_tests {
         arena.reset();
 
         let visual = "ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ";
-        let expected = "ﻛﺸﻒ ﺍﻟﺤﺴﺎﺏ";
+        let expected = "كشف الحساب";
         let chars = chars_from_visual_line(&mut arena, visual);
 
         let settings = TextSettings::default();
