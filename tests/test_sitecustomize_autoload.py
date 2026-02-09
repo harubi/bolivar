@@ -12,6 +12,10 @@ ROOT_PATH = Path(ROOT)
 PYTHON_SHIM_PATH = Path(PYTHON_SHIM)
 
 
+def _join_pythonpath(*paths: str | Path) -> str:
+    return os.pathsep.join(str(path) for path in paths)
+
+
 def _clear_modules():
     for name in list(sys.modules.keys()):
         if (
@@ -49,7 +53,7 @@ def test_sitecustomize_autoload_patches_pdfplumber():
 def test_autoload_prefers_bolivar_with_reference_path():
     env = os.environ.copy()
     env["ROOT"] = ROOT
-    env["PYTHONPATH"] = f"{PYTHON_SHIM}:{ROOT}/references/pdfminer.six"
+    env["PYTHONPATH"] = _join_pythonpath(PYTHON_SHIM, ROOT_PATH / "references" / "pdfminer.six")
     code = (
         "import os, sys; "
         "sys.path.insert(0, os.path.join(os.environ['ROOT'], 'references', 'pdfminer.six')); "
@@ -67,8 +71,10 @@ def test_autoload_prefers_bolivar_with_reference_path():
     )
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     assert lines, "expected subprocess output"
-    assert "crates/python/python/pdfminer/__init__.py" in lines[0]
-    assert "crates/python/python/pdfplumber/__init__.py" in lines[1]
+    pdfminer_path = lines[0].replace("\\", "/")
+    pdfplumber_path = lines[1].replace("\\", "/")
+    assert pdfminer_path.endswith("crates/python/python/pdfminer/__init__.py")
+    assert pdfplumber_path.endswith("crates/python/python/pdfplumber/__init__.py")
     assert lines[-1] == "True"
 
 
@@ -81,7 +87,7 @@ def test_sitecustomize_falls_back_when_bolivar_autoload_import_fails():
             "raise ImportError('shadowed bolivar_autoload')\n",
         )
         env = os.environ.copy()
-        env["PYTHONPATH"] = f"{shadow_dir}:{PYTHON_SHIM}"
+        env["PYTHONPATH"] = _join_pythonpath(shadow_dir, PYTHON_SHIM)
         result = subprocess.run(
             [sys.executable, "-c", "print('ok')"],
             check=True,
@@ -107,7 +113,7 @@ def test_sitecustomize_warns_when_all_autoload_paths_fail():
             "raise ImportError('shadowed bolivar package')\n",
         )
         env = os.environ.copy()
-        env["PYTHONPATH"] = f"{shadow_dir}:{PYTHON_SHIM}"
+        env["PYTHONPATH"] = _join_pythonpath(shadow_dir, PYTHON_SHIM)
         result = subprocess.run(
             [sys.executable, "-c", "print('ok')"],
             check=True,
@@ -127,7 +133,7 @@ def test_bolivar_autoload_module_falls_back_to_shim_registry():
             "raise ImportError('shadowed bolivar_autoload')\n",
         )
         env = os.environ.copy()
-        env["PYTHONPATH"] = f"{shadow_dir}:{PYTHON_SHIM}"
+        env["PYTHONPATH"] = _join_pythonpath(shadow_dir, PYTHON_SHIM)
         code = (
             "from bolivar import _autoload; "
             "print(_autoload.install()); "
