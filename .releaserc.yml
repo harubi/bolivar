@@ -15,7 +15,10 @@ plugins:
 
   - - "@semantic-release/exec"
     - prepareCmd: ./scripts/bump-version.sh ${nextRelease.version}
-    - publishCmd: ./scripts/publish-crates.sh && ./scripts/publish-maven.sh
+      publishCmd: ./scripts/publish-crates.sh
+      successCmd: |
+        echo "new_release_published=true" >> $GITHUB_OUTPUT
+        echo "new_release_version=${nextRelease.version}" >> $GITHUB_OUTPUT
 
   - - "@semantic-release/git"
     - assets:

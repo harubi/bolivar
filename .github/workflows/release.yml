@@ -4,21 +4,53 @@ on:
   push:
     branches: [master]
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-  actions: write      # to trigger CI.yml via workflow_dispatch
-  id-token: write     # for crates.io Trusted Publishing
-
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
+  release:
+    name: Semantic release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    outputs:
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          submodules: true
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Authenticate with crates.io
+        uses: rust-lang/crates-io-auth-action@v1
+        id: crates-auth
+      - name: Install semantic-release
+        run: npm ci
+      - name: Run semantic-release
+        id: semantic
+        run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+
   build-native-libs:
     name: Build native lib (${{ matrix.classifier }})
+    needs: release
+    if: needs.release.outputs.new_release_published == 'true'
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
@@ -51,6 +83,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          ref: v${{ needs.release.outputs.new_release_version }}
           submodules: true
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@nightly
@@ -67,50 +100,32 @@ jobs:
           name: native-${{ matrix.classifier }}
           path: target/${{ matrix.target }}/release/${{ matrix.lib_name }}
 
-  release:
-    name: Semantic release
-    needs: build-native-libs
+  publish-maven:
+    name: Publish to Maven Central
+    needs: [release, build-native-libs]
+    if: needs.release.outputs.new_release_published == 'true'
     runs-on: ubuntu-24.04
-    outputs:
-      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
-      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          persist-credentials: true
+          ref: v${{ needs.release.outputs.new_release_version }}
           submodules: true
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@nightly
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
-
-      # OIDC token exchange, no API token secret needed
-      - name: Authenticate with crates.io
-        uses: rust-lang/crates-io-auth-action@v1
-        id: crates-auth
-
       - name: Download native libraries
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v6
         with:
           pattern: native-*
           path: crates/uniffi/jvm/natives/
           merge-multiple: false
-
       - name: Organize native libraries
         run: |
           cd crates/uniffi/jvm/natives
@@ -118,19 +133,17 @@ jobs:
             classifier="${dir#native-}"
             mv "$dir" "$classifier"
           done
-
+      - name: Verify all native libraries present
+        run: |
+          cd crates/uniffi/jvm/natives
+          for classifier in linux-x86-64 linux-aarch64 macos-x86-64 macos-aarch64 windows-x86-64 windows-aarch64; do
+            [ -d "$classifier" ] || { echo "Missing $classifier"; exit 1; }
+          done
       - name: Generate Kotlin bindings
         run: cargo build -p bolivar-uniffi && cargo run -p bolivar-uniffi --bin uniffi-bindgen generate --library target/debug/libbolivar_uniffi.so --language kotlin --out-dir crates/uniffi/kotlin
-
-      - name: Install semantic-release
-        run: npm ci
-
-      - name: Run semantic-release
-        id: semantic
-        run: npx semantic-release
+      - name: Publish to Maven Central
+        run: ./scripts/publish-maven.sh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_SIGNING_KEY }}
@@ -141,6 +154,8 @@ jobs:
     needs: release
     if: needs.release.outputs.new_release_published == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
     steps:
       - name: Dispatch CI workflow
         uses: actions/github-script@v8
