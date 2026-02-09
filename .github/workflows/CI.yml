@@ -24,23 +24,26 @@ jobs:
     strategy:
       matrix:
         platform:
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: x86_64
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: x86
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: aarch64
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: armv7
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: s390x
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: ppc64le
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
+          cache: 'pip'
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -49,7 +52,7 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-linux-${{ matrix.platform.target }}
           path: dist
@@ -58,7 +61,6 @@ jobs:
         shell: bash
         run: |
           set -e
-          git submodule update --init
           python3 -m venv .venv
           source .venv/bin/activate
           pip install bolivar --find-links dist --force-reinstall
@@ -66,7 +68,7 @@ jobs:
           pytest tests/
       - name: pytest
         if: ${{ !startsWith(matrix.platform.target, 'x86') && matrix.platform.target != 'ppc64' }}
-        uses: uraimo/run-on-arch-action@v2
+        uses: uraimo/run-on-arch-action@v3
         with:
           arch: ${{ matrix.platform.target }}
           distro: ubuntu22.04
@@ -77,6 +79,7 @@ jobs:
             pip3 install -U pip pytest
           run: |
             set -e
+            git config --global --add safe.directory "$PWD"
             git submodule update --init
             pip3 install bolivar --find-links dist --force-reinstall
             pytest tests/
@@ -86,19 +89,20 @@ jobs:
     strategy:
       matrix:
         platform:
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: x86_64
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: x86
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: aarch64
-          - runner: ubuntu-22.04
+          - runner: ubuntu-24.04
             target: armv7
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
+          cache: 'pip'
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -107,7 +111,7 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
           path: dist
@@ -119,7 +123,9 @@ jobs:
           options: -v ${{ github.workspace }}:/io -w /io
           run: |
             set -e
-            apk add py3-pip py3-virtualenv
+            apk add git py3-pip py3-virtualenv
+            git config --global --add safe.directory "$PWD"
+            git submodule update --init
             python3 -m virtualenv .venv
             source .venv/bin/activate
             pip install bolivar --no-index --find-links dist --force-reinstall
@@ -127,15 +133,17 @@ jobs:
             pytest tests/
       - name: pytest
         if: ${{ !startsWith(matrix.platform.target, 'x86') }}
-        uses: uraimo/run-on-arch-action@v2
+        uses: uraimo/run-on-arch-action@v3
         with:
           arch: ${{ matrix.platform.target }}
           distro: alpine_latest
           githubToken: ${{ github.token }}
           install: |
-            apk add py3-virtualenv
+            apk add git py3-virtualenv
           run: |
             set -e
+            git config --global --add safe.directory "$PWD"
+            git submodule update --init
             python3 -m virtualenv .venv
             source .venv/bin/activate
             pip install pytest
@@ -158,10 +166,13 @@ jobs:
             python_arch: arm64
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - uses: actions/setup-python@v6
         with:
           python-version: 3.13
           architecture: ${{ matrix.platform.python_arch }}
+          cache: 'pip'
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -169,7 +180,7 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-windows-${{ matrix.platform.target }}
           path: dist
@@ -177,7 +188,6 @@ jobs:
         shell: bash
         run: |
           set -e
-          git submodule update --init
           python3 -m venv .venv
           source .venv/Scripts/activate
           pip install bolivar --find-links dist --force-reinstall
@@ -195,9 +205,12 @@ jobs:
             target: aarch64
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: true
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
+          cache: 'pip'
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -205,14 +218,13 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-macos-${{ matrix.platform.target }}
           path: dist
       - name: pytest
         run: |
           set -e
-          git submodule update --init
           python3 -m venv .venv
           source .venv/bin/activate
           pip install bolivar --find-links dist --force-reinstall
@@ -229,7 +241,7 @@ jobs:
           command: sdist
           args: --out dist
       - name: Upload sdist
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-sdist
           path: dist
@@ -247,7 +259,7 @@ jobs:
       # Used to generate artifact attestation
       attestations: write
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v3
         with:
