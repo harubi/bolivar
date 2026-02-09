@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "UniFFI bindings for bolivar PDF library"
+publish = false
 
 [lib]
 name = "bolivar_uniffi"
@@ -15,7 +16,7 @@ name = "uniffi-bindgen"
 path = "uniffi-bindgen.rs"
 
 [dependencies]
-bolivar-core = { path = "../core" }
+bolivar-core.workspace = true
 thiserror.workspace = true
 tokio = { version = "1.40", features = ["rt-multi-thread"] }
 uniffi = { version = "0.31.0", features = ["cli"] }

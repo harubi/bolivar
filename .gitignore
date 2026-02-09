@@ -461,6 +461,9 @@ Cargo.lock
 /check_*.py
 /AGENTS.md
 
+# Node.js (semantic-release tooling)
+node_modules/
+
 # UniFFI JVM local build artifacts
 crates/uniffi/jvm/.gradle/
 crates/uniffi/jvm/.kotlin/

@@ -10,10 +10,13 @@ on:
     branches:
       - main
       - master
-    tags:
-      - '*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref (tag) to checkout for release'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -39,6 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref || github.ref }}
           submodules: true
       - uses: actions/setup-python@v6
         with:
@@ -104,6 +108,9 @@ jobs:
             target: armv7
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          submodules: true
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
@@ -182,6 +189,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref || github.ref }}
           submodules: true
       - uses: actions/setup-python@v6
         with:
@@ -221,6 +229,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.ref || github.ref }}
           submodules: true
       - uses: actions/setup-python@v6
         with:
@@ -250,6 +259,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          submodules: true
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
@@ -264,14 +276,11 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
+    if: github.event_name == 'workflow_dispatch' && startsWith(inputs.ref, 'v')
     needs: [linux, musllinux, windows, macos, sdist]
     permissions:
-      # Use to sign the release artifacts
       id-token: write
-      # Used to upload release artifacts
       contents: write
-      # Used to generate artifact attestation
       attestations: write
     steps:
       - uses: actions/download-artifact@v7
@@ -280,10 +289,8 @@ jobs:
         with:
           subject-path: 'wheels-*/*'
       - name: Install uv
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
         uses: astral-sh/setup-uv@v7
       - name: Publish to PyPI
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
         run: uv publish 'wheels-*/*'
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}

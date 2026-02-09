@@ -5,13 +5,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Python bindings for bolivar PDF library"
+publish = false
 
 [lib]
 name = "_bolivar"
 crate-type = ["cdylib"]
 
 [dependencies]
-bolivar-core = { path = "../core" }
+bolivar-core.workspace = true
 bytes.workspace = true
 flate2.workspace = true
 pyo3.workspace = true

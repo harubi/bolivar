@@ -7,7 +7,7 @@ repository.workspace = true
 description = "PDF text extraction CLI tools"
 
 [dependencies]
-bolivar-core = { path = "../core" }
+bolivar-core.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 serde.workspace = true
