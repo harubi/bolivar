@@ -4,7 +4,11 @@ build-backend = "maturin"
 
 [project]
 name = "bolivar"
+description = "Fast PDF content extraction, written in Rust with Python bindings"
 requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Ahmed Aloufi", email = "936636+harubi@users.noreply.github.com" }]
+readme = "README.md"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -13,8 +17,13 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Text Processing",
 ]
 dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/harubi/bolivar"
 
 [project.optional-dependencies]
 pandas = [

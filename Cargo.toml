@@ -8,6 +8,9 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/harubi/bolivar"
+authors = ["Ahmed Aloufi <936636+harubi@users.noreply.github.com>"]
+keywords = ["pdf", "text-extraction", "pdfminer", "pdfplumber"]
+categories = ["parser-implementations", "text-processing"]
 
 [workspace.dependencies]
 # Internal crates
