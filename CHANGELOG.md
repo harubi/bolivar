@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/harubi/bolivar/compare/v1.0.0...v1.0.1) (2026-02-09)
+
+### Bug Fixes
+
+* **ci:** remove redundant `cargo publish` flag ([eca37c1](https://github.com/harubi/bolivar/commit/eca37c179d5f160123c376087fa084658a3d0c29))
+
 ## 1.0.0 (2026-02-09)
 
 ### Features
