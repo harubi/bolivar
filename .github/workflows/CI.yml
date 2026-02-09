@@ -58,11 +58,12 @@ jobs:
         shell: bash
         run: |
           set -e
+          git submodule update --init
           python3 -m venv .venv
           source .venv/bin/activate
           pip install bolivar --find-links dist --force-reinstall
           pip install pytest
-          pytest
+          pytest tests/
       - name: pytest
         if: ${{ !startsWith(matrix.platform.target, 'x86') && matrix.platform.target != 'ppc64' }}
         uses: uraimo/run-on-arch-action@v2
@@ -72,12 +73,13 @@ jobs:
           githubToken: ${{ github.token }}
           install: |
             apt-get update
-            apt-get install -y --no-install-recommends python3 python3-pip
+            apt-get install -y --no-install-recommends python3 python3-pip git
             pip3 install -U pip pytest
           run: |
             set -e
+            git submodule update --init
             pip3 install bolivar --find-links dist --force-reinstall
-            pytest
+            pytest tests/
 
   musllinux:
     runs-on: ${{ matrix.platform.runner }}
@@ -122,7 +124,7 @@ jobs:
             source .venv/bin/activate
             pip install bolivar --no-index --find-links dist --force-reinstall
             pip install pytest
-            pytest
+            pytest tests/
       - name: pytest
         if: ${{ !startsWith(matrix.platform.target, 'x86') }}
         uses: uraimo/run-on-arch-action@v2
@@ -137,8 +139,8 @@ jobs:
             python3 -m virtualenv .venv
             source .venv/bin/activate
             pip install pytest
-            pip install bolivar --find-links dist --force-reinstall
-            pytest
+            pip install boliva tests/r --find-links dist --force-reinstall
+            pytest tests/
 
   windows:
     runs-on: ${{ matrix.platform.runner }}
@@ -171,11 +173,12 @@ jobs:
         shell: bash
         run: |
           set -e
+          git submodule update --init
           python3 -m venv .venv
           source .venv/Scripts/activate
           pip install bolivar --find-links dist --force-reinstall
           pip install pytest
-          pytest
+          pytest tests/
 
   macos:
     runs-on: ${{ matrix.platform.runner }}
@@ -210,7 +213,7 @@ jobs:
           source .venv/bin/activate
           pip install bolivar --find-links dist --force-reinstall
           pip install pytest
-          pytest
+          pytest tests/
 
   sdist:
     runs-on: ubuntu-latest

@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bolivar-core",
  "clap",
@@ -232,7 +232,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes",
  "bumpalo",
@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-python"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bolivar-core",
  "bytes",
@@ -288,7 +288,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-uniffi"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bolivar-core",
  "pollster",
