@@ -1,16 +1,17 @@
 //! Image export bindings for Python.
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 
 use bolivar_core::image::ImageWriter;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::document::PyPDFStream;
 
-#[pyclass(name = "ImageWriter", unsendable)]
+#[pyclass(name = "ImageWriter")]
 pub struct PyImageWriter {
-    inner: RefCell<ImageWriter>,
+    inner: Mutex<ImageWriter>,
 }
 
 #[pymethods]
@@ -20,7 +21,7 @@ impl PyImageWriter {
         let writer = ImageWriter::new(output_dir)
             .map_err(|e| PyValueError::new_err(format!("Failed to create ImageWriter: {e}")))?;
         Ok(Self {
-            inner: RefCell::new(writer),
+            inner: Mutex::new(writer),
         })
     }
 
@@ -38,7 +39,8 @@ impl PyImageWriter {
             .unwrap_or((None, None));
         let colorspace = colorspace.unwrap_or_default();
         self.inner
-            .borrow_mut()
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("ImageWriter mutex poisoned"))?
             .export_image(name, &stream.stream, srcsize, bits, &colorspace)
             .map_err(|e| PyValueError::new_err(format!("Failed to export image: {e}")))
     }

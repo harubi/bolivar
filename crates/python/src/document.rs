@@ -345,7 +345,7 @@ pub fn kwd(py: Python<'_>, name: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
 }
 
 /// PostScript base parser.
-#[pyclass(name = "PSBaseParser", unsendable, subclass)]
+#[pyclass(name = "PSBaseParser", subclass)]
 pub struct PyPSBaseParser {
     parser: CorePSBaseParser<'static>,
 }
@@ -378,7 +378,7 @@ impl PyPSBaseParser {
 }
 
 /// PostScript stack parser.
-#[pyclass(name = "PSStackParser", unsendable, subclass)]
+#[pyclass(name = "PSStackParser", subclass)]
 pub struct PyPSStackParser {
     parser: CorePSStackParser<'static>,
 }
@@ -403,7 +403,7 @@ impl PyPSStackParser {
 }
 
 /// PDF object parser.
-#[pyclass(name = "PDFParser", unsendable)]
+#[pyclass(name = "PDFParser")]
 pub struct PyPDFParser {
     data: Vec<u8>,
     path: Option<String>,

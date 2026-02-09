@@ -5,8 +5,8 @@
 use crate::error::{PdfError, Result};
 use crate::simd::U8_LANES;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::simd::prelude::*;
+use std::sync::Arc;
 
 /// A PostScript literal name.
 ///
@@ -676,7 +676,7 @@ const BUFSIZ: usize = 4096;
 /// PostScript base parser - performs tokenization
 enum PSData<'a> {
     Borrowed(&'a [u8]),
-    Shared(Rc<[u8]>),
+    Shared(Arc<[u8]>),
 }
 
 impl<'a> PSData<'a> {
@@ -712,7 +712,7 @@ impl<'a> PSBaseParser<'a> {
 
     /// Create a parser from a raw byte slice (copies into shared storage).
     pub fn from_bytes(data: &[u8]) -> PSBaseParser<'static> {
-        PSBaseParser::new_shared(Rc::from(data))
+        PSBaseParser::new_shared(Arc::from(data))
     }
 
     /// Current position in stream
@@ -1126,7 +1126,7 @@ impl<'a> ContentLexer<'a> {
     }
 
     /// Create a lexer from a shared byte slice.
-    pub const fn new_shared(data: Rc<[u8]>) -> ContentLexer<'static> {
+    pub fn new_shared(data: Arc<[u8]>) -> ContentLexer<'static> {
         ContentLexer {
             data: PSData::Shared(data),
             pos: 0,
@@ -1640,7 +1640,7 @@ pub(crate) fn name_from_bytes(bytes: &[u8]) -> String {
 
 impl PSBaseParser<'static> {
     /// Create a parser backed by shared storage.
-    pub const fn new_shared(data: Rc<[u8]>) -> Self {
+    pub fn new_shared(data: Arc<[u8]>) -> Self {
         Self {
             data: PSData::Shared(data),
             pos: 0,
