@@ -80,6 +80,11 @@ jobs:
           run: |
             set -e
             git config --global --add safe.directory "$PWD"
+            if [ -f .gitmodules ]; then
+              git config --file .gitmodules --get-regexp path | awk '{print $2}' | while read -r sm_path; do
+                git config --global --add safe.directory "$PWD/$sm_path"
+              done
+            fi
             git submodule update --init
             pip3 install bolivar --find-links dist --force-reinstall
             pytest tests/
@@ -125,6 +130,11 @@ jobs:
             set -e
             apk add git py3-pip py3-virtualenv
             git config --global --add safe.directory "$PWD"
+            if [ -f .gitmodules ]; then
+              git config --file .gitmodules --get-regexp path | awk '{print $2}' | while read -r sm_path; do
+                git config --global --add safe.directory "$PWD/$sm_path"
+              done
+            fi
             git submodule update --init
             python3 -m virtualenv .venv
             source .venv/bin/activate
@@ -143,6 +153,11 @@ jobs:
           run: |
             set -e
             git config --global --add safe.directory "$PWD"
+            if [ -f .gitmodules ]; then
+              git config --file .gitmodules --get-regexp path | awk '{print $2}' | while read -r sm_path; do
+                git config --global --add safe.directory "$PWD/$sm_path"
+              done
+            fi
             git submodule update --init
             python3 -m virtualenv .venv
             source .venv/bin/activate
