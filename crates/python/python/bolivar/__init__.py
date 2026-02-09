@@ -2,6 +2,12 @@
 #
 # Python bindings for the bolivar Rust library.
 
+from pkgutil import extend_path
+
+# Allow the source shim package and installed wheel package to co-exist on
+# sys.path so native extension imports resolve in subprocess tests/CI.
+__path__ = extend_path(__path__, __name__)
+
 from bolivar._bolivar import (
     LAParams,
     PDFDocument,
