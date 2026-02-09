@@ -205,6 +205,7 @@ jobs:
       - name: pytest
         run: |
           set -e
+          git submodule update --init
           python3 -m venv .venv
           source .venv/bin/activate
           pip install bolivar --find-links dist --force-reinstall
