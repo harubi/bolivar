@@ -40,10 +40,12 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
       - name: Setup Node.js
         uses: actions/setup-node@v6.2.0
         with:
           node-version: 22
+          cache: npm
       - name: Authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@v1.0.3
         id: crates-auth
@@ -79,7 +81,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
-          sccache: false
+          sccache: true
           manylinux: auto
       - name: Upload wheels
         uses: actions/upload-artifact@v6.0.0
@@ -106,7 +108,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
-          sccache: false
+          sccache: true
           manylinux: musllinux_1_2
       - name: Upload wheels
         uses: actions/upload-artifact@v6.0.0
@@ -143,7 +145,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
-          sccache: false
+          sccache: true
       - name: Upload wheels
         uses: actions/upload-artifact@v6.0.0
         with:
@@ -173,7 +175,7 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
-          sccache: false
+          sccache: true
       - name: Upload wheels
         uses: actions/upload-artifact@v6.0.0
         with:
@@ -246,6 +248,9 @@ jobs:
         with:
           toolchain: nightly
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
       - name: Install cross
         if: matrix.cross
         uses: taiki-e/install-action@v2
@@ -301,6 +306,7 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
       - name: Setup Java
         uses: actions/setup-java@v5.2.0
         with:
