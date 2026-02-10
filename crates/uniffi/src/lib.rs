@@ -1,11 +1,12 @@
 use bolivar_core::PdfError;
 use bolivar_core::api::stream::extract_pages_stream_from_doc;
 use bolivar_core::high_level::{
-    ExtractOptions, extract_pages as core_extract_pages, extract_text as core_extract_text,
+    ExtractOptions as CoreExtractOptions,
+    extract_text_with_document as core_extract_text_with_document,
 };
 use bolivar_core::layout::{
-    LTItem, LTPage, LTTextBox as CoreLTTextBox, LTTextLine, LTTextLineHorizontal,
-    LTTextLineVertical, TextBoxType,
+    LAParams as CoreLAParams, LTItem, LTPage, LTTextBox as CoreLTTextBox, LTTextLine,
+    LTTextLineHorizontal, LTTextLineVertical, TextBoxType,
 };
 use bolivar_core::layout::{TextLineElement, TextLineType};
 use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
@@ -17,11 +18,7 @@ use bolivar_core::table::{
 };
 use bolivar_core::utils::HasBBox;
 use std::io::ErrorKind;
-#[cfg(test)]
-use std::sync::Mutex;
-#[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BolivarError {
@@ -45,57 +42,6 @@ pub enum BolivarError {
     DecodeError,
     #[error("runtime error")]
     RuntimeError,
-}
-
-#[cfg(test)]
-static OFFLOAD_CALLS: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-static OFFLOAD_THREADS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
-#[cfg(test)]
-static OFFLOAD_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-#[cfg(test)]
-fn mark_offload_call() {
-    OFFLOAD_CALLS.fetch_add(1, Ordering::SeqCst);
-    let ids = OFFLOAD_THREADS.get_or_init(|| Mutex::new(Vec::new()));
-    if let Ok(mut guard) = ids.lock() {
-        guard.push(format!("{:?}", std::thread::current().id()));
-    }
-}
-
-#[cfg(not(test))]
-fn mark_offload_call() {}
-
-#[cfg(test)]
-fn reset_offload_calls() {
-    OFFLOAD_CALLS.store(0, Ordering::SeqCst);
-    let ids = OFFLOAD_THREADS.get_or_init(|| Mutex::new(Vec::new()));
-    if let Ok(mut guard) = ids.lock() {
-        guard.clear();
-    }
-}
-
-#[cfg(test)]
-fn offload_call_count() -> usize {
-    OFFLOAD_CALLS.load(Ordering::SeqCst)
-}
-
-#[cfg(test)]
-fn offload_thread_ids() -> Vec<String> {
-    let ids = OFFLOAD_THREADS.get_or_init(|| Mutex::new(Vec::new()));
-    if let Ok(guard) = ids.lock() {
-        return guard.clone();
-    }
-    Vec::new()
-}
-
-#[cfg(test)]
-fn offload_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    OFFLOAD_TEST_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("offload test lock")
 }
 
 fn map_io_error_kind(kind: ErrorKind) -> BolivarError {
@@ -188,6 +134,38 @@ pub struct Table {
     pub cells: Vec<TableCell>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayoutParams {
+    pub line_overlap: Option<f64>,
+    pub char_margin: Option<f64>,
+    pub line_margin: Option<f64>,
+    pub word_margin: Option<f64>,
+    pub boxes_flow: Option<f64>,
+    pub detect_vertical: Option<bool>,
+    pub all_texts: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtractOptions {
+    pub password: Option<String>,
+    pub page_numbers: Option<Vec<u32>>,
+    pub max_pages: Option<u32>,
+    pub caching: Option<bool>,
+    pub layout_params: Option<LayoutParams>,
+}
+
+impl Default for ExtractOptions {
+    fn default() -> Self {
+        Self {
+            password: None,
+            page_numbers: None,
+            max_pages: None,
+            caching: Some(true),
+            layout_params: None,
+        }
+    }
+}
+
 fn normalize_page_numbers(
     page_numbers: Option<Vec<u32>>,
 ) -> Result<Option<Vec<usize>>, BolivarError> {
@@ -213,17 +191,58 @@ fn normalize_max_pages(max_pages: Option<u32>) -> Result<usize, BolivarError> {
     usize::try_from(max_pages).map_err(|_| BolivarError::InvalidArgument)
 }
 
-fn extract_options(
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<ExtractOptions, BolivarError> {
-    Ok(ExtractOptions {
-        password: password.unwrap_or_default(),
-        page_numbers: normalize_page_numbers(page_numbers)?,
-        maxpages: normalize_max_pages(max_pages)?,
-        caching: true,
-        laparams: None,
+fn extract_password(options: &Option<ExtractOptions>) -> String {
+    options
+        .as_ref()
+        .and_then(|value| value.password.clone())
+        .unwrap_or_default()
+}
+
+fn extract_caching(options: &Option<ExtractOptions>) -> bool {
+    options
+        .as_ref()
+        .and_then(|value| value.caching)
+        .unwrap_or(true)
+}
+
+fn normalize_layout_params(
+    layout_params: Option<LayoutParams>,
+) -> Result<Option<CoreLAParams>, BolivarError> {
+    let Some(layout_params) = layout_params else {
+        return Ok(None);
+    };
+
+    let defaults = CoreLAParams::default();
+    let boxes_flow = layout_params.boxes_flow.or(defaults.boxes_flow);
+    if let Some(flow) = boxes_flow
+        && !(-1.0..=1.0).contains(&flow)
+    {
+        return Err(BolivarError::InvalidArgument);
+    }
+
+    Ok(Some(CoreLAParams {
+        line_overlap: layout_params.line_overlap.unwrap_or(defaults.line_overlap),
+        char_margin: layout_params.char_margin.unwrap_or(defaults.char_margin),
+        line_margin: layout_params.line_margin.unwrap_or(defaults.line_margin),
+        word_margin: layout_params.word_margin.unwrap_or(defaults.word_margin),
+        boxes_flow,
+        detect_vertical: layout_params
+            .detect_vertical
+            .unwrap_or(defaults.detect_vertical),
+        all_texts: layout_params.all_texts.unwrap_or(defaults.all_texts),
+    }))
+}
+
+fn core_extract_options(
+    options: Option<ExtractOptions>,
+) -> Result<CoreExtractOptions, BolivarError> {
+    let options = options.unwrap_or_default();
+    Ok(CoreExtractOptions {
+        password: options.password.unwrap_or_default(),
+        page_numbers: normalize_page_numbers(options.page_numbers)?,
+        maxpages: normalize_max_pages(options.max_pages)?,
+        caching: options.caching.unwrap_or(true),
+        laparams: normalize_layout_params(options.layout_params)?,
     })
 }
 
@@ -407,13 +426,10 @@ fn layout_page_from_ltpage(page: &LTPage) -> LayoutPage {
 }
 
 fn extract_layout_pages_core(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
+    doc: Arc<PDFDocument>,
+    options: CoreExtractOptions,
 ) -> Result<Vec<LayoutPage>, BolivarError> {
-    let options = extract_options(password, page_numbers, max_pages)?;
-    let pages_iter = core_extract_pages(&pdf_data, Some(options)).map_err(BolivarError::from)?;
+    let pages_iter = extract_pages_stream_from_doc(doc, options).map_err(BolivarError::from)?;
     let mut pages = Vec::new();
     for page_result in pages_iter {
         pages.push(layout_page_from_ltpage(
@@ -474,7 +490,7 @@ fn cache_capacity(caching: bool) -> usize {
     if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
 }
 
-fn selected_page_indices(doc: &PDFDocument, options: &ExtractOptions) -> Vec<usize> {
+fn selected_page_indices(doc: &PDFDocument, options: &CoreExtractOptions) -> Vec<usize> {
     let mut selected_indices = Vec::new();
     let mut selected = 0usize;
     for page_idx in 0..doc.page_tree_len() {
@@ -493,23 +509,12 @@ fn selected_page_indices(doc: &PDFDocument, options: &ExtractOptions) -> Vec<usi
 }
 
 fn extract_tables_core(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
+    doc: Arc<PDFDocument>,
+    options: CoreExtractOptions,
 ) -> Result<Vec<Table>, BolivarError> {
-    let options = extract_options(password, page_numbers, max_pages)?;
-    let doc = Arc::new(
-        PDFDocument::new_with_cache(
-            &pdf_data,
-            &options.password,
-            cache_capacity(options.caching),
-        )
-        .map_err(BolivarError::from)?,
-    );
     let selected_indices = selected_page_indices(doc.as_ref(), &options);
-    let mut pages =
-        extract_pages_stream_from_doc(Arc::clone(&doc), options).map_err(BolivarError::from)?;
+    let mut pages = extract_pages_stream_from_doc(Arc::clone(&doc), options.clone())
+        .map_err(BolivarError::from)?;
 
     let settings = TableSettings::default();
 
@@ -546,340 +551,84 @@ fn summary_from_layout_page(layout_page: LayoutPage) -> PageSummary {
     }
 }
 
-fn get_or_try_init_no_error_cache<T, E>(
-    cell: &OnceLock<T>,
-    init: impl FnOnce() -> Result<T, E>,
-) -> Result<&T, E> {
-    if let Some(value) = cell.get() {
-        return Ok(value);
+fn open_pdf_document(
+    pdf_data: &[u8],
+    options: &Option<ExtractOptions>,
+) -> Result<Arc<PDFDocument>, BolivarError> {
+    let password = extract_password(options);
+    let caching = extract_caching(options);
+    PDFDocument::new_with_cache(pdf_data, &password, cache_capacity(caching))
+        .map(Arc::new)
+        .map_err(BolivarError::from)
+}
+
+pub struct NativePdfDocument {
+    doc: Arc<PDFDocument>,
+    options: Option<ExtractOptions>,
+}
+
+impl std::fmt::Debug for NativePdfDocument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativePdfDocument").finish_non_exhaustive()
+    }
+}
+
+impl NativePdfDocument {
+    pub fn from_path(path: String, options: Option<ExtractOptions>) -> Result<Self, BolivarError> {
+        let pdf_data = read_pdf_bytes(path)?;
+        Self::from_bytes(pdf_data, options)
     }
 
-    let value = init()?;
-    let _ = cell.set(value);
-    Ok(cell
-        .get()
-        .expect("OnceLock should contain a value after successful initialization"))
-}
+    pub fn from_bytes(
+        pdf_data: Vec<u8>,
+        options: Option<ExtractOptions>,
+    ) -> Result<Self, BolivarError> {
+        let doc = open_pdf_document(&pdf_data, &options)?;
+        Ok(Self { doc, options })
+    }
 
-static ASYNC_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    fn core_options(&self) -> Result<CoreExtractOptions, BolivarError> {
+        core_extract_options(self.options.clone())
+    }
 
-fn build_async_runtime() -> std::io::Result<tokio::runtime::Runtime> {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-}
+    pub fn extract_text(&self) -> Result<String, BolivarError> {
+        let options = self.core_options()?;
+        core_extract_text_with_document(self.doc.as_ref(), options).map_err(BolivarError::from)
+    }
 
-fn get_async_runtime() -> Result<&'static tokio::runtime::Runtime, BolivarError> {
-    get_or_try_init_no_error_cache(&ASYNC_RUNTIME, build_async_runtime)
-        .map_err(|_| BolivarError::RuntimeError)
-}
-
-async fn offload_blocking<T, F>(job: F) -> Result<T, BolivarError>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T, BolivarError> + Send + 'static,
-{
-    let runtime = get_async_runtime()?;
-    let join = runtime.spawn_blocking(move || {
-        mark_offload_call();
-        job()
-    });
-    join.await.map_err(|_| BolivarError::RuntimeError)?
-}
-
-pub fn extract_text_from_bytes(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-) -> Result<String, BolivarError> {
-    extract_text_from_bytes_with_page_range(pdf_data, password, None, None)
-}
-
-pub fn extract_text_from_bytes_with_page_range(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<String, BolivarError> {
-    let options = extract_options(password, page_numbers, max_pages)?;
-    core_extract_text(&pdf_data, Some(options)).map_err(BolivarError::from)
-}
-
-pub fn extract_text_from_path(
-    path: String,
-    password: Option<String>,
-) -> Result<String, BolivarError> {
-    extract_text_from_path_with_page_range(path, password, None, None)
-}
-
-pub fn extract_text_from_path_with_page_range(
-    path: String,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<String, BolivarError> {
-    let pdf_data = read_pdf_bytes(path)?;
-    extract_text_from_bytes_with_page_range(pdf_data, password, page_numbers, max_pages)
-}
-
-pub async fn extract_text_from_bytes_async(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-) -> Result<String, BolivarError> {
-    extract_text_from_bytes_with_page_range_async(pdf_data, password, None, None).await
-}
-
-pub async fn extract_text_from_bytes_with_page_range_async(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<String, BolivarError> {
-    offload_blocking(move || {
-        extract_text_from_bytes_with_page_range(pdf_data, password, page_numbers, max_pages)
-    })
-    .await
-}
-
-pub async fn extract_text_from_path_async(
-    path: String,
-    password: Option<String>,
-) -> Result<String, BolivarError> {
-    extract_text_from_path_with_page_range_async(path, password, None, None).await
-}
-
-pub async fn extract_text_from_path_with_page_range_async(
-    path: String,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<String, BolivarError> {
-    offload_blocking(move || {
-        extract_text_from_path_with_page_range(path, password, page_numbers, max_pages)
-    })
-    .await
-}
-
-pub fn extract_page_summaries_from_bytes(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-) -> Result<Vec<PageSummary>, BolivarError> {
-    extract_page_summaries_from_bytes_with_page_range(pdf_data, password, None, None)
-}
-
-pub fn extract_page_summaries_from_bytes_with_page_range(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<PageSummary>, BolivarError> {
-    Ok(
-        extract_layout_pages_core(pdf_data, password, page_numbers, max_pages)?
+    pub fn extract_page_summaries(&self) -> Result<Vec<PageSummary>, BolivarError> {
+        Ok(self
+            .extract_layout_pages()?
             .into_iter()
             .map(summary_from_layout_page)
-            .collect(),
-    )
+            .collect())
+    }
+
+    pub fn extract_layout_pages(&self) -> Result<Vec<LayoutPage>, BolivarError> {
+        let options = self.core_options()?;
+        extract_layout_pages_core(Arc::clone(&self.doc), options)
+    }
+
+    pub fn extract_tables(&self) -> Result<Vec<Table>, BolivarError> {
+        let options = self.core_options()?;
+        extract_tables_core(Arc::clone(&self.doc), options)
+    }
 }
 
-pub fn extract_page_summaries_from_path(
+pub fn quick_extract_text(
     path: String,
-    password: Option<String>,
-) -> Result<Vec<PageSummary>, BolivarError> {
-    extract_page_summaries_from_path_with_page_range(path, password, None, None)
+    options: Option<ExtractOptions>,
+) -> Result<String, BolivarError> {
+    let doc = NativePdfDocument::from_path(path, options)?;
+    doc.extract_text()
 }
 
-pub fn extract_page_summaries_from_path_with_page_range(
-    path: String,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<PageSummary>, BolivarError> {
-    let pdf_data = read_pdf_bytes(path)?;
-    extract_page_summaries_from_bytes_with_page_range(pdf_data, password, page_numbers, max_pages)
-}
-
-pub async fn extract_page_summaries_from_bytes_async(
+pub fn quick_extract_text_from_bytes(
     pdf_data: Vec<u8>,
-    password: Option<String>,
-) -> Result<Vec<PageSummary>, BolivarError> {
-    extract_page_summaries_from_bytes_with_page_range_async(pdf_data, password, None, None).await
-}
-
-pub async fn extract_page_summaries_from_bytes_with_page_range_async(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<PageSummary>, BolivarError> {
-    offload_blocking(move || {
-        extract_page_summaries_from_bytes_with_page_range(
-            pdf_data,
-            password,
-            page_numbers,
-            max_pages,
-        )
-    })
-    .await
-}
-
-pub async fn extract_page_summaries_from_path_async(
-    path: String,
-    password: Option<String>,
-) -> Result<Vec<PageSummary>, BolivarError> {
-    extract_page_summaries_from_path_with_page_range_async(path, password, None, None).await
-}
-
-pub async fn extract_page_summaries_from_path_with_page_range_async(
-    path: String,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<PageSummary>, BolivarError> {
-    offload_blocking(move || {
-        extract_page_summaries_from_path_with_page_range(path, password, page_numbers, max_pages)
-    })
-    .await
-}
-
-pub fn extract_layout_pages_from_bytes(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-) -> Result<Vec<LayoutPage>, BolivarError> {
-    extract_layout_pages_from_bytes_with_page_range(pdf_data, password, None, None)
-}
-
-pub fn extract_layout_pages_from_bytes_with_page_range(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<LayoutPage>, BolivarError> {
-    extract_layout_pages_core(pdf_data, password, page_numbers, max_pages)
-}
-
-pub fn extract_layout_pages_from_path(
-    path: String,
-    password: Option<String>,
-) -> Result<Vec<LayoutPage>, BolivarError> {
-    extract_layout_pages_from_path_with_page_range(path, password, None, None)
-}
-
-pub fn extract_layout_pages_from_path_with_page_range(
-    path: String,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<LayoutPage>, BolivarError> {
-    let pdf_data = read_pdf_bytes(path)?;
-    extract_layout_pages_from_bytes_with_page_range(pdf_data, password, page_numbers, max_pages)
-}
-
-pub async fn extract_layout_pages_from_bytes_async(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-) -> Result<Vec<LayoutPage>, BolivarError> {
-    extract_layout_pages_from_bytes_with_page_range_async(pdf_data, password, None, None).await
-}
-
-pub async fn extract_layout_pages_from_bytes_with_page_range_async(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<LayoutPage>, BolivarError> {
-    offload_blocking(move || {
-        extract_layout_pages_from_bytes_with_page_range(pdf_data, password, page_numbers, max_pages)
-    })
-    .await
-}
-
-pub async fn extract_layout_pages_from_path_async(
-    path: String,
-    password: Option<String>,
-) -> Result<Vec<LayoutPage>, BolivarError> {
-    extract_layout_pages_from_path_with_page_range_async(path, password, None, None).await
-}
-
-pub async fn extract_layout_pages_from_path_with_page_range_async(
-    path: String,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<LayoutPage>, BolivarError> {
-    offload_blocking(move || {
-        extract_layout_pages_from_path_with_page_range(path, password, page_numbers, max_pages)
-    })
-    .await
-}
-
-pub fn extract_tables_from_bytes(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-) -> Result<Vec<Table>, BolivarError> {
-    extract_tables_from_bytes_with_page_range(pdf_data, password, None, None)
-}
-
-pub fn extract_tables_from_bytes_with_page_range(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<Table>, BolivarError> {
-    extract_tables_core(pdf_data, password, page_numbers, max_pages)
-}
-
-pub fn extract_tables_from_path(
-    path: String,
-    password: Option<String>,
-) -> Result<Vec<Table>, BolivarError> {
-    extract_tables_from_path_with_page_range(path, password, None, None)
-}
-
-pub fn extract_tables_from_path_with_page_range(
-    path: String,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<Table>, BolivarError> {
-    let pdf_data = read_pdf_bytes(path)?;
-    extract_tables_from_bytes_with_page_range(pdf_data, password, page_numbers, max_pages)
-}
-
-pub async fn extract_tables_from_bytes_async(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-) -> Result<Vec<Table>, BolivarError> {
-    extract_tables_from_bytes_with_page_range_async(pdf_data, password, None, None).await
-}
-
-pub async fn extract_tables_from_bytes_with_page_range_async(
-    pdf_data: Vec<u8>,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<Table>, BolivarError> {
-    offload_blocking(move || {
-        extract_tables_from_bytes_with_page_range(pdf_data, password, page_numbers, max_pages)
-    })
-    .await
-}
-
-pub async fn extract_tables_from_path_async(
-    path: String,
-    password: Option<String>,
-) -> Result<Vec<Table>, BolivarError> {
-    extract_tables_from_path_with_page_range_async(path, password, None, None).await
-}
-
-pub async fn extract_tables_from_path_with_page_range_async(
-    path: String,
-    password: Option<String>,
-    page_numbers: Option<Vec<u32>>,
-    max_pages: Option<u32>,
-) -> Result<Vec<Table>, BolivarError> {
-    offload_blocking(move || {
-        extract_tables_from_path_with_page_range(path, password, page_numbers, max_pages)
-    })
-    .await
+    options: Option<ExtractOptions>,
+) -> Result<String, BolivarError> {
+    let doc = NativePdfDocument::from_bytes(pdf_data, options)?;
+    doc.extract_text()
 }
 
 uniffi::include_scaffolding!("bolivar");
@@ -892,57 +641,6 @@ mod tests {
     use std::collections::HashMap;
     mod common {
         include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/common/mod.rs"));
-    }
-
-    #[test]
-    fn async_text_uses_offload_helper() {
-        let _guard = offload_test_guard();
-        reset_offload_calls();
-        let caller = format!("{:?}", std::thread::current().id());
-        let pdf = common::build_minimal_pdf_with_pages(1);
-        let _ = pollster::block_on(extract_text_from_bytes_async(pdf, None)).expect("text async");
-        assert!(offload_call_count() > 0);
-        let worker_ids = offload_thread_ids();
-        assert!(worker_ids.iter().any(|id| id != &caller));
-    }
-
-    #[test]
-    fn async_layout_uses_offload_helper() {
-        let _guard = offload_test_guard();
-        reset_offload_calls();
-        let caller = format!("{:?}", std::thread::current().id());
-        let pdf = common::build_minimal_pdf_with_pages(1);
-        let _ = pollster::block_on(extract_layout_pages_from_bytes_async(pdf, None))
-            .expect("layout async");
-        assert!(offload_call_count() > 0);
-        let worker_ids = offload_thread_ids();
-        assert!(worker_ids.iter().any(|id| id != &caller));
-    }
-
-    #[test]
-    fn async_summaries_uses_offload_helper() {
-        let _guard = offload_test_guard();
-        reset_offload_calls();
-        let caller = format!("{:?}", std::thread::current().id());
-        let pdf = common::build_minimal_pdf_with_pages(1);
-        let _ = pollster::block_on(extract_page_summaries_from_bytes_async(pdf, None))
-            .expect("summary async");
-        assert!(offload_call_count() > 0);
-        let worker_ids = offload_thread_ids();
-        assert!(worker_ids.iter().any(|id| id != &caller));
-    }
-
-    #[test]
-    fn async_tables_uses_offload_helper() {
-        let _guard = offload_test_guard();
-        reset_offload_calls();
-        let caller = format!("{:?}", std::thread::current().id());
-        let pdf = common::build_minimal_pdf_with_pages(1);
-        let _ =
-            pollster::block_on(extract_tables_from_bytes_async(pdf, None)).expect("tables async");
-        assert!(offload_call_count() > 0);
-        let worker_ids = offload_thread_ids();
-        assert!(worker_ids.iter().any(|id| id != &caller));
     }
 
     #[test]
@@ -1035,7 +733,7 @@ mod tests {
     fn selected_page_indices_respect_page_numbers_and_max_pages() {
         let pdf = common::build_minimal_pdf_with_pages(5);
         let doc = PDFDocument::new_with_cache(&pdf, "", DEFAULT_CACHE_CAPACITY).expect("doc");
-        let options = ExtractOptions {
+        let options = CoreExtractOptions {
             password: String::new(),
             page_numbers: Some(vec![0, 2, 4]),
             maxpages: 2,
@@ -1054,33 +752,6 @@ mod tests {
     }
 
     #[test]
-    fn runtime_cell_retries_after_init_failure() {
-        let cell = OnceLock::new();
-        let attempts = AtomicUsize::new(0);
-
-        let first = get_or_try_init_no_error_cache(&cell, || {
-            let call = attempts.fetch_add(1, Ordering::SeqCst);
-            if call == 0 {
-                return Err(());
-            }
-            Ok(7u32)
-        });
-        assert!(first.is_err());
-
-        let second = get_or_try_init_no_error_cache(&cell, || {
-            let call = attempts.fetch_add(1, Ordering::SeqCst);
-            if call == 0 {
-                return Err(());
-            }
-            Ok(7u32)
-        })
-        .expect("second init should succeed");
-
-        assert_eq!(*second, 7);
-        assert_eq!(attempts.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
     fn maps_pdf_error_kinds_without_collapsing_all_to_pdf_error() {
         assert!(matches!(
             BolivarError::from(PdfError::SyntaxError("bad".to_string())),
@@ -1094,5 +765,26 @@ mod tests {
             BolivarError::from(PdfError::EncryptionError("bad".to_string())),
             BolivarError::EncryptionError
         ));
+    }
+
+    #[test]
+    fn core_extract_options_validates_boxes_flow_range() {
+        let options = ExtractOptions {
+            password: None,
+            page_numbers: None,
+            max_pages: None,
+            caching: None,
+            layout_params: Some(LayoutParams {
+                line_overlap: None,
+                char_margin: None,
+                line_margin: None,
+                word_margin: None,
+                boxes_flow: Some(1.2),
+                detect_vertical: None,
+                all_texts: None,
+            }),
+        };
+        let err = core_extract_options(Some(options)).expect_err("out-of-range boxes_flow");
+        assert!(matches!(err, BolivarError::InvalidArgument));
     }
 }

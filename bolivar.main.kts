@@ -1,14 +1,13 @@
 #!/usr/bin/env kotlin
-@file:DependsOn("crates/uniffi/jvm/build/libs/bolivar-uniffi-jvm.jar")
+@file:DependsOn("crates/uniffi/jvm/build/libs/bolivar-1.2.0.jar")
 @file:DependsOn("net.java.dev.jna:jna:5.18.1")
 @file:DependsOn("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 @file:DependsOn("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.10.2")
 
-import io.bolivar.jvm.Bolivar
-import io.bolivar.jvm.BolivarAsync
-import io.bolivar.jvm.BolivarNativeLoader
+import sa.ingenious.bolivar.Bolivar
+import sa.ingenious.bolivar.BolivarNativeLoader
+import sa.ingenious.bolivar.DocumentOptions
 import java.io.File
-import kotlinx.coroutines.future.await
 import kotlinx.coroutines.runBlocking
 
 val libName = System.mapLibraryName("bolivar_uniffi")
@@ -28,15 +27,24 @@ require(pdfPath.exists()) {
     "PDF not found at ${pdfPath.path}. Pass a PDF path as the first argument."
 }
 
-val syncText = Bolivar.extractTextFromPathWithPageRange(
+Bolivar.open(
     pdfPath.path,
-    null,
-    listOf(1u, 2u), // 1-based pages
-    2u
-)
-println(syncText.take(200))
+    DocumentOptions {
+        pages(1, 2) // 1-based pages
+        maxPages = 2
+    },
+).use { doc ->
+    val syncText = doc.extractTables()
+    println(syncText)
+}
 
 runBlocking {
-    val asyncText = BolivarAsync.extractTextFromPathAsync(pdfPath.path, null).await()
+    val asyncText = Bolivar.extractTextAsync(
+        pdfPath.path,
+        DocumentOptions {
+            pages(1, 2)
+            maxPages = 2
+        },
+    )
     println("async chars=${asyncText.length}")
 }

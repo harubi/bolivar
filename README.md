@@ -170,7 +170,7 @@ runBlocking {
     val doc = Bolivar.open("doc.pdf", DocumentOptions {
         pages(1, 2)
     })
-    val tables = doc.extractTablesSuspend()
+    val tables = doc.extractTablesAsync()
     println(tables.size)
 }
 ```
