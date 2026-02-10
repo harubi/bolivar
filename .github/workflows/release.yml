@@ -157,7 +157,7 @@ jobs:
             [ -d "$classifier" ] || { echo "Missing $classifier"; exit 1; }
           done
       - name: Generate Kotlin bindings
-        run: cargo run -p bolivar-uniffi --bin uniffi-bindgen generate --library target/debug/libbolivar_uniffi.so --language kotlin --out-dir crates/uniffi/kotlin
+        run: cargo run -p bolivar-uniffi --bin uniffi-bindgen generate --library crates/uniffi/jvm/natives/linux-x86-64/libbolivar_uniffi.so --language kotlin --out-dir crates/uniffi/kotlin
       - name: Publish to Maven Central
         run: ./scripts/publish-maven.sh
         env:

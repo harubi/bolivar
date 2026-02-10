@@ -42,6 +42,7 @@ include = [
     "crates/python/python/bolivar_autoload.py",
     "crates/python/python/bolivar_autoload.pth",
     "rust-toolchain.toml",
+    "LICENSE",
 ]
 
 [dependency-groups]
