@@ -1,1 +1,1 @@
-rootProject.name = "bolivar-uniffi-jvm"
+rootProject.name = "bolivar"

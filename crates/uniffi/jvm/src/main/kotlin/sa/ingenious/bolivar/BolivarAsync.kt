@@ -1,8 +1,8 @@
-package io.bolivar.jvm
+package sa.ingenious.bolivar
 
-import io.bolivar.LayoutPage
-import io.bolivar.PageSummary
-import io.bolivar.Table
+import sa.ingenious.bolivar.LayoutPage
+import sa.ingenious.bolivar.PageSummary
+import sa.ingenious.bolivar.Table
 import java.util.concurrent.CompletableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +24,7 @@ object BolivarAsync {
         password: String?,
     ): CompletableFuture<String> {
         return scope.future {
-            io.bolivar.`extractTextFromBytesAsync`(pdfData, password)
+            sa.ingenious.bolivar.extractTextFromBytesAsync(pdfData, password)
         }
     }
 
@@ -36,14 +36,14 @@ object BolivarAsync {
         maxPages: UInt?,
     ): CompletableFuture<String> {
         return scope.future {
-            io.bolivar.`extractTextFromBytesWithPageRangeAsync`(pdfData, password, pageNumbers, maxPages)
+            sa.ingenious.bolivar.extractTextFromBytesWithPageRangeAsync(pdfData, password, pageNumbers, maxPages)
         }
     }
 
     @JvmStatic
     fun extractTextFromPathAsync(path: String, password: String?): CompletableFuture<String> {
         return scope.future {
-            io.bolivar.`extractTextFromPathAsync`(path, password)
+            sa.ingenious.bolivar.extractTextFromPathAsync(path, password)
         }
     }
 
@@ -55,7 +55,7 @@ object BolivarAsync {
         maxPages: UInt?,
     ): CompletableFuture<String> {
         return scope.future {
-            io.bolivar.`extractTextFromPathWithPageRangeAsync`(path, password, pageNumbers, maxPages)
+            sa.ingenious.bolivar.extractTextFromPathWithPageRangeAsync(path, password, pageNumbers, maxPages)
         }
     }
 
@@ -65,7 +65,7 @@ object BolivarAsync {
         password: String?,
     ): CompletableFuture<List<PageSummary>> {
         return scope.future {
-            io.bolivar.`extractPageSummariesFromBytesAsync`(pdfData, password)
+            sa.ingenious.bolivar.extractPageSummariesFromBytesAsync(pdfData, password)
         }
     }
 
@@ -77,7 +77,7 @@ object BolivarAsync {
         maxPages: UInt?,
     ): CompletableFuture<List<PageSummary>> {
         return scope.future {
-            io.bolivar.`extractPageSummariesFromBytesWithPageRangeAsync`(pdfData, password, pageNumbers, maxPages)
+            sa.ingenious.bolivar.extractPageSummariesFromBytesWithPageRangeAsync(pdfData, password, pageNumbers, maxPages)
         }
     }
 
@@ -87,7 +87,7 @@ object BolivarAsync {
         password: String?,
     ): CompletableFuture<List<PageSummary>> {
         return scope.future {
-            io.bolivar.`extractPageSummariesFromPathAsync`(path, password)
+            sa.ingenious.bolivar.extractPageSummariesFromPathAsync(path, password)
         }
     }
 
@@ -99,7 +99,7 @@ object BolivarAsync {
         maxPages: UInt?,
     ): CompletableFuture<List<PageSummary>> {
         return scope.future {
-            io.bolivar.`extractPageSummariesFromPathWithPageRangeAsync`(path, password, pageNumbers, maxPages)
+            sa.ingenious.bolivar.extractPageSummariesFromPathWithPageRangeAsync(path, password, pageNumbers, maxPages)
         }
     }
 
@@ -109,7 +109,7 @@ object BolivarAsync {
         password: String?,
     ): CompletableFuture<List<LayoutPage>> {
         return scope.future {
-            io.bolivar.`extractLayoutPagesFromBytesAsync`(pdfData, password)
+            sa.ingenious.bolivar.extractLayoutPagesFromBytesAsync(pdfData, password)
         }
     }
 
@@ -121,7 +121,7 @@ object BolivarAsync {
         maxPages: UInt?,
     ): CompletableFuture<List<LayoutPage>> {
         return scope.future {
-            io.bolivar.`extractLayoutPagesFromBytesWithPageRangeAsync`(pdfData, password, pageNumbers, maxPages)
+            sa.ingenious.bolivar.extractLayoutPagesFromBytesWithPageRangeAsync(pdfData, password, pageNumbers, maxPages)
         }
     }
 
@@ -131,7 +131,7 @@ object BolivarAsync {
         password: String?,
     ): CompletableFuture<List<LayoutPage>> {
         return scope.future {
-            io.bolivar.`extractLayoutPagesFromPathAsync`(path, password)
+            sa.ingenious.bolivar.extractLayoutPagesFromPathAsync(path, password)
         }
     }
 
@@ -143,7 +143,7 @@ object BolivarAsync {
         maxPages: UInt?,
     ): CompletableFuture<List<LayoutPage>> {
         return scope.future {
-            io.bolivar.`extractLayoutPagesFromPathWithPageRangeAsync`(path, password, pageNumbers, maxPages)
+            sa.ingenious.bolivar.extractLayoutPagesFromPathWithPageRangeAsync(path, password, pageNumbers, maxPages)
         }
     }
 
@@ -153,7 +153,7 @@ object BolivarAsync {
         password: String?,
     ): CompletableFuture<List<Table>> {
         return scope.future {
-            io.bolivar.`extractTablesFromBytesAsync`(pdfData, password)
+            sa.ingenious.bolivar.extractTablesFromBytesAsync(pdfData, password)
         }
     }
 
@@ -165,14 +165,14 @@ object BolivarAsync {
         maxPages: UInt?,
     ): CompletableFuture<List<Table>> {
         return scope.future {
-            io.bolivar.`extractTablesFromBytesWithPageRangeAsync`(pdfData, password, pageNumbers, maxPages)
+            sa.ingenious.bolivar.extractTablesFromBytesWithPageRangeAsync(pdfData, password, pageNumbers, maxPages)
         }
     }
 
     @JvmStatic
     fun extractTablesFromPathAsync(path: String, password: String?): CompletableFuture<List<Table>> {
         return scope.future {
-            io.bolivar.`extractTablesFromPathAsync`(path, password)
+            sa.ingenious.bolivar.extractTablesFromPathAsync(path, password)
         }
     }
 
@@ -184,7 +184,7 @@ object BolivarAsync {
         maxPages: UInt?,
     ): CompletableFuture<List<Table>> {
         return scope.future {
-            io.bolivar.`extractTablesFromPathWithPageRangeAsync`(path, password, pageNumbers, maxPages)
+            sa.ingenious.bolivar.extractTablesFromPathWithPageRangeAsync(path, password, pageNumbers, maxPages)
         }
     }
 }

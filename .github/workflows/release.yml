@@ -13,8 +13,11 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
-  release:
+  semantic-release:
     name: Semantic release
     runs-on: ubuntu-24.04
     permissions:
@@ -57,10 +60,151 @@ jobs:
           GIT_COMMITTER_NAME: "github-actions[bot]"
           GIT_COMMITTER_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
 
+  build-wheels-linux:
+    name: Build wheels (linux-${{ matrix.target }})
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, x86, aarch64, armv7, s390x, ppc64le]
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: v${{ needs.semantic-release.outputs.new_release_version }}
+          submodules: true
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          sccache: false
+          manylinux: auto
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: dist
+
+  build-wheels-musllinux:
+    name: Build wheels (musllinux-${{ matrix.target }})
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, x86, aarch64, armv7]
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: v${{ needs.semantic-release.outputs.new_release_version }}
+          submodules: true
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          sccache: false
+          manylinux: musllinux_1_2
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: wheels-musllinux-${{ matrix.target }}
+          path: dist
+
+  build-wheels-windows:
+    name: Build wheels (windows-${{ matrix.platform.target }})
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - runner: windows-latest
+            target: x64
+          - runner: windows-latest
+            target: x86
+          - runner: windows-11-arm
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: v${{ needs.semantic-release.outputs.new_release_version }}
+          submodules: true
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: '3.13'
+          architecture: ${{ matrix.platform.target == 'aarch64' && 'arm64' || matrix.platform.target }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --find-interpreter
+          sccache: false
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: wheels-windows-${{ matrix.platform.target }}
+          path: dist
+
+  build-wheels-macos:
+    name: Build wheels (macos-${{ matrix.platform.target }})
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - runner: macos-15-intel
+            target: x86_64
+          - runner: macos-latest
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: v${{ needs.semantic-release.outputs.new_release_version }}
+          submodules: true
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --find-interpreter
+          sccache: false
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: wheels-macos-${{ matrix.platform.target }}
+          path: dist
+
+  build-sdist:
+    name: Build sdist
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: v${{ needs.semantic-release.outputs.new_release_version }}
+          submodules: true
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          command: sdist
+          args: --out dist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: wheels-sdist
+          path: dist
+
   build-native-libs:
     name: Build native lib (${{ matrix.classifier }})
-    needs: release
-    if: needs.release.outputs.new_release_published == 'true'
+    needs: semantic-release
+    if: needs.semantic-release.outputs.new_release_published == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -95,7 +239,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6.0.2
         with:
-          ref: v${{ needs.release.outputs.new_release_version }}
+          ref: v${{ needs.semantic-release.outputs.new_release_version }}
           submodules: true
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@v1
@@ -115,16 +259,43 @@ jobs:
           name: native-${{ matrix.classifier }}
           path: target/${{ matrix.target }}/release/${{ matrix.lib_name }}
 
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [semantic-release, build-wheels-linux, build-wheels-musllinux, build-wheels-windows, build-wheels-macos, build-sdist]
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+    environment:
+      name: pypi
+      url: https://pypi.org/p/bolivar
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v7.0.0
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v3.2.0
+        with:
+          subject-path: 'dist/*'
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
   publish-maven:
     name: Publish to Maven Central
-    needs: [release, build-native-libs]
-    if: needs.release.outputs.new_release_published == 'true'
+    needs: [semantic-release, build-native-libs]
+    if: needs.semantic-release.outputs.new_release_published == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
         with:
-          ref: v${{ needs.release.outputs.new_release_version }}
+          ref: v${{ needs.semantic-release.outputs.new_release_version }}
           submodules: true
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@v1
@@ -165,23 +336,3 @@ jobs:
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_SIGNING_PASSWORD }}
-
-  trigger-pypi:
-    name: Trigger PyPI publish
-    needs: release
-    if: needs.release.outputs.new_release_published == 'true'
-    runs-on: ubuntu-24.04
-    permissions:
-      actions: write
-    steps:
-      - name: Dispatch CI workflow
-        uses: actions/github-script@v8
-        with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'CI.yml',
-              ref: 'v${{ needs.release.outputs.new_release_version }}',
-              inputs: { ref: 'v${{ needs.release.outputs.new_release_version }}' },
-            });

@@ -508,9 +508,8 @@ fn extract_tables_core(
         .map_err(BolivarError::from)?,
     );
     let selected_indices = selected_page_indices(doc.as_ref(), &options);
-    let mut pages = extract_pages_stream_from_doc(Arc::clone(&doc), options)
-        .map_err(BolivarError::from)?
-        .into_iter();
+    let mut pages =
+        extract_pages_stream_from_doc(Arc::clone(&doc), options).map_err(BolivarError::from)?;
 
     let settings = TableSettings::default();
 
@@ -549,8 +548,8 @@ fn summary_from_layout_page(layout_page: LayoutPage) -> PageSummary {
 
 fn get_or_try_init_no_error_cache<T, E>(
     cell: &OnceLock<T>,
-    init: impl FnOnce() -> std::result::Result<T, E>,
-) -> std::result::Result<&T, E> {
+    init: impl FnOnce() -> Result<T, E>,
+) -> Result<&T, E> {
     if let Some(value) = cell.get() {
         return Ok(value);
     }
@@ -1057,10 +1056,10 @@ mod tests {
     #[test]
     fn runtime_cell_retries_after_init_failure() {
         let cell = OnceLock::new();
-        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        let attempts = AtomicUsize::new(0);
 
         let first = get_or_try_init_no_error_cache(&cell, || {
-            let call = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let call = attempts.fetch_add(1, Ordering::SeqCst);
             if call == 0 {
                 return Err(());
             }
@@ -1069,7 +1068,7 @@ mod tests {
         assert!(first.is_err());
 
         let second = get_or_try_init_no_error_cache(&cell, || {
-            let call = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let call = attempts.fetch_add(1, Ordering::SeqCst);
             if call == 0 {
                 return Err(());
             }
@@ -1078,7 +1077,7 @@ mod tests {
         .expect("second init should succeed");
 
         assert_eq!(*second, 7);
-        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
     }
 
     #[test]

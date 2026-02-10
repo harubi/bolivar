@@ -59,11 +59,11 @@ mavenPublishing {
     publishToMavenCentral()
     signAllPublications()
 
-    coordinates("sa.ingenious", "bolivar-uniffi-jvm", version.toString())
+    coordinates("sa.ingenious", "bolivar", version.toString())
 
     pom {
-        name.set("Bolivar UniFFI JVM Bindings")
-        description.set("JVM bindings for the Bolivar PDF library via UniFFI")
+        name.set("Bolivar JVM Bindings")
+        description.set("JVM bindings for the Bolivar PDF library")
         inceptionYear.set("2025")
         url.set("https://github.com/harubi/bolivar")
 

@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    tags-ignore:
+      - '*'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust-tests:
+    name: Rust tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: cargo test
+        run: cargo test --workspace
+
+  cross-platform-smoke:
+    name: Cross-platform smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64
+          - os: windows-latest
+            target: x64
+          - os: macos-latest
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          submodules: true
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            source .venv/Scripts/activate
+          else
+            source .venv/bin/activate
+          fi
+          pip install bolivar --find-links dist --force-reinstall
+          python - <<'PY'
+          from io import BytesIO
+          from pathlib import Path
+          from pdfminer.pdfdocument import PDFDocument
+          from pdfminer.pdfpage import PDFPage
+          from pdfminer.pdfparser import PDFParser
+
+          fixture = Path("crates/core/tests/fixtures/simple1.pdf")
+          document = PDFDocument(PDFParser(BytesIO(fixture.read_bytes())))
+          pages = list(PDFPage.create_pages(document))
+          assert pages, "expected at least one parsed page"
+          print("cross-platform smoke check passed")
+          PY

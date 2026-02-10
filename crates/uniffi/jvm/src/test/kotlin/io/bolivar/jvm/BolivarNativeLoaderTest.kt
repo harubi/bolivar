@@ -1,4 +1,4 @@
-package io.bolivar.jvm
+package sa.ingenious.bolivar
 
 import kotlin.test.Test
 import kotlin.test.assertContains

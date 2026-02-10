@@ -1,13 +1,13 @@
-package io.bolivar.jvm
+package sa.ingenious.bolivar
 
-import io.bolivar.LayoutPage
-import io.bolivar.PageSummary
-import io.bolivar.Table
+import sa.ingenious.bolivar.LayoutPage
+import sa.ingenious.bolivar.PageSummary
+import sa.ingenious.bolivar.Table
 
 object Bolivar {
     @JvmStatic
     fun extractTextFromBytes(pdfData: ByteArray, password: String?): String {
-        return io.bolivar.`extractTextFromBytes`(pdfData, password)
+        return sa.ingenious.bolivar.extractTextFromBytes(pdfData, password)
     }
 
     @JvmStatic
@@ -17,12 +17,12 @@ object Bolivar {
         pageNumbers: List<UInt>?,
         maxPages: UInt?,
     ): String {
-        return io.bolivar.`extractTextFromBytesWithPageRange`(pdfData, password, pageNumbers, maxPages)
+        return sa.ingenious.bolivar.extractTextFromBytesWithPageRange(pdfData, password, pageNumbers, maxPages)
     }
 
     @JvmStatic
     fun extractTextFromPath(path: String, password: String?): String {
-        return io.bolivar.`extractTextFromPath`(path, password)
+        return sa.ingenious.bolivar.extractTextFromPath(path, password)
     }
 
     @JvmStatic
@@ -32,12 +32,12 @@ object Bolivar {
         pageNumbers: List<UInt>?,
         maxPages: UInt?,
     ): String {
-        return io.bolivar.`extractTextFromPathWithPageRange`(path, password, pageNumbers, maxPages)
+        return sa.ingenious.bolivar.extractTextFromPathWithPageRange(path, password, pageNumbers, maxPages)
     }
 
     @JvmStatic
     fun extractPageSummariesFromBytes(pdfData: ByteArray, password: String?): List<PageSummary> {
-        return io.bolivar.`extractPageSummariesFromBytes`(pdfData, password)
+        return sa.ingenious.bolivar.extractPageSummariesFromBytes(pdfData, password)
     }
 
     @JvmStatic
@@ -47,12 +47,12 @@ object Bolivar {
         pageNumbers: List<UInt>?,
         maxPages: UInt?,
     ): List<PageSummary> {
-        return io.bolivar.`extractPageSummariesFromBytesWithPageRange`(pdfData, password, pageNumbers, maxPages)
+        return sa.ingenious.bolivar.extractPageSummariesFromBytesWithPageRange(pdfData, password, pageNumbers, maxPages)
     }
 
     @JvmStatic
     fun extractPageSummariesFromPath(path: String, password: String?): List<PageSummary> {
-        return io.bolivar.`extractPageSummariesFromPath`(path, password)
+        return sa.ingenious.bolivar.extractPageSummariesFromPath(path, password)
     }
 
     @JvmStatic
@@ -62,12 +62,12 @@ object Bolivar {
         pageNumbers: List<UInt>?,
         maxPages: UInt?,
     ): List<PageSummary> {
-        return io.bolivar.`extractPageSummariesFromPathWithPageRange`(path, password, pageNumbers, maxPages)
+        return sa.ingenious.bolivar.extractPageSummariesFromPathWithPageRange(path, password, pageNumbers, maxPages)
     }
 
     @JvmStatic
     fun extractLayoutPagesFromBytes(pdfData: ByteArray, password: String?): List<LayoutPage> {
-        return io.bolivar.`extractLayoutPagesFromBytes`(pdfData, password)
+        return sa.ingenious.bolivar.extractLayoutPagesFromBytes(pdfData, password)
     }
 
     @JvmStatic
@@ -77,12 +77,12 @@ object Bolivar {
         pageNumbers: List<UInt>?,
         maxPages: UInt?,
     ): List<LayoutPage> {
-        return io.bolivar.`extractLayoutPagesFromBytesWithPageRange`(pdfData, password, pageNumbers, maxPages)
+        return sa.ingenious.bolivar.extractLayoutPagesFromBytesWithPageRange(pdfData, password, pageNumbers, maxPages)
     }
 
     @JvmStatic
     fun extractLayoutPagesFromPath(path: String, password: String?): List<LayoutPage> {
-        return io.bolivar.`extractLayoutPagesFromPath`(path, password)
+        return sa.ingenious.bolivar.extractLayoutPagesFromPath(path, password)
     }
 
     @JvmStatic
@@ -92,12 +92,12 @@ object Bolivar {
         pageNumbers: List<UInt>?,
         maxPages: UInt?,
     ): List<LayoutPage> {
-        return io.bolivar.`extractLayoutPagesFromPathWithPageRange`(path, password, pageNumbers, maxPages)
+        return sa.ingenious.bolivar.extractLayoutPagesFromPathWithPageRange(path, password, pageNumbers, maxPages)
     }
 
     @JvmStatic
     fun extractTablesFromBytes(pdfData: ByteArray, password: String?): List<Table> {
-        return io.bolivar.`extractTablesFromBytes`(pdfData, password)
+        return sa.ingenious.bolivar.extractTablesFromBytes(pdfData, password)
     }
 
     @JvmStatic
@@ -107,12 +107,12 @@ object Bolivar {
         pageNumbers: List<UInt>?,
         maxPages: UInt?,
     ): List<Table> {
-        return io.bolivar.`extractTablesFromBytesWithPageRange`(pdfData, password, pageNumbers, maxPages)
+        return sa.ingenious.bolivar.extractTablesFromBytesWithPageRange(pdfData, password, pageNumbers, maxPages)
     }
 
     @JvmStatic
     fun extractTablesFromPath(path: String, password: String?): List<Table> {
-        return io.bolivar.`extractTablesFromPath`(path, password)
+        return sa.ingenious.bolivar.extractTablesFromPath(path, password)
     }
 
     @JvmStatic
@@ -122,6 +122,6 @@ object Bolivar {
         pageNumbers: List<UInt>?,
         maxPages: UInt?,
     ): List<Table> {
-        return io.bolivar.`extractTablesFromPathWithPageRange`(path, password, pageNumbers, maxPages)
+        return sa.ingenious.bolivar.extractTablesFromPathWithPageRange(path, password, pageNumbers, maxPages)
     }
 }

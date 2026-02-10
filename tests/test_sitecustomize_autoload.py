@@ -53,7 +53,9 @@ def test_sitecustomize_autoload_patches_pdfplumber():
 def test_autoload_prefers_bolivar_with_reference_path():
     env = os.environ.copy()
     env["ROOT"] = ROOT
-    env["PYTHONPATH"] = _join_pythonpath(PYTHON_SHIM, ROOT_PATH / "references" / "pdfminer.six")
+    env["PYTHONPATH"] = _join_pythonpath(
+        PYTHON_SHIM, ROOT_PATH / "references" / "pdfminer.six"
+    )
     code = (
         "import os, sys; "
         "sys.path.insert(0, os.path.join(os.environ['ROOT'], 'references', 'pdfminer.six')); "

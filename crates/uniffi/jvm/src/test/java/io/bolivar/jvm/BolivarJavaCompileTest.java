@@ -1,4 +1,4 @@
-package io.bolivar.jvm;
+package sa.ingenious.bolivar;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

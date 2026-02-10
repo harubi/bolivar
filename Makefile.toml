@@ -79,12 +79,11 @@ fi
 mkdir -p crates/uniffi/kotlin
 find crates/uniffi/kotlin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
-cargo run -p bolivar-uniffi --bin uniffi-bindgen -- \
+cargo run --release -p bolivar-uniffi --bin uniffi-bindgen -- \
   generate \
   --library "$lib_path" \
   --language kotlin \
-  --out-dir crates/uniffi/kotlin \
-  --no-format
+  --out-dir crates/uniffi/kotlin
 '''
 dependencies = ["build-uniffi"]
 
