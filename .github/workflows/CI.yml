@@ -8,8 +8,10 @@ name: CI
 on:
   push:
     branches:
-      - main
       - master
+      - main
+    tags-ignore:
+      - '*'
   pull_request:
   workflow_dispatch:
     inputs:
@@ -22,7 +24,76 @@ permissions:
   contents: read
 
 jobs:
+  rust-tests:
+    name: Rust tests
+    if: github.event_name != 'workflow_dispatch' || !startsWith(inputs.ref || github.ref_name, 'v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          submodules: true
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - name: cargo test
+        run: cargo test --workspace
+
+  cross-platform-smoke:
+    name: Cross-platform smoke (${{ matrix.os }})
+    if: github.event_name != 'workflow_dispatch' || !startsWith(inputs.ref || github.ref_name, 'v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64
+          - os: windows-latest
+            target: x64
+          - os: macos-latest
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          submodules: true
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: 3.13
+          cache: 'pip'
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            source .venv/Scripts/activate
+          else
+            source .venv/bin/activate
+          fi
+          pip install bolivar --find-links dist --force-reinstall
+          python - <<'PY'
+          from io import BytesIO
+          from pathlib import Path
+          from pdfminer.pdfdocument import PDFDocument
+          from pdfminer.pdfpage import PDFPage
+          from pdfminer.pdfparser import PDFParser
+
+          fixture = Path("crates/core/tests/fixtures/simple1.pdf")
+          document = PDFDocument(PDFParser(BytesIO(fixture.read_bytes())))
+          pages = list(PDFPage.create_pages(document))
+          assert pages, "expected at least one parsed page"
+          print("cross-platform smoke check passed")
+          PY
+
   linux:
+    if: github.event_name == 'workflow_dispatch' && startsWith(inputs.ref || github.ref_name, 'v')
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -40,23 +111,23 @@ jobs:
           - runner: ubuntu-24.04
             target: ppc64le
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           ref: ${{ inputs.ref || github.ref }}
           submodules: true
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6.2.0
         with:
           python-version: 3.x
           cache: 'pip'
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.50.0
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
       - name: Upload wheels
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: wheels-linux-${{ matrix.platform.target }}
           path: dist
@@ -72,7 +143,7 @@ jobs:
           pytest tests/
       - name: pytest
         if: ${{ !startsWith(matrix.platform.target, 'x86') && matrix.platform.target != 'ppc64' }}
-        uses: uraimo/run-on-arch-action@v3
+        uses: uraimo/run-on-arch-action@v3.0.1
         with:
           arch: ${{ matrix.platform.target }}
           distro: ubuntu22.04
@@ -94,6 +165,7 @@ jobs:
             pytest tests/
 
   musllinux:
+    if: github.event_name == 'workflow_dispatch' && startsWith(inputs.ref || github.ref_name, 'v')
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -107,23 +179,23 @@ jobs:
           - runner: ubuntu-24.04
             target: armv7
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           ref: ${{ inputs.ref || github.ref }}
           submodules: true
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6.2.0
         with:
           python-version: 3.x
           cache: 'pip'
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.50.0
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
       - name: Upload wheels
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
           path: dist
@@ -150,7 +222,7 @@ jobs:
             pytest tests/
       - name: pytest
         if: ${{ !startsWith(matrix.platform.target, 'x86') }}
-        uses: uraimo/run-on-arch-action@v3
+        uses: uraimo/run-on-arch-action@v3.0.1
         with:
           arch: ${{ matrix.platform.target }}
           distro: alpine_latest
@@ -173,6 +245,7 @@ jobs:
             pytest tests/
 
   windows:
+    if: github.event_name == 'workflow_dispatch' && startsWith(inputs.ref || github.ref_name, 'v')
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -187,23 +260,23 @@ jobs:
             target: aarch64
             python_arch: arm64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           ref: ${{ inputs.ref || github.ref }}
           submodules: true
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6.2.0
         with:
           python-version: 3.13
           architecture: ${{ matrix.platform.python_arch }}
           cache: 'pip'
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.50.0
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: wheels-windows-${{ matrix.platform.target }}
           path: dist
@@ -218,6 +291,7 @@ jobs:
           pytest tests/
 
   macos:
+    if: github.event_name == 'workflow_dispatch' && startsWith(inputs.ref || github.ref_name, 'v')
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -227,22 +301,22 @@ jobs:
           - runner: macos-latest
             target: aarch64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           ref: ${{ inputs.ref || github.ref }}
           submodules: true
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6.2.0
         with:
           python-version: 3.x
           cache: 'pip'
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.50.0
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: wheels-macos-${{ matrix.platform.target }}
           path: dist
@@ -256,19 +330,20 @@ jobs:
           pytest tests/
 
   sdist:
+    if: github.event_name == 'workflow_dispatch' && startsWith(inputs.ref || github.ref_name, 'v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           ref: ${{ inputs.ref || github.ref }}
           submodules: true
       - name: Build sdist
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@v1.50.0
         with:
           command: sdist
           args: --out dist
       - name: Upload sdist
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: wheels-sdist
           path: dist
@@ -276,20 +351,20 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && startsWith(inputs.ref, 'v')
+    if: github.event_name == 'workflow_dispatch' && startsWith(inputs.ref || github.ref_name, 'v')
     needs: [linux, musllinux, windows, macos, sdist]
     permissions:
       id-token: write
       contents: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v7.0.0
       - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v3.2.0
         with:
           subject-path: 'wheels-*/*'
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v7.3.0
       - name: Publish to PyPI
         run: uv publish 'wheels-*/*'
         env:
