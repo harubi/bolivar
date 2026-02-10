@@ -4,7 +4,7 @@ members = ["crates/*"]
 default-members = ["crates/core", "crates/cli"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/harubi/bolivar"
@@ -14,7 +14,7 @@ categories = ["parser-implementations", "text-processing"]
 
 [workspace.dependencies]
 # Internal crates
-bolivar-core = { path = "crates/core", version = "1.0.0" }
+bolivar-core = { path = "crates/core", version = "1.1.0" }
 
 # Core dependencies
 aes = "0.8"

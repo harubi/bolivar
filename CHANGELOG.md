@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/harubi/bolivar/compare/v1.0.0...v1.1.0) (2026-02-10)
+
+### Features
+
+* **release:** use downloaded native lib for uniffi ([ecbcc4a](https://github.com/harubi/bolivar/commit/ecbcc4ae34ad0073cad4c90718398ce3f8dde407))
+
 ## 1.0.0 (2026-02-10)
 
 ### Features
