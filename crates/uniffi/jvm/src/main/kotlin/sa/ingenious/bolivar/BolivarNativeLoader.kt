@@ -41,8 +41,9 @@ object BolivarNativeLoader {
                 return override
             }
 
-            val stream = BolivarNativeLoader::class.java.getResourceAsStream(resourcePath)
-                ?: throw IllegalStateException("Missing native resource at $resourcePath")
+            val stream =
+                BolivarNativeLoader::class.java.getResourceAsStream(resourcePath)
+                    ?: throw IllegalStateException("Missing native resource at $resourcePath")
 
             stream.use {
                 val fileName = resourcePath.substringAfterLast('/')
