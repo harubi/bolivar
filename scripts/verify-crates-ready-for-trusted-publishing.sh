@@ -1,33 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REGISTRY_API_BASE="${REGISTRY_API_BASE:-https://crates.io/api/v1}"
 CRATES=("bolivar-core" "bolivar-cli")
 MISSING=()
 
 check_crate_exists() {
   local crate="$1"
-  local status
+  local output
 
-  status="$(
-    curl --silent --show-error --location \
-      --output /dev/null \
-      --write-out '%{http_code}' \
-      "${REGISTRY_API_BASE}/crates/${crate}"
-  )"
+  # Use cargo's official crates.io client path instead of direct HTTP probing.
+  if output="$(cargo owner --list "${crate}" 2>&1)"; then
+    echo "Found crate on crates.io: ${crate}"
+    return
+  fi
 
-  case "$status" in
-    200)
-      echo "Found crate on crates.io: ${crate}"
-      ;;
-    404)
+  if grep -qE "status 404 Not Found|does not exist" <<<"${output}"; then
+      echo "Crate not found on crates.io: ${crate}"
       MISSING+=("$crate")
-      ;;
-    *)
-      echo "Failed to verify crate '${crate}' (HTTP ${status}) via ${REGISTRY_API_BASE}" >&2
-      exit 1
-      ;;
-  esac
+    return
+  fi
+
+  echo "Failed to verify crate '${crate}' via cargo owner --list" >&2
+  echo "${output}" >&2
+  exit 1
 }
 
 for crate in "${CRATES[@]}"; do
@@ -40,4 +35,3 @@ if ((${#MISSING[@]} > 0)); then
   echo "Publish each missing crate manually once (e.g. with a crates.io API token), then re-run release." >&2
   exit 1
 fi
-
