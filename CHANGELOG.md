@@ -1,3 +1,14 @@
+## [1.3.0](https://github.com/harubi/bolivar/compare/v1.2.0...v1.3.0) (2026-02-10)
+
+### Features
+
+* **uniffi:** redesign kotlin api ([6232220](https://github.com/harubi/bolivar/commit/6232220eec49d88aefba07ec8e9eaad8143d0d09))
+
+### Bug Fixes
+
+* enable cache in workflows ([11b3d4a](https://github.com/harubi/bolivar/commit/11b3d4a5e997159d23b4d3c2b4a82adbe083227a))
+* update readme ([1c95580](https://github.com/harubi/bolivar/commit/1c9558088431a27b84de8ca1117190ea7251738e))
+
 ## [1.2.0](https://github.com/harubi/bolivar/compare/v1.1.0...v1.2.0) (2026-02-10)
 
 ### Features
