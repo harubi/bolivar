@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/harubi/bolivar/compare/v1.1.0...v1.2.0) (2026-02-10)
+
+### Features
+
+* **release:** restructure gh actions ([4289ef7](https://github.com/harubi/bolivar/commit/4289ef7320ced956e273fe8bfc542cd70905dbcd))
+
 ## [1.1.0](https://github.com/harubi/bolivar/compare/v1.0.0...v1.1.0) (2026-02-10)
 
 ### Features
