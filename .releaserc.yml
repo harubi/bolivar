@@ -14,7 +14,8 @@ plugins:
     - changelogFile: CHANGELOG.md
 
   - - "@semantic-release/exec"
-    - prepareCmd: ./scripts/bump-version.sh ${nextRelease.version}
+    - verifyConditionsCmd: ./scripts/verify-crates-ready-for-trusted-publishing.sh
+      prepareCmd: ./scripts/bump-version.sh ${nextRelease.version}
       publishCmd: ./scripts/publish-crates.sh
       successCmd: |
         echo "new_release_published=true" >> $GITHUB_OUTPUT

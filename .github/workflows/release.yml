@@ -1,8 +1,13 @@
 name: Release
 
 on:
-  push:
-    branches: [master]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or commit to release from'
+        required: false
+        default: master
+        type: string
 
 concurrency:
   group: release
@@ -22,19 +27,22 @@ jobs:
       new_release_version: ${{ steps.semantic.outputs.new_release_version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
         with:
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
           persist-credentials: true
           submodules: true
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: nightly
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v6.2.0
         with:
           node-version: 22
       - name: Authenticate with crates.io
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@v1.0.3
         id: crates-auth
       - name: Install semantic-release
         run: npm ci
@@ -81,13 +89,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
         with:
           ref: v${{ needs.release.outputs.new_release_version }}
           submodules: true
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@v1
         with:
+          toolchain: nightly
           targets: ${{ matrix.target }}
       - name: Install cross
         if: matrix.cross
@@ -95,7 +104,7 @@ jobs:
       - name: Build UniFFI cdylib
         run: ${{ matrix.cross && 'cross' || 'cargo' }} build -p bolivar-uniffi --release --target ${{ matrix.target }}
       - name: Upload native library
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: native-${{ matrix.classifier }}
           path: target/${{ matrix.target }}/release/${{ matrix.lib_name }}
@@ -107,21 +116,23 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
         with:
           ref: v${{ needs.release.outputs.new_release_version }}
           submodules: true
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: nightly
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.2.0
         with:
           distribution: temurin
           java-version: 21
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v5.0.1
       - name: Download native libraries
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7.0.0
         with:
           pattern: native-*
           path: crates/uniffi/jvm/natives/
@@ -166,4 +177,5 @@ jobs:
               repo: context.repo.repo,
               workflow_id: 'CI.yml',
               ref: 'v${{ needs.release.outputs.new_release_version }}',
+              inputs: { ref: 'v${{ needs.release.outputs.new_release_version }}' },
             });
