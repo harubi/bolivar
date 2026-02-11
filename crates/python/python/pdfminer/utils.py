@@ -4,9 +4,10 @@
 
 import io
 import pathlib
-from typing import Any, BinaryIO, TextIO, Tuple, Union
+from types import TracebackType
+from typing import BinaryIO, Protocol, TextIO
 
-from bolivar._bolivar import (
+from bolivar._native_api import (
     INF,
     MATRIX_IDENTITY,
     PDFDocEncoding,
@@ -26,33 +27,59 @@ from bolivar._bolivar import (
 from .pdfexceptions import PDFTypeError
 
 # Type aliases
-Point = Tuple[float, float]
-Rect = Tuple[float, float, float, float]
-Matrix = Tuple[float, float, float, float, float, float]
+Point = tuple[float, float]
+Rect = tuple[float, float, float, float]
+Matrix = tuple[float, float, float, float, float, float]
 
-FileOrName = Union[pathlib.PurePath, str, io.IOBase]
-AnyIO = Union[TextIO, BinaryIO]
+FileOrName = pathlib.PurePath | str | io.IOBase
+AnyIO = TextIO | BinaryIO
+
+
+class _ClosableIO(Protocol):
+    def close(self) -> None:
+        """Close stream."""
 
 
 class open_filename:
     """Context manager that opens filenames and leaves file objects untouched."""
 
-    def __init__(self, filename: FileOrName, *args: Any, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        filename: FileOrName,
+        mode: str = "rb",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> None:
+        self.file_handler: _ClosableIO
+        self.closing = False
         if isinstance(filename, pathlib.PurePath):
             filename = str(filename)
         if isinstance(filename, str):
-            self.file_handler = open(filename, *args, **kwargs)  # noqa: SIM115
+            self.file_handler = open(  # noqa: SIM115
+                filename,
+                mode=mode,
+                buffering=buffering,
+                encoding=encoding,
+                errors=errors,
+                newline=newline,
+            )
             self.closing = True
         elif isinstance(filename, io.IOBase):
             self.file_handler = filename
-            self.closing = False
         else:
             raise PDFTypeError(f"Unsupported input type: {type(filename)}")
 
-    def __enter__(self) -> io.IOBase:
+    def __enter__(self) -> _ClosableIO:
         return self.file_handler
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if self.closing:
             self.file_handler.close()
 
@@ -60,6 +87,7 @@ class open_filename:
 __all__ = [
     "INF",
     "MATRIX_IDENTITY",
+    "AnyIO",
     "Matrix",
     "PDFDocEncoding",
     "Plane",
@@ -67,7 +95,6 @@ __all__ = [
     "Rect",
     "apply_matrix_pt",
     "apply_matrix_rect",
-    "AnyIO",
     "decode_text",
     "format_int_alpha",
     "format_int_roman",

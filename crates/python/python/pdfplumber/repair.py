@@ -2,15 +2,15 @@ import pathlib
 import shutil
 import subprocess
 from io import BufferedReader, BytesIO
-from typing import Literal, Optional, Union
+from typing import Literal
 
 T_repair_setting = Literal["default", "prepress", "printer", "ebook", "screen"]
 
 
 def _repair(
-    path_or_fp: Union[str, pathlib.Path, BufferedReader, BytesIO],
-    password: Optional[str] = None,
-    gs_path: Optional[Union[str, pathlib.Path]] = None,
+    path_or_fp: str | pathlib.Path | BufferedReader | BytesIO,
+    password: str | None = None,
+    gs_path: str | pathlib.Path | None = None,
     setting: T_repair_setting = "default",
 ) -> BytesIO:
     executable = (
@@ -60,12 +60,12 @@ def _repair(
 
 
 def repair(
-    path_or_fp: Union[str, pathlib.Path, BufferedReader, BytesIO],
-    outfile: Optional[Union[str, pathlib.Path]] = None,
-    password: Optional[str] = None,
-    gs_path: Optional[Union[str, pathlib.Path]] = None,
+    path_or_fp: str | pathlib.Path | BufferedReader | BytesIO,
+    outfile: str | pathlib.Path | None = None,
+    password: str | None = None,
+    gs_path: str | pathlib.Path | None = None,
     setting: T_repair_setting = "default",
-) -> Optional[BytesIO]:
+) -> BytesIO | None:
     repaired = _repair(path_or_fp, password, gs_path=gs_path, setting=setting)
     if outfile:
         with open(outfile, "wb") as f:

@@ -1,13 +1,13 @@
 # pdfminer.pdfdevice compatibility shim
 
-from bolivar._bolivar import TagExtractor
+from bolivar._native_api import TagExtractor
 
 
 class PDFDevice:
-    def __init__(self, rsrcmgr=None):
+    def __init__(self, rsrcmgr: object | None = None) -> None:
         self.rsrcmgr = rsrcmgr
 
-    def close(self):
+    def close(self) -> None:
         return None
 
 

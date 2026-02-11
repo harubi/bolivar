@@ -36,6 +36,15 @@ command = "uv"
 args = ["run", "pytest", "tests/", "-v", "--cov=bolivar", "--cov-report=term-missing"]
 dependencies = ["build-py"]
 
+[tasks.typecheck-py]
+category = "Python"
+description = "Run Python type/lint/format checks (ty + ruff)"
+script = '''
+uv run --group typecheck ty check crates/python/python --error all --error-on-warning
+uv run --group typecheck ruff check crates/python/python
+uv run --group typecheck ruff format --check crates/python/python
+'''
+
 # ============================================================================
 # Rust
 # ============================================================================
@@ -173,7 +182,7 @@ dependencies = ["test", "test-py"]
 [tasks.lint]
 category = "Workflow"
 description = "Run all lints (format check + clippy)"
-dependencies = ["fmt-check", "clippy"]
+dependencies = ["fmt-check", "clippy", "typecheck-py"]
 
 [tasks.dev]
 category = "Workflow"
@@ -183,7 +192,7 @@ dependencies = ["build", "test", "clippy"]
 [tasks.ci]
 category = "Workflow"
 description = "Full CI pipeline (format + lint + all tests)"
-dependencies = ["fmt-check", "clippy", "test", "test-py"]
+dependencies = ["fmt-check", "clippy", "typecheck-py", "test", "test-py"]
 
 # ============================================================================
 # Cleanup

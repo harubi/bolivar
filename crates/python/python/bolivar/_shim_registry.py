@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import sys
+from types import ModuleType
 
 _SHIM_PACKAGES = ("pdfminer", "pdfplumber")
 
@@ -19,7 +20,7 @@ def _purge_modules(prefixes: tuple[str, ...]) -> None:
                 break
 
 
-def _load_package(name: str, base: str):
+def _load_package(name: str, base: str) -> ModuleType:
     pkg_dir = os.path.join(base, name)
     init_py = os.path.join(pkg_dir, "__init__.py")
     spec = importlib.util.spec_from_file_location(
@@ -51,7 +52,7 @@ def apply_pdfplumber_patch() -> None:
     bolivar_patch.patch_pdfplumber()
 
 
-def install(base: str | None = None):
+def install(base: str | None = None) -> dict[str, ModuleType]:
     base = _resolve_base(base)
     _purge_modules(_SHIM_PACKAGES)
     loaded = {}

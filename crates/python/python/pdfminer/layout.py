@@ -3,9 +3,10 @@
 # Layout analysis types backed by bolivar's PyO3 classes.
 
 import abc
-from typing import Iterable
+from collections.abc import Generator, Iterable, Iterator
+from typing import Protocol, TypeGuard
 
-from bolivar._bolivar import (
+from bolivar._native_api import (
     INF,
     LAParams,
     LTAnno,
@@ -14,11 +15,21 @@ from bolivar._bolivar import (
     LTFigure,
     LTImage,
     LTLine,
-    LTPage as _RustLTPage,
     LTRect,
+)
+from bolivar._native_api import (
+    LTPage as _RustLTPage,
+)
+from bolivar._native_api import (
     LTTextBoxHorizontal as _RustLTTextBoxHorizontal,
+)
+from bolivar._native_api import (
     LTTextBoxVertical as _RustLTTextBoxVertical,
+)
+from bolivar._native_api import (
     LTTextLineHorizontal as _RustLTTextLineHorizontal,
+)
+from bolivar._native_api import (
     LTTextLineVertical as _RustLTTextLineVertical,
 )
 
@@ -29,7 +40,7 @@ class PDFGraphicState:
     pdfplumber accesses obj.graphicstate.scolor/.ncolor for colors.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.linewidth = 0
         self.linecap = None
         self.linejoin = None
@@ -44,17 +55,41 @@ class PDFGraphicState:
         self.ncs = None  # non-stroking colorspace
 
 
-class LTItem(metaclass=abc.ABCMeta):
+class LTItem(metaclass=abc.ABCMeta):  # noqa: B024
     """Marker base class for layout items."""
+
+
+class _HasBBox(Protocol):
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    width: float
+    height: float
+
+
+class _PlaneLike(Protocol):
+    def find(self, bbox: tuple[float, float, float, float]) -> Iterable[object]:
+        """Return objects in bbox."""
+
+
+class _LAParamsLike(Protocol):
+    line_margin: float
+
+
+def _is_bbox_obj(obj: object) -> TypeGuard[_HasBBox]:
+    return all(
+        hasattr(obj, name) for name in ("x0", "y0", "x1", "y1", "width", "height")
+    )
 
 
 class LTComponent(LTItem):
     """Object with a bounding box."""
 
-    def __init__(self, bbox):
+    def __init__(self, bbox: tuple[float, float, float, float]) -> None:
         self.set_bbox(bbox)
 
-    def set_bbox(self, bbox):
+    def set_bbox(self, bbox: tuple[float, float, float, float]) -> None:
         x0, y0, x1, y1 = bbox
         self.x0 = x0
         self.y0 = y0
@@ -64,49 +99,49 @@ class LTComponent(LTItem):
         self.height = y1 - y0
         self.bbox = (x0, y0, x1, y1)
 
-    def is_empty(self):
+    def is_empty(self) -> bool:
         return self.width <= 0 or self.height <= 0
 
-    def is_hoverlap(self, obj):
+    def is_hoverlap(self, obj: _HasBBox) -> bool:
         return obj.x0 <= self.x1 and self.x0 <= obj.x1
 
-    def hdistance(self, obj):
+    def hdistance(self, obj: _HasBBox) -> float:
         if self.is_hoverlap(obj):
             return 0
         return min(abs(self.x0 - obj.x1), abs(self.x1 - obj.x0))
 
-    def hoverlap(self, obj):
+    def hoverlap(self, obj: _HasBBox) -> float:
         return max(0, min(self.x1, obj.x1) - max(self.x0, obj.x0))
 
-    def is_voverlap(self, obj):
+    def is_voverlap(self, obj: _HasBBox) -> bool:
         return obj.y0 <= self.y1 and self.y0 <= obj.y1
 
-    def vdistance(self, obj):
+    def vdistance(self, obj: _HasBBox) -> float:
         if self.is_voverlap(obj):
             return 0
         return min(abs(self.y0 - obj.y1), abs(self.y1 - obj.y0))
 
-    def voverlap(self, obj):
+    def voverlap(self, obj: _HasBBox) -> float:
         return max(0, min(self.y1, obj.y1) - max(self.y0, obj.y0))
 
 
 class LTContainer(LTComponent):
     """Object that can be extended and analyzed."""
 
-    def __init__(self, bbox):
+    def __init__(self, bbox: tuple[float, float, float, float]) -> None:
         super().__init__(bbox)
-        self._objs = []
+        self._objs: list[object] = []
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[object]:
         return iter(self._objs)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._objs)
 
-    def add(self, obj):
+    def add(self, obj: object) -> None:
         self._objs.append(obj)
 
-    def extend(self, objs):
+    def extend(self, objs: Iterable[object]) -> None:
         for obj in objs:
             self.add(obj)
 
@@ -114,11 +149,13 @@ class LTContainer(LTComponent):
 class LTTextContainer(LTContainer):
     """Base class for text containers with expandable bbox."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__((INF, INF, -INF, -INF))
 
-    def add(self, obj):
+    def add(self, obj: object) -> None:
         super().add(obj)
+        if not _is_bbox_obj(obj):
+            return
         self.set_bbox(
             (
                 min(self.x0, obj.x0),
@@ -128,25 +165,32 @@ class LTTextContainer(LTContainer):
             )
         )
 
-    def get_text(self):
-        return "".join(obj.get_text() for obj in self if hasattr(obj, "get_text"))
+    def get_text(self) -> str:
+        parts: list[str] = []
+        for obj in self:
+            getter = getattr(obj, "get_text", None)
+            if callable(getter):
+                parts.append(str(getter()))
+        return "".join(parts)
 
 
 class LTLayoutContainer(LTContainer):
     """Layout container that can group text lines into text boxes."""
 
-    def __init__(self, bbox):
+    def __init__(self, bbox: tuple[float, float, float, float]) -> None:
         super().__init__(bbox)
         self.groups = None
 
-    def group_textlines(self, laparams, lines):
+    def group_textlines(
+        self, laparams: _LAParamsLike, lines: Iterable["LTTextLine"]
+    ) -> Generator["LTTextBox", None, None]:
         from .utils import Plane
 
         plane = Plane(self.bbox)
         lines = list(lines)
         plane.extend(lines)
 
-        boxes = {}
+        boxes: dict[object, LTTextBox] = {}
         for line in lines:
             neighbors = line.find_neighbors(plane, laparams.line_margin)
             members = [line]
@@ -177,28 +221,28 @@ class LTLayoutContainer(LTContainer):
 class LTTextLine(LTTextContainer):
     """Base class for text lines."""
 
-    def __init__(self, word_margin):
+    def __init__(self, word_margin: float) -> None:
         super().__init__()
         self.word_margin = word_margin
 
-    def find_neighbors(self, plane, ratio):
+    def find_neighbors(self, plane: _PlaneLike, ratio: float) -> list["LTTextLine"]:
         raise NotImplementedError
 
 
 class LTTextBox(LTTextContainer):
     """Base class for text boxes."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.index = -1
 
 
 class LTTextLineHorizontal(LTTextLine):
-    def __init__(self, word_margin):
+    def __init__(self, word_margin: float) -> None:
         super().__init__(word_margin)
         self._x1 = INF
 
-    def find_neighbors(self, plane, ratio):
+    def find_neighbors(self, plane: _PlaneLike, ratio: float) -> list["LTTextLine"]:
         d = ratio * self.height
         objs = plane.find((self.x0, self.y0 - d, self.x1, self.y1 + d))
         return [
@@ -213,25 +257,25 @@ class LTTextLineHorizontal(LTTextLine):
             )
         ]
 
-    def _is_left_aligned_with(self, other, tolerance=0):
+    def _is_left_aligned_with(self, other: _HasBBox, tolerance: float = 0) -> bool:
         return abs(other.x0 - self.x0) <= tolerance
 
-    def _is_right_aligned_with(self, other, tolerance=0):
+    def _is_right_aligned_with(self, other: _HasBBox, tolerance: float = 0) -> bool:
         return abs(other.x1 - self.x1) <= tolerance
 
-    def _is_centrally_aligned_with(self, other, tolerance=0):
+    def _is_centrally_aligned_with(self, other: _HasBBox, tolerance: float = 0) -> bool:
         return abs((other.x0 + other.x1) / 2 - (self.x0 + self.x1) / 2) <= tolerance
 
-    def _is_same_height_as(self, other, tolerance=0):
+    def _is_same_height_as(self, other: _HasBBox, tolerance: float = 0) -> bool:
         return abs(other.height - self.height) <= tolerance
 
 
 class LTTextLineVertical(LTTextLine):
-    def __init__(self, word_margin):
+    def __init__(self, word_margin: float) -> None:
         super().__init__(word_margin)
         self._y0 = -INF
 
-    def find_neighbors(self, plane, ratio):
+    def find_neighbors(self, plane: _PlaneLike, ratio: float) -> list["LTTextLine"]:
         d = ratio * self.width
         objs = plane.find((self.x0 - d, self.y0, self.x1 + d, self.y1))
         return [
@@ -246,16 +290,16 @@ class LTTextLineVertical(LTTextLine):
             )
         ]
 
-    def _is_lower_aligned_with(self, other, tolerance=0):
+    def _is_lower_aligned_with(self, other: _HasBBox, tolerance: float = 0) -> bool:
         return abs(other.y0 - self.y0) <= tolerance
 
-    def _is_upper_aligned_with(self, other, tolerance=0):
+    def _is_upper_aligned_with(self, other: _HasBBox, tolerance: float = 0) -> bool:
         return abs(other.y1 - self.y1) <= tolerance
 
-    def _is_centrally_aligned_with(self, other, tolerance=0):
+    def _is_centrally_aligned_with(self, other: _HasBBox, tolerance: float = 0) -> bool:
         return abs((other.y0 + other.y1) / 2 - (self.y0 + self.y1) / 2) <= tolerance
 
-    def _is_same_width_as(self, other, tolerance=0):
+    def _is_same_width_as(self, other: _HasBBox, tolerance: float = 0) -> bool:
         return abs(other.width - self.width) <= tolerance
 
 
@@ -267,7 +311,7 @@ class LTTextBoxVertical(LTTextBox):
     pass
 
 
-def _wrap_rust_item(item):
+def _wrap_rust_item(item: object) -> object:
     return item
 
 
@@ -279,7 +323,7 @@ _PAGE_SKIP_TYPES = (
 )
 
 
-def _iter_page_items(item):
+def _iter_page_items(item: object) -> Generator[object, None, None]:
     wrapped = _wrap_rust_item(item)
     if not isinstance(wrapped, _PAGE_SKIP_TYPES):
         yield wrapped
@@ -288,7 +332,7 @@ def _iter_page_items(item):
             yield from _iter_page_items(child)
 
 
-def _uniq(objs: Iterable):
+def _uniq(objs: Iterable[object]) -> Generator[object, None, None]:
     seen = set()
     for obj in objs:
         marker = id(obj)
@@ -299,7 +343,7 @@ def _uniq(objs: Iterable):
 
 
 class LTPage(LTLayoutContainer):
-    def __init__(self, page):
+    def __init__(self, page: object) -> None:
         if isinstance(page, LTPage):
             page = page._page
         if not isinstance(page, _RustLTPage):
@@ -311,38 +355,38 @@ class LTPage(LTLayoutContainer):
         self.groups = None
 
     @property
-    def x0(self):
+    def x0(self) -> float:
         return self.bbox[0]
 
     @property
-    def y0(self):
+    def y0(self) -> float:
         return self.bbox[1]
 
     @property
-    def x1(self):
+    def x1(self) -> float:
         return self.bbox[2]
 
     @property
-    def y1(self):
+    def y1(self) -> float:
         return self.bbox[3]
 
     @property
-    def width(self):
+    def width(self) -> float:
         return self.x1 - self.x0
 
     @property
-    def height(self):
+    def height(self) -> float:
         return self.y1 - self.y0
 
     @property
-    def _objs(self):
+    def _objs(self) -> list[object]:
         return [_wrap_rust_item(obj) for obj in self._page]
 
-    def __iter__(self):
+    def __iter__(self) -> Generator[object, None, None]:
         for item in self._page:
             yield from _iter_page_items(item)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self._page)
 
 
@@ -423,14 +467,14 @@ LTTextBoxHorizontal.register(_RustLTTextBoxHorizontal)
 LTTextBoxVertical.register(_RustLTTextBoxVertical)
 
 
-def _container_objs(self):
+def _container_objs(self: Iterable[object]) -> list[object]:
     return list(self)
 
 
 for _cls in _CONTAINER_TYPES:
     if _cls is LTPage:
         continue
-    setattr(_cls, "_objs", property(_container_objs))
+    _cls._objs = property(_container_objs)
 
 
 __all__ = [

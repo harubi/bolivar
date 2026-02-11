@@ -1,24 +1,96 @@
-import logging
-import sys
 import importlib.abc
 import importlib.machinery
-import importlib.util
+import logging
+import sys
 import threading
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Sequence
+from io import BytesIO
+from operator import index as to_index
+from os import PathLike
+from types import ModuleType, TracebackType
+from typing import Protocol, SupportsIndex, TypeAlias, cast, overload
+
+_Number: TypeAlias = int | float
+_PageBox: TypeAlias = tuple[_Number, ...]
+_PageGeometry: TypeAlias = tuple[_PageBox, _PageBox, float, bool]
+_Table: TypeAlias = list[list[object]]
+_Tables: TypeAlias = list[_Table]
+_StreamItem: TypeAlias = tuple[int, _Tables]
+_StreamFactory: TypeAlias = Callable[[], Iterable[_StreamItem]]
+_SliceIndex: TypeAlias = slice
+_OutFile: TypeAlias = str | bytes | int | PathLike[str] | PathLike[bytes]
 
 
-def _apply_patch(module) -> bool:
-    page_mod = getattr(module, "page", None)
+class _DocLike(Protocol):
+    def page_mediaboxes(self) -> Sequence[Sequence[_Number]]: ...
+
+    def page_count(self) -> int: ...
+
+    def get_page(self, page_index: int) -> object: ...
+
+
+class _PdfLike(Protocol):
+    doc: _DocLike | None
+    pages_to_parse: Iterable[int] | None
+
+
+class _PageLike(Protocol):
+    bbox: Sequence[_Number]
+    mediabox: Sequence[_Number]
+    initial_doctop: _Number
+    page_obj: object
+    page_number: int
+    objects: object
+    pdf: object
+
+
+class _HasPageNumber(Protocol):
+    page_number: int
+
+
+class _Closable(Protocol):
+    def close(self) -> None: ...
+
+
+class _StreamLike(Protocol):
+    def close(self) -> None: ...
+
+
+class _PdfClosable(Protocol):
+    stream_is_external: bool
+    stream: _StreamLike
+
+    def flush_cache(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
+def _set_attr(target: object, name: str, value: object) -> None:
+    setattr(target, name, value)
+
+
+def _mark_patched(func: Callable[..., object]) -> None:
+    _set_attr(func, "_bolivar_patched", True)
+
+
+def _module_from_sys(name: str) -> ModuleType | None:
+    module = sys.modules.get(name)
+    return module if isinstance(module, ModuleType) else None
+
+
+def _apply_patch(module: ModuleType) -> bool:
+    page_mod: object | None = getattr(module, "page", None)
     if page_mod is None and getattr(module, "__name__", "") == "pdfplumber.page":
         page_mod = module
-        pkg = sys.modules.get("pdfplumber")
+        pkg = _module_from_sys("pdfplumber")
         if pkg is not None and not hasattr(pkg, "page"):
-            pkg.page = module
+            _set_attr(pkg, "page", module)
             module = pkg
     if page_mod is None and getattr(module, "__name__", "") == "pdfplumber.pdf":
-        page_mod = sys.modules.get("pdfplumber.page")
-        pkg = sys.modules.get("pdfplumber")
+        page_mod = _module_from_sys("pdfplumber.page")
+        pkg = _module_from_sys("pdfplumber")
         if pkg is not None and page_mod is not None and not hasattr(pkg, "page"):
-            pkg.page = page_mod
+            _set_attr(pkg, "page", page_mod)
 
     if page_mod is None:
         return False
@@ -26,10 +98,10 @@ def _apply_patch(module) -> bool:
     already_patched = getattr(page_mod.Page.extract_tables, "_bolivar_patched", False)
 
     from bolivar import extract_tables_stream_from_document
-    from bolivar._bolivar import _extract_tables_from_page_objects
+    from bolivar._native_api import _extract_tables_from_page_objects
     from pdfplumber.utils.exceptions import PdfminerException
 
-    def _page_geom(page):
+    def _page_geom(page: _PageLike) -> _PageGeometry:
         return (
             tuple(page.bbox),
             tuple(page.mediabox),
@@ -37,37 +109,48 @@ def _apply_patch(module) -> bool:
             not getattr(page, "is_original", True),
         )
 
-    def _safe_page_mediaboxes(doc):
+    def _safe_page_mediaboxes(doc: _DocLike) -> Sequence[Sequence[_Number]]:
         try:
             return doc.page_mediaboxes()
         except PdfminerException:
             raise
         except Exception as e:
-            raise PdfminerException(str(e))
+            raise PdfminerException(str(e)) from e
 
-    def _base_geometries(doc):
+    def _base_geometries(doc: _DocLike) -> list[_PageGeometry]:
         boxes = _safe_page_mediaboxes(doc)
-        doctops = []
+        doctops: list[float] = []
         running = 0.0
         for box in boxes:
             doctops.append(running)
             running += box[3] - box[1]
         return [
             (tuple(box), tuple(box), doctop, False)
-            for box, doctop in zip(boxes, doctops)
+            for box, doctop in zip(boxes, doctops, strict=False)
         ]
 
-    def _get_base_geometries(pdf, doc):
+    def _get_base_geometries(
+        pdf: object | None,
+        doc: _DocLike,
+    ) -> list[_PageGeometry]:
         if pdf is not None:
-            base = getattr(pdf, "_bolivar_table_geom_base", None)
+            base = cast(
+                "list[_PageGeometry] | None",
+                getattr(pdf, "_bolivar_table_geom_base", None),
+            )
             if base is not None:
                 return base
         base = _base_geometries(doc)
         if pdf is not None:
-            pdf._bolivar_table_geom_base = base
+            _set_attr(pdf, "_bolivar_table_geom_base", base)
         return base
 
-    def _build_geometries(doc, page_index, page, base=None):
+    def _build_geometries(
+        doc: _DocLike,
+        page_index: int,
+        page: _PageLike,
+        base: list[_PageGeometry] | None = None,
+    ) -> list[_PageGeometry]:
         if base is None:
             base = _base_geometries(doc)
         geoms = list(base)
@@ -76,7 +159,7 @@ def _apply_patch(module) -> bool:
             geoms[page_index] = current
         return geoms
 
-    def _normalize_key(value):
+    def _normalize_key(value: object) -> object:
         if isinstance(value, dict):
             return tuple(
                 sorted((key, _normalize_key(val)) for key, val in value.items())
@@ -85,10 +168,10 @@ def _apply_patch(module) -> bool:
             return tuple(_normalize_key(val) for val in value)
         return value
 
-    def _settings_key(table_settings):
+    def _settings_key(table_settings: object) -> object:
         return _normalize_key(table_settings)
 
-    def _laparams_key(pdf):
+    def _laparams_key(pdf: object | None) -> object:
         laparams = getattr(pdf, "laparams", None) if pdf is not None else None
         if laparams is None:
             return None
@@ -103,16 +186,20 @@ def _apply_patch(module) -> bool:
     _TABLE_STREAM_CACHE_LIMIT = 2
 
     class _BolivarTableStream:
-        def __init__(self, stream_factory, cache_limit=_TABLE_STREAM_CACHE_LIMIT):
+        def __init__(
+            self,
+            stream_factory: _StreamFactory,
+            cache_limit: int = _TABLE_STREAM_CACHE_LIMIT,
+        ) -> None:
             self._stream_factory = stream_factory
             self._stream = iter(stream_factory())
-            self._cache = {}
+            self._cache: dict[int, _Tables] = {}
             self._done = False
             self._lock = threading.Lock()
             self._max_index_seen = -1
             self._cache_limit = max(int(cache_limit), 0)
 
-        def _evict_cache(self, newest_index):
+        def _evict_cache(self, newest_index: int) -> None:
             if self._cache_limit <= 0:
                 self._cache.clear()
                 return
@@ -121,7 +208,7 @@ def _apply_patch(module) -> bool:
                 if key < keep_from:
                     self._cache.pop(key, None)
 
-        def _get_from_fresh_stream(self, page_index):
+        def _get_from_fresh_stream(self, page_index: int) -> _Tables | None:
             stream = iter(self._stream_factory())
             for idx, tables in stream:
                 if idx == page_index:
@@ -130,7 +217,7 @@ def _apply_patch(module) -> bool:
                     break
             return None
 
-        def get(self, page_index):
+        def get(self, page_index: int) -> _Tables | None:
             with self._lock:
                 if page_index in self._cache:
                     return self._cache[page_index]
@@ -148,13 +235,22 @@ def _apply_patch(module) -> bool:
                     self._evict_cache(idx)
                 return self._cache.get(page_index)
 
-    def _get_table_stream(pdf, doc, table_settings, geometries, page_numbers):
-        streams = None
+    def _get_table_stream(
+        pdf: object | None,
+        doc: _DocLike,
+        table_settings: object,
+        geometries: Sequence[_PageGeometry],
+        page_numbers: Sequence[int] | None,
+    ) -> _BolivarTableStream:
+        streams: dict[tuple[object, ...], _BolivarTableStream] | None = None
         if pdf is not None:
-            streams = getattr(pdf, "_bolivar_table_streams", None)
+            streams = cast(
+                "dict[tuple[object, ...], _BolivarTableStream] | None",
+                getattr(pdf, "_bolivar_table_streams", None),
+            )
             if streams is None:
                 streams = {}
-                pdf._bolivar_table_streams = streams
+                _set_attr(pdf, "_bolivar_table_streams", streams)
         settings_key = _settings_key(table_settings)
         geometries_key = tuple(geometries)
         laparams_key = _laparams_key(pdf)
@@ -164,15 +260,20 @@ def _apply_patch(module) -> bool:
             return streams[key]
         rust_doc = getattr(doc, "_rust_doc", None) or doc
 
-        def _stream_factory():
-            return extract_tables_stream_from_document(
-                rust_doc,
-                geometries,
-                table_settings=table_settings,
-                laparams=getattr(pdf, "laparams", None) if pdf is not None else None,
-                page_numbers=page_numbers,
-                maxpages=0,
-                caching=getattr(doc, "caching", True),
+        def _stream_factory() -> Iterable[_StreamItem]:
+            return cast(
+                "Iterable[_StreamItem]",
+                extract_tables_stream_from_document(
+                    rust_doc,
+                    geometries,
+                    table_settings=table_settings,
+                    laparams=(
+                        getattr(pdf, "laparams", None) if pdf is not None else None
+                    ),
+                    page_numbers=page_numbers,
+                    maxpages=0,
+                    caching=getattr(doc, "caching", True),
+                ),
             )
 
         wrapped = _BolivarTableStream(_stream_factory)
@@ -182,21 +283,27 @@ def _apply_patch(module) -> bool:
 
     if not already_patched:
 
-        def extract_tables_from_page(page, table_settings=None):
+        def extract_tables_from_page(
+            page: _PageLike,
+            table_settings: object = None,
+        ) -> _Tables:
             if not getattr(page, "is_original", True):
-                return _extract_tables_from_page_objects(
-                    page.objects,
-                    page.bbox,
-                    page.mediabox,
-                    page.initial_doctop,
-                    table_settings=table_settings,
-                    force_crop=not getattr(page, "is_original", True),
+                return cast(
+                    "_Tables",
+                    _extract_tables_from_page_objects(
+                        page.objects,
+                        page.bbox,
+                        page.mediabox,
+                        page.initial_doctop,
+                        table_settings=table_settings,
+                        force_crop=not getattr(page, "is_original", True),
+                    ),
                 )
             page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
             pdf = getattr(page, "pdf", None)
-            doc = getattr(pdf, "doc", None) if pdf is not None else None
+            doc = cast("_DocLike | None", getattr(pdf, "doc", None)) if pdf else None
             if doc is None:
-                doc = getattr(page.page_obj, "doc", None)
+                doc = cast("_DocLike | None", getattr(page.page_obj, "doc", None))
             if doc is None:
                 raise PdfminerException("pdf document missing")
             base_geoms = _get_base_geometries(pdf, doc)
@@ -209,33 +316,40 @@ def _apply_patch(module) -> bool:
             tables = stream.get(page_index)
             return tables or []
 
-        def _extract_tables(self, table_settings=None):
+        def _extract_tables(self: _PageLike, table_settings: object = None) -> _Tables:
             return extract_tables_from_page(self, table_settings)
 
-        def _table_cell_count(table):
+        def _table_cell_count(table: _Table) -> int:
             return sum(len(row) for row in table)
 
-        def _extract_table(self, table_settings=None):
+        def _extract_table(
+            self: _PageLike,
+            table_settings: object = None,
+        ) -> _Table | None:
             tables = _extract_tables(self, table_settings=table_settings)
             if not tables:
                 return None
             return max(tables, key=_table_cell_count)
 
-        _extract_tables._bolivar_patched = True
-        page_mod.Page.extract_tables = _extract_tables
-        _extract_table._bolivar_patched = True
-        page_mod.Page.extract_table = _extract_table
+        _mark_patched(_extract_tables)
+        _set_attr(page_mod.Page, "extract_tables", _extract_tables)
+        _mark_patched(_extract_table)
+        _set_attr(page_mod.Page, "extract_table", _extract_table)
 
-    class BolivarLazyPages(list):
-        def __init__(self, pdf):
+    class BolivarLazyPages(list[object]):
+        def __init__(self, pdf: _PdfLike) -> None:
             self._pdf = pdf
-            self._doc = getattr(pdf, "doc", None)
-            if self._doc is None:
+            doc = cast("_DocLike | None", getattr(pdf, "doc", None))
+            if doc is None:
                 raise RuntimeError("pdf document missing")
+            self._doc: _DocLike = doc
             page_count = self._doc.page_count()
             if page_count <= 0:
                 raise PdfminerException("PDF contains no pages")
-            pages_to_parse = getattr(pdf, "pages_to_parse", None)
+            pages_to_parse = cast(
+                "Iterable[int] | None",
+                getattr(pdf, "pages_to_parse", None),
+            )
             if pages_to_parse is None:
                 self._page_numbers = list(range(page_count))
             else:
@@ -244,20 +358,21 @@ def _apply_patch(module) -> bool:
                     idx for idx in range(page_count) if (idx + 1) in allowed
                 ]
             self._page_number_set = set(self._page_numbers)
-            self._page_cache = {}
-            self._doctops = None
+            self._page_cache: dict[int, object] = {}
+            self._doctops: list[float] | None = None
 
-        def close(self):
+        def close(self) -> None:
             for page in self._page_cache.values():
                 if hasattr(page, "close"):
-                    page.close()
+                    closable_page = cast("_Closable", page)
+                    closable_page.close()
             self._page_cache.clear()
 
-        def _ensure_doctops(self):
+        def _ensure_doctops(self) -> None:
             if self._doctops is not None:
                 return
             boxes = _safe_page_mediaboxes(self._doc)
-            doctops = []
+            doctops: list[float] = []
             running = 0.0
             try:
                 for page_index in self._page_numbers:
@@ -266,17 +381,28 @@ def _apply_patch(module) -> bool:
                     doctops.append(running)
                     running += height
             except IndexError as e:
-                raise PdfminerException(str(e))
+                raise PdfminerException(str(e)) from e
             self._doctops = doctops
 
-        def __len__(self):
+        def __len__(self) -> int:
             return len(self._page_numbers)
 
-        def __getitem__(self, idx):
+        @overload
+        def __getitem__(self, idx: _SliceIndex) -> list[object]: ...
+
+        @overload
+        def __getitem__(self, idx: SupportsIndex) -> object: ...
+
+        def __getitem__(
+            self,
+            idx: SupportsIndex | _SliceIndex,
+        ) -> object | list[object]:
             if isinstance(idx, slice):
                 return [self[i] for i in range(*idx.indices(len(self)))]
-            if not isinstance(idx, int):
-                raise TypeError("page index must be int or slice")
+            try:
+                idx = to_index(idx)
+            except TypeError as e:
+                raise TypeError("page index must be int or slice") from e
             if idx < 0:
                 idx += len(self)
             if idx < 0 or idx >= len(self):
@@ -286,13 +412,14 @@ def _apply_patch(module) -> bool:
             cached = self._page_cache.get(page_index)
             if cached is not None:
                 return cached
-            doctop = self._doctops[idx]
+            doctops = cast("list[float]", self._doctops)
+            doctop = doctops[idx]
             try:
                 page_obj = self._doc.get_page(page_index)
             except PdfminerException:
                 raise
             except Exception as e:
-                raise PdfminerException(str(e))
+                raise PdfminerException(str(e)) from e
             page = page_mod.Page(
                 self._pdf,
                 page_obj,
@@ -302,22 +429,25 @@ def _apply_patch(module) -> bool:
             self._page_cache[page_index] = page
             return page
 
-        def __iter__(self):
+        def __iter__(self) -> Iterator[object]:
             for i in range(len(self)):
                 yield self[i]
 
-        def __reversed__(self):
+        def __reversed__(self) -> Iterator[object]:
             for i in range(len(self) - 1, -1, -1):
                 yield self[i]
 
-        def __contains__(self, item):
+        def __contains__(self, item: object) -> bool:
             if hasattr(item, "page_number"):
-                return (item.page_number - 1) in self._page_number_set
+                page_item = cast("_HasPageNumber", item)
+                page_number = page_item.page_number
+                return (page_number - 1) in self._page_number_set
             return False
 
-        def __aiter__(self):
-            async def gen():
-                # Keep async iteration lightweight; avoid eager layout extraction to cap memory.
+        def __aiter__(self) -> AsyncIterator[object]:
+            async def gen() -> AsyncIterator[object]:
+                # Keep async iteration lightweight.
+                # Avoid eager layout extraction to cap memory.
                 self._ensure_doctops()
                 page_numbers = list(self._page_numbers)
                 doctops = list(self._doctops or [])
@@ -331,7 +461,7 @@ def _apply_patch(module) -> bool:
                         except PdfminerException:
                             raise
                         except Exception as e:
-                            raise PdfminerException(str(e))
+                            raise PdfminerException(str(e)) from e
                         doctop = doctops[idx] if idx < len(doctops) else 0.0
                         page = page_mod.Page(
                             self._pdf,
@@ -344,10 +474,13 @@ def _apply_patch(module) -> bool:
             return gen()
 
     # Always import to ensure module is fully initialized (not just in sys.modules)
+    pdf_mod: ModuleType | None
     try:
-        import pdfplumber.pdf as pdf_mod
+        import pdfplumber.pdf as _pdf_mod
     except Exception:
         pdf_mod = None
+    else:
+        pdf_mod = _pdf_mod
 
     if pdf_mod is not None and hasattr(pdf_mod, "PDF"):
         pdf_cls = pdf_mod.PDF
@@ -359,22 +492,23 @@ def _apply_patch(module) -> bool:
             current_getter, "_bolivar_patched", False
         ):
 
-            def _bolivar_pages(self):
-                if hasattr(self, "_pages"):
-                    return self._pages
+            def _bolivar_pages(self: _PdfLike) -> BolivarLazyPages:
+                pages = cast("BolivarLazyPages | None", getattr(self, "_pages", None))
+                if pages is not None:
+                    return pages
                 pages = BolivarLazyPages(self)
-                self._pages = pages
+                _set_attr(self, "_pages", pages)
                 return pages
 
-            _bolivar_pages._bolivar_patched = True
-            pdf_cls.pages = property(_bolivar_pages)
+            _mark_patched(_bolivar_pages)
+            _set_attr(pdf_cls, "pages", property(_bolivar_pages))
 
         current_close = getattr(pdf_cls, "close", None)
         if current_close is None or not getattr(
             current_close, "_bolivar_patched", False
         ):
 
-            def _bolivar_close(self):
+            def _bolivar_close(self: _PdfClosable) -> None:
                 pages = getattr(self, "_pages", None)
                 if pages is not None:
                     if hasattr(pages, "close"):
@@ -386,20 +520,26 @@ def _apply_patch(module) -> bool:
                 if not getattr(self, "stream_is_external", False):
                     self.stream.close()
 
-            _bolivar_close._bolivar_patched = True
-            pdf_cls.close = _bolivar_close
+            _mark_patched(_bolivar_close)
+            _set_attr(pdf_cls, "close", _bolivar_close)
 
         if not hasattr(pdf_cls, "__aenter__"):
 
-            async def _aenter(self):
+            async def _aenter(self: _PdfClosable) -> _PdfClosable:
                 return self
 
-            async def _aexit(self, exc_type, exc, tb):
+            async def _aexit(
+                self: _PdfClosable,
+                exc_type: type[BaseException] | None,
+                exc: BaseException | None,
+                tb: TracebackType | None,
+            ) -> bool:
+                del exc_type, exc, tb
                 self.close()
                 return False
 
-            pdf_cls.__aenter__ = _aenter
-            pdf_cls.__aexit__ = _aexit
+            _set_attr(pdf_cls, "__aenter__", _aenter)
+            _set_attr(pdf_cls, "__aexit__", _aexit)
 
     # Check if PDF.pages was successfully patched
     pdf_pages_patched = False
@@ -416,42 +556,50 @@ def _apply_patch(module) -> bool:
         pass
 
     # Patch pdfplumber.repair to use Rust repair
+    repair_mod: ModuleType | None
     try:
-        import pdfplumber.repair as repair_mod
+        import pdfplumber.repair as _repair_mod
     except Exception:
         repair_mod = None
+    else:
+        repair_mod = _repair_mod
 
     if repair_mod is not None:
-        from io import BytesIO
         from bolivar import repair_pdf
 
-        def _rust_repair(path_or_fp, password=None, gs_path=None, setting="default"):
+        def _rust_repair(
+            path_or_fp: object,
+            password: str | None = None,
+            gs_path: object = None,
+            setting: str = "default",
+        ) -> BytesIO:
+            del password, gs_path, setting
             # Ignore gs_path/setting; Rust repair is internal.
             return BytesIO(repair_pdf(path_or_fp))
 
         def _rust_repair_public(
-            path_or_fp,
-            outfile=None,
-            password=None,
-            gs_path=None,
-            setting="default",
-        ):
+            path_or_fp: object,
+            outfile: _OutFile | None = None,
+            password: str | None = None,
+            gs_path: object = None,
+            setting: str = "default",
+        ) -> BytesIO | None:
             repaired = _rust_repair(
                 path_or_fp, password=password, gs_path=gs_path, setting=setting
             )
-            if outfile:
+            if outfile is not None:
                 with open(outfile, "wb") as f:
                     f.write(repaired.read())
                 return None
             return repaired
 
-        repair_mod._repair = _rust_repair
-        repair_mod.repair = _rust_repair_public
+        _set_attr(repair_mod, "_repair", _rust_repair)
+        _set_attr(repair_mod, "repair", _rust_repair_public)
         if hasattr(module, "repair"):
-            module.repair = repair_mod.repair
-        pdf_mod = sys.modules.get("pdfplumber.pdf")
+            _set_attr(module, "repair", _rust_repair_public)
+        pdf_mod = _module_from_sys("pdfplumber.pdf")
         if pdf_mod is not None and hasattr(pdf_mod, "_repair"):
-            pdf_mod._repair = _rust_repair
+            _set_attr(pdf_mod, "_repair", _rust_repair)
 
     # Only consider patch complete when PDF.pages is patched
     return pdf_pages_patched
@@ -464,15 +612,18 @@ _logger = logging.getLogger("bolivar.pdfplumber_patch")
 
 
 class _PdfplumberPatchLoader(importlib.abc.Loader):
-    def __init__(self, loader):
+    def __init__(self, loader: importlib.abc.Loader) -> None:
         self.loader = loader
 
-    def create_module(self, spec):
+    def create_module(
+        self,
+        spec: importlib.machinery.ModuleSpec,
+    ) -> ModuleType | None:
         if hasattr(self.loader, "create_module"):
-            return self.loader.create_module(spec)
+            return cast("ModuleType | None", self.loader.create_module(spec))
         return None
 
-    def exec_module(self, module):
+    def exec_module(self, module: ModuleType) -> None:
         global _PATCH_APPLIED
         self.loader.exec_module(module)
         with _HOOK_LOCK:
@@ -488,10 +639,16 @@ class _PdfplumberPatchLoader(importlib.abc.Loader):
 
 
 class _PdfplumberPatchFinder(importlib.abc.MetaPathFinder):
-    def __init__(self, names):
+    def __init__(self, names: Iterable[str]) -> None:
         self.names = set(names)
 
-    def find_spec(self, fullname, path, target=None):
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None,
+        target: ModuleType | None = None,
+    ) -> importlib.machinery.ModuleSpec | None:
+        del target
         if fullname not in self.names:
             return None
         spec = importlib.machinery.PathFinder.find_spec(fullname, path)
@@ -501,7 +658,7 @@ class _PdfplumberPatchFinder(importlib.abc.MetaPathFinder):
         return spec
 
 
-def _install_hook(names=None):
+def _install_hook(names: set[str] | None = None) -> None:
     global _HOOK_INSTALLED
     if names is None:
         names = {"pdfplumber", "pdfplumber.page", "pdfplumber.pdf"}
@@ -517,7 +674,7 @@ def _install_hook(names=None):
         _HOOK_INSTALLED = True
 
 
-def _remove_hook_unlocked():
+def _remove_hook_unlocked() -> None:
     global _HOOK_INSTALLED
     if not _HOOK_INSTALLED:
         return
@@ -527,13 +684,13 @@ def _remove_hook_unlocked():
     _HOOK_INSTALLED = False
 
 
-def _remove_hook():
+def _remove_hook() -> None:
     with _HOOK_LOCK:
         _remove_hook_unlocked()
 
 
 def patch_pdfplumber() -> bool:
-    module = sys.modules.get("pdfplumber")
+    module = _module_from_sys("pdfplumber")
     if module is not None and hasattr(module, "page"):
         return _apply_patch(module)
 

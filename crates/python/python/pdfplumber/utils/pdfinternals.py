@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Union
+from typing import cast
 
 from pdfminer.pdftypes import PDFObjRef
 from pdfminer.psparser import PSLiteral
@@ -7,7 +7,7 @@ from pdfminer.utils import PDFDocEncoding
 from .exceptions import MalformedPDFException
 
 
-def decode_text(s: Union[bytes, str]) -> str:
+def decode_text(s: bytes | str) -> str:
     """
     Decodes a PDFDocEncoding string to Unicode.
     Adds py3 compatibility to pdfminer's version.
@@ -21,10 +21,11 @@ def decode_text(s: Union[bytes, str]) -> str:
         return str(s)
 
 
-def resolve_and_decode(obj: Any) -> Any:
+def resolve_and_decode(obj: object) -> object:
     """Recursively resolve the metadata values."""
-    if hasattr(obj, "resolve"):
-        obj = obj.resolve()
+    resolver = getattr(obj, "resolve", None)
+    if callable(resolver):
+        obj = resolver()
     if isinstance(obj, list):
         return list(map(resolve_and_decode, obj))
     elif isinstance(obj, PSLiteral):
@@ -32,38 +33,37 @@ def resolve_and_decode(obj: Any) -> Any:
     elif isinstance(obj, (str, bytes)):
         return decode_text(obj)
     elif isinstance(obj, dict):
-        for k, v in obj.items():
-            obj[k] = resolve_and_decode(v)
-        return obj
+        return {k: resolve_and_decode(v) for k, v in obj.items()}
 
     return obj
 
 
-def decode_psl_list(_list: List[Union[PSLiteral, str]]) -> List[str]:
+def decode_psl_list(_list: list[PSLiteral | str]) -> list[str]:
     return [
         decode_text(value.name) if isinstance(value, PSLiteral) else value
         for value in _list
     ]
 
 
-def resolve(x: Any) -> Any:
+def resolve(x: object) -> object:
     if isinstance(x, PDFObjRef):
         return x.resolve()
     else:
         return x
 
 
-def get_dict_type(d: Any) -> Optional[str]:
+def get_dict_type(d: object) -> str | None:
     if not isinstance(d, dict):
         return None
-    t = d.get("Type")
+    typed_dict = cast("dict[str, object]", d)
+    t = typed_dict.get("Type")
     if isinstance(t, PSLiteral):
         return decode_text(t.name)
     else:
         return t
 
 
-def resolve_all(x: Any) -> Any:
+def resolve_all(x: object) -> object:
     """
     Recursively resolves the given object and all the internals.
     """
@@ -77,7 +77,7 @@ def resolve_all(x: Any) -> Any:
         try:
             return resolve_all(resolved)
         except RecursionError as e:
-            raise MalformedPDFException(e)
+            raise MalformedPDFException(e) from e
     elif isinstance(x, (list, tuple)):
         return type(x)(resolve_all(v) for v in x)
     elif isinstance(x, dict):

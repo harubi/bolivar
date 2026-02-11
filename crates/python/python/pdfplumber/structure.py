@@ -2,19 +2,12 @@ import itertools
 import logging
 import re
 from collections import deque
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass, field
+from re import Pattern
 from typing import (
     TYPE_CHECKING,
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    Iterator,
-    List,
-    Optional,
-    Pattern,
-    Tuple,
-    Union,
+    cast,
 )
 
 from pdfminer.data_structures import NumberTree
@@ -22,7 +15,7 @@ from pdfminer.pdfparser import PDFParser
 from pdfminer.pdftypes import PDFObjRef, resolve1
 from pdfminer.psparser import PSLiteral
 
-from ._typing import T_bbox, T_obj
+from ._typing import StructElementDict, T_bbox, T_obj
 from .utils import decode_text, geometry
 
 logger = logging.getLogger(__name__)
@@ -36,28 +29,42 @@ if TYPE_CHECKING:  # pragma: nocover
 MatchFunc = Callable[["PDFStructElement"], bool]
 
 
+def _as_dict(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return cast("dict[str, object]", value)
+    return {}
+
+
+def _as_list(value: object) -> list[object]:
+    if isinstance(value, list):
+        return cast("list[object]", value)
+    return []
+
+
+def _decode_text_value(value: object) -> str:
+    if isinstance(value, (bytes, str)):
+        return decode_text(value)
+    return str(value)
+
+
 def _find_all(
     elements: Iterable["PDFStructElement"],
-    matcher: Union[str, Pattern[str], MatchFunc],
+    matcher: str | Pattern[str] | MatchFunc,
 ) -> Iterator["PDFStructElement"]:
     """
     Common code for `find_all()` in trees and elements.
     """
 
-    def match_tag(x: "PDFStructElement") -> bool:
-        """Match an element name."""
-        return x.type == matcher
-
-    def match_regex(x: "PDFStructElement") -> bool:
-        """Match an element name by regular expression."""
-        return matcher.match(x.type)  # type: ignore
-
     if isinstance(matcher, str):
-        match_func = match_tag
+
+        def match_func(x: PDFStructElement) -> bool:
+            return x.type == matcher
     elif isinstance(matcher, re.Pattern):
-        match_func = match_regex
+
+        def match_func(x: PDFStructElement) -> bool:
+            return matcher.match(x.type) is not None
     else:
-        match_func = matcher  # type: ignore
+        match_func = matcher
     d = deque(elements)
     while d:
         el = d.popleft()
@@ -70,10 +77,10 @@ class Findable:
     """find() and find_all() methods that can be inherited to avoid
     repeating oneself"""
 
-    children: List["PDFStructElement"]
+    children: list["PDFStructElement"]
 
     def find_all(
-        self, matcher: Union[str, Pattern[str], MatchFunc]
+        self, matcher: str | Pattern[str] | MatchFunc
     ) -> Iterator["PDFStructElement"]:
         """Iterate depth-first over matching elements in subtree.
 
@@ -84,8 +91,8 @@ class Findable:
         return _find_all(self.children, matcher)
 
     def find(
-        self, matcher: Union[str, Pattern[str], MatchFunc]
-    ) -> Optional["PDFStructElement"]:
+        self, matcher: str | Pattern[str] | MatchFunc
+    ) -> "PDFStructElement | None":
         """Find the first matching element in subtree.
 
         The `matcher` argument is either an element name, a regular
@@ -101,21 +108,21 @@ class Findable:
 @dataclass
 class PDFStructElement(Findable):
     type: str
-    revision: Optional[int]
-    id: Optional[str]
-    lang: Optional[str]
-    alt_text: Optional[str]
-    actual_text: Optional[str]
-    title: Optional[str]
-    page_number: Optional[int]
-    attributes: Dict[str, Any] = field(default_factory=dict)
-    mcids: List[int] = field(default_factory=list)
-    children: List["PDFStructElement"] = field(default_factory=list)
+    revision: int | None
+    id: str | None
+    lang: str | None
+    alt_text: str | None
+    actual_text: str | None
+    title: str | None
+    page_number: int | None
+    attributes: dict[str, object] = field(default_factory=dict)
+    mcids: list[int] = field(default_factory=list)
+    children: list["PDFStructElement"] = field(default_factory=list)
 
     def __iter__(self) -> Iterator["PDFStructElement"]:
         return iter(self.children)
 
-    def all_mcids(self) -> Iterator[Tuple[Optional[int], int]]:
+    def all_mcids(self) -> Iterator[tuple[int | None, int]]:
         """Collect all MCIDs (with their page numbers, if there are
         multiple pages in the tree) inside a structure element.
         """
@@ -129,9 +136,9 @@ class PDFStructElement(Findable):
                 yield el.page_number, mcid
             d.extendleft(reversed(el.children))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> StructElementDict:
         """Return a compacted dict representation."""
-        r = asdict(self)
+        r = cast("StructElementDict", asdict(self))
         # Prune empty values (does not matter in which order)
         d = deque([r])
         while d:
@@ -140,7 +147,7 @@ class PDFStructElement(Findable):
                 if el[k] is None or el[k] == [] or el[k] == {}:
                     del el[k]
             if "children" in el:
-                d.extend(el["children"])
+                d.extend(cast("list[StructElementDict]", el["children"]))
         return r
 
 
@@ -166,16 +173,19 @@ class PDFStructTree(Findable):
 
     """
 
-    page: Optional["Page"]
+    page: "Page | None"
 
-    def __init__(self, doc: "PDF", page: Optional["Page"] = None):
+    def __init__(self, doc: "PDF", page: "Page | None" = None) -> None:
         self.doc = doc.doc
         if "StructTreeRoot" not in self.doc.catalog:
             raise StructTreeMissing("PDF has no structure")
-        self.root = resolve1(self.doc.catalog["StructTreeRoot"])
-        self.role_map = resolve1(self.root.get("RoleMap", {}))
-        self.class_map = resolve1(self.root.get("ClassMap", {}))
-        self.children: List[PDFStructElement] = []
+        root = _as_dict(resolve1(self.doc.catalog["StructTreeRoot"]))
+        if not root:
+            raise StructTreeMissing("Invalid StructTreeRoot")
+        self.root = root
+        self.role_map = _as_dict(resolve1(self.root.get("RoleMap", {})))
+        self.class_map = _as_dict(resolve1(self.root.get("ClassMap", {})))
+        self.children: list[PDFStructElement] = []
 
         # If we have a specific page then we will work backwards from
         # its ParentTree - this is because structure elements could
@@ -204,7 +214,7 @@ class PDFStructTree(Findable):
                 parent_array = resolve1(
                     next(array for num, array in parent_tree.values if num == parent_id)
                 )
-                self._parse_parent_tree(parent_array)
+                self._parse_parent_tree(_as_list(parent_array))
         else:
             self.page = None
             # Overhead of creating pages shouldn't be too bad we hope!
@@ -215,9 +225,9 @@ class PDFStructTree(Findable):
             self._parse_struct_tree()
 
     def _make_attributes(
-        self, obj: Dict[str, Any], revision: Optional[int]
-    ) -> Dict[str, Any]:
-        attr_obj_list = []
+        self, obj: dict[str, object], revision: int | None
+    ) -> dict[str, object]:
+        attr_obj_list: list[object] = []
         for key in "C", "A":
             if key not in obj:
                 continue
@@ -248,49 +258,60 @@ class PDFStructTree(Findable):
         # Now merge all the attribute objects in the collected to a
         # single set (again, the spec doesn't really explain this but
         # does say that attributes in /A supersede those in /C)
-        attr = {}
-        for obj in attr_objs:
-            if isinstance(obj, PSLiteral):
-                key = decode_text(obj.name)
+        attr: dict[str, object] = {}
+        for attr_candidate in attr_objs:
+            if isinstance(attr_candidate, PSLiteral):
+                key = decode_text(attr_candidate.name)
                 if key not in self.class_map:
                     logger.warning("Unknown attribute class %s", key)
                     continue
-                obj = self.class_map[key]
-            for k, v in obj.items():
+                attr_candidate = self.class_map[key]
+            if not isinstance(attr_candidate, dict):
+                continue
+            typed_obj = cast("dict[str, object]", attr_candidate)
+            for k, v in typed_obj.items():
                 if isinstance(v, PSLiteral):
                     attr[k] = decode_text(v.name)
                 else:
-                    attr[k] = obj[k]
+                    attr[k] = typed_obj[k]
         return attr
 
-    def _make_element(self, obj: Any) -> Tuple[Optional[PDFStructElement], List[Any]]:
+    def _make_element(
+        self, obj: dict[str, object]
+    ) -> tuple[PDFStructElement | None, list[object]]:
         # We hopefully caught these earlier
-        assert "MCID" not in obj, "Uncaught MCR: %s" % obj
-        assert "Obj" not in obj, "Uncaught OBJR: %s" % obj
+        assert "MCID" not in obj, f"Uncaught MCR: {obj}"
+        assert "Obj" not in obj, f"Uncaught OBJR: {obj}"
         # Get page number if necessary
         page_number = None
         if self.page_dict is not None and "Pg" in obj:
-            page_objid = obj["Pg"].objid
-            assert page_objid in self.page_dict, "Object on unparsed page: %s" % obj
+            page_objid = cast("PDFObjRef", obj["Pg"]).objid
+            assert page_objid in self.page_dict, f"Object on unparsed page: {obj}"
             page_number = self.page_dict[page_objid]
         obj_tag = ""
         if "S" in obj:
-            obj_tag = decode_text(obj["S"].name)
+            obj_tag = decode_text(cast("PSLiteral", obj["S"]).name)
             if obj_tag in self.role_map:
-                obj_tag = decode_text(self.role_map[obj_tag].name)
-        children = resolve1(obj["K"]) if "K" in obj else []
-        if isinstance(children, int):  # ugh... isinstance...
-            children = [children]
-        elif isinstance(children, dict):  # a single object.. ugh...
+                mapped_tag = self.role_map[obj_tag]
+                if isinstance(mapped_tag, PSLiteral):
+                    obj_tag = decode_text(mapped_tag.name)
+        children_obj = resolve1(obj["K"]) if "K" in obj else []
+        if isinstance(children_obj, int):  # ugh... isinstance...
+            children: list[object] = [children_obj]
+        elif isinstance(children_obj, dict):  # a single object.. ugh...
             children = [obj["K"]]
-        revision = obj.get("R")
+        else:
+            children = _as_list(children_obj)
+        revision = cast("int | None", obj.get("R"))
         attributes = self._make_attributes(obj, revision)
-        element_id = decode_text(resolve1(obj["ID"])) if "ID" in obj else None
-        title = decode_text(resolve1(obj["T"])) if "T" in obj else None
-        lang = decode_text(resolve1(obj["Lang"])) if "Lang" in obj else None
-        alt_text = decode_text(resolve1(obj["Alt"])) if "Alt" in obj else None
+        element_id = _decode_text_value(resolve1(obj["ID"])) if "ID" in obj else None
+        title = _decode_text_value(resolve1(obj["T"])) if "T" in obj else None
+        lang = _decode_text_value(resolve1(obj["Lang"])) if "Lang" in obj else None
+        alt_text = _decode_text_value(resolve1(obj["Alt"])) if "Alt" in obj else None
         actual_text = (
-            decode_text(resolve1(obj["ActualText"])) if "ActualText" in obj else None
+            _decode_text_value(resolve1(obj["ActualText"]))
+            if "ActualText" in obj
+            else None
         )
         element = PDFStructElement(
             type=obj_tag,
@@ -305,12 +326,12 @@ class PDFStructTree(Findable):
         )
         return element, children
 
-    def _parse_parent_tree(self, parent_array: List[Any]) -> None:
+    def _parse_parent_tree(self, parent_array: list[object]) -> None:
         """Populate the structure tree using the leaves of the parent tree for
         a given page."""
         # First walk backwards from the leaves to the root, tracking references
         d = deque(parent_array)
-        s = {}
+        s: dict[str, tuple[PDFStructElement | None, list[object]]] = {}
         found_root = False
         while d:
             ref = d.popleft()
@@ -322,42 +343,44 @@ class PDFStructTree(Findable):
                 continue
             obj = resolve1(ref)
             # This is required! It's in the spec!
-            if "Type" in obj and decode_text(obj["Type"].name) == "StructTreeRoot":
+            typed_obj = _as_dict(obj)
+            if (
+                "Type" in typed_obj
+                and isinstance(typed_obj["Type"], PSLiteral)
+                and decode_text(typed_obj["Type"].name) == "StructTreeRoot"
+            ):
                 found_root = True
             else:
                 # We hope that these are actual elements and not
                 # references or marked-content sections...
-                element, children = self._make_element(obj)
+                element, children = self._make_element(typed_obj)
                 # We have no page tree so we assume this page was parsed
                 assert element is not None
                 s[repr(ref)] = element, children
-                d.append(obj["P"])
+                parent_ref = typed_obj.get("P")
+                if parent_ref is not None:
+                    d.append(parent_ref)
         # If we didn't reach the root something is quite wrong!
         assert found_root
         self._resolve_children(s)
 
-    def on_parsed_page(self, obj: Dict[str, Any]) -> bool:
+    def on_parsed_page(self, obj: dict[str, object]) -> bool:
         if "Pg" not in obj:
             return True
-        page_objid = obj["Pg"].objid
+        page_objid = cast("PDFObjRef", obj["Pg"]).objid
         if self.page_dict is not None:
             return page_objid in self.page_dict
-        if self.page is not None:
-            # We have to do this to satisfy mypy
-            if page_objid != self.page.page_obj.pageid:
-                return False
-        return True
+        return self.page is None or page_objid == self.page.page_obj.pageid
 
     def _parse_struct_tree(self) -> None:
         """Populate the structure tree starting from the root, skipping
         unparsed pages and empty elements."""
-        root = resolve1(self.root["K"])
+        root_obj = resolve1(self.root["K"])
 
         # It could just be a single object ... it's in the spec (argh)
-        if isinstance(root, dict):
-            root = [self.root["K"]]
+        root = [self.root["K"]] if isinstance(root_obj, dict) else _as_list(root_obj)
         d = deque(root)
-        s = {}
+        s: dict[str, tuple[PDFStructElement | None, list[object]]] = {}
         while d:
             ref = d.popleft()
             # In case the tree is actually a DAG and not a tree...
@@ -365,44 +388,50 @@ class PDFStructTree(Findable):
                 continue
             obj = resolve1(ref)
             # Deref top-level OBJR skipping refs to unparsed pages
-            if isinstance(obj, dict) and "Obj" in obj:
-                if not self.on_parsed_page(obj):
+            typed_obj = _as_dict(obj)
+            if "Obj" in typed_obj:
+                if not self.on_parsed_page(typed_obj):
                     continue
-                ref = obj["Obj"]
+                ref = typed_obj["Obj"]
                 obj = resolve1(ref)
-            element, children = self._make_element(obj)
+            typed_obj = _as_dict(obj)
+            element, children = self._make_element(typed_obj)
             # Similar to above, delay resolving the children to avoid
             # tree-recursion.
             s[repr(ref)] = element, children
             for child in children:
                 obj = resolve1(child)
-                if isinstance(obj, dict):
-                    if not self.on_parsed_page(obj):
+                typed_obj = _as_dict(obj)
+                if typed_obj:
+                    if not self.on_parsed_page(typed_obj):
                         continue
-                    if "Obj" in obj:
-                        child = obj["Obj"]
-                    elif "MCID" in obj:
+                    if "Obj" in typed_obj:
+                        child = typed_obj["Obj"]
+                    elif "MCID" in typed_obj:
                         continue
                 if isinstance(child, PDFObjRef):
                     d.append(child)
 
         # Traverse depth-first, removing empty elements (unsure how to
         # do this non-recursively)
-        def prune(elements: List[Any]) -> List[Any]:
-            next_elements = []
+        def prune(elements: list[object]) -> list[object]:
+            next_elements: list[object] = []
             for ref in elements:
                 obj = resolve1(ref)
                 if isinstance(ref, int):
                     next_elements.append(ref)
                     continue
-                elif isinstance(obj, dict):
-                    if not self.on_parsed_page(obj):
+                typed_obj = _as_dict(obj)
+                if typed_obj:
+                    if not self.on_parsed_page(typed_obj):
                         continue
-                    if "MCID" in obj:
-                        next_elements.append(obj["MCID"])
+                    if "MCID" in typed_obj:
+                        mcid = typed_obj["MCID"]
+                        if isinstance(mcid, int):
+                            next_elements.append(mcid)
                         continue
-                    elif "Obj" in obj:
-                        ref = obj["Obj"]
+                    if "Obj" in typed_obj:
+                        ref = typed_obj["Obj"]
                 element, children = s[repr(ref)]
                 children = prune(children)
                 # See assertions below
@@ -416,23 +445,26 @@ class PDFStructTree(Findable):
         prune(root)
         self._resolve_children(s)
 
-    def _resolve_children(self, seen: Dict[str, Any]) -> None:
+    def _resolve_children(
+        self,
+        seen: dict[str, tuple[PDFStructElement | None, list[object]]],
+    ) -> None:
         """Resolve children starting from the tree root based on references we
         saw when traversing the structure tree.
         """
         root = resolve1(self.root["K"])
         # It could just be a single object ... it's in the spec (argh)
-        if isinstance(root, dict):
-            root = [self.root["K"]]
+        root = [self.root["K"]] if isinstance(root, dict) else _as_list(root)
         self.children = []
         # Create top-level self.children
         parsed_root = []
         for ref in root:
             obj = resolve1(ref)
-            if isinstance(obj, dict) and "Obj" in obj:
-                if not self.on_parsed_page(obj):
+            typed_obj = _as_dict(obj)
+            if "Obj" in typed_obj:
+                if not self.on_parsed_page(typed_obj):
                     continue
-                ref = obj["Obj"]
+                ref = typed_obj["Obj"]
             if repr(ref) in seen:
                 parsed_root.append(ref)
         d = deque(parsed_root)
@@ -444,21 +476,28 @@ class PDFStructTree(Findable):
                 obj = resolve1(child)
                 if isinstance(obj, int):
                     element.mcids.append(obj)
-                elif isinstance(obj, dict):
+                else:
+                    typed_obj = _as_dict(obj)
                     # Skip out-of-page MCIDS and OBJRs
-                    if not self.on_parsed_page(obj):
+                    if typed_obj and not self.on_parsed_page(typed_obj):
                         continue
-                    if "MCID" in obj:
-                        element.mcids.append(obj["MCID"])
-                    elif "Obj" in obj:
-                        child = obj["Obj"]
+                    if typed_obj and "MCID" in typed_obj:
+                        mcid = typed_obj["MCID"]
+                        if isinstance(mcid, int):
+                            element.mcids.append(mcid)
+                    elif typed_obj and "Obj" in typed_obj:
+                        child = typed_obj["Obj"]
                 # NOTE: if, not elif, in case of OBJR above
                 if isinstance(child, PDFObjRef):
                     child_element, _ = seen.get(repr(child), (None, None))
                     if child_element is not None:
                         element.children.append(child_element)
                         d.append(child)
-        self.children = [seen[repr(ref)][0] for ref in parsed_root]
+        self.children = []
+        for ref in parsed_root:
+            root_child, _ = seen[repr(ref)]
+            assert root_child is not None, "Unparsed root child"
+            self.children.append(root_child)
 
     def __iter__(self) -> Iterator[PDFStructElement]:
         return iter(self.children)
@@ -478,7 +517,8 @@ class PDFStructTree(Findable):
             # page.height because it is the *cropped* dimension, but
             # cropping does not actually translate coordinates)
             bbox = _invert_box(
-                _normalize_box(bbox), page.mediabox[3] - page.mediabox[1]
+                _normalize_box(cast("T_bbox", bbox)),
+                page.mediabox[3] - page.mediabox[1],
             )
             # Use more secret knowledge of CroppedPage
             if isinstance(page, CroppedPage):
@@ -488,8 +528,7 @@ class PDFStructTree(Findable):
                     raise IndexError("Element no longer on page")
                 return geometry.obj_to_bbox(rects[0])
             else:
-                # Not sure why mypy complains here
-                return bbox  # type: ignore
+                return bbox
         else:
             mcid_objs = []
             for page_number, mcid in el.all_mcids():

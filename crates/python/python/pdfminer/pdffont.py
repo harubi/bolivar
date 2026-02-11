@@ -1,3 +1,3 @@
-from bolivar._bolivar import PDFFont, PDFCIDFont, get_widths
+from bolivar._native_api import PDFCIDFont, PDFFont, get_widths
 
-__all__ = ["PDFFont", "PDFCIDFont", "get_widths"]
+__all__ = ["PDFCIDFont", "PDFFont", "get_widths"]

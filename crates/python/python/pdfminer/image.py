@@ -1,5 +1,5 @@
 # pdfminer.image compatibility shim
 
-from bolivar._bolivar import ImageWriter
+from bolivar._native_api import ImageWriter
 
 __all__ = ["ImageWriter"]

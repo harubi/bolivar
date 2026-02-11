@@ -4,7 +4,7 @@ import json
 import sys
 from collections import defaultdict, deque
 from itertools import chain
-from typing import Any, DefaultDict, Dict, List
+from typing import Any, cast
 
 from .pdf import PDF
 
@@ -12,7 +12,7 @@ if len(sys.argv) == 1:
     sys.argv.append("--help")
 
 
-def parse_page_spec(p_str: str) -> List[int]:
+def parse_page_spec(p_str: str) -> list[int]:
     if "-" in p_str:
         start, end = map(int, p_str.split("-"))
         return list(range(start, end + 1))
@@ -20,7 +20,7 @@ def parse_page_spec(p_str: str) -> List[int]:
         return [int(p_str)]
 
 
-def parse_args(args_raw: List[str]) -> argparse.Namespace:
+def parse_args(args_raw: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser("pdfplumber")
 
     parser.add_argument("infile", nargs="?", type=argparse.FileType("rb"))
@@ -70,8 +70,8 @@ def parse_args(args_raw: List[str]) -> argparse.Namespace:
     return args
 
 
-def add_text_to_mcids(pdf: PDF, data: List[Dict[str, Any]]) -> None:
-    page_contents: DefaultDict[int, Any] = defaultdict(lambda: defaultdict(str))
+def add_text_to_mcids(pdf: PDF, data: list[dict[str, Any]]) -> None:
+    page_contents: defaultdict[int, Any] = defaultdict(lambda: defaultdict(str))
     for page in pdf.pages:
         text_contents = page_contents[page.page_number]
         for c in page.chars:
@@ -92,14 +92,14 @@ def add_text_to_mcids(pdf: PDF, data: List[Dict[str, Any]]) -> None:
             el["text"] = [text_contents[mcid] for mcid in el["mcids"]]
 
 
-def main(args_raw: List[str] = sys.argv[1:]) -> None:
+def main(args_raw: list[str] = sys.argv[1:]) -> None:
     args = parse_args(args_raw)
 
     with PDF.open(args.infile, pages=args.pages, laparams=args.laparams) as pdf:
         if args.structure:
             print(json.dumps(pdf.structure_tree, indent=args.indent))
         elif args.structure_text:
-            tree = pdf.structure_tree
+            tree = cast("list[dict[str, Any]]", pdf.structure_tree)
             add_text_to_mcids(pdf, tree)
             print(json.dumps(tree, indent=args.indent, ensure_ascii=False))
         elif args.format == "csv":

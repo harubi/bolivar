@@ -1,26 +1,24 @@
+import contextlib
 import importlib.util
 import os
 import sys
+from types import ModuleType
 
 
 def _warn(exc: Exception) -> None:
-    try:
+    with contextlib.suppress(Exception):
         sys.stderr.write(f"bolivar autoload failed: {exc}\n")
-    except Exception:
-        pass
 
 
 def _ensure_sys_path(base: str) -> None:
     if sys.path and sys.path[0] == base:
         return
-    try:
+    with contextlib.suppress(ValueError):
         sys.path.remove(base)
-    except ValueError:
-        pass
     sys.path.insert(0, base)
 
 
-def _load_registry_module(base: str):
+def _load_registry_module(base: str) -> ModuleType:
     path = os.path.join(base, "bolivar", "_shim_registry.py")
     spec = importlib.util.spec_from_file_location("bolivar._shim_registry", path)
     if spec is None or spec.loader is None:

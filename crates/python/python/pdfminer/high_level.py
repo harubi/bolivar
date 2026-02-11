@@ -3,17 +3,28 @@
 import logging
 import os
 import sys
-from collections.abc import Container
-from typing import Any, BinaryIO, Iterable, Optional
+from collections.abc import Generator, Iterable
+from typing import BinaryIO, Literal, cast
 
 from bolivar import (
     extract_pages as _extract_pages,
-    extract_pages_with_images as _extract_pages_with_images,
+)
+from bolivar import (
     extract_pages_from_path as _extract_pages_from_path,
+)
+from bolivar import (
+    extract_pages_with_images as _extract_pages_with_images,
+)
+from bolivar import (
     extract_pages_with_images_from_path as _extract_pages_with_images_from_path,
+)
+from bolivar import (
     extract_text as _extract_text,
+)
+from bolivar import (
     extract_text_from_path as _extract_text_from_path,
 )
+
 from .converter import HOCRConverter, HTMLConverter, TextConverter, XMLConverter
 from .image import ImageWriter
 from .layout import LTPage
@@ -21,15 +32,21 @@ from .pdfexceptions import PDFValueError
 from .pdfinterp import PDFResourceManager
 from .utils import AnyIO
 
+PDFInput = str | os.PathLike[str] | bytes | bytearray | memoryview | BinaryIO
+ReadInput = (
+    tuple[Literal["path"], str | bytes]
+    | tuple[Literal["bytes"], bytes | bytearray | memoryview]
+)
 
-def _read_input(pdf_file):
+
+def _read_input(pdf_file: PDFInput) -> ReadInput:
     if isinstance(pdf_file, (str, os.PathLike)):
-        return "path", os.fspath(pdf_file)
-    if hasattr(pdf_file, "read"):
-        data = pdf_file.read()
-        return "bytes", data
+        return "path", cast("str | bytes", os.fspath(pdf_file))
     if isinstance(pdf_file, (bytes, bytearray, memoryview)):
         return "bytes", pdf_file
+    if hasattr(pdf_file, "read"):
+        data = cast("bytes | bytearray | memoryview", pdf_file.read())
+        return "bytes", data
     raise TypeError("pdf_file must be a path, bytes, or file-like object")
 
 
@@ -38,9 +55,9 @@ def extract_text_to_fp(
     outfp: AnyIO,
     output_type: str = "text",
     codec: str = "utf-8",
-    laparams=None,
+    laparams: object | None = None,
     maxpages: int = 0,
-    page_numbers: Container[int] | None = None,
+    page_numbers: Iterable[int] | None = None,
     password: str = "",
     scale: float = 1.0,
     rotation: int = 0,
@@ -49,7 +66,7 @@ def extract_text_to_fp(
     strip_control: bool = False,
     debug: bool = False,
     disable_caching: bool = False,
-    **kwargs: Any,
+    **_kwargs: object,
 ) -> None:
     if debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -153,13 +170,13 @@ def extract_text_to_fp(
 
 
 def extract_text(
-    pdf_file,
+    pdf_file: PDFInput,
     password: str = "",
-    page_numbers: Optional[Iterable[int]] = None,
+    page_numbers: Iterable[int] | None = None,
     maxpages: int = 0,
     caching: bool = True,
-    laparams=None,
-):
+    laparams: object | None = None,
+) -> str:
     kind, value = _read_input(pdf_file)
     if kind == "path":
         return _extract_text_from_path(
@@ -169,13 +186,13 @@ def extract_text(
 
 
 def extract_pages(
-    pdf_file,
+    pdf_file: PDFInput,
     password: str = "",
-    page_numbers: Optional[Iterable[int]] = None,
+    page_numbers: Iterable[int] | None = None,
     maxpages: int = 0,
     caching: bool = True,
-    laparams=None,
-):
+    laparams: object | None = None,
+) -> Generator[LTPage, None, None]:
     kind, value = _read_input(pdf_file)
     if kind == "path":
         pages = _extract_pages_from_path(

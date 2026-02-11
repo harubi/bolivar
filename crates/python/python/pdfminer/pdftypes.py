@@ -1,7 +1,14 @@
 # pdfminer.pdftypes compatibility shim
 
+from collections.abc import Mapping
+from typing import Protocol
 
-from bolivar._bolivar import PDFStream
+from bolivar._native_api import PDFStream
+
+
+class _PDFDocumentLike(Protocol):
+    def getobj(self, objid: int) -> object:
+        """Resolve a PDF object by id."""
 
 
 class PDFObjRef:
@@ -10,15 +17,15 @@ class PDFObjRef:
     Represents an indirect object reference like "1 0 R".
     """
 
-    def __init__(self, doc, objid, genno=0):
+    def __init__(self, doc: _PDFDocumentLike, objid: int, genno: int = 0) -> None:
         self.doc = doc
         self.objid = objid
         self.genno = genno
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<PDFObjRef:{self.objid}>"
 
-    def resolve(self, default=None):
+    def resolve(self, default: object | None = None) -> object | None:
         """Resolve this reference to its actual object."""
         try:
             return self.doc.getobj(self.objid)
@@ -26,7 +33,7 @@ class PDFObjRef:
             return default
 
 
-def resolve1(x, default=None):
+def resolve1(x: object, default: object | None = None) -> object | None:
     """Resolve a PDF object reference.
 
     If x is a PDFObjRef, resolve it. Otherwise return x.
@@ -36,39 +43,55 @@ def resolve1(x, default=None):
     return x
 
 
-def resolve_all(x, default=None):
+def resolve_all(x: object, default: object | None = None) -> object:
     """Recursively resolve all PDFObjRef in a structure."""
     if isinstance(x, PDFObjRef):
         return resolve_all(x.resolve(default), default)
     elif isinstance(x, list):
         return [resolve_all(item, default) for item in x]
-    elif isinstance(x, dict):
+    elif isinstance(x, Mapping):
         return {k: resolve_all(v, default) for k, v in x.items()}
     return x
 
 
-def stream_value(x):
+def stream_value(x: object) -> object:
     """Get a stream's data."""
     if isinstance(x, PDFStream):
         return x.get_data()
     return x
 
 
-def int_value(x):
+def int_value(x: object) -> int:
     """Convert to int."""
     if isinstance(x, PDFObjRef):
         x = x.resolve()
-    return int(x) if x is not None else 0
+    if isinstance(x, int):
+        return x
+    if isinstance(x, float):
+        return int(x)
+    if isinstance(x, (str, bytes, bytearray)):
+        try:
+            return int(x)
+        except (TypeError, ValueError):
+            return 0
+    return 0
 
 
-def float_value(x):
+def float_value(x: object) -> float:
     """Convert to float."""
     if isinstance(x, PDFObjRef):
         x = x.resolve()
-    return float(x) if x is not None else 0.0
+    if isinstance(x, (int, float)):
+        return float(x)
+    if isinstance(x, (str, bytes, bytearray)):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return 0.0
+    return 0.0
 
 
-def str_value(x):
+def str_value(x: object) -> str:
     """Convert to string."""
     if isinstance(x, PDFObjRef):
         x = x.resolve()
@@ -77,7 +100,7 @@ def str_value(x):
     return str(x) if x is not None else ""
 
 
-def list_value(x):
+def list_value(x: object) -> list[object]:
     """Convert to list."""
     if isinstance(x, PDFObjRef):
         x = x.resolve()
@@ -86,10 +109,10 @@ def list_value(x):
     return []
 
 
-def dict_value(x):
+def dict_value(x: object) -> dict[object, object]:
     """Convert to dict."""
     if isinstance(x, PDFObjRef):
         x = x.resolve()
-    if isinstance(x, dict):
-        return x
+    if isinstance(x, Mapping):
+        return dict(x.items())
     return {}

@@ -1,10 +1,10 @@
 __all__ = [
     "__version__",
-    "utils",
-    "pdfminer",
     "open",
+    "pdfminer",
     "repair",
     "set_debug",
+    "utils",
 ]
 
 import pdfminer

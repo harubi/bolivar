@@ -1,10 +1,10 @@
 import pathlib
 from io import BufferedReader, BytesIO
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Union
 
 import PIL.Image
 import PIL.ImageDraw
-import pypdfium2  # type: ignore
+import pypdfium2
 
 from . import utils
 from ._typing import T_bbox, T_num, T_obj, T_obj_list, T_point, T_seq
@@ -18,30 +18,30 @@ if TYPE_CHECKING:  # pragma: nocover
 
 
 class COLORS:
-    RED = (255, 0, 0)
-    GREEN = (0, 255, 0)
-    BLUE = (0, 0, 255)
-    TRANSPARENT = (0, 0, 0, 0)
+    RED: tuple[int, int, int] = (255, 0, 0)
+    GREEN: tuple[int, int, int] = (0, 255, 0)
+    BLUE: tuple[int, int, int] = (0, 0, 255)
+    TRANSPARENT: tuple[int, int, int, int] = (0, 0, 0, 0)
 
 
-DEFAULT_FILL = COLORS.BLUE + (50,)
-DEFAULT_STROKE = COLORS.RED + (200,)
+DEFAULT_FILL: tuple[int, int, int, int] = (*COLORS.BLUE, 50)
+DEFAULT_STROKE: tuple[int, int, int, int] = (*COLORS.RED, 200)
 DEFAULT_STROKE_WIDTH = 1
 DEFAULT_RESOLUTION = 72
 
-T_color = Union[Tuple[int, int, int], Tuple[int, int, int, int], str]
-T_contains_points = Union[Tuple[T_point, ...], List[T_point], T_obj]
+T_color = tuple[int, int, int] | tuple[int, int, int, int] | str
+T_contains_points = tuple[T_point, ...] | list[T_point] | T_obj
 
 
 def get_page_image(
-    stream: Union[BufferedReader, BytesIO],
-    path: Optional[pathlib.Path],
+    stream: BufferedReader | BytesIO,
+    path: pathlib.Path | None,
     page_ix: int,
-    resolution: Union[int, float],
-    password: Optional[str],
+    resolution: int | float,
+    password: str | None,
     antialias: bool = False,
 ) -> PIL.Image.Image:
-    src: Union[pathlib.Path, BufferedReader, BytesIO]
+    src: pathlib.Path | BufferedReader | BytesIO
 
     # If we are working with a file object saved to disk
     if path:
@@ -55,7 +55,7 @@ def get_page_image(
     try:
         pdfium_doc = pypdfium2.PdfDocument(src, password=password)
     except pypdfium2.PdfiumError as e:
-        raise MalformedPDFException(e)
+        raise MalformedPDFException(e) from e
 
     pdfium_page = pdfium_doc.get_page(page_ix)
 
@@ -77,11 +77,11 @@ class PageImage:
     def __init__(
         self,
         page: "Page",
-        original: Optional[PIL.Image.Image] = None,
-        resolution: Union[int, float] = DEFAULT_RESOLUTION,
+        original: PIL.Image.Image | None = None,
+        resolution: int | float = DEFAULT_RESOLUTION,
         antialias: bool = False,
         force_mediabox: bool = False,
-    ):
+    ) -> None:
         self.page = page
         self.root = page if page.is_original else page.root_page
         self.resolution = resolution
@@ -126,13 +126,13 @@ class PageImage:
 
         self.reset()
 
-    def _reproject_bbox(self, bbox: T_bbox) -> Tuple[int, int, int, int]:
+    def _reproject_bbox(self, bbox: T_bbox) -> tuple[int, int, int, int]:
         x0, top, x1, bottom = bbox
         _x0, _top = self._reproject((x0, top))
         _x1, _bottom = self._reproject((x1, bottom))
         return (_x0, _top, _x1, _bottom)
 
-    def _reproject(self, coord: T_point) -> Tuple[int, int]:
+    def _reproject(self, coord: T_point) -> tuple[int, int]:
         """
         Given an (x0, top) tuple from the *root* coordinate system,
         return an (x0, top) tuple in the *image* coordinate system.
@@ -150,17 +150,17 @@ class PageImage:
 
     def save(
         self,
-        dest: Union[str, pathlib.Path, BytesIO],
+        dest: str | pathlib.Path | BytesIO,
         format: str = "PNG",
         quantize: bool = True,
         colors: int = 256,
         bits: int = 8,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> None:
         if quantize:
-            out = self.annotated.quantize(colors, method=PIL.Image.FASTOCTREE).convert(
-                "P"
-            )
+            out = self.annotated.quantize(
+                colors, method=PIL.Image.Quantize.FASTOCTREE
+            ).convert("P")
         else:
             out = self.annotated
 
@@ -220,7 +220,7 @@ class PageImage:
 
     def draw_vlines(
         self,
-        locations: Union[List[T_num], "pd.Series[float]"],
+        locations: Union[list[T_num], "pd.Series[float]"],
         stroke: T_color = DEFAULT_STROKE,
         stroke_width: int = DEFAULT_STROKE_WIDTH,
     ) -> "PageImage":
@@ -240,7 +240,7 @@ class PageImage:
 
     def draw_hlines(
         self,
-        locations: Union[List[T_num], "pd.Series[float]"],
+        locations: Union[list[T_num], "pd.Series[float]"],
         stroke: T_color = DEFAULT_STROKE,
         stroke_width: int = DEFAULT_STROKE_WIDTH,
     ) -> "PageImage":
@@ -250,7 +250,7 @@ class PageImage:
 
     def draw_rect(
         self,
-        bbox_or_obj: Union[T_bbox, T_obj],
+        bbox_or_obj: T_bbox | T_obj,
         fill: T_color = DEFAULT_FILL,
         stroke: T_color = DEFAULT_STROKE,
         stroke_width: int = DEFAULT_STROKE_WIDTH,
@@ -283,7 +283,7 @@ class PageImage:
 
     def draw_rects(
         self,
-        list_of_rects: Union[List[T_bbox], T_obj_list, "pd.DataFrame"],
+        list_of_rects: Union[list[T_bbox], T_obj_list, "pd.DataFrame"],
         fill: T_color = DEFAULT_FILL,
         stroke: T_color = DEFAULT_STROKE,
         stroke_width: int = DEFAULT_STROKE_WIDTH,
@@ -294,7 +294,7 @@ class PageImage:
 
     def draw_circle(
         self,
-        center_or_obj: Union[T_point, T_obj],
+        center_or_obj: T_point | T_obj,
         radius: int = 5,
         fill: T_color = DEFAULT_FILL,
         stroke: T_color = DEFAULT_STROKE,
@@ -311,7 +311,7 @@ class PageImage:
 
     def draw_circles(
         self,
-        list_of_circles: Union[List[T_point], T_obj_list, "pd.DataFrame"],
+        list_of_circles: Union[list[T_point], T_obj_list, "pd.DataFrame"],
         radius: int = 5,
         fill: T_color = DEFAULT_FILL,
         stroke: T_color = DEFAULT_STROKE,
@@ -337,9 +337,7 @@ class PageImage:
 
     def debug_tablefinder(
         self,
-        table_settings: Optional[
-            Union[TableFinder, TableSettings, T_table_settings]
-        ] = None,
+        table_settings: TableFinder | TableSettings | T_table_settings | None = None,
     ) -> "PageImage":
         if isinstance(table_settings, TableFinder):
             finder = table_settings
@@ -361,7 +359,7 @@ class PageImage:
         self.draw_circles(
             list(finder.intersections.keys()),
             fill=COLORS.TRANSPARENT,
-            stroke=COLORS.BLUE + (200,),
+            stroke=(*COLORS.BLUE, 200),
             radius=3,
         )
         return self

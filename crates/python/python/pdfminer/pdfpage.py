@@ -1,5 +1,34 @@
 # pdfminer.pdfpage compatibility shim
 
+from collections.abc import Container, Generator
+from typing import Protocol
+
+
+class _RustPageLike(Protocol):
+    pageid: int
+    mediabox: tuple[float, float, float, float] | None
+    cropbox: tuple[float, float, float, float] | None
+    rotate: int
+    resources: object
+    label: object
+    annots: object
+    bleedbox: tuple[float, float, float, float] | None
+    trimbox: tuple[float, float, float, float] | None
+    artbox: tuple[float, float, float, float] | None
+    attrs: dict[object, object]
+
+
+class _RustDocumentLike(Protocol):
+    def page_count(self) -> int:
+        """Return page count."""
+
+    def get_page(self, index: int) -> _RustPageLike:
+        """Return a single page."""
+
+
+class _DocumentLike(Protocol):
+    _rust_doc: _RustDocumentLike
+
 
 class PDFPage:
     """PDF page - wraps bolivar's Rust PDFPage.
@@ -7,7 +36,12 @@ class PDFPage:
     Provides pdfminer.six-compatible API for accessing page properties.
     """
 
-    def __init__(self, rust_page, doc, page_index=None):
+    def __init__(
+        self,
+        rust_page: _RustPageLike,
+        doc: object,
+        page_index: int | None = None,
+    ) -> None:
         """Create a PDFPage from a Rust PDFPage.
 
         Args:
@@ -49,7 +83,12 @@ class PDFPage:
         self.attrs = rust_page.attrs
 
     @classmethod
-    def create_pages(cls, document, caching=True, check_extractable=True):
+    def create_pages(
+        cls,
+        document: _DocumentLike,
+        caching: bool = True,
+        check_extractable: bool = True,
+    ) -> Generator["PDFPage", None, None]:
         """Iterate over pages in a PDF document.
 
         Args:
@@ -62,47 +101,47 @@ class PDFPage:
         """
         try:
             page_count = document._rust_doc.page_count()
-        except Exception as e:
+        except Exception as exc:
             try:
                 from pdfplumber.utils.exceptions import PdfminerException
             except Exception:
-                raise e
-            raise PdfminerException(e)
+                raise exc from exc
+            raise PdfminerException(exc) from exc
 
         if page_count <= 0:
             try:
                 from pdfplumber.utils.exceptions import PdfminerException
-            except Exception:
-                raise RuntimeError("No pages found in PDF")
+            except Exception as exc:
+                raise RuntimeError("No pages found in PDF") from exc
             raise PdfminerException("No pages found in PDF")
 
         for idx in range(page_count):
             try:
                 rust_page = document._rust_doc.get_page(idx)
-            except Exception as e:
+            except Exception as exc:
                 try:
                     from pdfplumber.utils.exceptions import PdfminerException
                 except Exception:
-                    raise e
-                raise PdfminerException(e)
+                    raise exc from exc
+                raise PdfminerException(exc) from exc
             yield cls(rust_page, document, page_index=idx)
 
     @classmethod
     def get_pages(
         cls,
-        fp,
-        page_numbers=None,
-        maxpages=0,
-        password=b"",
-        caching=True,
-        check_extractable=True,
-    ):
+        fp: object,
+        page_numbers: Container[int] | None = None,
+        maxpages: int = 0,
+        password: bytes | str = b"",
+        caching: bool = True,
+        check_extractable: bool = True,
+    ) -> Generator["PDFPage", None, None]:
         """Legacy interface for iterating pages.
 
         This is a convenience method that creates parser and document.
         """
-        from .pdfparser import PDFParser
         from .pdfdocument import PDFDocument
+        from .pdfparser import PDFParser
 
         parser = PDFParser(fp)
         doc = PDFDocument(parser, password=password, caching=caching)

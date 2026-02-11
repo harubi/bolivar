@@ -1,3 +1,3 @@
-from bolivar._bolivar import Arcfour
+from bolivar._native_api import Arcfour
 
 __all__ = ["Arcfour"]
