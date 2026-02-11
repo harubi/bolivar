@@ -77,6 +77,28 @@ def test_pdfplumber_pages_is_lazy_and_supports_slices(monkeypatch):
         assert len(pages[1:3]) == 2
 
 
+def test_pdfplumber_pages_supports_index_objects(monkeypatch):
+    class _Index:
+        def __init__(self, value):
+            self.value = value
+
+        def __index__(self):
+            return self.value
+
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        pages = pdf.pages
+        first = pages[_Index(0)]
+        last = pages[_Index(-1)]
+        assert first.page_number == 1
+        assert last.page_number == len(pages)
+
+
 def test_pdfplumber_close_does_not_iterate_lazy_pages(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
@@ -236,6 +258,17 @@ def test_extract_tables_rejects_threads_kw(monkeypatch):
         page = pdf.pages[0]
         with pytest.raises(TypeError):
             page.extract_tables(threads=1)
+
+
+def test_pdfplumber_repair_honors_falsey_outfile(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "references/pdfplumber/tests/pdfs/pdffill-demo.pdf",
+    )
+    with pytest.raises(OSError):
+        pdfplumber.repair.repair(pdf_path, outfile="")
 
 
 def test_extract_tables_uses_bolivar(monkeypatch):

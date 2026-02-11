@@ -1,12 +1,12 @@
 import itertools
+from collections.abc import Iterable
 from operator import itemgetter
-from typing import Dict, Iterable, Optional
 
 from .._typing import T_bbox, T_num, T_obj, T_obj_list
 from .clustering import cluster_objects
 
 
-def objects_to_rect(objects: Iterable[T_obj]) -> Dict[str, T_num]:
+def objects_to_rect(objects: Iterable[T_obj]) -> dict[str, T_num]:
     """
     Given an iterable of objects, return the smallest rectangle (i.e. a
     dict with "x0", "top", "x1", and "bottom" keys) that contains them
@@ -34,7 +34,7 @@ def obj_to_bbox(obj: T_obj) -> T_bbox:
     return bbox
 
 
-def bbox_to_rect(bbox: T_bbox) -> Dict[str, T_num]:
+def bbox_to_rect(bbox: T_bbox) -> dict[str, T_num]:
     """
     Return the rectangle (i.e a dict with keys "x0", "top", "x1",
     "bottom") for an object.
@@ -47,11 +47,11 @@ def merge_bboxes(bboxes: Iterable[T_bbox]) -> T_bbox:
     Given an iterable of bounding boxes, return the smallest bounding box
     that contains them all.
     """
-    x0, top, x1, bottom = zip(*bboxes)
+    x0, top, x1, bottom = zip(*bboxes, strict=False)
     return (min(x0), min(top), max(x1), max(bottom))
 
 
-def get_bbox_overlap(a: T_bbox, b: T_bbox) -> Optional[T_bbox]:
+def get_bbox_overlap(a: T_bbox, b: T_bbox) -> T_bbox | None:
     a_left, a_top, a_right, a_bottom = a
     b_left, b_top, b_right, b_bottom = b
     o_left = max(a_left, b_left)
@@ -73,7 +73,7 @@ def calculate_area(bbox: T_bbox) -> T_num:
     return (right - left) * (bottom - top)
 
 
-def clip_obj(obj: T_obj, bbox: T_bbox) -> Optional[T_obj]:
+def clip_obj(obj: T_obj, bbox: T_bbox) -> T_obj | None:
     overlap = get_bbox_overlap(obj_to_bbox(obj), bbox)
     if overlap is None:
         return None
@@ -133,7 +133,7 @@ def move_object(obj: T_obj, axis: str, value: T_num) -> T_obj:
             ("x0", obj["x0"] + value),
             ("x1", obj["x1"] + value),
         ]
-    if axis == "v":
+    elif axis == "v":
         new_items = [
             ("top", obj["top"] + value),
             ("bottom", obj["bottom"] + value),
@@ -145,6 +145,8 @@ def move_object(obj: T_obj, axis: str, value: T_num) -> T_obj:
                 ("y0", obj["y0"] - value),
                 ("y1", obj["y1"] - value),
             ]
+    else:
+        raise ValueError("axis must be 'h' or 'v'")
     return obj.__class__(tuple(obj.items()) + tuple(new_items))
 
 
@@ -155,7 +157,7 @@ def snap_objects(objs: Iterable[T_obj], attr: str, tolerance: T_num) -> T_obj_li
     avgs = [sum(map(itemgetter(attr), cluster)) / len(cluster) for cluster in clusters]
     snapped_clusters = [
         [move_object(obj, axis, avg - obj[attr]) for obj in cluster]
-        for cluster, avg in zip(clusters, avgs)
+        for cluster, avg in zip(clusters, avgs, strict=False)
     ]
     return list(itertools.chain(*snapped_clusters))
 
@@ -188,7 +190,7 @@ def resize_object(obj: T_obj, key: str, value: T_num) -> T_obj:
 
 
 def curve_to_edges(curve: T_obj) -> T_obj_list:
-    point_pairs = zip(curve["pts"], curve["pts"][1:])
+    point_pairs = zip(curve["pts"], curve["pts"][1:], strict=False)
     return [
         {
             "object_type": "curve_edge",
@@ -263,8 +265,8 @@ def obj_to_edges(obj: T_obj) -> T_obj_list:
 
 def filter_edges(
     edges: Iterable[T_obj],
-    orientation: Optional[str] = None,
-    edge_type: Optional[str] = None,
+    orientation: str | None = None,
+    edge_type: str | None = None,
     min_length: T_num = 1,
 ) -> T_obj_list:
     if orientation not in ("v", "h", None):

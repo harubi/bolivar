@@ -4,18 +4,12 @@ import logging
 import re
 import string
 import unicodedata
+from collections.abc import Callable, Generator, Iterable
 from operator import itemgetter
+from re import Match, Pattern
 from typing import (
     Any,
-    Callable,
-    Dict,
-    Generator,
-    List,
-    Match,
-    Optional,
-    Pattern,
-    Tuple,
-    Union,
+    cast,
 )
 
 from .._typing import T_bbox, T_dir, T_num, T_obj, T_obj_iter, T_obj_list
@@ -69,7 +63,7 @@ def _text_contains_rtl(text: str) -> bool:
 
 def _reorder_text_for_output_with_core(text: str) -> str:
     try:
-        from bolivar._bolivar import reorder_text_for_output
+        from bolivar._native_api import reorder_text_for_output
     except Exception:
         if _contains_arabic_presentation_forms(text):
             return unicodedata.normalize("NFKC", text)
@@ -99,7 +93,7 @@ def get_line_cluster_key(line_dir: T_dir) -> Callable[[T_obj], T_num]:
     }[line_dir]
 
 
-def get_char_sort_key(char_dir: T_dir) -> Callable[[T_obj], Tuple[T_num, T_num]]:
+def get_char_sort_key(char_dir: T_dir) -> Callable[[T_obj], tuple[T_num, T_num]]:
     return {
         "ttb": lambda x: (x["top"], x["bottom"]),
         "btt": lambda x: (-(x["top"] + x["height"]), -x["top"]),
@@ -148,7 +142,7 @@ class TextMap:
 
     def __init__(
         self,
-        tuples: List[Tuple[str, Optional[T_obj]]],
+        tuples: list[tuple[str, T_obj | None]],
         line_dir_render: T_dir,
         char_dir_render: T_dir,
     ) -> None:
@@ -196,7 +190,7 @@ class TextMap:
         main_group: int = 0,
         return_groups: bool = True,
         return_chars: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         subset = self.tuples[m.start(main_group) : m.end(main_group)]
         chars = [c for (text, c) in subset if c is not None]
         x0, top, x1, bottom = objects_to_bbox(chars)
@@ -219,13 +213,13 @@ class TextMap:
 
     def search(
         self,
-        pattern: Union[str, Pattern[str]],
+        pattern: str | Pattern[str],
         regex: bool = True,
         case: bool = True,
         return_groups: bool = True,
         return_chars: bool = True,
         main_group: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if isinstance(pattern, Pattern):
             if regex is False:
                 raise ValueError(
@@ -259,7 +253,7 @@ class TextMap:
 
     def extract_text_lines(
         self, strip: bool = True, return_chars: bool = True
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         `strip` is analogous to Python's `str.strip()` method, and returns
         `text` attributes without their surrounding whitespace. Only
@@ -268,10 +262,7 @@ class TextMap:
         Setting `return_chars` to False will exclude the individual
         character objects from the returned text-line dicts.
         """
-        if strip:
-            pat = r" *([^\n]+?) *(\n|$)"
-        else:
-            pat = r"([^\n]+)"
+        pat = r" *([^\n]+?) *(\n|$)" if strip else r"([^\n]+)"
 
         return self.search(
             pat, main_group=1, return_chars=return_chars, return_groups=False
@@ -283,7 +274,7 @@ class WordMap:
     A WordMap maps words->chars.
     """
 
-    def __init__(self, tuples: List[Tuple[T_obj, T_obj_list]]) -> None:
+    def __init__(self, tuples: list[tuple[T_obj, T_obj_list]]) -> None:
         self.tuples = tuples
 
     def to_textmap(
@@ -301,10 +292,10 @@ class WordMap:
         y_tolerance: T_num = DEFAULT_Y_TOLERANCE,
         line_dir: T_dir = DEFAULT_LINE_DIR,
         char_dir: T_dir = DEFAULT_CHAR_DIR,
-        line_dir_rotated: Optional[T_dir] = None,
-        char_dir_rotated: Optional[T_dir] = None,
-        char_dir_render: Optional[T_dir] = None,
-        line_dir_render: Optional[T_dir] = None,
+        line_dir_rotated: T_dir | None = None,
+        char_dir_rotated: T_dir | None = None,
+        char_dir_render: T_dir | None = None,
+        line_dir_render: T_dir | None = None,
         use_text_flow: bool = False,
         presorted: bool = False,
         expand_ligatures: bool = True,
@@ -340,7 +331,7 @@ class WordMap:
         For other line/character directions (e.g., bottom-to-top,
         right-to-left), these steps are adjusted.
         """
-        _textmap: List[Tuple[str, Optional[T_obj]]] = []
+        _textmap: list[tuple[str, T_obj | None]] = []
 
         if not len(self.tuples):
             return TextMap(
@@ -358,7 +349,7 @@ class WordMap:
                         "`layout_width` and `layout_width_chars` cannot both be set."
                     )
             else:
-                layout_width_chars = int(round(layout_width / x_density))
+                layout_width_chars = round(layout_width / x_density)
 
             if layout_height_chars:
                 if layout_height:
@@ -366,7 +357,7 @@ class WordMap:
                         "`layout_height` and `layout_height_chars` cannot both be set."
                     )
             else:
-                layout_height_chars = int(round(layout_height / y_density))
+                layout_height_chars = round(layout_height / y_density)
 
             blank_line = [(" ", None)] * layout_width_chars
         else:
@@ -411,7 +402,7 @@ class WordMap:
                 round(y_dist) - num_newlines,
             )
 
-            for i in range(num_newlines_prepend):
+            for _i in range(num_newlines_prepend):
                 if not len(_textmap) or _textmap[-1][0] == "\n":
                     _textmap += blank_line
                 _textmap.append(("\n", None))
@@ -473,20 +464,20 @@ class WordExtractor:
         self,
         x_tolerance: T_num = DEFAULT_X_TOLERANCE,
         y_tolerance: T_num = DEFAULT_Y_TOLERANCE,
-        x_tolerance_ratio: Union[int, float, None] = None,
-        y_tolerance_ratio: Union[int, float, None] = None,
+        x_tolerance_ratio: int | float | None = None,
+        y_tolerance_ratio: int | float | None = None,
         keep_blank_chars: bool = False,
         use_text_flow: bool = False,
         vertical_ttb: bool = True,  # Should vertical words be read top-to-bottom?
         horizontal_ltr: bool = True,  # Should words be read left-to-right?
         line_dir: T_dir = DEFAULT_LINE_DIR,
         char_dir: T_dir = DEFAULT_CHAR_DIR,
-        line_dir_rotated: Optional[T_dir] = None,
-        char_dir_rotated: Optional[T_dir] = None,
-        extra_attrs: Optional[List[str]] = None,
-        split_at_punctuation: Union[bool, str] = False,
+        line_dir_rotated: T_dir | None = None,
+        char_dir_rotated: T_dir | None = None,
+        extra_attrs: list[str] | None = None,
+        split_at_punctuation: bool | str = False,
         expand_ligatures: bool = True,
-    ):
+    ) -> None:
         self.x_tolerance = x_tolerance
         self.y_tolerance = y_tolerance
         self.x_tolerance_ratio = x_tolerance_ratio
@@ -646,7 +637,7 @@ class WordExtractor:
         current_word: T_obj_list = []
 
         def start_next_word(
-            new_char: Optional[T_obj],
+            new_char: T_obj | None,
         ) -> Generator[T_obj_list, None, None]:
             nonlocal current_word
 
@@ -688,7 +679,7 @@ class WordExtractor:
 
     def iter_chars_to_lines(
         self, chars: T_obj_iter
-    ) -> Generator[Tuple[T_obj_list, T_dir], None, None]:
+    ) -> Generator[tuple[T_obj_list, T_dir], None, None]:
         chars = list(chars)
         upright = chars[0]["upright"]
         line_dir = self.line_dir if upright else self.line_dir_rotated
@@ -711,16 +702,16 @@ class WordExtractor:
 
     def iter_extract_tuples(
         self, chars: T_obj_iter
-    ) -> Generator[Tuple[T_obj, T_obj_list], None, None]:
+    ) -> Generator[tuple[T_obj, T_obj_list], None, None]:
         grouping_key = itemgetter("upright", *self.extra_attrs)
         grouped_chars = itertools.groupby(chars, grouping_key)
 
-        for keyvals, char_group in grouped_chars:
-            line_groups = (
-                [(char_group, self.char_dir)]
-                if self.use_text_flow
-                else self.iter_chars_to_lines(char_group)
-            )
+        for _keyvals, char_group in grouped_chars:
+            line_groups: Iterable[tuple[T_obj_iter, T_dir]]
+            if self.use_text_flow:
+                line_groups = [(char_group, self.char_dir)]
+            else:
+                line_groups = self.iter_chars_to_lines(char_group)
             for line_chars, direction in line_groups:
                 for word_chars in self.iter_chars_to_words(line_chars, direction):
                     yield (self.merge_chars(word_chars), word_chars)
@@ -732,25 +723,26 @@ class WordExtractor:
         self, chars: T_obj_list, return_chars: bool = False
     ) -> T_obj_list:
         if return_chars:
-            return list(
+            return [
                 {**word, "chars": word_chars}
                 for word, word_chars in self.iter_extract_tuples(chars)
-            )
+            ]
         else:
-            return list(word for word, word_chars in self.iter_extract_tuples(chars))
+            return [word for word, word_chars in self.iter_extract_tuples(chars)]
 
 
 def extract_words(
-    chars: T_obj_list, return_chars: bool = False, **kwargs: Any
+    chars: T_obj_list, return_chars: bool = False, **kwargs: object
 ) -> T_obj_list:
-    return WordExtractor(**kwargs).extract_words(chars, return_chars)
+    extractor_kwargs = cast("dict[str, Any]", kwargs)
+    return WordExtractor(**extractor_kwargs).extract_words(chars, return_chars)
 
 
 TEXTMAP_KWARGS = inspect.signature(WordMap.to_textmap).parameters.keys()
 WORD_EXTRACTOR_KWARGS = inspect.signature(WordExtractor).parameters.keys()
 
 
-def chars_to_textmap(chars: T_obj_list, **kwargs: Any) -> TextMap:
+def chars_to_textmap(chars: T_obj_list, **kwargs: object) -> TextMap:
     kwargs.update(
         {
             "presorted": True,
@@ -758,38 +750,48 @@ def chars_to_textmap(chars: T_obj_list, **kwargs: Any) -> TextMap:
         }
     )
 
-    extractor = WordExtractor(
-        **{k: kwargs[k] for k in WORD_EXTRACTOR_KWARGS if k in kwargs}
+    extractor_kwargs = cast(
+        "dict[str, Any]", {k: kwargs[k] for k in WORD_EXTRACTOR_KWARGS if k in kwargs}
     )
+    extractor = WordExtractor(**extractor_kwargs)
     wordmap = extractor.extract_wordmap(chars)
-    textmap = wordmap.to_textmap(
-        **{k: kwargs[k] for k in TEXTMAP_KWARGS if k in kwargs}
+    textmap_kwargs = cast(
+        "dict[str, Any]", {k: kwargs[k] for k in TEXTMAP_KWARGS if k in kwargs}
     )
+    textmap = wordmap.to_textmap(**textmap_kwargs)
     return textmap
 
 
 def extract_text(
     chars: T_obj_list,
-    line_dir_render: Optional[T_dir] = None,
-    char_dir_render: Optional[T_dir] = None,
-    **kwargs: Any,
+    line_dir_render: T_dir | None = None,
+    char_dir_render: T_dir | None = None,
+    **kwargs: object,
 ) -> str:
     chars = to_list(chars)
     if len(chars) == 0:
         return ""
-    auto_rtl = kwargs.pop("auto_rtl", True)
+    auto_rtl = cast("bool", kwargs.pop("auto_rtl", True))
 
     if kwargs.get("layout"):
-        textmap_kwargs = {
-            **kwargs,
-            **{"line_dir_render": line_dir_render, "char_dir_render": char_dir_render},
-        }
+        textmap_kwargs = cast(
+            "dict[str, Any]",
+            {
+                **kwargs,
+                **{
+                    "line_dir_render": line_dir_render,
+                    "char_dir_render": char_dir_render,
+                },
+            },
+        )
         out = chars_to_textmap(chars, **textmap_kwargs).as_string
         return _normalize_rtl_output_text(out) if auto_rtl else out
     else:
-        extractor = WordExtractor(
-            **{k: kwargs[k] for k in WORD_EXTRACTOR_KWARGS if k in kwargs}
+        extractor_kwargs = cast(
+            "dict[str, Any]",
+            {k: kwargs[k] for k in WORD_EXTRACTOR_KWARGS if k in kwargs},
         )
+        extractor = WordExtractor(**extractor_kwargs)
         words = extractor.extract_words(chars)
 
         line_dir_render = line_dir_render or extractor.line_dir
@@ -797,8 +799,8 @@ def extract_text(
 
         line_cluster_key = get_line_cluster_key(extractor.line_dir)
 
-        x_tolerance = kwargs.get("x_tolerance", DEFAULT_X_TOLERANCE)
-        y_tolerance = kwargs.get("y_tolerance", DEFAULT_Y_TOLERANCE)
+        x_tolerance = cast("T_num", kwargs.get("x_tolerance", DEFAULT_X_TOLERANCE))
+        y_tolerance = cast("T_num", kwargs.get("y_tolerance", DEFAULT_Y_TOLERANCE))
 
         lines = cluster_objects(
             words,
@@ -845,19 +847,19 @@ def extract_text_simple(
 def dedupe_chars(
     chars: T_obj_list,
     tolerance: T_num = 1,
-    extra_attrs: Optional[Tuple[str, ...]] = ("fontname", "size"),
+    extra_attrs: tuple[str, ...] | None = ("fontname", "size"),
 ) -> T_obj_list:
     """
-    Removes duplicate chars — those sharing the same text and positioning
+    Removes duplicate chars - those sharing the same text and positioning
     (within `tolerance`) as other characters in the set. Use extra_args to
     be more restrictive with the properties shared by the matching chars.
     """
-    key = itemgetter(*("upright", "text"), *(extra_attrs or tuple()))
+    key = itemgetter(*("upright", "text"), *(extra_attrs or ()))
     pos_key = itemgetter("doctop", "x0")
 
     def yield_unique_chars(chars: T_obj_list) -> Generator[T_obj, None, None]:
         sorted_chars = sorted(chars, key=key)
-        for grp, grp_chars in itertools.groupby(sorted_chars, key=key):
+        for _grp, grp_chars in itertools.groupby(sorted_chars, key=key):
             for y_cluster in cluster_objects(
                 list(grp_chars), itemgetter("doctop"), tolerance
             ):

@@ -55,3 +55,46 @@ test = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
 ]
+typecheck = [
+    "ruff>=0.15.0",
+    "ty>=0.0.16",
+]
+
+[tool.ty]
+
+[tool.ty.src]
+exclude = [".venv/**", "target/**", "references/**"]
+
+[tool.ty.environment]
+root = [".", "crates/python/python"]
+python-version = "3.10"
+
+[tool.ty.rules]
+all = "error"
+
+[tool.ty.terminal]
+error-on-warning = true
+
+[tool.ruff]
+target-version = "py310"
+src = ["crates/python/python"]
+
+[tool.ruff.lint]
+extend-select = [
+    "ANN",
+    "TC",
+    "E",
+    "W",
+    "F",
+    "I",
+    "PGH003",
+    "UP",
+    "B",
+    "SIM",
+    "C4",
+    "RUF",
+]
+
+[tool.ruff.lint.flake8-annotations]
+ignore-fully-untyped = false
+allow-star-arg-any = false

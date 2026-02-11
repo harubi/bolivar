@@ -1,11 +1,10 @@
+import contextlib
 import sys
 
 
 def _warn(exc: Exception) -> None:
-    try:
+    with contextlib.suppress(Exception):
         sys.stderr.write(f"bolivar autoload failed: {exc}\n")
-    except Exception:
-        pass
 
 
 try:

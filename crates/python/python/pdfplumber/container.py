@@ -2,30 +2,35 @@ import csv
 import json
 from io import StringIO
 from itertools import chain
-from typing import Any, Dict, List, Optional, Set, TextIO
+from typing import Any, ClassVar, TextIO, cast
 
 from . import utils
 from ._typing import T_obj, T_obj_list
 from .convert import CSV_COLS_REQUIRED, CSV_COLS_TO_PREPEND, Serializer
 
 
-class Container(object):
-    cached_properties = ["_rect_edges", "_curve_edges", "_edges", "_objects"]
+class Container:
+    cached_properties: ClassVar[list[str]] = [
+        "_rect_edges",
+        "_curve_edges",
+        "_edges",
+        "_objects",
+    ]
 
     @property
-    def pages(self) -> Optional[List[Any]]:  # pragma: nocover
+    def pages(self) -> list[Any] | None:  # pragma: nocover
         raise NotImplementedError
 
     @property
-    def objects(self) -> Dict[str, T_obj_list]:  # pragma: nocover
+    def objects(self) -> dict[str, T_obj_list]:  # pragma: nocover
         raise NotImplementedError
 
     def to_dict(
-        self, object_types: Optional[List[str]] = None
-    ) -> Dict[str, Any]:  # pragma: nocover
+        self, object_types: list[str] | None = None
+    ) -> dict[str, Any]:  # pragma: nocover
         raise NotImplementedError
 
-    def flush_cache(self, properties: Optional[List[str]] = None) -> None:
+    def flush_cache(self, properties: list[str] | None = None) -> None:
         props = self.cached_properties if properties is None else properties
         for p in props:
             if hasattr(self, p):
@@ -107,13 +112,13 @@ class Container(object):
 
     def to_json(
         self,
-        stream: Optional[TextIO] = None,
-        object_types: Optional[List[str]] = None,
-        include_attrs: Optional[List[str]] = None,
-        exclude_attrs: Optional[List[str]] = None,
-        precision: Optional[int] = None,
-        indent: Optional[int] = None,
-    ) -> Optional[str]:
+        stream: TextIO | None = None,
+        object_types: list[str] | None = None,
+        include_attrs: list[str] | None = None,
+        exclude_attrs: list[str] | None = None,
+        precision: int | None = None,
+        indent: int | None = None,
+    ) -> str | None:
         data = self.to_dict(object_types)
 
         serialized = Serializer(
@@ -130,12 +135,12 @@ class Container(object):
 
     def to_csv(
         self,
-        stream: Optional[TextIO] = None,
-        object_types: Optional[List[str]] = None,
-        precision: Optional[int] = None,
-        include_attrs: Optional[List[str]] = None,
-        exclude_attrs: Optional[List[str]] = None,
-    ) -> Optional[str]:
+        stream: TextIO | None = None,
+        object_types: list[str] | None = None,
+        precision: int | None = None,
+        include_attrs: list[str] | None = None,
+        exclude_attrs: list[str] | None = None,
+    ) -> str | None:
         if stream is None:
             stream = StringIO()
             to_string = True
@@ -143,10 +148,10 @@ class Container(object):
             to_string = False
 
         if object_types is None:
-            object_types = list(self.objects.keys()) + ["annot"]
+            object_types = [*list(self.objects), "annot"]
 
-        serialized = []
-        fields: Set[str] = set()
+        serialized: list[dict[str, object]] = []
+        fields: set[str] = set()
 
         pages = [self] if self.pages is None else self.pages
 
@@ -159,12 +164,16 @@ class Container(object):
             for t in object_types:
                 objs = getattr(page, t + "s")
                 if len(objs):
-                    serialized += serializer.serialize(objs)
+                    serialized_objs = serializer.serialize(objs)
+                    if isinstance(serialized_objs, list):
+                        serialized.extend(
+                            cast("list[dict[str, object]]", serialized_objs)
+                        )
                     new_keys = [k for k, v in objs[0].items() if type(v) is not dict]
                     fields = fields.union(set(new_keys))
 
-        non_req_cols = CSV_COLS_TO_PREPEND + list(
-            sorted(set(fields) - set(CSV_COLS_REQUIRED + CSV_COLS_TO_PREPEND))
+        non_req_cols = CSV_COLS_TO_PREPEND + sorted(
+            set(fields) - set(CSV_COLS_REQUIRED + CSV_COLS_TO_PREPEND)
         )
 
         cols = CSV_COLS_REQUIRED + list(filter(serializer.attr_filter, non_req_cols))

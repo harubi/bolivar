@@ -1,36 +1,46 @@
 # pdfminer.pdfinterp compatibility shim
 
 import logging
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Protocol, cast
 
 from bolivar import (
     process_page as _rust_process_page,
 )
-from bolivar._bolivar import PDFResourceManager as _RustPDFResourceManager
+from bolivar._native_api import PDFResourceManager as _RustPDFResourceManager
+
 from .layout import PDFGraphicState
 from .psparser import PSLiteral, literal_name
 
 log = logging.getLogger(__name__)
 
 # PDFStackT type alias (matches pdfminer.six)
-PDFStackT = Union[
-    bool,
-    int,
-    float,
-    bytes,
-    str,
-    List[Any],
-    Dict[str, Any],
-    Tuple[Any, ...],
-]
+PDFStackT = (
+    bool | int | float | bytes | str | list[Any] | dict[str, Any] | tuple[Any, ...]
+)
+PatternColor = str | tuple[float | tuple[float, ...], str]
 
 
 # Rust-backed resource manager (drop-in compatible API).
 PDFResourceManager = _RustPDFResourceManager
 
 
+class _DocumentLike(Protocol):
+    _rust_doc: object
+
+
+class _PageLike(Protocol):
+    doc: _DocumentLike
+    _rust_page: object
+
+
+class _DeviceLike(Protocol):
+    _laparams: object | None
+
+    def _receive_layout(self, layout: object) -> None: ...
+
+
 class PDFColorSpace:
-    def __init__(self, name="DeviceGray", ncomponents=1):
+    def __init__(self, name: str = "DeviceGray", ncomponents: int = 1) -> None:
         self.name = name
         self.ncomponents = ncomponents
 
@@ -41,7 +51,7 @@ class PDFPageInterpreter:
     Provides pdfminer.six-compatible API for page interpretation.
     """
 
-    def __init__(self, rsrcmgr, device):
+    def __init__(self, rsrcmgr: PDFResourceManager, device: object) -> None:
         """Create a page interpreter.
 
         Args:
@@ -49,40 +59,50 @@ class PDFPageInterpreter:
             device: PDFDevice instance (PDFPageAggregator or similar)
         """
         self.rsrcmgr = rsrcmgr
-        self.device = device
-        self._stack = []
-        self.graphicstate = None
-        self.ctm = None
+        self.device: _DeviceLike = cast("_DeviceLike", device)
+        self._stack: list[PDFStackT] = []
+        self.graphicstate: PDFGraphicState | None = None
+        self.ctm: object | None = None
 
-    def init_resources(self, resources):
-        self.resources = resources
-        self.graphicstate = PDFGraphicState()
+    def _get_graphicstate(self) -> PDFGraphicState:
+        if self.graphicstate is None:
+            self.graphicstate = PDFGraphicState()
         if self.graphicstate.scs is None:
             self.graphicstate.scs = PDFColorSpace()
         if self.graphicstate.ncs is None:
             self.graphicstate.ncs = PDFColorSpace()
+        return self.graphicstate
 
-    def init_state(self, ctm):
+    def init_resources(self, resources: object) -> None:
+        self.resources = resources
+        self.graphicstate = PDFGraphicState()
+        self._get_graphicstate()
+
+    def init_state(self, ctm: object) -> None:
         self.ctm = ctm
 
-    def push(self, obj):
+    def push(self, obj: PDFStackT) -> None:
         self._stack.append(obj)
 
-    def _popn(self, n):
+    def _popn(self, n: int) -> list[PDFStackT]:
         if n <= 0:
             return []
         vals = self._stack[-n:]
         del self._stack[-n:]
         return vals
 
-    def _pattern_color(self, is_stroking, iso_ref):
-        cs = self.graphicstate.scs if is_stroking else self.graphicstate.ncs
+    def _pattern_color(self, is_stroking: bool, iso_ref: str) -> PatternColor | None:
+        state = self._get_graphicstate()
+        cs = state.scs if is_stroking else state.ncs
         ncomponents = getattr(cs, "ncomponents", 1) or 1
         if ncomponents <= 1:
             name = self._popn(1)[0] if self._stack else None
             if not isinstance(name, PSLiteral):
                 log.warning(
-                    "Pattern color space requires name object (PSLiteral); got %s: %s (ISO 32000 %s)",
+                    (
+                        "Pattern color space requires name object (PSLiteral); "
+                        "got %s: %s (ISO 32000 %s)"
+                    ),
                     type(name).__name__,
                     name,
                     iso_ref,
@@ -95,37 +115,48 @@ class PDFPageInterpreter:
         pattern = values[-1]
         if not isinstance(pattern, PSLiteral):
             log.warning(
-                "Pattern color space requires name object (PSLiteral); got %s: %s (ISO 32000 %s)",
+                (
+                    "Pattern color space requires name object (PSLiteral); "
+                    "got %s: %s (ISO 32000 %s)"
+                ),
                 type(pattern).__name__,
                 pattern,
                 iso_ref,
             )
             return None
-        base_vals = tuple(float(v) for v in values[:-1])
+        base_vals_list: list[float] = []
+        for component in values[:-1]:
+            if not isinstance(component, (int, float)):
+                return None
+            base_vals_list.append(float(component))
+        base_vals = tuple(base_vals_list)
         base_color = base_vals[0] if len(base_vals) == 1 else base_vals
         return (base_color, literal_name(pattern))
 
-    def do_SCN(self):
-        if getattr(self.graphicstate.scs, "name", None) == "Pattern":
+    def do_SCN(self) -> None:
+        state = self._get_graphicstate()
+        if getattr(state.scs, "name", None) == "Pattern":
             color = self._pattern_color(True, "8.7.3.3")
             if color is not None:
-                self.graphicstate.scolor = color
+                state.scolor = color
 
-    def do_scn(self):
-        if getattr(self.graphicstate.ncs, "name", None) == "Pattern":
+    def do_scn(self) -> None:
+        state = self._get_graphicstate()
+        if getattr(state.ncs, "name", None) == "Pattern":
             color = self._pattern_color(False, "8.7.3.2")
             if color is not None:
-                self.graphicstate.ncolor = color
+                state.ncolor = color
 
-    def process_page(self, page):
+    def process_page(self, page: object) -> None:
         """Process a PDF page and send results to device.
 
         Args:
             page: PDFPage instance to process
         """
+        typed_page = cast("_PageLike", page)
         # Get the Rust document and page from the shim wrappers
-        rust_doc = page.doc._rust_doc
-        rust_page = page._rust_page
+        rust_doc = typed_page.doc._rust_doc
+        rust_page = typed_page._rust_page
 
         # Get LAParams from the device if available
         laparams = getattr(self.device, "_laparams", None)

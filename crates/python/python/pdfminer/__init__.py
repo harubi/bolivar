@@ -8,6 +8,8 @@
 __version__ = "0.1.0"
 
 # Re-export submodules for convenient access
+import bolivar._shim_registry as _shim_registry
+import pdfminer._bolivar_patch as _bolivar_patch
 import pdfminer.converter as converter
 import pdfminer.data_structures as data_structures
 import pdfminer.high_level as high_level
@@ -19,8 +21,6 @@ import pdfminer.pdfparser as pdfparser
 import pdfminer.pdftypes as pdftypes
 import pdfminer.psparser as psparser
 import pdfminer.utils as utils
-import pdfminer._bolivar_patch as _bolivar_patch
-import bolivar._shim_registry as _shim_registry
 
 patch_pdfplumber = _bolivar_patch.patch_pdfplumber
 

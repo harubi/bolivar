@@ -5,9 +5,40 @@
 
 import io
 import re
+from collections.abc import Sequence
+from typing import Protocol
+
+from bolivar._native_api import (
+    HOCRConverter as _NativeHOCRConverter,
+)
+from bolivar._native_api import (
+    HTMLConverter as _NativeHTMLConverter,
+)
+from bolivar._native_api import (
+    TextConverter as _NativeTextConverter,
+)
+from bolivar._native_api import (
+    XMLConverter as _NativeXMLConverter,
+)
 
 from .layout import LTCurve, LTLine, LTPage, LTRect
 from .utils import MATRIX_IDENTITY, apply_matrix_pt
+
+
+class _LayoutItemSink(Protocol):
+    def add(self, item: object) -> None:
+        """Add a layout item to the current container."""
+
+
+class _GraphicState(Protocol):
+    linewidth: float
+    scolor: object
+    ncolor: object
+    dash: object
+
+
+_PathOperand = str | float | int
+_PathOperation = Sequence[_PathOperand]
 
 
 class PDFPageAggregator:
@@ -17,42 +48,52 @@ class PDFPageAggregator:
     pdfplumber subclasses this as PDFPageAggregatorWithMarkedContent.
     """
 
-    def __init__(self, rsrcmgr, pageno=1, laparams=None):
+    def __init__(
+        self,
+        rsrcmgr: object,
+        pageno: int = 1,
+        laparams: object | None = None,
+    ) -> None:
         self.rsrcmgr = rsrcmgr
         self.pageno = pageno
         # Store laparams for interpreter to access
         self._laparams = laparams
         self.laparams = laparams
-        self.cur_item = None
+        self.cur_item: object | None = None
 
-    def begin_page(self, page, ctm):
+    def begin_page(self, page: object, ctm: Sequence[float]) -> None:
         """Called at the start of page processing."""
         pass
 
-    def end_page(self, page):
+    def end_page(self, page: object) -> None:
         """Called at the end of page processing."""
         pass
 
-    def begin_figure(self, name, bbox, matrix):
+    def begin_figure(
+        self,
+        name: str,
+        bbox: object,
+        matrix: Sequence[float],
+    ) -> None:
         """Called when entering a figure."""
         pass
 
-    def end_figure(self, name):
+    def end_figure(self, name: str) -> None:
         """Called when exiting a figure."""
         pass
 
-    def receive_layout(self, ltpage):
+    def receive_layout(self, ltpage: object) -> None:
         """Receive the analyzed layout for a page (public API)."""
         self.cur_item = ltpage
 
-    def _receive_layout(self, rust_ltpage):
+    def _receive_layout(self, rust_ltpage: object) -> None:
         """Receive layout from Rust (internal API).
 
         Receives the Rust LTPage directly.
         """
         self.receive_layout(LTPage(rust_ltpage))
 
-    def get_result(self):
+    def get_result(self) -> object | None:
         """Get the current page's layout result."""
         return self.cur_item
 
@@ -60,18 +101,30 @@ class PDFPageAggregator:
 class PDFLayoutAnalyzer:
     """PDFLayoutAnalyzer - minimal paint_path implementation for tests."""
 
-    def __init__(self, rsrcmgr, pageno=1, laparams=None):
+    def __init__(
+        self,
+        rsrcmgr: object,
+        pageno: int = 1,
+        laparams: object | None = None,
+    ) -> None:
         self.rsrcmgr = rsrcmgr
         self.pageno = pageno
         self.laparams = laparams
-        self.cur_item = None
+        self.cur_item: _LayoutItemSink | None = None
         self.ctm = MATRIX_IDENTITY
         self._stack = []
 
-    def set_ctm(self, ctm):
+    def set_ctm(self, ctm: Sequence[float]) -> None:
         self.ctm = tuple(ctm)
 
-    def paint_path(self, gstate, stroke, fill, evenodd, path):
+    def paint_path(
+        self,
+        gstate: _GraphicState,
+        stroke: bool,
+        fill: bool,
+        evenodd: bool,
+        path: Sequence[_PathOperation],
+    ) -> None:
         """Paint paths described in section 4.4 of the PDF reference manual."""
         if not path:
             return
@@ -86,8 +139,13 @@ class PDFLayoutAnalyzer:
             return
 
         # Points for each operation (h uses starting point).
-        raw_pts = [tuple(p[-2:]) if p[0] != "h" else tuple(path[0][-2:]) for p in path]
-        pts = [apply_matrix_pt(self.ctm, (float(x), float(y))) for x, y in raw_pts]
+        raw_pts = [
+            (float(p[-2]), float(p[-1]))
+            if p[0] != "h"
+            else (float(path[0][-2]), float(path[0][-1]))
+            for p in path
+        ]
+        pts = [apply_matrix_pt(self.ctm, pt) for pt in raw_pts]
 
         operators = [str(operation[0]) for operation in path]
         transformed_points = [
@@ -165,85 +223,32 @@ class PDFLayoutAnalyzer:
 class PDFConverter(PDFLayoutAnalyzer):
     """Base class for PDF converters."""
 
-    def __init__(self, rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None):
+    def __init__(
+        self,
+        rsrcmgr: object,
+        outfp: object,
+        codec: str = "utf-8",
+        pageno: int = 1,
+        laparams: object | None = None,
+    ) -> None:
         super().__init__(rsrcmgr, pageno=pageno, laparams=laparams)
         self.outfp = outfp
         self.codec = codec
         self.outfp_binary = self._is_binary_stream(self.outfp)
 
     @staticmethod
-    def _is_binary_stream(outfp):
+    def _is_binary_stream(outfp: object) -> bool:
         if "b" in getattr(outfp, "mode", ""):
             return True
         if hasattr(outfp, "mode"):
             return False
         if isinstance(outfp, io.BytesIO):
             return True
-        if isinstance(outfp, (io.StringIO, io.TextIOBase)):
-            return False
-        return True
+        return not isinstance(outfp, (io.StringIO, io.TextIOBase))
 
 
-class TextConverter:
-    """Converts PDF to plain text - stub."""
-
-    def __init__(
-        self,
-        rsrcmgr,
-        outfp,
-        codec="utf-8",
-        pageno=1,
-        laparams=None,
-        showpageno=False,
-        imagewriter=None,
-    ):
-        raise NotImplementedError("TextConverter not yet implemented via bolivar")
-
-
-class HTMLConverter:
-    """Converts PDF to HTML - stub."""
-
-    def __init__(
-        self,
-        rsrcmgr,
-        outfp,
-        codec="utf-8",
-        pageno=1,
-        laparams=None,
-        scale=1,
-        fontscale=1.0,
-        layoutmode="normal",
-        showpageno=True,
-        imagewriter=None,
-    ):
-        raise NotImplementedError("HTMLConverter not yet implemented via bolivar")
-
-
-class XMLConverter:
-    """Converts PDF to XML - stub."""
-
-    def __init__(
-        self,
-        rsrcmgr,
-        outfp,
-        codec="utf-8",
-        pageno=1,
-        laparams=None,
-        stripcontrol=False,
-        imagewriter=None,
-    ):
-        raise NotImplementedError("XMLConverter not yet implemented via bolivar")
-
-
-# Rust-backed converters (override stubs).
-from bolivar._bolivar import (  # noqa: E402
-    TextConverter as _RustTextConverter,
-    HTMLConverter as _RustHTMLConverter,
-    HOCRConverter as _RustHOCRConverter,
-    XMLConverter as _RustXMLConverter,
-)
-
-TextConverter = _RustTextConverter
-HTMLConverter = _RustHTMLConverter
-HOCRConverter = _RustHOCRConverter
-XMLConverter = _RustXMLConverter
+# Canonical runtime converter exports.
+TextConverter = _NativeTextConverter
+HTMLConverter = _NativeHTMLConverter
+HOCRConverter = _NativeHOCRConverter
+XMLConverter = _NativeXMLConverter
