@@ -39,6 +39,9 @@ profile = "release"
 features = ["pyo3/extension-module"]
 python-packages = ["bolivar", "pdfminer", "pdfplumber", "sitecustomize"]
 include = [
+    "crates/python/python/bolivar/_bolivar.pyi",
+    "crates/python/python/bolivar/py.typed",
+    "crates/python/python/pdfminer/py.typed",
     "crates/python/python/bolivar_autoload.py",
     "crates/python/python/bolivar_autoload.pth",
     "rust-toolchain.toml",
@@ -94,6 +97,9 @@ extend-select = [
     "C4",
     "RUF",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"*.pyi" = ["ANN"]
 
 [tool.ruff.lint.flake8-annotations]
 ignore-fully-untyped = false

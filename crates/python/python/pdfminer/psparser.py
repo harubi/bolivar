@@ -1,7 +1,14 @@
 # pdfminer.psparser compatibility shim (Rust-backed)
 
 import pdfminer.psexceptions as psexceptions
-from bolivar._native_api import KWD, PSKeyword, PSLiteral
+from bolivar._native_api import (
+    KWD,
+    LIT,
+    PSBaseParser,
+    PSKeyword,
+    PSLiteral,
+    PSStackParser,
+)
 
 PSException = psexceptions.PSException
 PSEOF = psexceptions.PSEOF
@@ -36,3 +43,26 @@ def keyword_name(x: object) -> object:
     if isinstance(name, bytes):
         return name.decode("utf-8", "ignore")
     return str(name)
+
+
+__all__ = [
+    "KEYWORD_ARRAY_BEGIN",
+    "KEYWORD_ARRAY_END",
+    "KEYWORD_DICT_BEGIN",
+    "KEYWORD_DICT_END",
+    "KEYWORD_PROC_BEGIN",
+    "KEYWORD_PROC_END",
+    "KWD",
+    "LIT",
+    "PSEOF",
+    "PSBaseParser",
+    "PSException",
+    "PSKeyword",
+    "PSLiteral",
+    "PSStackParser",
+    "PSSyntaxError",
+    "PSTypeError",
+    "PSValueError",
+    "keyword_name",
+    "literal_name",
+]

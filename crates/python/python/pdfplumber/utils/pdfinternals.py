@@ -60,7 +60,7 @@ def get_dict_type(d: object) -> str | None:
     if isinstance(t, PSLiteral):
         return decode_text(t.name)
     else:
-        return t
+        return cast("str | None", t)
 
 
 def resolve_all(x: object) -> object:

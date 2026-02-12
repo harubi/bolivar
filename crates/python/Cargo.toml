@@ -9,7 +9,7 @@ publish = false
 
 [lib]
 name = "_bolivar"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 bolivar-core.workspace = true

@@ -45,6 +45,24 @@ uv run --group typecheck ruff check crates/python/python
 uv run --group typecheck ruff format --check crates/python/python
 '''
 
+[tasks.check-stub-parity]
+category = "Python"
+description = "Verify every __all__ symbol has a matching .pyi stub entry"
+command = "uv"
+args = ["run", "python", "scripts/check_stub_parity.py"]
+
+[tasks.typecheck-py-report]
+category = "Python"
+description = "Report type-check status per package"
+script = '''
+echo "=== bolivar ==="
+uv run --group typecheck ty check crates/python/python/bolivar 2>&1 | tail -1
+echo "=== pdfminer ==="
+uv run --group typecheck ty check crates/python/python/pdfminer 2>&1 | tail -1
+echo "=== pdfplumber ==="
+uv run --group typecheck ty check crates/python/python/pdfplumber 2>&1 | tail -1
+'''
+
 # ============================================================================
 # Rust
 # ============================================================================
@@ -182,7 +200,7 @@ dependencies = ["test", "test-py"]
 [tasks.lint]
 category = "Workflow"
 description = "Run all lints (format check + clippy)"
-dependencies = ["fmt-check", "clippy", "typecheck-py"]
+dependencies = ["fmt-check", "clippy", "typecheck-py", "check-stub-parity"]
 
 [tasks.dev]
 category = "Workflow"
@@ -192,7 +210,7 @@ dependencies = ["build", "test", "clippy"]
 [tasks.ci]
 category = "Workflow"
 description = "Full CI pipeline (format + lint + all tests)"
-dependencies = ["fmt-check", "clippy", "typecheck-py", "test", "test-py"]
+dependencies = ["fmt-check", "clippy", "typecheck-py", "check-stub-parity", "test", "test-py"]
 
 # ============================================================================
 # Cleanup

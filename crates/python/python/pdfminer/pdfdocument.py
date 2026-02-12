@@ -1,9 +1,14 @@
 # pdfminer.pdfdocument compatibility shim
+from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from bolivar import PDFDocument as _RustPDFDocument
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
+    from bolivar._bolivar import PDFDocument as _NativePDFDocument
 
 from .pdfexceptions import PDFException, PDFObjectNotFound
 
@@ -41,6 +46,8 @@ class PDFDocument:
 
     Provides pdfminer.six-compatible API for accessing PDF structure.
     """
+
+    _rust_doc: _NativePDFDocument
 
     def __init__(
         self,
