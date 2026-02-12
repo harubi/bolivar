@@ -37,9 +37,7 @@ jobs:
           persist-credentials: true
           submodules: true
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: nightly
+        run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       - name: Setup Node.js
         uses: actions/setup-node@v6.2.0
@@ -140,6 +138,9 @@ jobs:
         with:
           python-version: '3.13'
           architecture: ${{ matrix.platform.target == 'aarch64' && 'arm64' || matrix.platform.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform.target }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -170,6 +171,9 @@ jobs:
         with:
           ref: v${{ needs.semantic-release.outputs.new_release_version }}
           submodules: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform.target }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -244,10 +248,9 @@ jobs:
           ref: v${{ needs.semantic-release.outputs.new_release_version }}
           submodules: true
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: nightly
-          targets: ${{ matrix.target }}
+        run: |
+          rustup show active-toolchain
+          rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
@@ -303,9 +306,7 @@ jobs:
           ref: v${{ needs.semantic-release.outputs.new_release_version }}
           submodules: true
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: nightly
+        run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
       - name: Setup Java
         uses: actions/setup-java@v5.2.0
