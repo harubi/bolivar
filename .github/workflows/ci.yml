@@ -7,10 +7,22 @@ on:
       - main
     tags-ignore:
       - '*'
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE']
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Zthreads=8"
 
 jobs:
   rust-tests:
@@ -18,15 +30,20 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.2
-        with:
-          submodules: true
+      - name: Checkout test submodules
+        run: git submodule update --init --depth 1 references/pdfplumber references/tabula-java references/pdfminer.six
       - name: Setup Rust
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
-      - name: cargo test
-        run: cargo test --workspace
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: cargo nextest
+        run: cargo nextest run --workspace --locked
+      - name: Doc tests
+        run: cargo test --workspace --doc --locked
 
   cross-platform-smoke:
     name: Cross-platform smoke (${{ matrix.os }})
@@ -43,12 +60,9 @@ jobs:
             target: aarch64
     steps:
       - uses: actions/checkout@v6.0.2
-        with:
-          submodules: true
       - uses: actions/setup-python@v6.2.0
         with:
           python-version: '3.13'
-          cache: 'pip'
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}

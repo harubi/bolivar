@@ -9,3 +9,6 @@ sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
 sed -i "s/\(bolivar-core = { path = \"crates\/core\", version = \)\".*\"/\1\"$VERSION\"/" Cargo.toml
 
 sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/uniffi/jvm/build.gradle.kts
+
+# Regenerate Cargo.lock to reflect the new version
+cargo check --quiet
