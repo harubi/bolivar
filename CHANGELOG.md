@@ -1,3 +1,14 @@
+## [1.3.1](https://github.com/harubi/bolivar/compare/v1.3.0...v1.3.1) (2026-02-12)
+
+### Bug Fixes
+
+* **ci:** pin nightly toolchain and unify cache ([7ad69dc](https://github.com/harubi/bolivar/commit/7ad69dc66ec0e904d8dd0b25e419ebc4eaef742b))
+* **release:** make semantic-release trigger on all ([7ed4ec1](https://github.com/harubi/bolivar/commit/7ed4ec1107c67d2c177b62b287626cc73b37ed85))
+
+### Code Refactoring
+
+* **python:** make api strictly-typed ([21fafa2](https://github.com/harubi/bolivar/commit/21fafa22e025421525c96b8cf076d2cae2c97d2b))
+
 ## [1.3.0](https://github.com/harubi/bolivar/compare/v1.2.0...v1.3.0) (2026-02-10)
 
 ### Features
