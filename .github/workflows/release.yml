@@ -16,6 +16,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CARGO_INCREMENTAL: "0"
+
 jobs:
   semantic-release:
     name: Semantic release
@@ -35,7 +38,6 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
           persist-credentials: true
-          submodules: true
       - name: Setup Rust
         run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
@@ -73,7 +75,6 @@ jobs:
       - uses: actions/checkout@v6.0.2
         with:
           ref: v${{ needs.semantic-release.outputs.new_release_version }}
-          submodules: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -100,7 +101,6 @@ jobs:
       - uses: actions/checkout@v6.0.2
         with:
           ref: v${{ needs.semantic-release.outputs.new_release_version }}
-          submodules: true
       - name: Build wheels
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -133,7 +133,6 @@ jobs:
       - uses: actions/checkout@v6.0.2
         with:
           ref: v${{ needs.semantic-release.outputs.new_release_version }}
-          submodules: true
       - uses: actions/setup-python@v6.2.0
         with:
           python-version: '3.13'
@@ -170,7 +169,6 @@ jobs:
       - uses: actions/checkout@v6.0.2
         with:
           ref: v${{ needs.semantic-release.outputs.new_release_version }}
-          submodules: true
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.platform.target }}
@@ -195,7 +193,6 @@ jobs:
       - uses: actions/checkout@v6.0.2
         with:
           ref: v${{ needs.semantic-release.outputs.new_release_version }}
-          submodules: true
       - name: Build sdist
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -246,7 +243,6 @@ jobs:
         uses: actions/checkout@v6.0.2
         with:
           ref: v${{ needs.semantic-release.outputs.new_release_version }}
-          submodules: true
       - name: Setup Rust
         run: |
           rustup show active-toolchain
@@ -260,12 +256,21 @@ jobs:
         with:
           tool: cross
       - name: Build UniFFI cdylib
-        run: ${{ matrix.cross && 'cross' || 'cargo' }} build -p bolivar-uniffi --release --target ${{ matrix.target }}
+        run: ${{ matrix.cross && 'cross' || 'cargo' }} build -p bolivar-uniffi --release --target ${{ matrix.target }} --locked
       - name: Upload native library
         uses: actions/upload-artifact@v6.0.0
         with:
           name: native-${{ matrix.classifier }}
           path: target/${{ matrix.target }}/release/${{ matrix.lib_name }}
+      - name: Build uniffi-bindgen
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo build -p bolivar-uniffi --bin uniffi-bindgen --release --target ${{ matrix.target }} --locked
+      - name: Upload uniffi-bindgen
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: uniffi-bindgen-tool
+          path: target/${{ matrix.target }}/release/uniffi-bindgen
 
   publish-pypi:
     name: Publish to PyPI
@@ -304,10 +309,6 @@ jobs:
         uses: actions/checkout@v6.0.2
         with:
           ref: v${{ needs.semantic-release.outputs.new_release_version }}
-          submodules: true
-      - name: Setup Rust
-        run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@v2
       - name: Setup Java
         uses: actions/setup-java@v5.2.0
         with:
@@ -334,8 +335,15 @@ jobs:
           for classifier in linux-x86-64 linux-aarch64 macos-x86-64 macos-aarch64 windows-x86-64 windows-aarch64; do
             [ -d "$classifier" ] || { echo "Missing $classifier"; exit 1; }
           done
+      - name: Download uniffi-bindgen
+        uses: actions/download-artifact@v7.0.0
+        with:
+          name: uniffi-bindgen-tool
+          path: .
       - name: Generate Kotlin bindings
-        run: cargo run -p bolivar-uniffi --bin uniffi-bindgen generate --library crates/uniffi/jvm/natives/linux-x86-64/libbolivar_uniffi.so --language kotlin --out-dir crates/uniffi/kotlin
+        run: |
+          chmod +x uniffi-bindgen
+          ./uniffi-bindgen generate --library crates/uniffi/jvm/natives/linux-x86-64/libbolivar_uniffi.so --language kotlin --out-dir crates/uniffi/kotlin
       - name: Publish to Maven Central
         run: ./scripts/publish-maven.sh
         env:

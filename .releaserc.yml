@@ -76,6 +76,7 @@ plugins:
     - assets:
         - CHANGELOG.md
         - Cargo.toml
+        - Cargo.lock
         - crates/uniffi/jvm/build.gradle.kts
       message: "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
 
