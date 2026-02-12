@@ -1,3 +1,13 @@
+## [1.4.0](https://github.com/harubi/bolivar/compare/v1.3.1...v1.4.0) (2026-02-12)
+
+### Features
+
+* **python:** add types to python apis ([b22f66f](https://github.com/harubi/bolivar/commit/b22f66fd33be4b49d18e47534137ab039dd5b3a1))
+
+### Performance Improvements
+
+* **ci:** enhance CI build speed ([ab4d0bb](https://github.com/harubi/bolivar/commit/ab4d0bb98a5a3f96a3e6863a4819eb686f42a80b))
+
 ## [1.3.1](https://github.com/harubi/bolivar/compare/v1.3.0...v1.3.1) (2026-02-12)
 
 ### Bug Fixes
