@@ -6,7 +6,7 @@
 import io
 import re
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Protocol, TypeAlias
 
 from bolivar._native_api import (
     HOCRConverter as _NativeHOCRConverter,
@@ -30,11 +30,14 @@ class _LayoutItemSink(Protocol):
         """Add a layout item to the current container."""
 
 
+_DashingStyle: TypeAlias = tuple[list[float], float] | None
+
+
 class _GraphicState(Protocol):
     linewidth: float
     scolor: object
     ncolor: object
-    dash: object
+    dash: _DashingStyle
 
 
 _PathOperand = str | float | int
@@ -47,6 +50,8 @@ class PDFPageAggregator:
     Pure Python implementation for subclassability.
     pdfplumber subclasses this as PDFPageAggregatorWithMarkedContent.
     """
+
+    _laparams: object | None
 
     def __init__(
         self,
@@ -115,7 +120,8 @@ class PDFLayoutAnalyzer:
         self._stack = []
 
     def set_ctm(self, ctm: Sequence[float]) -> None:
-        self.ctm = tuple(ctm)
+        a, b, c, d, e, f = ctm
+        self.ctm = (a, b, c, d, e, f)
 
     def paint_path(
         self,

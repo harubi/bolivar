@@ -1,10 +1,11 @@
 # pdfminer.high_level compatibility shim
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
-from collections.abc import Generator, Iterable
-from typing import BinaryIO, Literal, cast
+from typing import TYPE_CHECKING, BinaryIO
 
 from bolivar import (
     extract_pages as _extract_pages,
@@ -30,23 +31,28 @@ from .image import ImageWriter
 from .layout import LTPage
 from .pdfexceptions import PDFValueError
 from .pdfinterp import PDFResourceManager
-from .utils import AnyIO
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterable
+
+    from bolivar._bolivar import LAParams
+
+    from .utils import AnyIO
 
 PDFInput = str | os.PathLike[str] | bytes | bytearray | memoryview | BinaryIO
-ReadInput = (
-    tuple[Literal["path"], str | bytes]
-    | tuple[Literal["bytes"], bytes | bytearray | memoryview]
-)
 
 
-def _read_input(pdf_file: PDFInput) -> ReadInput:
+def _resolve_input(pdf_file: PDFInput) -> str | bytes | bytearray:
     if isinstance(pdf_file, (str, os.PathLike)):
-        return "path", cast("str | bytes", os.fspath(pdf_file))
-    if isinstance(pdf_file, (bytes, bytearray, memoryview)):
-        return "bytes", pdf_file
+        return os.fspath(pdf_file)
+    if isinstance(pdf_file, bytes):
+        return pdf_file
+    if isinstance(pdf_file, bytearray):
+        return pdf_file
+    if isinstance(pdf_file, memoryview):
+        return bytes(pdf_file)
     if hasattr(pdf_file, "read"):
-        data = cast("bytes | bytearray | memoryview", pdf_file.read())
-        return "bytes", data
+        return pdf_file.read()
     raise TypeError("pdf_file must be a path, bytes, or file-like object")
 
 
@@ -55,7 +61,7 @@ def extract_text_to_fp(
     outfp: AnyIO,
     output_type: str = "text",
     codec: str = "utf-8",
-    laparams: object | None = None,
+    laparams: LAParams | None = None,
     maxpages: int = 0,
     page_numbers: Iterable[int] | None = None,
     password: str = "",
@@ -131,11 +137,11 @@ def extract_text_to_fp(
     if page_numbers is not None:
         page_numbers = list(page_numbers)
 
-    kind, value = _read_input(inf)
+    resolved = _resolve_input(inf)
     if output_dir:
-        if kind == "path":
+        if isinstance(resolved, str):
             pages = _extract_pages_with_images_from_path(
-                value,
+                resolved,
                 output_dir,
                 password,
                 page_numbers,
@@ -145,7 +151,7 @@ def extract_text_to_fp(
             )
         else:
             pages = _extract_pages_with_images(
-                value,
+                resolved,
                 output_dir,
                 password,
                 page_numbers,
@@ -154,13 +160,23 @@ def extract_text_to_fp(
                 laparams,
             )
     else:
-        if kind == "path":
+        if isinstance(resolved, str):
             pages = _extract_pages_from_path(
-                value, password, page_numbers, maxpages, not disable_caching, laparams
+                resolved,
+                password,
+                page_numbers,
+                maxpages,
+                not disable_caching,
+                laparams,
             )
         else:
             pages = _extract_pages(
-                value, password, page_numbers, maxpages, not disable_caching, laparams
+                resolved,
+                password,
+                page_numbers,
+                maxpages,
+                not disable_caching,
+                laparams,
             )
 
     for page in pages:
@@ -175,14 +191,22 @@ def extract_text(
     page_numbers: Iterable[int] | None = None,
     maxpages: int = 0,
     caching: bool = True,
-    laparams: object | None = None,
+    laparams: LAParams | None = None,
 ) -> str:
-    kind, value = _read_input(pdf_file)
-    if kind == "path":
+    pages_list = list(page_numbers) if page_numbers is not None else None
+    resolved = _resolve_input(pdf_file)
+    if isinstance(resolved, str):
         return _extract_text_from_path(
-            value, password, page_numbers, maxpages, caching, laparams
+            resolved, password, pages_list, maxpages, caching, laparams
         )
-    return _extract_text(value, password, page_numbers, maxpages, caching, laparams)
+    return _extract_text(
+        resolved,
+        password,
+        pages_list,
+        maxpages,
+        caching,
+        laparams,
+    )
 
 
 def extract_pages(
@@ -191,15 +215,21 @@ def extract_pages(
     page_numbers: Iterable[int] | None = None,
     maxpages: int = 0,
     caching: bool = True,
-    laparams: object | None = None,
+    laparams: LAParams | None = None,
 ) -> Generator[LTPage, None, None]:
-    kind, value = _read_input(pdf_file)
-    if kind == "path":
+    pages_list = list(page_numbers) if page_numbers is not None else None
+    resolved = _resolve_input(pdf_file)
+    if isinstance(resolved, str):
         pages = _extract_pages_from_path(
-            value, password, page_numbers, maxpages, caching, laparams
+            resolved, password, pages_list, maxpages, caching, laparams
         )
     else:
         pages = _extract_pages(
-            value, password, page_numbers, maxpages, caching, laparams
+            resolved,
+            password,
+            pages_list,
+            maxpages,
+            caching,
+            laparams,
         )
     return (LTPage(page) for page in pages)

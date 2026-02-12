@@ -1,7 +1,12 @@
 # pdfminer.pdfpage compatibility shim
+from __future__ import annotations
 
-from collections.abc import Container, Generator
-from typing import Protocol
+from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Container, Generator
+
+    from bolivar._bolivar import PDFDocument as _NativePDFDocument
 
 
 class _RustPageLike(Protocol):
@@ -9,25 +14,17 @@ class _RustPageLike(Protocol):
     mediabox: tuple[float, float, float, float] | None
     cropbox: tuple[float, float, float, float] | None
     rotate: int
-    resources: object
-    label: object
-    annots: object
+    resources: dict[str, Any]
+    label: str | None
+    annots: list[Any]
     bleedbox: tuple[float, float, float, float] | None
     trimbox: tuple[float, float, float, float] | None
     artbox: tuple[float, float, float, float] | None
-    attrs: dict[object, object]
-
-
-class _RustDocumentLike(Protocol):
-    def page_count(self) -> int:
-        """Return page count."""
-
-    def get_page(self, index: int) -> _RustPageLike:
-        """Return a single page."""
+    attrs: dict[str, Any]
 
 
 class _DocumentLike(Protocol):
-    _rust_doc: _RustDocumentLike
+    _rust_doc: _NativePDFDocument
 
 
 class PDFPage:
@@ -88,7 +85,7 @@ class PDFPage:
         document: _DocumentLike,
         caching: bool = True,
         check_extractable: bool = True,
-    ) -> Generator["PDFPage", None, None]:
+    ) -> Generator[PDFPage, None, None]:
         """Iterate over pages in a PDF document.
 
         Args:
@@ -129,13 +126,13 @@ class PDFPage:
     @classmethod
     def get_pages(
         cls,
-        fp: object,
+        fp: BinaryIO | bytes | bytearray,
         page_numbers: Container[int] | None = None,
         maxpages: int = 0,
         password: bytes | str = b"",
         caching: bool = True,
         check_extractable: bool = True,
-    ) -> Generator["PDFPage", None, None]:
+    ) -> Generator[PDFPage, None, None]:
         """Legacy interface for iterating pages.
 
         This is a convenience method that creates parser and document.

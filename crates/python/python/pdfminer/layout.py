@@ -16,6 +16,7 @@ from bolivar._native_api import (
     LTImage,
     LTLine,
     LTRect,
+    Plane,
 )
 from bolivar._native_api import (
     LTPage as _RustLTPage,
@@ -66,11 +67,6 @@ class _HasBBox(Protocol):
     y1: float
     width: float
     height: float
-
-
-class _PlaneLike(Protocol):
-    def find(self, bbox: tuple[float, float, float, float]) -> Iterable[object]:
-        """Return objects in bbox."""
 
 
 class _LAParamsLike(Protocol):
@@ -225,7 +221,7 @@ class LTTextLine(LTTextContainer):
         super().__init__()
         self.word_margin = word_margin
 
-    def find_neighbors(self, plane: _PlaneLike, ratio: float) -> list["LTTextLine"]:
+    def find_neighbors(self, plane: Plane, ratio: float) -> list["LTTextLine"]:
         raise NotImplementedError
 
 
@@ -242,7 +238,7 @@ class LTTextLineHorizontal(LTTextLine):
         super().__init__(word_margin)
         self._x1 = INF
 
-    def find_neighbors(self, plane: _PlaneLike, ratio: float) -> list["LTTextLine"]:
+    def find_neighbors(self, plane: Plane, ratio: float) -> list["LTTextLine"]:
         d = ratio * self.height
         objs = plane.find((self.x0, self.y0 - d, self.x1, self.y1 + d))
         return [
@@ -275,7 +271,7 @@ class LTTextLineVertical(LTTextLine):
         super().__init__(word_margin)
         self._y0 = -INF
 
-    def find_neighbors(self, plane: _PlaneLike, ratio: float) -> list["LTTextLine"]:
+    def find_neighbors(self, plane: Plane, ratio: float) -> list["LTTextLine"]:
         d = ratio * self.width
         objs = plane.find((self.x0 - d, self.y0, self.x1 + d, self.y1))
         return [
@@ -474,7 +470,7 @@ def _container_objs(self: Iterable[object]) -> list[object]:
 for _cls in _CONTAINER_TYPES:
     if _cls is LTPage:
         continue
-    _cls._objs = property(_container_objs)
+    _cls._objs = property(_container_objs)  # type: ignore[invalid-assignment]
 
 
 __all__ = [

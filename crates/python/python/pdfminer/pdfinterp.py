@@ -1,7 +1,12 @@
 # pdfminer.pdfinterp compatibility shim
+from __future__ import annotations
 
 import logging
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+if TYPE_CHECKING:
+    from bolivar._bolivar import PDFDocument as _NativePDFDocument
+    from bolivar._bolivar import PDFPage as _NativePDFPage
 
 from bolivar import (
     process_page as _rust_process_page,
@@ -25,12 +30,12 @@ PDFResourceManager = _RustPDFResourceManager
 
 
 class _DocumentLike(Protocol):
-    _rust_doc: object
+    _rust_doc: _NativePDFDocument
 
 
 class _PageLike(Protocol):
     doc: _DocumentLike
-    _rust_page: object
+    _rust_page: _NativePDFPage
 
 
 class _DeviceLike(Protocol):
@@ -147,16 +152,15 @@ class PDFPageInterpreter:
             if color is not None:
                 state.ncolor = color
 
-    def process_page(self, page: object) -> None:
+    def process_page(self, page: _PageLike) -> None:
         """Process a PDF page and send results to device.
 
         Args:
             page: PDFPage instance to process
         """
-        typed_page = cast("_PageLike", page)
         # Get the Rust document and page from the shim wrappers
-        rust_doc = typed_page.doc._rust_doc
-        rust_page = typed_page._rust_page
+        rust_doc = page.doc._rust_doc
+        rust_page = page._rust_page
 
         # Get LAParams from the device if available
         laparams = getattr(self.device, "_laparams", None)
