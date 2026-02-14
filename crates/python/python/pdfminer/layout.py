@@ -4,7 +4,7 @@
 
 import abc
 from collections.abc import Generator, Iterable, Iterator
-from typing import Protocol, TypeGuard
+from typing import Protocol, TypeAlias, TypeGuard
 
 from bolivar._native_api import (
     INF,
@@ -40,6 +40,18 @@ class PDFGraphicState:
 
     pdfplumber accesses obj.graphicstate.scolor/.ncolor for colors.
     """
+
+    linewidth: float
+    linecap: int | None
+    linejoin: int | None
+    miterlimit: float | None
+    dash: tuple[list[float], float] | None
+    intent: str | None
+    flatness: float | None
+    scolor: object
+    ncolor: object
+    scs: object | None
+    ncs: object | None
 
     def __init__(self) -> None:
         self.linewidth = 0
@@ -81,6 +93,14 @@ def _is_bbox_obj(obj: object) -> TypeGuard[_HasBBox]:
 
 class LTComponent(LTItem):
     """Object with a bounding box."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    width: float
+    height: float
+    bbox: tuple[float, float, float, float]
 
     def __init__(self, bbox: tuple[float, float, float, float]) -> None:
         self.set_bbox(bbox)
@@ -173,6 +193,8 @@ class LTTextContainer(LTContainer):
 class LTLayoutContainer(LTContainer):
     """Layout container that can group text lines into text boxes."""
 
+    groups: object | None
+
     def __init__(self, bbox: tuple[float, float, float, float]) -> None:
         super().__init__(bbox)
         self.groups = None
@@ -217,6 +239,8 @@ class LTLayoutContainer(LTContainer):
 class LTTextLine(LTTextContainer):
     """Base class for text lines."""
 
+    word_margin: float
+
     def __init__(self, word_margin: float) -> None:
         super().__init__()
         self.word_margin = word_margin
@@ -228,12 +252,16 @@ class LTTextLine(LTTextContainer):
 class LTTextBox(LTTextContainer):
     """Base class for text boxes."""
 
+    index: int
+
     def __init__(self) -> None:
         super().__init__()
         self.index = -1
 
 
 class LTTextLineHorizontal(LTTextLine):
+    _x1: float
+
     def __init__(self, word_margin: float) -> None:
         super().__init__(word_margin)
         self._x1 = INF
@@ -267,6 +295,8 @@ class LTTextLineHorizontal(LTTextLine):
 
 
 class LTTextLineVertical(LTTextLine):
+    _y0: float
+
     def __init__(self, word_margin: float) -> None:
         super().__init__(word_margin)
         self._y0 = -INF
@@ -318,6 +348,8 @@ _PAGE_SKIP_TYPES = (
     _RustLTTextLineVertical,
 )
 
+_Rect: TypeAlias = tuple[float, float, float, float]
+
 
 def _iter_page_items(item: object) -> Generator[object, None, None]:
     wrapped = _wrap_rust_item(item)
@@ -339,6 +371,12 @@ def _uniq(objs: Iterable[object]) -> Generator[object, None, None]:
 
 
 class LTPage(LTLayoutContainer):
+    _page: _RustLTPage
+    pageid: int
+    rotate: float
+    bbox: _Rect
+    groups: object | None
+
     def __init__(self, page: object) -> None:
         if isinstance(page, LTPage):
             page = page._page
@@ -467,10 +505,12 @@ def _container_objs(self: Iterable[object]) -> list[object]:
     return list(self)
 
 
+_container_objs_attr = "_objs"
+
 for _cls in _CONTAINER_TYPES:
     if _cls is LTPage:
         continue
-    _cls._objs = property(_container_objs)  # type: ignore[invalid-assignment]
+    setattr(_cls, _container_objs_attr, property(_container_objs))
 
 
 __all__ = [

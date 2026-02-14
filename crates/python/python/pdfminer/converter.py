@@ -31,6 +31,7 @@ class _LayoutItemSink(Protocol):
 
 
 _DashingStyle: TypeAlias = tuple[list[float], float] | None
+_Matrix: TypeAlias = tuple[float, float, float, float, float, float]
 
 
 class _GraphicState(Protocol):
@@ -105,6 +106,8 @@ class PDFPageAggregator:
 
 class PDFLayoutAnalyzer:
     """PDFLayoutAnalyzer - minimal paint_path implementation for tests."""
+
+    ctm: _Matrix
 
     def __init__(
         self,
@@ -228,6 +231,8 @@ class PDFLayoutAnalyzer:
 
 class PDFConverter(PDFLayoutAnalyzer):
     """Base class for PDF converters."""
+
+    outfp_binary: bool
 
     def __init__(
         self,

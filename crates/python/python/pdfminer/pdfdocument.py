@@ -1,7 +1,7 @@
 # pdfminer.pdfdocument compatibility shim
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from bolivar import PDFDocument as _RustPDFDocument
 
@@ -48,6 +48,14 @@ class PDFDocument:
     """
 
     _rust_doc: _NativePDFDocument
+    parser: _ParserLike
+    caching: bool
+    _rust_pages: object | None
+    xrefs: list[XRef]
+    info: list[dict[str, Any]]
+    catalog: dict[str, Any]
+    encryption: object | None
+    decipher: object | None
 
     def __init__(
         self,

@@ -22,7 +22,10 @@ import pdfminer.pdftypes as pdftypes
 import pdfminer.psparser as psparser
 import pdfminer.utils as utils
 
-patch_pdfplumber = _bolivar_patch.patch_pdfplumber
+
+def patch_pdfplumber() -> bool:
+    return _bolivar_patch.patch_pdfplumber()
+
 
 __all__ = [
     "converter",

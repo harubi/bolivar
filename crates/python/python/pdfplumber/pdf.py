@@ -1,7 +1,7 @@
 import itertools
 import logging
 import pathlib
-from collections.abc import Generator
+from collections.abc import AsyncIterator, Generator, Iterator
 from io import BufferedReader, BytesIO
 from types import TracebackType
 from typing import Any, ClassVar, Literal
@@ -20,11 +20,35 @@ from .structure import PDFStructTree, StructTreeMissing
 from .utils import resolve_and_decode
 from .utils.exceptions import PdfminerException
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
+
+
+class SyncAsyncPages(list[Page]):
+    """Page container that supports both sync and async iteration."""
+
+    def __aiter__(self) -> AsyncIterator[Page]:
+        async def gen() -> AsyncIterator[Page]:
+            for page in self:
+                yield page
+
+        return gen()
 
 
 class PDF(Container):
     cached_properties: ClassVar[list[str]] = [*Container.cached_properties, "_pages"]
+    stream: BufferedReader | BytesIO
+    stream_is_external: bool
+    path: pathlib.Path | None
+    pages_to_parse: list[int] | tuple[int] | None
+    laparams: LAParams | None
+    password: str | None
+    unicode_norm: Literal["NFC", "NFKC", "NFD", "NFKD"] | None
+    raise_unicode_errors: bool
+    doc: PDFDocument
+    rsrcmgr: PDFResourceManager
+    metadata: dict[str, object]
+    _pages: SyncAsyncPages
+    _objects: dict[str, T_obj_list]
 
     def __init__(
         self,
@@ -141,14 +165,30 @@ class PDF(Container):
     ) -> None:
         self.close()
 
+    async def __aenter__(self) -> "PDF":
+        return self
+
+    async def __aexit__(
+        self,
+        t: type[BaseException] | None,
+        value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool:
+        del t, value, traceback
+        self.close()
+        return False
+
+    def __iter__(self) -> Iterator[Page]:
+        return iter(self.pages)
+
     @property
-    def pages(self) -> list[Page]:
+    def pages(self) -> SyncAsyncPages:
         if hasattr(self, "_pages"):
             return self._pages
 
         doctop: T_num = 0
         pp = self.pages_to_parse
-        self._pages: list[Page] = []
+        self._pages = SyncAsyncPages()
 
         def iter_pages() -> Generator[PDFPage, None, None]:
             gen = PDFPage.create_pages(self.doc)

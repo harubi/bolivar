@@ -1,12 +1,13 @@
 # pdfminer.pdfpage compatibility shim
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
+from typing import TYPE_CHECKING, Any, BinaryIO, Protocol, cast
 
 if TYPE_CHECKING:
     from collections.abc import Container, Generator
 
     from bolivar._bolivar import PDFDocument as _NativePDFDocument
+    from bolivar._bolivar import PDFPage as _NativePDFPage
 
 
 class _RustPageLike(Protocol):
@@ -33,10 +34,26 @@ class PDFPage:
     Provides pdfminer.six-compatible API for accessing page properties.
     """
 
+    _rust_page: _NativePDFPage
+    doc: _DocumentLike
+    _page_index: int | None
+    pageid: int
+    mediabox: list[float] | None
+    cropbox: list[float] | None
+    rotate: int
+    resources: dict[str, Any]
+    label: str | None
+    annots: list[Any]
+    beads: object | None
+    bleedbox: list[float] | None
+    trimbox: list[float] | None
+    artbox: list[float] | None
+    attrs: dict[str, Any]
+
     def __init__(
         self,
         rust_page: _RustPageLike,
-        doc: object,
+        doc: _DocumentLike,
         page_index: int | None = None,
     ) -> None:
         """Create a PDFPage from a Rust PDFPage.
@@ -46,8 +63,8 @@ class PDFPage:
             doc: Parent PDFDocument (for compatibility)
             page_index: Optional 0-based index for fast lookup
         """
-        self._rust_page = rust_page
-        self.doc = doc
+        self._rust_page: _NativePDFPage = cast("_NativePDFPage", rust_page)
+        self.doc: _DocumentLike = doc
         self._page_index = page_index
         self.pageid = rust_page.pageid
 

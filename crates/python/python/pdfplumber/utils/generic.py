@@ -7,7 +7,7 @@ if TYPE_CHECKING:  # pragma: nocover
     from pandas.core.frame import DataFrame
 
 
-def to_list(collection: Union[T_seq[Any], "DataFrame"]) -> list[Any]:
+def to_list(collection: Union[T_seq, "DataFrame"]) -> list[Any]:
     if isinstance(collection, list):
         return collection
     elif isinstance(collection, Sequence):
