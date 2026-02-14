@@ -60,6 +60,8 @@ def to_b64(data: bytes) -> str:
 
 
 class Serializer:
+    attr_filter: Callable[[str], bool]
+
     def __init__(
         self,
         precision: int | None = None,

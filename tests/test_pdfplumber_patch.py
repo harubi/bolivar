@@ -99,6 +99,18 @@ def test_pdfplumber_pages_supports_index_objects(monkeypatch):
         assert last.page_number == len(pages)
 
 
+def test_pdfplumber_pdf_is_iterable(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        iterated = list(pdf)
+        assert [p.page_number for p in iterated] == [p.page_number for p in pdf.pages]
+
+
 def test_pdfplumber_close_does_not_iterate_lazy_pages(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(

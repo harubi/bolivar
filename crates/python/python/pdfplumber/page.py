@@ -3,11 +3,7 @@ import re
 from collections.abc import Callable, Generator, Iterable
 from functools import lru_cache
 from re import Pattern
-from typing import (
-    TYPE_CHECKING,
-    ClassVar,
-    cast,
-)
+from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 from unicodedata import normalize as normalize_unicode
 from warnings import warn
 
@@ -43,7 +39,7 @@ from .utils import decode_text, resolve_all, resolve_and_decode
 from .utils.exceptions import MalformedPDFException, PdfminerException
 from .utils.text import TextMap
 
-lt_pat = re.compile(r"^LT")
+lt_pat: Pattern[str] = re.compile(r"^LT")
 
 ALL_ATTRS = {
     "adv",
@@ -79,6 +75,13 @@ ALL_ATTRS = {
 if TYPE_CHECKING:  # pragma: nocover
     from .display import PageImage
     from .pdf import PDF
+
+
+class _CachedTextMapGetter(Protocol):
+    def __call__(self, **kwargs: object) -> TextMap: ...
+
+    def cache_clear(self) -> None: ...
+
 
 # via https://git.ghostscript.com/?p=mupdf.git;a=blob;f=source/pdf/pdf-font.c;h=6322cedf2c26cfb312c0c0878d7aff97b4c7470e;hb=HEAD#l774   # noqa
 
@@ -192,7 +195,19 @@ def _invert_box(box_raw: T_bbox, mb_height: T_num) -> T_bbox:
 class Page(Container):
     cached_properties: ClassVar[list[str]] = [*Container.cached_properties, "_layout"]
     is_original: bool = True
-    pages = None
+    pages: list["Page"] | None = None
+    pdf: "PDF"
+    root_page: "Page"
+    page_obj: PDFPage
+    page_number: int
+    initial_doctop: T_num
+    rotation: int
+    mediabox: T_bbox
+    cropbox: T_bbox
+    bbox: T_bbox
+    get_textmap: _CachedTextMapGetter
+    _layout: LTPage
+    _objects: dict[str, T_obj_list]
 
     def __init__(
         self,
@@ -237,7 +252,7 @@ class Page(Container):
         self.bbox = self.mediabox
 
         # See https://rednafi.com/python/lru_cache_on_methods/
-        self.get_textmap = lru_cache()(self._get_textmap)
+        self.get_textmap = cast("_CachedTextMapGetter", lru_cache()(self._get_textmap))
 
     def close(self) -> None:
         self.flush_cache()
@@ -697,6 +712,16 @@ class Page(Container):
 
 class DerivedPage(Page):
     is_original: bool = False
+    parent_page: Page
+    root_page: Page
+    pdf: "PDF"
+    page_obj: PDFPage
+    page_number: int
+    initial_doctop: T_num
+    rotation: int
+    mediabox: T_bbox
+    cropbox: T_bbox
+    get_textmap: _CachedTextMapGetter
 
     def __init__(self, parent_page: Page) -> None:
         self.parent_page = parent_page
@@ -709,7 +734,7 @@ class DerivedPage(Page):
         self.mediabox = parent_page.mediabox
         self.cropbox = parent_page.cropbox
         self.flush_cache(Container.cached_properties)
-        self.get_textmap = lru_cache()(self._get_textmap)
+        self.get_textmap = cast("_CachedTextMapGetter", lru_cache()(self._get_textmap))
 
 
 def test_proposed_bbox(bbox: T_bbox, parent_bbox: T_bbox) -> None:
@@ -733,6 +758,10 @@ def test_proposed_bbox(bbox: T_bbox, parent_bbox: T_bbox) -> None:
 
 
 class CroppedPage(DerivedPage):
+    _crop_fn: Callable[[T_obj_list], T_obj_list]
+    bbox: T_bbox
+    _objects: dict[str, T_obj_list]
+
     def __init__(
         self,
         parent_page: Page,
@@ -773,6 +802,10 @@ class CroppedPage(DerivedPage):
 
 
 class FilteredPage(DerivedPage):
+    bbox: T_bbox
+    filter_fn: Callable[[T_obj], bool]
+    _objects: dict[str, T_obj_list]
+
     def __init__(self, parent_page: Page, filter_fn: Callable[[T_obj], bool]) -> None:
         self.bbox = parent_page.bbox
         self.filter_fn = filter_fn

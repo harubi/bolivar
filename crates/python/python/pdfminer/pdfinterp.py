@@ -16,7 +16,7 @@ from bolivar._native_api import PDFResourceManager as _RustPDFResourceManager
 from .layout import PDFGraphicState
 from .psparser import PSLiteral, literal_name
 
-log = logging.getLogger(__name__)
+log: logging.Logger = logging.getLogger(__name__)
 
 # PDFStackT type alias (matches pdfminer.six)
 PDFStackT = (
@@ -45,6 +45,9 @@ class _DeviceLike(Protocol):
 
 
 class PDFColorSpace:
+    name: str
+    ncomponents: int
+
     def __init__(self, name: str = "DeviceGray", ncomponents: int = 1) -> None:
         self.name = name
         self.ncomponents = ncomponents

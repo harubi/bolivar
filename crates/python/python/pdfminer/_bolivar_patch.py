@@ -4,11 +4,19 @@ import logging
 import sys
 import threading
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Sequence
-from io import BytesIO
+from io import BufferedReader, BytesIO
 from operator import index as to_index
-from os import PathLike
+from os import PathLike, fspath
 from types import ModuleType, TracebackType
-from typing import Any, Protocol, SupportsIndex, TypeAlias, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Protocol,
+    SupportsIndex,
+    TypeAlias,
+    cast,
+    overload,
+)
 
 _Number: TypeAlias = int | float
 _PageBox: TypeAlias = tuple[_Number, ...]
@@ -19,6 +27,12 @@ _StreamItem: TypeAlias = tuple[int, _Tables]
 _StreamFactory: TypeAlias = Callable[[], Iterable[_StreamItem]]
 _SliceIndex: TypeAlias = slice
 _OutFile: TypeAlias = str | bytes | int | PathLike[str] | PathLike[bytes]
+_RepairInput: TypeAlias = (
+    str | PathLike[str] | PathLike[bytes] | BufferedReader | BytesIO | bytes | bytearray
+)
+
+if TYPE_CHECKING:
+    from bolivar._native_api import PDFDocument as _NativePDFDocument
 
 
 class _DocLike(Protocol):
@@ -257,8 +271,9 @@ def _apply_patch(module: ModuleType) -> bool:
         rust_doc = getattr(doc, "_rust_doc", None) or doc
 
         def _stream_factory() -> Iterable[_StreamItem]:
+            native_doc = cast("_NativePDFDocument", rust_doc)
             return extract_tables_stream_from_document(
-                rust_doc,  # type: ignore[arg-type]
+                native_doc,
                 geometries,
                 table_settings=table_settings,
                 laparams=(getattr(pdf, "laparams", None) if pdf is not None else None),
@@ -555,23 +570,31 @@ def _apply_patch(module: ModuleType) -> bool:
         from bolivar import repair_pdf
 
         def _rust_repair(
-            path_or_fp: bytes | bytearray,
+            path_or_fp: _RepairInput,
             password: str | None = None,
             gs_path: object = None,
             setting: str = "default",
         ) -> BytesIO:
             del password, gs_path, setting
-            return BytesIO(repair_pdf(path_or_fp))
+            payload: bytes | bytearray
+            if isinstance(path_or_fp, (bytes, bytearray)):
+                payload = path_or_fp
+            elif isinstance(path_or_fp, (str, PathLike)):
+                with open(fspath(path_or_fp), "rb") as f:
+                    payload = f.read()
+            else:
+                payload = path_or_fp.read()
+            return BytesIO(repair_pdf(payload))
 
         def _rust_repair_public(
-            path_or_fp: object,
+            path_or_fp: _RepairInput,
             outfile: _OutFile | None = None,
             password: str | None = None,
             gs_path: object = None,
             setting: str = "default",
         ) -> BytesIO | None:
             repaired = _rust_repair(
-                path_or_fp,  # type: ignore[arg-type]
+                path_or_fp,
                 password=password,
                 gs_path=gs_path,
                 setting=setting,

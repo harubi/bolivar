@@ -11,6 +11,7 @@ from typing import (
 )
 
 from pdfminer.data_structures import NumberTree
+from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfparser import PDFParser
 from pdfminer.pdftypes import PDFObjRef, resolve1
 from pdfminer.psparser import PSLiteral
@@ -18,7 +19,7 @@ from pdfminer.psparser import PSLiteral
 from ._typing import StructElementDict, T_bbox, T_obj
 from .utils import decode_text, geometry
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:  # pragma: nocover
@@ -174,6 +175,13 @@ class PDFStructTree(Findable):
     """
 
     page: "Page | None"
+    doc: PDFDocument
+    root: dict[str, object]
+    role_map: dict[str, object]
+    class_map: dict[str, object]
+    children: list[PDFStructElement]
+    pages: dict[int, "Page"]
+    page_dict: dict[int, int] | None
 
     def __init__(self, doc: "PDF", page: "Page | None" = None) -> None:
         self.doc = doc.doc

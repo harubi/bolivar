@@ -365,6 +365,9 @@ def cells_to_tables(cells: list[T_bbox]) -> list[list[T_bbox]]:
 
 
 class CellGroup:
+    cells: list[T_bbox | None]
+    bbox: T_bbox
+
     def __init__(self, cells: list[T_bbox | None]) -> None:
         self.cells = cells
         self.bbox = (
@@ -603,6 +606,13 @@ class TableFinder:
     ... and inspired by Tabula:
     https://github.com/tabulapdf/tabula-extractor/issues/16
     """
+
+    page: "Page"
+    settings: TableSettings
+    edges: T_obj_list
+    intersections: T_intersections
+    cells: list[T_bbox]
+    tables: list[Table]
 
     def __init__(
         self,

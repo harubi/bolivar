@@ -7,11 +7,13 @@ import PIL.ImageDraw
 import pypdfium2
 
 from . import utils
-from ._typing import T_bbox, T_num, T_obj, T_obj_list, T_point, T_seq
+from ._typing import T_bbox, T_num, T_obj, T_obj_list, T_point
 from .table import T_table_settings, Table, TableFinder, TableSettings
 from .utils.exceptions import MalformedPDFException
 
 if TYPE_CHECKING:  # pragma: nocover
+    from collections.abc import Sequence
+
     import pandas as pd
 
     from .page import Page
@@ -74,6 +76,15 @@ def get_page_image(
 
 
 class PageImage:
+    page: "Page"
+    root: "Page"
+    resolution: int | float
+    original: PIL.Image.Image
+    scale: float
+    bbox: T_bbox
+    annotated: PIL.Image.Image
+    draw: PIL.ImageDraw.ImageDraw
+
     def __init__(
         self,
         page: "Page",
@@ -200,7 +211,7 @@ class PageImage:
 
     def draw_lines(
         self,
-        list_of_lines: Union[T_seq[T_contains_points], "pd.DataFrame"],
+        list_of_lines: Union["Sequence[T_contains_points]", "pd.DataFrame"],
         stroke: T_color = DEFAULT_STROKE,
         stroke_width: int = DEFAULT_STROKE_WIDTH,
     ) -> "PageImage":

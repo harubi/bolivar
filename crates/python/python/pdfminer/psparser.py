@@ -1,5 +1,7 @@
 # pdfminer.psparser compatibility shim (Rust-backed)
 
+from typing import TypeVar, overload
+
 import pdfminer.psexceptions as psexceptions
 from bolivar._native_api import (
     KWD,
@@ -24,6 +26,9 @@ KEYWORD_DICT_BEGIN = KWD(b"<<")
 KEYWORD_DICT_END = KWD(b">>")
 
 
+_T = TypeVar("_T")
+
+
 def literal_name(x: object) -> str:
     if isinstance(x, PSLiteral):
         name = x.name
@@ -34,6 +39,14 @@ def literal_name(x: object) -> str:
         except UnicodeDecodeError:
             return str(name)
     return str(x)
+
+
+@overload
+def keyword_name(x: PSKeyword) -> str: ...
+
+
+@overload
+def keyword_name(x: _T) -> _T: ...
 
 
 def keyword_name(x: object) -> object:

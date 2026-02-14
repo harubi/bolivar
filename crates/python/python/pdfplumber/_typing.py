@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from typing import Any, Literal, Protocol, TypeAlias, TypedDict
 
-T_seq: TypeAlias = Sequence
+T_seq: TypeAlias = Sequence[Any]
 T_num: TypeAlias = int | float
 T_point: TypeAlias = tuple[T_num, T_num]
 T_bbox: TypeAlias = tuple[T_num, T_num, T_num, T_num]

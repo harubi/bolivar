@@ -17,7 +17,7 @@ from .clustering import cluster_objects
 from .generic import to_list
 from .geometry import objects_to_bbox
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 DEFAULT_X_TOLERANCE = 3
 DEFAULT_Y_TOLERANCE = 3
@@ -139,6 +139,11 @@ class TextMap:
     A TextMap maps each unicode character in the text to an individual `char`
     object (or, in the case of layout-implied whitespace, `None`).
     """
+
+    tuples: list[tuple[str, T_obj | None]]
+    line_dir_render: T_dir
+    char_dir_render: T_dir
+    as_string: str
 
     def __init__(
         self,
@@ -273,6 +278,8 @@ class WordMap:
     """
     A WordMap maps words->chars.
     """
+
+    tuples: list[tuple[T_obj, T_obj_list]]
 
     def __init__(self, tuples: list[tuple[T_obj, T_obj_list]]) -> None:
         self.tuples = tuples
@@ -460,6 +467,22 @@ class WordMap:
 
 
 class WordExtractor:
+    x_tolerance: T_num
+    y_tolerance: T_num
+    x_tolerance_ratio: int | float | None
+    y_tolerance_ratio: int | float | None
+    keep_blank_chars: bool
+    use_text_flow: bool
+    vertical_ttb: bool
+    horizontal_ltr: bool
+    line_dir: T_dir
+    char_dir: T_dir
+    line_dir_rotated: T_dir
+    char_dir_rotated: T_dir
+    extra_attrs: list[str]
+    split_at_punctuation: str
+    expansions: dict[str, str]
+
     def __init__(
         self,
         x_tolerance: T_num = DEFAULT_X_TOLERANCE,

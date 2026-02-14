@@ -1,5 +1,5 @@
 import itertools
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from operator import itemgetter
 
 from .._typing import T_bbox, T_num, T_obj, T_obj_list
@@ -23,7 +23,7 @@ def objects_to_bbox(objects: Iterable[T_obj]) -> T_bbox:
     return merge_bboxes(map(bbox_getter, objects))
 
 
-bbox_getter = itemgetter("x0", "top", "x1", "bottom")
+bbox_getter: Callable[[T_obj], T_bbox] = itemgetter("x0", "top", "x1", "bottom")
 
 
 def obj_to_bbox(obj: T_obj) -> T_bbox:

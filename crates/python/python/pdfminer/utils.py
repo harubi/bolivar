@@ -43,6 +43,8 @@ class _ClosableIO(Protocol):
 class open_filename:
     """Context manager that opens filenames and leaves file objects untouched."""
 
+    closing: bool
+
     def __init__(
         self,
         filename: FileOrName,
