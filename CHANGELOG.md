@@ -1,3 +1,9 @@
+## [1.5.0](https://github.com/harubi/bolivar/compare/v1.4.0...v1.5.0) (2026-02-14)
+
+### Features
+
+* **python:** increase type coverage ([c5b20d1](https://github.com/harubi/bolivar/commit/c5b20d11545ee44c03a323380a298e9090e5a90b))
+
 ## [1.4.0](https://github.com/harubi/bolivar/compare/v1.3.1...v1.4.0) (2026-02-12)
 
 ### Features
