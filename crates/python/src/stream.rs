@@ -1,6 +1,5 @@
 //! Async streaming bindings for Python.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,11 +8,13 @@ use bolivar_core::api::stream::{
     DEFAULT_STREAM_BUFFER_CAPACITY, TableStream,
     extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
     extract_tables_stream_from_doc_with_geometries as core_extract_tables_stream_from_doc_with_geometries,
+    extract_text_pages_from_doc_with_geometries as core_extract_text_pages_from_doc_with_geometries,
+    extract_words_pages_from_doc_with_geometries as core_extract_words_pages_from_doc_with_geometries,
 };
 use bolivar_core::error::Result as CoreResult;
 use bolivar_core::high_level::{ExtractOptions, extract_pages_stream as core_extract_pages_stream};
 use bolivar_core::layout::LTPage;
-use bolivar_core::table::{TextDir, WordObj, extract_text_from_ltpage, extract_words_from_ltpage};
+use bolivar_core::table::{TextDir, WordObj};
 use pyo3::exceptions::{PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -22,30 +23,6 @@ use tokio::sync::{Mutex, mpsc};
 use crate::document::{PyPDFDocument, pdf_input_from_py};
 use crate::layout::ltpage_to_py;
 use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings, parse_text_settings};
-
-fn build_page_order(
-    doc: &bolivar_core::pdfdocument::PDFDocument,
-    page_numbers: Option<&[usize]>,
-    maxpages: usize,
-) -> Vec<usize> {
-    let mut order = Vec::new();
-    let page_count = doc.page_count();
-    let selected = page_numbers.map(|pages| pages.iter().copied().collect::<HashSet<_>>());
-    let mut yielded = 0usize;
-    for page_idx in 0..page_count {
-        if let Some(chosen) = selected.as_ref()
-            && !chosen.contains(&page_idx)
-        {
-            continue;
-        }
-        if maxpages > 0 && yielded >= maxpages {
-            break;
-        }
-        order.push(page_idx);
-        yielded += 1;
-    }
-    order
-}
 
 fn text_dir_to_str(direction: TextDir) -> &'static str {
     match direction {
@@ -333,36 +310,22 @@ pub fn extract_text_stream(
 ) -> PyResult<Vec<(usize, String)>> {
     let settings = parse_text_settings(py, text_settings)?;
     let geoms = parse_page_geometries(geometries)?;
-    let page_count = doc.inner.page_count();
-    if geoms.len() != page_count {
-        return Err(PyValueError::new_err(format!(
-            "geometry count mismatch: expected {page_count}, got {}",
-            geoms.len()
-        )));
-    }
-    let order = build_page_order(doc.inner.as_ref(), page_numbers.as_deref(), maxpages);
     let options = ExtractOptions {
         password: String::new(),
-        page_numbers: page_numbers.clone(),
+        page_numbers,
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
     };
 
     py.detach(|| {
-        let mut stream = core_extract_pages_stream_from_doc(Arc::clone(&doc.inner), options)
-            .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {e}")))?;
-        let mut out: Vec<(usize, String)> = Vec::with_capacity(order.len());
-        for page_idx in order {
-            let page = stream
-                .next()
-                .ok_or_else(|| PyValueError::new_err("page stream ended early"))?
-                .map_err(|e| PyValueError::new_err(format!("Failed to extract page: {e}")))?;
-            let geom = geoms[page_idx].clone();
-            let text = extract_text_from_ltpage(&page, &geom, settings.clone());
-            out.push((page_idx, text));
-        }
-        Ok(out)
+        core_extract_text_pages_from_doc_with_geometries(
+            Arc::clone(&doc.inner),
+            options,
+            settings,
+            geoms,
+        )
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract text: {e}")))
     })
 }
 
@@ -381,38 +344,23 @@ pub fn extract_words_stream(
 ) -> PyResult<Vec<(usize, Vec<Py<PyAny>>)>> {
     let settings = parse_text_settings(py, text_settings)?;
     let geoms = parse_page_geometries(geometries)?;
-    let page_count = doc.inner.page_count();
-    if geoms.len() != page_count {
-        return Err(PyValueError::new_err(format!(
-            "geometry count mismatch: expected {page_count}, got {}",
-            geoms.len()
-        )));
-    }
-    let order = build_page_order(doc.inner.as_ref(), page_numbers.as_deref(), maxpages);
     let options = ExtractOptions {
         password: String::new(),
-        page_numbers: page_numbers.clone(),
+        page_numbers,
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
     };
 
-    let words: Vec<(usize, Vec<WordObj>)> =
-        py.detach(|| -> PyResult<Vec<(usize, Vec<WordObj>)>> {
-            let mut stream = core_extract_pages_stream_from_doc(Arc::clone(&doc.inner), options)
-                .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {e}")))?;
-            let mut out: Vec<(usize, Vec<WordObj>)> = Vec::with_capacity(order.len());
-            for page_idx in order {
-                let page = stream
-                    .next()
-                    .ok_or_else(|| PyValueError::new_err("page stream ended early"))?
-                    .map_err(|e| PyValueError::new_err(format!("Failed to extract page: {e}")))?;
-                let geom = geoms[page_idx].clone();
-                let page_words = extract_words_from_ltpage(&page, &geom, settings.clone());
-                out.push((page_idx, page_words));
-            }
-            Ok(out)
-        })?;
+    let words: Vec<(usize, Vec<WordObj>)> = py.detach(|| {
+        core_extract_words_pages_from_doc_with_geometries(
+            Arc::clone(&doc.inner),
+            options,
+            settings,
+            geoms,
+        )
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract words: {e}")))
+    })?;
 
     let mut out: Vec<(usize, Vec<Py<PyAny>>)> = Vec::with_capacity(words.len());
     for (page_idx, page_words) in words {

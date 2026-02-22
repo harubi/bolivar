@@ -753,6 +753,16 @@ pub fn extract_words_from_ltpage(
     extract_words(&chars, &settings, &arena)
 }
 
+/// Extract words from pre-collected character objects.
+pub fn extract_words_from_objects(
+    chars: Vec<CharObj>,
+    settings: TextSettings,
+    arena: &impl ArenaLookup,
+) -> Vec<WordObj> {
+    let arena_lookup: &dyn ArenaLookup = arena;
+    extract_words(&chars, &settings, arena_lookup)
+}
+
 /// Extract text from a page.
 pub fn extract_text_from_ltpage(
     page: &LTPage,
@@ -763,6 +773,16 @@ pub fn extract_text_from_ltpage(
     arena.reset();
     let (chars, _edges) = collect_page_objects(page, geom, &mut arena);
     extract_text(&chars, &settings, &arena)
+}
+
+/// Extract text from pre-collected character objects.
+pub fn extract_text_from_objects(
+    chars: Vec<CharObj>,
+    settings: TextSettings,
+    arena: &impl ArenaLookup,
+) -> String {
+    let arena_lookup: &dyn ArenaLookup = arena;
+    extract_text(&chars, &settings, arena_lookup)
 }
 
 #[cfg(test)]

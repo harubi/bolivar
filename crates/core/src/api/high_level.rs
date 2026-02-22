@@ -826,6 +826,7 @@ mod tests {
 
     #[test]
     fn test_extract_pages_uses_stream_path() {
+        let _guard = crate::api::stream::stream_usage_test_guard();
         let pdf_data = build_minimal_pdf_with_pages(2);
         crate::api::stream::set_stream_usage_enabled(true);
         crate::api::stream::take_stream_usage();
