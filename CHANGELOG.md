@@ -1,3 +1,14 @@
+## [1.5.2](https://github.com/harubi/bolivar/compare/v1.5.1...v1.5.2) (2026-02-22)
+
+### Performance Improvements
+
+* **python:** offload more api to rust ([cb00bc1](https://github.com/harubi/bolivar/commit/cb00bc1a0dbc4bc1bb97fc6af86d9c59c94eb671))
+* **python:** offload pdfplumber text/words stream ([33a2775](https://github.com/harubi/bolivar/commit/33a2775fd2e1bd9d81c0bcee511ee9cab71828af))
+
+### Continuous Integration
+
+* trim release matrices ([a368d0a](https://github.com/harubi/bolivar/commit/a368d0a82e355e7b66de508c06919db1fa5acb45))
+
 ## [1.5.1](https://github.com/harubi/bolivar/compare/v1.5.0...v1.5.1) (2026-02-22)
 
 ### Performance Improvements
