@@ -206,6 +206,93 @@ class TestPDFPage:
         with pytest.raises(AttributeError):
             PDFPage(DummyPage(), object())
 
+    def test_page_init_is_lazy_for_expensive_fields(self):
+        """PDFPage init should not resolve attrs/resources/annots eagerly."""
+        from pdfminer.pdfpage import PDFPage
+
+        class DummyPage:
+            pageid = 1
+            mediabox = (0.0, 0.0, 1.0, 1.0)
+            cropbox = None
+            rotate = 0
+            label = None
+            bleedbox = None
+            trimbox = None
+            artbox = None
+
+            @property
+            def resources(self):
+                raise AssertionError("resources resolved eagerly")
+
+            @property
+            def annots(self):
+                raise AssertionError("annots resolved eagerly")
+
+            @property
+            def attrs(self):
+                raise AssertionError("attrs resolved eagerly")
+
+        class DummyDoc:
+            _rust_doc = object()
+
+        page = PDFPage(DummyPage(), DummyDoc())
+        assert page.pageid == 1
+
+    def test_page_expensive_fields_resolve_lazily_and_cache(self):
+        """PDFPage should resolve attrs/resources/annots on first access only."""
+        from pdfminer.pdfpage import PDFPage
+
+        class DummyPage:
+            pageid = 1
+            mediabox = (0.0, 0.0, 1.0, 1.0)
+            cropbox = None
+            rotate = 0
+            label = None
+            bleedbox = None
+            trimbox = None
+            artbox = None
+
+            def __init__(self):
+                self.resources_calls = 0
+                self.annots_calls = 0
+                self.attrs_calls = 0
+
+            @property
+            def resources(self):
+                self.resources_calls += 1
+                return {"Font": {}}
+
+            @property
+            def annots(self):
+                self.annots_calls += 1
+                return [{"Rect": [0, 0, 1, 1]}]
+
+            @property
+            def attrs(self):
+                self.attrs_calls += 1
+                return {"MediaBox": [0, 0, 1, 1]}
+
+        class DummyDoc:
+            _rust_doc = object()
+
+        rust_page = DummyPage()
+        page = PDFPage(rust_page, DummyDoc())
+        assert rust_page.resources_calls == 0
+        assert rust_page.annots_calls == 0
+        assert rust_page.attrs_calls == 0
+
+        assert page.resources == {"Font": {}}
+        assert page.resources == {"Font": {}}
+        assert rust_page.resources_calls == 1
+
+        assert page.annots == [{"Rect": [0, 0, 1, 1]}]
+        assert page.annots == [{"Rect": [0, 0, 1, 1]}]
+        assert rust_page.annots_calls == 1
+
+        assert page.attrs == {"MediaBox": [0, 0, 1, 1]}
+        assert page.attrs == {"MediaBox": [0, 0, 1, 1]}
+        assert rust_page.attrs_calls == 1
+
     def test_page_has_pageid(self):
         """PDFPage has pageid attribute"""
         from pdfminer.pdfparser import PDFParser

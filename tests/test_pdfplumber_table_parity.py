@@ -13,10 +13,10 @@ logging.disable(logging.ERROR)
 HERE = os.path.join(ROOT, "references/pdfplumber/tests")
 
 
-def test_extract_tables_core_helper_available():
+def test_extract_tables_core_helper_removed():
     import bolivar
 
-    assert hasattr(bolivar, "_extract_tables_core")
+    assert not hasattr(bolivar, "_extract_tables_core")
 
 
 class TestTableParity(unittest.TestCase):

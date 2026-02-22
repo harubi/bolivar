@@ -14,7 +14,7 @@ def test_table_stream_yields_results():
         geoms.append((tuple(box), tuple(box), running, False))
         running += box[3] - box[1]
 
-    stream = _bolivar.extract_tables_stream_from_document(doc, geoms)
+    stream = _bolivar._extract_tables_stream(doc, geoms)
     page_idx, tables = next(iter(stream))
     assert page_idx == 0
     assert isinstance(tables, list)

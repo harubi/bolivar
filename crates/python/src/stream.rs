@@ -232,9 +232,9 @@ pub fn extract_pages_async_from_document(
 }
 
 /// Extract tables as a blocking stream from an existing PDFDocument.
-#[pyfunction]
+#[pyfunction(name = "_extract_tables_stream")]
 #[pyo3(signature = (doc, geometries, table_settings = None, laparams = None, page_numbers = None, maxpages = 0, caching = true))]
-pub fn extract_tables_stream_from_document(
+pub fn extract_tables_stream(
     py: Python<'_>,
     doc: &PyPDFDocument,
     geometries: &Bound<'_, PyAny>,
@@ -273,6 +273,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_pages_async, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages_async_from_document, m)?)?;
     m.add_class::<PyTableStream>()?;
-    m.add_function(wrap_pyfunction!(extract_tables_stream_from_document, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tables_stream, m)?)?;
     Ok(())
 }

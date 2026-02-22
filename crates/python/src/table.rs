@@ -7,12 +7,10 @@ use bolivar_core::arena::PageArena;
 use bolivar_core::high_level::{
     ExtractOptions, extract_pages_with_document as core_extract_pages_with_document,
     extract_pages_with_images_with_document as core_extract_pages_with_images_with_document,
-    extract_tables_for_page_indexed as core_extract_tables_for_page_indexed,
-    extract_tables_with_document_geometries as core_extract_tables_with_document_geometries,
     extract_text_with_document as core_extract_text_with_document,
 };
 use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
-use bolivar_core::table::{CharObj, EdgeObj, Orientation, PageGeometry, TableSettings};
+use bolivar_core::table::{CharObj, EdgeObj, Orientation, PageGeometry};
 use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -21,7 +19,7 @@ use std::fs::File;
 
 use crate::document::{PdfInput, PyPDFDocument, PyPDFPage, pdf_input_from_py};
 use crate::layout::{PyLTPage, ltpage_to_py};
-use crate::params::{PyLAParams, parse_bbox, parse_page_geometries, parse_table_settings};
+use crate::params::{PyLAParams, parse_bbox, parse_table_settings};
 
 /// Process a PDF page and return its layout.
 ///
@@ -119,45 +117,6 @@ pub fn process_pages(
         .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
 
     Ok(pages.into_iter().map(ltpage_to_py).collect())
-}
-
-/// Extract tables from a document using per-page geometry.
-#[pyfunction]
-#[pyo3(signature = (doc, geometries, table_settings = None, laparams = None))]
-pub fn extract_tables_from_document(
-    py: Python<'_>,
-    doc: &PyPDFDocument,
-    geometries: &Bound<'_, PyAny>,
-    table_settings: Option<Py<PyAny>>,
-    laparams: Option<&PyLAParams>,
-) -> PyResult<Vec<Vec<Vec<Vec<Option<String>>>>>> {
-    let settings = parse_table_settings(py, table_settings)?;
-    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
-        laparams: la,
-    };
-    let geoms = parse_page_geometries(geometries)?;
-    let tables = py
-        .detach(|| {
-            core_extract_tables_with_document_geometries(&doc.inner, options, &settings, &geoms)
-        })
-        .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {}", e)))?;
-
-    Ok(tables)
-}
-
-fn table_extract_options(laparams: Option<&PyLAParams>) -> ExtractOptions {
-    ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
-        laparams: laparams.map(|p| p.clone().into()),
-    }
 }
 
 fn dict_f64(dict: &Bound<'_, PyDict>, key: &str) -> Option<f64> {
@@ -466,68 +425,6 @@ fn objects_to_chars_edges(
     Ok((chars, edges))
 }
 
-fn extract_tables_core_impl(
-    doc: &PDFDocument,
-    page_index: usize,
-    geom: &PageGeometry,
-    options: &ExtractOptions,
-    settings: &TableSettings,
-) -> Result<Vec<Vec<Vec<Option<String>>>>, String> {
-    core_extract_tables_for_page_indexed(doc, page_index, geom, options.clone(), settings)
-        .map_err(|e| format!("Failed to extract tables: {}", e))
-}
-
-fn extract_tables_core_internal(
-    py: Python<'_>,
-    doc: &PyPDFDocument,
-    page_index: usize,
-    page_bbox: (f64, f64, f64, f64),
-    mediabox: (f64, f64, f64, f64),
-    initial_doctop: f64,
-    table_settings: Option<Py<PyAny>>,
-    laparams: Option<&PyLAParams>,
-    force_crop: bool,
-) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
-    let settings = parse_table_settings(py, table_settings)?;
-    let options = table_extract_options(laparams);
-    let geom = PageGeometry {
-        page_bbox,
-        mediabox,
-        initial_doctop,
-        force_crop,
-    };
-    let tables =
-        py.detach(|| extract_tables_core_impl(&doc.inner, page_index, &geom, &options, &settings));
-    tables.map_err(PyValueError::new_err)
-}
-
-/// Extract tables from a page using Rust table extraction.
-#[pyfunction(name = "_extract_tables_core")]
-#[pyo3(signature = (doc, page_index, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, laparams = None, force_crop = false))]
-pub fn extract_tables_core(
-    py: Python<'_>,
-    doc: &PyPDFDocument,
-    page_index: usize,
-    page_bbox: (f64, f64, f64, f64),
-    mediabox: (f64, f64, f64, f64),
-    initial_doctop: f64,
-    table_settings: Option<Py<PyAny>>,
-    laparams: Option<&PyLAParams>,
-    force_crop: bool,
-) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
-    extract_tables_core_internal(
-        py,
-        doc,
-        page_index,
-        page_bbox,
-        mediabox,
-        initial_doctop,
-        table_settings,
-        laparams,
-        force_crop,
-    )
-}
-
 /// Extract tables from page objects.
 #[pyfunction(name = "_extract_tables_from_page_objects")]
 #[pyo3(signature = (objects, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, force_crop = false))]
@@ -798,8 +695,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_pages_with_images_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_tables_from_document, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_tables_core, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page_objects, m)?)?;
     m.add_function(wrap_pyfunction!(repair_pdf, m)?)?;
     Ok(())

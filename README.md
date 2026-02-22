@@ -36,10 +36,10 @@ text = extract_text("doc.pdf")
 ```
 
 ```kotlin
-import sa.ingenious.bolivar.Bolivar
-import sa.ingenious.bolivar.DocumentOptions
+import sa.ingenious.DocumentOptions
+import sa.ingenious.bolivar
 
-val doc = Bolivar.open("doc.pdf", DocumentOptions {
+val doc = bolivar.open("doc.pdf", DocumentOptions {
     maxPages = 1
     layout {
         lineMargin = 0.5
@@ -74,10 +74,10 @@ with pdfplumber.open("doc.pdf") as pdf:
 ```
 
 ```kotlin
-import sa.ingenious.bolivar.Bolivar
-import sa.ingenious.bolivar.DocumentOptions
+import sa.ingenious.DocumentOptions
+import sa.ingenious.bolivar
 
-val doc = Bolivar.open("doc.pdf", DocumentOptions {
+val doc = bolivar.open("doc.pdf", DocumentOptions {
     pages(1, 2)
 })
 val tables = doc.extractTables()
@@ -123,10 +123,10 @@ for page in extract_pages("doc.pdf"):
 ```
 
 ```kotlin
-import sa.ingenious.bolivar.Bolivar
-import sa.ingenious.bolivar.DocumentOptions
+import sa.ingenious.DocumentOptions
+import sa.ingenious.bolivar
 
-val doc = Bolivar.open("doc.pdf", DocumentOptions {
+val doc = bolivar.open("doc.pdf", DocumentOptions {
     maxPages = 3
 })
 val pages = doc.extractPageSummaries()
@@ -148,9 +148,9 @@ fn main() -> bolivar_core::Result<()> {
 }
 ```
 
-## Async
+## Async (Python)
 
-Run extraction off the main thread. Kotlin offers both coroutine suspend functions and Java-compatible `CompletableFuture` so you can choose whichever fits your concurrency model.
+Run extraction off the main thread in Python while keeping the same `pdfplumber` API.
 
 ```python
 import pdfplumber
@@ -159,33 +159,6 @@ async with pdfplumber.open("doc.pdf") as pdf:
     for page in pdf.pages:
         for table in page.extract_tables():
             print(table)
-```
-
-```kotlin
-import kotlinx.coroutines.runBlocking
-import sa.ingenious.bolivar.Bolivar
-import sa.ingenious.bolivar.DocumentOptions
-
-runBlocking {
-    val doc = Bolivar.open("doc.pdf", DocumentOptions {
-        pages(1, 2)
-    })
-    val tables = doc.extractTablesAsync()
-    println(tables.size)
-}
-```
-
-```kotlin
-import sa.ingenious.bolivar.Bolivar
-import sa.ingenious.bolivar.DocumentOptions
-import sa.ingenious.bolivar.Table
-import java.util.concurrent.CompletableFuture
-
-val doc = Bolivar.open("doc.pdf", DocumentOptions {
-    pages(1, 2)
-})
-val future: CompletableFuture<List<Table>> = doc.extractTablesFuture()
-val tables = future.get()
 ```
 
 ## License

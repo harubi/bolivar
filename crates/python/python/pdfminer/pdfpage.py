@@ -1,13 +1,12 @@
 # pdfminer.pdfpage compatibility shim
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, BinaryIO, Protocol, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Container, Generator
 
     from bolivar._bolivar import PDFDocument as _NativePDFDocument
-    from bolivar._bolivar import PDFPage as _NativePDFPage
 
 
 class _RustPageLike(Protocol):
@@ -34,21 +33,21 @@ class PDFPage:
     Provides pdfminer.six-compatible API for accessing page properties.
     """
 
-    _rust_page: _NativePDFPage
+    _rust_page: _RustPageLike
     doc: _DocumentLike
     _page_index: int | None
     pageid: int
     mediabox: list[float] | None
     cropbox: list[float] | None
     rotate: int
-    resources: dict[str, Any]
+    _resources_cache: dict[str, Any] | None
     label: str | None
-    annots: list[Any]
+    _annots_cache: list[Any] | None
     beads: object | None
     bleedbox: list[float] | None
     trimbox: list[float] | None
     artbox: list[float] | None
-    attrs: dict[str, Any]
+    _attrs_cache: dict[str, Any] | None
 
     def __init__(
         self,
@@ -63,7 +62,12 @@ class PDFPage:
             doc: Parent PDFDocument (for compatibility)
             page_index: Optional 0-based index for fast lookup
         """
-        self._rust_page: _NativePDFPage = cast("_NativePDFPage", rust_page)
+        # Keep Rust attrs as the single source of truth.
+        # Checking the type avoids forcing expensive attribute materialization.
+        if not hasattr(type(rust_page), "attrs"):
+            raise AttributeError("rust page missing attrs")
+
+        self._rust_page = rust_page
         self.doc: _DocumentLike = doc
         self._page_index = page_index
         self.pageid = rust_page.pageid
@@ -81,11 +85,12 @@ class PDFPage:
             self.cropbox = self.mediabox  # Default to mediabox
 
         self.rotate = rust_page.rotate
-        self.resources = rust_page.resources
         self.label = rust_page.label
 
-        # Get annotations from Rust page
-        self.annots = rust_page.annots
+        # Defer expensive compatibility conversions until explicitly requested.
+        self._resources_cache = None
+        self._annots_cache = None
+        self._attrs_cache = None
         self.beads = None  # Reading order chain
 
         # Optional box types - get from Rust if available
@@ -93,8 +98,35 @@ class PDFPage:
         self.trimbox = list(rust_page.trimbox) if rust_page.trimbox else None
         self.artbox = list(rust_page.artbox) if rust_page.artbox else None
 
-        # Populate attrs dict from Rust (single source of truth)
-        self.attrs = rust_page.attrs
+    @property
+    def resources(self) -> dict[str, Any]:
+        if self._resources_cache is None:
+            self._resources_cache = self._rust_page.resources
+        return self._resources_cache
+
+    @resources.setter
+    def resources(self, value: dict[str, Any]) -> None:
+        self._resources_cache = value
+
+    @property
+    def annots(self) -> list[Any]:
+        if self._annots_cache is None:
+            self._annots_cache = self._rust_page.annots
+        return self._annots_cache
+
+    @annots.setter
+    def annots(self, value: list[Any]) -> None:
+        self._annots_cache = value
+
+    @property
+    def attrs(self) -> dict[str, Any]:
+        if self._attrs_cache is None:
+            self._attrs_cache = self._rust_page.attrs
+        return self._attrs_cache
+
+    @attrs.setter
+    def attrs(self, value: dict[str, Any]) -> None:
+        self._attrs_cache = value
 
     @classmethod
     def create_pages(

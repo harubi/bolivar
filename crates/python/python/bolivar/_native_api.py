@@ -157,9 +157,6 @@ if TYPE_CHECKING:
         __version__ as __version__,
     )
     from bolivar._bolivar import (
-        _extract_tables_core as _extract_tables_core,
-    )
-    from bolivar._bolivar import (
         _extract_tables_from_page_objects as _extract_tables_from_page_objects,
     )
     from bolivar._bolivar import (
@@ -197,12 +194,6 @@ if TYPE_CHECKING:
     )
     from bolivar._bolivar import (
         extract_pages_with_images_from_path as extract_pages_with_images_from_path,
-    )
-    from bolivar._bolivar import (
-        extract_tables_from_document as extract_tables_from_document,
-    )
-    from bolivar._bolivar import (
-        extract_tables_stream_from_document as extract_tables_stream_from_document,
     )
     from bolivar._bolivar import (
         extract_text as extract_text,
@@ -349,8 +340,6 @@ __all__ = [
     "UnicodeMap",
     "XMLConverter",
     "__version__",
-    "_extract_tables_core",
-    "_extract_tables_from_page_objects",
     "apply_matrix_pt",
     "apply_matrix_rect",
     "ascii85decode",
@@ -363,8 +352,6 @@ __all__ = [
     "extract_pages_from_path",
     "extract_pages_with_images",
     "extract_pages_with_images_from_path",
-    "extract_tables_from_document",
-    "extract_tables_stream_from_document",
     "extract_text",
     "extract_text_from_path",
     "font_metrics",
@@ -394,6 +381,20 @@ __all__ = [
     "translate_matrix",
     "unpad_aes",
 ]
+
+
+def _extract_tables_stream(*args: object, **kwargs: object) -> object:
+    """Internal table stream bridge used by the pdfplumber shim."""
+    native = load_native_api()
+    fn = native._extract_tables_stream
+    return fn(*args, **kwargs)
+
+
+def _extract_tables_from_page_objects(*args: object, **kwargs: object) -> object:
+    """Internal filtered-page extractor used by the pdfplumber shim."""
+    native = load_native_api()
+    fn = native._extract_tables_from_page_objects
+    return fn(*args, **kwargs)
 
 
 def __getattr__(name: str) -> object:
