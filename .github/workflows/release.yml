@@ -70,7 +70,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [x86_64, x86, aarch64, armv7, s390x, ppc64le]
+        target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v6.0.2
         with:
@@ -96,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [x86_64, x86, aarch64, armv7]
+        target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v6.0.2
         with:
@@ -125,10 +125,6 @@ jobs:
         platform:
           - runner: windows-latest
             target: x64
-          - runner: windows-latest
-            target: x86
-          - runner: windows-11-arm
-            target: aarch64
     steps:
       - uses: actions/checkout@v6.0.2
         with:
@@ -233,10 +229,6 @@ jobs:
             target: x86_64-pc-windows-msvc
             classifier: windows-x86-64
             lib_name: bolivar_uniffi.dll
-          - os: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            classifier: windows-aarch64
-            lib_name: bolivar_uniffi.dll
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -332,7 +324,7 @@ jobs:
       - name: Verify all native libraries present
         run: |
           cd crates/uniffi/jvm/natives
-          for classifier in linux-x86-64 linux-aarch64 macos-x86-64 macos-aarch64 windows-x86-64 windows-aarch64; do
+          for classifier in linux-x86-64 linux-aarch64 macos-x86-64 macos-aarch64 windows-x86-64; do
             [ -d "$classifier" ] || { echo "Missing $classifier"; exit 1; }
           done
       - name: Download uniffi-bindgen
