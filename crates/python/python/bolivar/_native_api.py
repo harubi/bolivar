@@ -397,6 +397,20 @@ def _extract_tables_from_page_objects(*args: object, **kwargs: object) -> object
     return fn(*args, **kwargs)
 
 
+def _extract_text_stream(*args: object, **kwargs: object) -> object:
+    """Internal text stream bridge used by the pdfplumber shim."""
+    native = load_native_api()
+    fn = native._extract_text_stream
+    return fn(*args, **kwargs)
+
+
+def _extract_words_stream(*args: object, **kwargs: object) -> object:
+    """Internal word stream bridge used by the pdfplumber shim."""
+    native = load_native_api()
+    fn = native._extract_words_stream
+    return fn(*args, **kwargs)
+
+
 def __getattr__(name: str) -> object:
     if name not in __all__:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
