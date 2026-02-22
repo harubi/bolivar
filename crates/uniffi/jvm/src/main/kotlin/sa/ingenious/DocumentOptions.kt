@@ -1,6 +1,6 @@
-package sa.ingenious.bolivar
+package sa.ingenious
 
-import sa.ingenious.bolivar.ffi.ExtractOptions as NativeExtractOptions
+import sa.ingenious.ffi.ExtractOptions as NativeExtractOptions
 
 data class DocumentOptions(
     val password: String? = null,

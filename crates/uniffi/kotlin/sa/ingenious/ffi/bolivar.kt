@@ -3,7 +3,7 @@
 
 @file:Suppress("NAME_SHADOWING")
 
-package sa.ingenious.bolivar.ffi
+package sa.ingenious.ffi
 
 // Common helper code.
 //

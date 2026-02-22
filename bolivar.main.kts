@@ -4,9 +4,9 @@
 @file:DependsOn("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 @file:DependsOn("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.10.2")
 
-import sa.ingenious.bolivar.Bolivar
-import sa.ingenious.bolivar.BolivarNativeLoader
-import sa.ingenious.bolivar.DocumentOptions
+import sa.ingenious.BolivarNativeLoader
+import sa.ingenious.DocumentOptions
+import sa.ingenious.bolivar
 import java.io.File
 import kotlinx.coroutines.runBlocking
 
@@ -27,7 +27,7 @@ require(pdfPath.exists()) {
     "PDF not found at ${pdfPath.path}. Pass a PDF path as the first argument."
 }
 
-Bolivar.open(
+bolivar.open(
     pdfPath.path,
     DocumentOptions {
         pages(1, 2) // 1-based pages
@@ -39,7 +39,7 @@ Bolivar.open(
 }
 
 runBlocking {
-    val asyncText = Bolivar.extractTextAsync(
+    val asyncText = bolivar.extractTextAsync(
         pdfPath.path,
         DocumentOptions {
             pages(1, 2)

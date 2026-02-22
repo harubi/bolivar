@@ -1,6 +1,6 @@
-package sa.ingenious.bolivar
+package sa.ingenious
 
-import sa.ingenious.bolivar.ffi.LayoutParams as NativeLayoutParams
+import sa.ingenious.ffi.LayoutParams as NativeLayoutParams
 
 data class LayoutParams(
     val lineOverlap: Double = 0.5,

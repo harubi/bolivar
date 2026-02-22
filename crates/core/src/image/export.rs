@@ -480,6 +480,7 @@ fn apply_png_predictor_impl(
     colors: usize,
     bits_per_component: usize,
     use_simd: bool,
+    mut simd_used: Option<&mut bool>,
 ) -> Result<Vec<u8>> {
     let row_bytes = colors * columns * bits_per_component / 8;
     let bpp = std::cmp::max(1, colors * bits_per_component / 8);
@@ -507,6 +508,9 @@ fn apply_png_predictor_impl(
             }
             2 => {
                 if use_simd && row_bytes >= PNG_SIMD_LANES {
+                    if let Some(flag) = simd_used.as_mut() {
+                        **flag = true;
+                    }
                     type V = Simd<u8, { PNG_SIMD_LANES }>;
                     let (prefix, middle, suffix) = row_data.as_simd::<{ PNG_SIMD_LANES }>();
                     let mut offset = 0;
@@ -567,17 +571,38 @@ fn apply_png_predictor(
     colors: usize,
     bits_per_component: usize,
 ) -> Result<Vec<u8>> {
-    apply_png_predictor_impl(data, columns, colors, bits_per_component, true)
+    apply_png_predictor_impl(data, columns, colors, bits_per_component, true, None)
 }
 
-#[cfg(test)]
-fn apply_png_predictor_scalar(
+#[doc(hidden)]
+pub fn apply_png_predictor_with_mode(
     data: &[u8],
     columns: usize,
     colors: usize,
     bits_per_component: usize,
+    use_simd: bool,
 ) -> Result<Vec<u8>> {
-    apply_png_predictor_impl(data, columns, colors, bits_per_component, false)
+    apply_png_predictor_impl(data, columns, colors, bits_per_component, use_simd, None)
+}
+
+#[cfg(test)]
+fn apply_png_predictor_with_mode_and_trace(
+    data: &[u8],
+    columns: usize,
+    colors: usize,
+    bits_per_component: usize,
+    use_simd: bool,
+) -> Result<(Vec<u8>, bool)> {
+    let mut simd_used = false;
+    let out = apply_png_predictor_impl(
+        data,
+        columns,
+        colors,
+        bits_per_component,
+        use_simd,
+        Some(&mut simd_used),
+    )?;
+    Ok((out, simd_used))
 }
 
 const fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
@@ -738,7 +763,7 @@ impl BmpWriter {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_IMAGE_DECODED_BYTES, apply_png_predictor, apply_png_predictor_scalar,
+        MAX_IMAGE_DECODED_BYTES, PNG_SIMD_LANES, apply_png_predictor_with_mode_and_trace,
         expected_image_len,
     };
 
@@ -757,13 +782,24 @@ mod tests {
     }
 
     #[test]
-    fn png_predictor_up_simd_matches_scalar() {
-        let data = [
-            2, 1, 2, 3, 4, // row1 (Up)
-            2, 4, 3, 2, 1, // row2 (Up)
-        ];
-        let scalar = apply_png_predictor_scalar(&data, 4, 1, 8).unwrap();
-        let simd = apply_png_predictor(&data, 4, 1, 8).unwrap();
+    fn png_predictor_up_simd_matches_scalar_and_uses_simd_path() {
+        let row_bytes = PNG_SIMD_LANES + 7;
+        let rows = 4usize;
+        let mut data = Vec::with_capacity(rows * (row_bytes + 1));
+        for row in 0..rows {
+            data.push(2);
+            for col in 0..row_bytes {
+                data.push(((row * 31 + col * 17 + 11) & 0xff) as u8);
+            }
+        }
+
+        let (scalar, scalar_used_simd) =
+            apply_png_predictor_with_mode_and_trace(&data, row_bytes, 1, 8, false).unwrap();
+        let (simd, simd_used_simd) =
+            apply_png_predictor_with_mode_and_trace(&data, row_bytes, 1, 8, true).unwrap();
+
+        assert!(!scalar_used_simd);
+        assert!(simd_used_simd);
         assert_eq!(scalar, simd);
     }
 }

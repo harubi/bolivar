@@ -1,8 +1,10 @@
-package sa.ingenious.bolivar
+@file:Suppress("ClassName")
+
+package sa.ingenious
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import sa.ingenious.bolivar.ffi.NativePdfDocument
+import sa.ingenious.ffi.NativePdfDocument
 import java.io.File
 import java.io.InputStream
 import java.nio.file.Path
@@ -10,7 +12,14 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executor
 import java.util.function.Supplier
 
-object Bolivar {
+/**
+ * Canonical JVM entrypoint.
+ *
+ * Usage:
+ * import sa.ingenious.bolivar
+ * val doc = bolivar.open("doc.pdf")
+ */
+object bolivar {
     @JvmStatic
     fun loadNativeLibrary(): String = BolivarNativeLoader.loadFromClasspath()
 
@@ -204,4 +213,5 @@ object Bolivar {
             CompletableFuture.supplyAsync(task, executor)
         }
     }
+
 }
