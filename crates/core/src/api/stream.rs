@@ -17,7 +17,8 @@ use crate::pdfinterp::PDFResourceManager;
 use crate::pdfpage::PDFPage;
 use crate::table::edge_probe::{page_has_edges, should_skip_tables};
 use crate::table::{
-    PageGeometry, TableSettings, collect_table_objects_from_arena, extract_tables_from_objects,
+    PageGeometry, TableSettings, TextSettings, WordObj, collect_table_objects_from_arena,
+    extract_tables_from_objects, extract_text_from_objects, extract_words_from_objects,
 };
 
 use super::high_level::{
@@ -31,6 +32,9 @@ static STREAM_USAGE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 #[cfg(test)]
 static STREAM_USAGE_ENABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+static STREAM_USAGE_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
 
 #[cfg(test)]
 fn record_stream_usage() {
@@ -47,6 +51,14 @@ pub(crate) fn take_stream_usage() -> usize {
 #[cfg(test)]
 pub(crate) fn set_stream_usage_enabled(enabled: bool) {
     STREAM_USAGE_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn stream_usage_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    STREAM_USAGE_TEST_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .expect("stream usage test lock")
 }
 
 type StreamItem = (usize, Result<LTPage>);
@@ -344,6 +356,118 @@ pub fn extract_tables_stream_from_doc_with_geometries(
     )
 }
 
+/// Extract per-page text for selected pages using arena-backed collection.
+pub fn extract_text_pages_from_doc_with_geometries(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    settings: TextSettings,
+    geometries: Vec<PageGeometry>,
+) -> Result<Vec<(usize, String)>> {
+    let geom_count = doc.page_index().len();
+    if geometries.len() != geom_count {
+        return Err(PdfError::DecodeError(format!(
+            "geometry count mismatch: expected {}, got {}",
+            geom_count,
+            geometries.len()
+        )));
+    }
+    if options.laparams.is_none() {
+        options.laparams = Some(LAParams::default());
+    }
+
+    let order = build_page_order(doc.as_ref(), &options);
+    let laparams = options.laparams.clone();
+    let caching = options.caching;
+
+    let thread_count = default_thread_count();
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()
+        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+
+    let mut results: Vec<(usize, String)> = pool.install(|| {
+        order
+            .par_iter()
+            .map(|&page_idx| {
+                let page = PDFPage::get_page_by_index(doc.as_ref(), page_idx)?;
+                let mut arena = PageArena::new();
+                arena.reset();
+                let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+                let mut collector =
+                    PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
+                let page_arena =
+                    process_page_arena(&page, &mut collector, &mut rsrcmgr, doc.as_ref())?;
+                let arena_lookup = collector.arena_lookup();
+                let geom = &geometries[page_idx];
+                let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
+                Ok((
+                    page_idx,
+                    extract_text_from_objects(chars, settings.clone(), arena_lookup),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()
+    })?;
+
+    results.sort_by_key(|(idx, _)| *idx);
+    Ok(results)
+}
+
+/// Extract per-page words for selected pages using arena-backed collection.
+pub fn extract_words_pages_from_doc_with_geometries(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    settings: TextSettings,
+    geometries: Vec<PageGeometry>,
+) -> Result<Vec<(usize, Vec<WordObj>)>> {
+    let geom_count = doc.page_index().len();
+    if geometries.len() != geom_count {
+        return Err(PdfError::DecodeError(format!(
+            "geometry count mismatch: expected {}, got {}",
+            geom_count,
+            geometries.len()
+        )));
+    }
+    if options.laparams.is_none() {
+        options.laparams = Some(LAParams::default());
+    }
+
+    let order = build_page_order(doc.as_ref(), &options);
+    let laparams = options.laparams.clone();
+    let caching = options.caching;
+
+    let thread_count = default_thread_count();
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(thread_count)
+        .build()
+        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+
+    let mut results: Vec<(usize, Vec<WordObj>)> = pool.install(|| {
+        order
+            .par_iter()
+            .map(|&page_idx| {
+                let page = PDFPage::get_page_by_index(doc.as_ref(), page_idx)?;
+                let mut arena = PageArena::new();
+                arena.reset();
+                let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+                let mut collector =
+                    PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
+                let page_arena =
+                    process_page_arena(&page, &mut collector, &mut rsrcmgr, doc.as_ref())?;
+                let arena_lookup = collector.arena_lookup();
+                let geom = &geometries[page_idx];
+                let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
+                Ok((
+                    page_idx,
+                    extract_words_from_objects(chars, settings.clone(), arena_lookup),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()
+    })?;
+
+    results.sort_by_key(|(idx, _)| *idx);
+    Ok(results)
+}
+
 fn extract_tables_stream_from_doc_with_geometries_internal(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
@@ -462,6 +586,16 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
 mod tests {
     use super::*;
 
+    fn full_page_geometries(page_count: usize) -> Vec<PageGeometry> {
+        let geom = PageGeometry {
+            page_bbox: (0.0, 0.0, 200.0, 200.0),
+            mediabox: (0.0, 0.0, 200.0, 200.0),
+            initial_doctop: 0.0,
+            force_crop: false,
+        };
+        vec![geom; page_count]
+    }
+
     fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(b"%PDF-1.4\n");
@@ -557,12 +691,7 @@ mod tests {
         let doc = PDFDocument::new(pdf, "").unwrap();
         let options = ExtractOptions::default();
         let settings = TableSettings::default();
-        let geoms = vec![PageGeometry {
-            page_bbox: (0.0, 0.0, 200.0, 200.0),
-            mediabox: (0.0, 0.0, 200.0, 200.0),
-            initial_doctop: 0.0,
-            force_crop: false,
-        }];
+        let geoms = full_page_geometries(1);
 
         let err =
             extract_tables_stream_from_doc_with_geometries(doc.into(), options, settings, geoms);
@@ -583,5 +712,53 @@ mod tests {
             .collect::<Result<Vec<_>>>()
             .unwrap();
         assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn text_pages_with_geometries_avoid_ltpage_stream_usage() {
+        let _guard = stream_usage_test_guard();
+        let pdf = build_minimal_pdf_with_pages(2);
+        let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
+        let options = ExtractOptions::default();
+        let geoms = full_page_geometries(2);
+
+        set_stream_usage_enabled(true);
+        take_stream_usage();
+        let out = extract_text_pages_from_doc_with_geometries(
+            Arc::clone(&doc),
+            options,
+            crate::table::TextSettings::default(),
+            geoms,
+        )
+        .unwrap();
+        let usage = take_stream_usage();
+        set_stream_usage_enabled(false);
+
+        assert_eq!(out.len(), 2);
+        assert_eq!(usage, 0);
+    }
+
+    #[test]
+    fn words_pages_with_geometries_avoid_ltpage_stream_usage() {
+        let _guard = stream_usage_test_guard();
+        let pdf = build_minimal_pdf_with_pages(2);
+        let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
+        let options = ExtractOptions::default();
+        let geoms = full_page_geometries(2);
+
+        set_stream_usage_enabled(true);
+        take_stream_usage();
+        let out = extract_words_pages_from_doc_with_geometries(
+            Arc::clone(&doc),
+            options,
+            crate::table::TextSettings::default(),
+            geoms,
+        )
+        .unwrap();
+        let usage = take_stream_usage();
+        set_stream_usage_enabled(false);
+
+        assert_eq!(out.len(), 2);
+        assert_eq!(usage, 0);
     }
 }
