@@ -1,8 +1,8 @@
-package sa.ingenious.bolivar
+package sa.ingenious
 
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ExecutionException
-import sa.ingenious.bolivar.ffi.BolivarException as NativeBolivarException
+import sa.ingenious.ffi.BolivarException as NativeBolivarException
 
 sealed class BolivarException(
     message: String,

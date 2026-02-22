@@ -1,4 +1,4 @@
-package sa.ingenious.bolivar
+package sa.ingenious
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

@@ -1,8 +1,8 @@
-package sa.ingenious.bolivar
+package sa.ingenious
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import sa.ingenious.bolivar.ffi.NativePdfDocument
+import sa.ingenious.ffi.NativePdfDocument
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executor
 import java.util.function.Supplier
@@ -69,14 +69,7 @@ class PdfDocument internal constructor(
     @Throws(BolivarException::class)
     fun extractTables(): List<Table> = withTranslatedExceptions { backend.extractTables() }
 
-    suspend fun extractTablesAsync(): List<Table> = withContext(Dispatchers.IO) { extractTables() }
-
-    @JvmOverloads
-    fun extractTablesFuture(executor: Executor? = null): CompletableFuture<List<Table>> = future(executor) { extractTables() }
-
     fun pages(): List<PageSummary> = extractPageSummaries()
-
-    fun tables(): List<Table> = extractTables()
 
     operator fun get(pageNumber: Int): PageSummary {
         require(pageNumber > 0) { "pageNumber must be >= 1" }

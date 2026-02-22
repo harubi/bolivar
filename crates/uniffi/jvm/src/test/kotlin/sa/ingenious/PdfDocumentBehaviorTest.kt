@@ -1,4 +1,4 @@
-package sa.ingenious.bolivar
+package sa.ingenious
 
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.TimeUnit

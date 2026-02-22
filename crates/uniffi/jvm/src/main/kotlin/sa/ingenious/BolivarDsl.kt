@@ -1,4 +1,4 @@
-package sa.ingenious.bolivar
+package sa.ingenious
 
 @DslMarker
 annotation class BolivarDsl

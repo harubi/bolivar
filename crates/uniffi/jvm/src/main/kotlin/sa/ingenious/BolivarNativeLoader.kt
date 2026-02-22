@@ -1,4 +1,4 @@
-package sa.ingenious.bolivar
+package sa.ingenious
 
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption

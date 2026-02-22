@@ -155,6 +155,13 @@ command = "cargo"
 args = ["bench", "-p", "bolivar-core"]
 env = { BOLIVAR_BENCH_TIER = "full" }
 
+[tasks.bench-png]
+category = "Rust"
+description = "Run PNG predictor scalar vs SIMD benchmark"
+command = "cargo"
+args = ["bench", "-p", "bolivar-core", "--bench", "png_predictor_bench"]
+env = { BOLIVAR_BENCH_TIER = "quick" }
+
 [tasks.bench-save]
 category = "Rust"
 description = "Run benchmarks and save baseline"

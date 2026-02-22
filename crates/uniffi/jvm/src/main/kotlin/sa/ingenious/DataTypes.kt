@@ -1,16 +1,16 @@
-package sa.ingenious.bolivar
+package sa.ingenious
 
 import kotlin.math.max
 import kotlin.math.min
 
-public typealias BoundingBox = sa.ingenious.bolivar.ffi.BoundingBox
-public typealias PageSummary = sa.ingenious.bolivar.ffi.PageSummary
-public typealias LayoutChar = sa.ingenious.bolivar.ffi.LayoutChar
-public typealias LayoutLine = sa.ingenious.bolivar.ffi.LayoutLine
-public typealias LayoutTextBox = sa.ingenious.bolivar.ffi.LayoutTextBox
-public typealias LayoutPage = sa.ingenious.bolivar.ffi.LayoutPage
-public typealias TableCell = sa.ingenious.bolivar.ffi.TableCell
-public typealias Table = sa.ingenious.bolivar.ffi.Table
+public typealias BoundingBox = sa.ingenious.ffi.BoundingBox
+public typealias PageSummary = sa.ingenious.ffi.PageSummary
+public typealias LayoutChar = sa.ingenious.ffi.LayoutChar
+public typealias LayoutLine = sa.ingenious.ffi.LayoutLine
+public typealias LayoutTextBox = sa.ingenious.ffi.LayoutTextBox
+public typealias LayoutPage = sa.ingenious.ffi.LayoutPage
+public typealias TableCell = sa.ingenious.ffi.TableCell
+public typealias Table = sa.ingenious.ffi.Table
 
 val PageSummary.pageNumberInt: Int
     get() = pageNumber.toInt()

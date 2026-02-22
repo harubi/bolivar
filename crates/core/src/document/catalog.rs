@@ -1034,6 +1034,7 @@ impl PDFDocument {
         colors: usize,
         bits_per_component: usize,
         use_simd: bool,
+        mut simd_used: Option<&mut bool>,
     ) -> Result<Vec<u8>> {
         let row_bytes = colors * columns * bits_per_component / 8;
         let bpp = std::cmp::max(1, colors * bits_per_component / 8); // bytes per pixel
@@ -1066,6 +1067,9 @@ impl PDFDocument {
                 2 => {
                     // Up - each byte depends on byte above
                     if use_simd && row_bytes >= PNG_SIMD_LANES {
+                        if let Some(flag) = simd_used.as_mut() {
+                            **flag = true;
+                        }
                         type V = Simd<u8, { PNG_SIMD_LANES }>;
                         let (prefix, middle, suffix) = row_data.as_simd::<{ PNG_SIMD_LANES }>();
                         let mut offset = 0;
@@ -1131,17 +1135,27 @@ impl PDFDocument {
         colors: usize,
         bits_per_component: usize,
     ) -> Result<Vec<u8>> {
-        Self::apply_png_predictor_impl(data, columns, colors, bits_per_component, true)
+        Self::apply_png_predictor_impl(data, columns, colors, bits_per_component, true, None)
     }
 
     #[cfg(test)]
-    fn apply_png_predictor_scalar(
+    fn apply_png_predictor_with_mode_and_trace(
         data: &[u8],
         columns: usize,
         colors: usize,
         bits_per_component: usize,
-    ) -> Result<Vec<u8>> {
-        Self::apply_png_predictor_impl(data, columns, colors, bits_per_component, false)
+        use_simd: bool,
+    ) -> Result<(Vec<u8>, bool)> {
+        let mut simd_used = false;
+        let out = Self::apply_png_predictor_impl(
+            data,
+            columns,
+            colors,
+            bits_per_component,
+            use_simd,
+            Some(&mut simd_used),
+        )?;
+        Ok((out, simd_used))
     }
 
     /// Paeth predictor function used in PNG filtering.
@@ -2477,13 +2491,26 @@ mod tests {
     }
 
     #[test]
-    fn png_predictor_up_simd_matches_scalar() {
-        let data = [
-            2, 1, 2, 3, 4, // row1 (Up)
-            2, 4, 3, 2, 1, // row2 (Up)
-        ];
-        let scalar = PDFDocument::apply_png_predictor_scalar(&data, 4, 1, 8).unwrap();
-        let simd = PDFDocument::apply_png_predictor(&data, 4, 1, 8).unwrap();
+    fn png_predictor_up_simd_matches_scalar_and_uses_simd_path() {
+        let row_bytes = PNG_SIMD_LANES + 7;
+        let rows = 4usize;
+        let mut data = Vec::with_capacity(rows * (row_bytes + 1));
+        for row in 0..rows {
+            data.push(2);
+            for col in 0..row_bytes {
+                data.push(((row * 31 + col * 17 + 11) & 0xff) as u8);
+            }
+        }
+
+        let (scalar, scalar_used_simd) =
+            PDFDocument::apply_png_predictor_with_mode_and_trace(&data, row_bytes, 1, 8, false)
+                .unwrap();
+        let (simd, simd_used_simd) =
+            PDFDocument::apply_png_predictor_with_mode_and_trace(&data, row_bytes, 1, 8, true)
+                .unwrap();
+
+        assert!(!scalar_used_simd);
+        assert!(simd_used_simd);
         assert_eq!(scalar, simd);
     }
 }
