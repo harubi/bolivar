@@ -1,3 +1,13 @@
+## [1.5.1](https://github.com/harubi/bolivar/compare/v1.5.0...v1.5.1) (2026-02-22)
+
+### Performance Improvements
+
+* **python:** lazily materialize page attrs ([7b29aee](https://github.com/harubi/bolivar/commit/7b29aee79dfa5ae195f69b9d1f7a2027b1f9cc95))
+
+### Miscellaneous Chores
+
+* **jvm:** update fqn ([96e0674](https://github.com/harubi/bolivar/commit/96e067497e1ca1bd161fb97002561462a97d3b68))
+
 ## [1.5.0](https://github.com/harubi/bolivar/compare/v1.4.0...v1.5.0) (2026-02-14)
 
 ### Features
