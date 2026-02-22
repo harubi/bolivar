@@ -221,32 +221,91 @@ class Page(Container):
         self.page_obj = page_obj
         self.page_number = page_number
         self.initial_doctop = initial_doctop
+        missing = object()
 
         def get_attr(key: str, default: object | None = None) -> object | None:
             value = resolve_all(page_obj.attrs.get(key))
             return default if value is None else value
 
+        def as_num(value: object, name: str) -> T_num:
+            if isinstance(value, bool):
+                return int(value)
+            if isinstance(value, (int, float)):
+                return value
+            raise MalformedPDFException(
+                f"{name} contains non-number coordinate(s): {value!r}"
+            )
+
+        def as_rotation(value: object | None) -> int:
+            if value is None:
+                return 0
+            if isinstance(value, bool):
+                return int(value)
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(value)
+            raise MalformedPDFException(f"Rotation is not numeric: {value!r}")
+
+        def as_bbox(value: object | None, name: str) -> T_bbox | None:
+            if value is None:
+                return None
+            if not isinstance(value, (list, tuple)) or len(value) != 4:
+                raise MalformedPDFException(
+                    f"{name} must be a 4-item box, got {value!r}"
+                )
+            x0 = as_num(value[0], name)
+            y0 = as_num(value[1], name)
+            x1 = as_num(value[2], name)
+            y1 = as_num(value[3], name)
+            return (x0, y0, x1, y1)
+
         # Per PDF Reference Table 3.27: "The number of degrees by which the
         # page should be rotated clockwise when displayed or printed. The value
         # must be a multiple of 90. Default value: 0"
-        _rotation = cast("int", get_attr("Rotate", 0))
-        self.rotation = _rotation % 360
+        rotation_src = getattr(page_obj, "rotate", None)
+        if rotation_src is None:
+            rotation_src = get_attr("Rotate", 0)
+        self.rotation = as_rotation(rotation_src) % 360
 
-        mb_raw = _normalize_box(cast("T_bbox", get_attr("MediaBox")), self.rotation)
+        mb_src = as_bbox(getattr(page_obj, "mediabox", None), "mediabox")
+        if mb_src is None:
+            mb_src = as_bbox(get_attr("MediaBox"), "MediaBox")
+        if mb_src is None:
+            raise MalformedPDFException("MediaBox is missing")
+        mb_raw = _normalize_box(mb_src, self.rotation)
         mb_height = mb_raw[3] - mb_raw[1]
 
         self.mediabox = _invert_box(mb_raw, mb_height)
 
-        for box_name in ["CropBox", "TrimBox", "BleedBox", "ArtBox"]:
-            if box_name in page_obj.attrs:
-                box_normalized = _invert_box(
-                    _normalize_box(cast("T_bbox", get_attr(box_name)), self.rotation),
-                    mb_height,
-                )
-                setattr(self, box_name.lower(), box_normalized)
-
-        if "CropBox" not in page_obj.attrs:
+        crop_raw = getattr(page_obj, "cropbox", missing)
+        crop_src = as_bbox(crop_raw if crop_raw is not missing else None, "cropbox")
+        if crop_raw is missing:
+            crop_src = as_bbox(get_attr("CropBox"), "CropBox")
+        if crop_src is None:
             self.cropbox = self.mediabox
+        else:
+            self.cropbox = _invert_box(
+                _normalize_box(crop_src, self.rotation),
+                mb_height,
+            )
+
+        for attr_name, box_name in (
+            ("trimbox", "TrimBox"),
+            ("bleedbox", "BleedBox"),
+            ("artbox", "ArtBox"),
+        ):
+            box_raw = getattr(page_obj, attr_name, missing)
+            box_src = as_bbox(box_raw if box_raw is not missing else None, attr_name)
+            if box_raw is missing:
+                box_src = as_bbox(get_attr(box_name), box_name)
+            if box_src is None:
+                continue
+            box_normalized = _invert_box(
+                _normalize_box(box_src, self.rotation),
+                mb_height,
+            )
+            setattr(self, attr_name, box_normalized)
 
         # Page.bbox defaults to self.mediabox, but can be altered by Page.crop(...)
         self.bbox = self.mediabox

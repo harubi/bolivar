@@ -111,8 +111,10 @@ def _apply_patch(module: ModuleType) -> bool:
 
     already_patched = getattr(page_mod.Page.extract_tables, "_bolivar_patched", False)
 
-    from bolivar import extract_tables_stream_from_document
-    from bolivar._native_api import _extract_tables_from_page_objects
+    from bolivar._native_api import (
+        _extract_tables_from_page_objects,
+        _extract_tables_stream,
+    )
     from pdfplumber.utils.exceptions import PdfminerException
 
     def _page_geom(page: _PageLike) -> _PageGeometry:
@@ -272,14 +274,19 @@ def _apply_patch(module: ModuleType) -> bool:
 
         def _stream_factory() -> Iterable[_StreamItem]:
             native_doc = cast("_NativePDFDocument", rust_doc)
-            return extract_tables_stream_from_document(
-                native_doc,
-                geometries,
-                table_settings=table_settings,
-                laparams=(getattr(pdf, "laparams", None) if pdf is not None else None),
-                page_numbers=page_numbers,
-                maxpages=0,
-                caching=getattr(doc, "caching", True),
+            return cast(
+                "Iterable[_StreamItem]",
+                _extract_tables_stream(
+                    native_doc,
+                    geometries,
+                    table_settings=table_settings,
+                    laparams=(
+                        getattr(pdf, "laparams", None) if pdf is not None else None
+                    ),
+                    page_numbers=page_numbers,
+                    maxpages=0,
+                    caching=getattr(doc, "caching", True),
+                ),
             )
 
         wrapped = _BolivarTableStream(_stream_factory)
@@ -294,13 +301,16 @@ def _apply_patch(module: ModuleType) -> bool:
             table_settings: dict[str, Any] | None = None,
         ) -> _Tables:
             if not getattr(page, "is_original", True):
-                return _extract_tables_from_page_objects(
-                    page.objects,
-                    page.bbox,
-                    page.mediabox,
-                    page.initial_doctop,
-                    table_settings=table_settings,
-                    force_crop=not getattr(page, "is_original", True),
+                return cast(
+                    "_Tables",
+                    _extract_tables_from_page_objects(
+                        page.objects,
+                        page.bbox,
+                        page.mediabox,
+                        page.initial_doctop,
+                        table_settings=table_settings,
+                        force_crop=not getattr(page, "is_original", True),
+                    ),
                 )
             page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
             pdf = page.pdf

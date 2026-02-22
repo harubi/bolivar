@@ -27,22 +27,12 @@ def test_filtered_page_tables_use_rust(monkeypatch):
 
 def test_text_layout_parity(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
-    from bolivar import _extract_tables_core
 
     with pdfplumber.open(PDF_PATH) as pdf:
         page = pdf.pages[0]
         settings = {"text_layout": True}
         expected = page.extract_table(settings)
-        page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
-        tables = _extract_tables_core(
-            page.page_obj.doc._rust_doc,
-            page_index,
-            page.bbox,
-            page.mediabox,
-            page.initial_doctop,
-            table_settings=settings,
-            force_crop=False,
-        )
+        tables = page.extract_tables(settings)
         if tables:
             got = max(tables, key=lambda table: sum(len(row) for row in table))
         else:

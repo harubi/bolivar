@@ -33,9 +33,6 @@ if TYPE_CHECKING:
         __version__ as __version__,
     )
     from bolivar._bolivar import (
-        _extract_tables_core as _extract_tables_core,
-    )
-    from bolivar._bolivar import (
         async_runtime_poc as async_runtime_poc,
     )
     from bolivar._bolivar import (
@@ -52,12 +49,6 @@ if TYPE_CHECKING:
     )
     from bolivar._bolivar import (
         extract_pages_with_images_from_path as extract_pages_with_images_from_path,
-    )
-    from bolivar._bolivar import (
-        extract_tables_from_document as extract_tables_from_document,
-    )
-    from bolivar._bolivar import (
-        extract_tables_stream_from_document as extract_tables_stream_from_document,
     )
     from bolivar._bolivar import (
         extract_text as extract_text,
@@ -88,8 +79,6 @@ __all__ = [
     "extract_pages_from_path",
     "extract_pages_with_images",
     "extract_pages_with_images_from_path",
-    "extract_tables_from_document",
-    "extract_tables_stream_from_document",
     "extract_text",
     "extract_text_from_path",
     "process_page",
@@ -97,7 +86,7 @@ __all__ = [
     "repair_pdf",
 ]
 
-_LAZY_EXPORTS = set(__all__) | {"_extract_tables_core"}
+_LAZY_EXPORTS = set(__all__)
 
 
 def __getattr__(name: str) -> object:

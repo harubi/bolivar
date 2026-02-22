@@ -141,11 +141,12 @@ class TestLTPage:
         assert len(bbox) == 4
 
 
-def test_extract_tables_binding_exists():
+def test_extract_tables_bindings_removed_from_top_level():
     import bolivar
 
-    assert hasattr(bolivar, "_extract_tables_core")
-    assert hasattr(bolivar, "extract_tables_stream_from_document")
+    assert not hasattr(bolivar, "_extract_tables_core")
+    assert not hasattr(bolivar, "extract_tables_stream_from_document")
+    assert not hasattr(bolivar, "extract_tables_from_document")
     assert not hasattr(bolivar, "extract_tables_from_page")
     assert not hasattr(bolivar, "extract_table_from_page")
     assert not hasattr(bolivar, "extract_tables_from_document_pages")
@@ -168,20 +169,7 @@ def test_threads_kw_rejected_in_python_bindings():
     pdf_path = FIXTURES_DIR / "pdfplumber" / "pdffill-demo.pdf"
     pdf_bytes = pdf_path.read_bytes()
     doc = bolivar.PDFDocument(pdf_bytes)
-    page = list(doc.get_pages())[0]
-    page_index = 0
-    bbox = page.mediabox
-    assert bbox is not None
-
-    with pytest.raises(TypeError):
-        bolivar._extract_tables_core(
-            doc,
-            page_index,
-            bbox,
-            bbox,
-            0.0,
-            threads=1,
-        )
+    _ = list(doc.get_pages())[0]
 
     with pytest.raises(TypeError):
         bolivar.extract_text(pdf_bytes, threads=1)
@@ -215,35 +203,21 @@ def test_high_level_memoryview():
 
 def test_extract_tables_settings_affects_output():
     import pdfplumber
-    from bolivar import _extract_tables_core
 
     pdf_path = ROOT / "references/pdfplumber/tests/pdfs/senate-expenditures.pdf"
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
-        page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
         base_settings = {
             "horizontal_strategy": "text",
             "vertical_strategy": "text",
             "min_words_vertical": 20,
         }
 
-        t = _extract_tables_core(
-            page.page_obj.doc._rust_doc,
-            page_index,
-            page.bbox,
-            page.mediabox,
-            page.initial_doctop,
-            base_settings,
-        )
-        t_tol = _extract_tables_core(
-            page.page_obj.doc._rust_doc,
-            page_index,
-            page.bbox,
-            page.mediabox,
-            page.initial_doctop,
-            {**base_settings, "text_x_tolerance": 1},
-        )
+        t = page.extract_tables(base_settings)
+        t_tol = page.extract_tables({**base_settings, "text_x_tolerance": 1})
 
+    assert t
+    assert t_tol
     assert t[-1] != t_tol[-1]
 
     def test_ltpage_iter_returns_layout_items(self):

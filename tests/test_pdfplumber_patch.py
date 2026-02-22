@@ -99,6 +99,32 @@ def test_pdfplumber_pages_supports_index_objects(monkeypatch):
         assert last.page_number == len(pages)
 
 
+def test_page_init_prefers_direct_boxes_without_attrs(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+
+    class DummyPageObj:
+        rotate = 0
+        mediabox = (0.0, 0.0, 100.0, 200.0)
+        cropbox = (0.0, 0.0, 100.0, 200.0)
+        trimbox = None
+        bleedbox = None
+        artbox = None
+
+        @property
+        def attrs(self):
+            raise AssertionError("Page.__init__ should not touch attrs for direct boxes")
+
+    page = pdfplumber.page.Page(
+        pdf=object(),
+        page_obj=DummyPageObj(),
+        page_number=1,
+        initial_doctop=0,
+    )
+    assert page.page_number == 1
+    assert page.mediabox == (0.0, 0.0, 100.0, 200.0)
+    assert page.cropbox == (0.0, 0.0, 100.0, 200.0)
+
+
 def test_pdfplumber_pdf_is_iterable(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
@@ -170,10 +196,7 @@ def test_extract_tables_does_not_instantiate_all_pages(monkeypatch):
 def test_extract_tables_avoids_document_wide_extraction(monkeypatch):
     import bolivar
 
-    def _boom(*args, **kwargs):
-        raise RuntimeError("doc_extraction_called")
-
-    monkeypatch.setattr(bolivar, "extract_tables_from_document", _boom)
+    assert not hasattr(bolivar, "extract_tables_from_document")
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
         os.path.dirname(__file__),
@@ -218,7 +241,7 @@ def test_extract_tables_reuses_table_stream(monkeypatch):
 
     pdfplumber = _reload_pdfplumber(monkeypatch)
     calls = {"count": 0}
-    target = _bolivar.extract_tables_stream_from_document
+    target = _bolivar._extract_tables_stream
 
     def profiler(frame, event, arg):
         if event == "c_call" and arg is target:
@@ -302,7 +325,7 @@ def test_extract_tables_uses_bolivar(monkeypatch):
             box = tuple(box)
             geometries.append((box, box, running, False))
             running += box[3] - box[1]
-        stream = _bolivar.extract_tables_stream_from_document(
+        stream = _bolivar._extract_tables_stream(
             pdf.doc._rust_doc,
             geometries,
             laparams=pdf.laparams,

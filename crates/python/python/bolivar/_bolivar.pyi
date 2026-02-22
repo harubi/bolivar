@@ -757,13 +757,7 @@ def process_pages(
     doc: PDFDocument,
     laparams: LAParams | None = None,
 ) -> list[LTPage]: ...
-def extract_tables_from_document(
-    doc: PDFDocument,
-    geometries: Sequence[Any],
-    table_settings: dict[str, Any] | None = None,
-    laparams: LAParams | None = None,
-) -> list[list[list[list[str | None]]]]: ...
-def extract_tables_stream_from_document(
+def _extract_tables_stream(
     doc: PDFDocument,
     geometries: Sequence[Any],
     table_settings: dict[str, Any] | None = None,
@@ -772,16 +766,6 @@ def extract_tables_stream_from_document(
     maxpages: int = 0,
     caching: bool = True,
 ) -> PyTableStream: ...
-def _extract_tables_core(
-    doc: PDFDocument,
-    page_index: int,
-    page_bbox: _Rect,
-    mediabox: _Rect,
-    initial_doctop: float = 0.0,
-    table_settings: dict[str, Any] | None = None,
-    laparams: LAParams | None = None,
-    force_crop: bool = False,
-) -> list[list[list[str | None]]]: ...
 def _extract_tables_from_page_objects(
     objects: dict[str, Any],
     page_bbox: Any,
