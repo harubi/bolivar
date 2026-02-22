@@ -23,8 +23,14 @@ _PageBox: TypeAlias = tuple[_Number, ...]
 _PageGeometry: TypeAlias = tuple[_PageBox, _PageBox, float, bool]
 _Table: TypeAlias = list[list[str | None]]
 _Tables: TypeAlias = list[_Table]
+_Word: TypeAlias = dict[str, Any]
+_Words: TypeAlias = list[_Word]
 _StreamItem: TypeAlias = tuple[int, _Tables]
 _StreamFactory: TypeAlias = Callable[[], Iterable[_StreamItem]]
+_TextStreamItem: TypeAlias = tuple[int, str]
+_TextStreamFactory: TypeAlias = Callable[[], Iterable[_TextStreamItem]]
+_WordsStreamItem: TypeAlias = tuple[int, _Words]
+_WordsStreamFactory: TypeAlias = Callable[[], Iterable[_WordsStreamItem]]
 _SliceIndex: TypeAlias = slice
 _OutFile: TypeAlias = str | bytes | int | PathLike[str] | PathLike[bytes]
 _RepairInput: TypeAlias = (
@@ -114,6 +120,8 @@ def _apply_patch(module: ModuleType) -> bool:
     from bolivar._native_api import (
         _extract_tables_from_page_objects,
         _extract_tables_stream,
+        _extract_text_stream,
+        _extract_words_stream,
     )
     from pdfplumber.utils.exceptions import PdfminerException
 
@@ -294,7 +302,214 @@ def _apply_patch(module: ModuleType) -> bool:
             streams[key] = wrapped
         return wrapped
 
+    _TEXT_STREAM_CACHE_LIMIT = 2
+
+    class _BolivarTextStream:
+        def __init__(
+            self,
+            stream_factory: _TextStreamFactory,
+            cache_limit: int = _TEXT_STREAM_CACHE_LIMIT,
+        ) -> None:
+            self._stream_factory = stream_factory
+            self._stream = iter(stream_factory())
+            self._cache: dict[int, str] = {}
+            self._done = False
+            self._lock = threading.Lock()
+            self._max_index_seen = -1
+            self._cache_limit = max(int(cache_limit), 0)
+
+        def _evict_cache(self, newest_index: int) -> None:
+            if self._cache_limit <= 0:
+                self._cache.clear()
+                return
+            keep_from = newest_index - (self._cache_limit - 1)
+            for key in list(self._cache.keys()):
+                if key < keep_from:
+                    self._cache.pop(key, None)
+
+        def _get_from_fresh_stream(self, page_index: int) -> str | None:
+            stream = iter(self._stream_factory())
+            for idx, text in stream:
+                if idx == page_index:
+                    return text
+                if idx > page_index:
+                    break
+            return None
+
+        def get(self, page_index: int) -> str | None:
+            with self._lock:
+                if page_index in self._cache:
+                    return self._cache[page_index]
+                if page_index < self._max_index_seen or self._done:
+                    return self._get_from_fresh_stream(page_index)
+                while page_index not in self._cache:
+                    try:
+                        idx, text = next(self._stream)
+                    except StopIteration:
+                        self._done = True
+                        break
+                    self._cache[idx] = text
+                    if idx > self._max_index_seen:
+                        self._max_index_seen = idx
+                    self._evict_cache(idx)
+                return self._cache.get(page_index)
+
+    class _BolivarWordsStream:
+        def __init__(
+            self,
+            stream_factory: _WordsStreamFactory,
+            cache_limit: int = _TEXT_STREAM_CACHE_LIMIT,
+        ) -> None:
+            self._stream_factory = stream_factory
+            self._stream = iter(stream_factory())
+            self._cache: dict[int, _Words] = {}
+            self._done = False
+            self._lock = threading.Lock()
+            self._max_index_seen = -1
+            self._cache_limit = max(int(cache_limit), 0)
+
+        def _evict_cache(self, newest_index: int) -> None:
+            if self._cache_limit <= 0:
+                self._cache.clear()
+                return
+            keep_from = newest_index - (self._cache_limit - 1)
+            for key in list(self._cache.keys()):
+                if key < keep_from:
+                    self._cache.pop(key, None)
+
+        def _get_from_fresh_stream(self, page_index: int) -> _Words | None:
+            stream = iter(self._stream_factory())
+            for idx, words in stream:
+                if idx == page_index:
+                    return words
+                if idx > page_index:
+                    break
+            return None
+
+        def get(self, page_index: int) -> _Words | None:
+            with self._lock:
+                if page_index in self._cache:
+                    return self._cache[page_index]
+                if page_index < self._max_index_seen or self._done:
+                    return self._get_from_fresh_stream(page_index)
+                while page_index not in self._cache:
+                    try:
+                        idx, words = next(self._stream)
+                    except StopIteration:
+                        self._done = True
+                        break
+                    self._cache[idx] = words
+                    if idx > self._max_index_seen:
+                        self._max_index_seen = idx
+                    self._evict_cache(idx)
+                return self._cache.get(page_index)
+
+    def _can_use_rust_text(kwargs: dict[str, Any]) -> bool:
+        if kwargs.get("auto_rtl") is False:
+            return False
+        allowed = {"auto_rtl"}
+        return not any(key not in allowed for key in kwargs)
+
+    def _can_use_rust_words(kwargs: dict[str, Any]) -> bool:
+        if kwargs.get("return_chars"):
+            return False
+        extra_attrs = kwargs.get("extra_attrs")
+        if extra_attrs not in (None, []):
+            return False
+        allowed = {"return_chars", "extra_attrs"}
+        return not any(key not in allowed for key in kwargs)
+
+    def _get_text_stream(
+        pdf: object | None,
+        doc: _DocLike,
+        text_settings: dict[str, Any] | None,
+        geometries: Sequence[_PageGeometry],
+        page_numbers: Sequence[int] | None,
+    ) -> _BolivarTextStream:
+        streams: dict[tuple[object, ...], _BolivarTextStream] | None = None
+        if pdf is not None:
+            streams = getattr(pdf, "_bolivar_text_streams", None)
+            if streams is None:
+                streams = {}
+                _set_attr(pdf, "_bolivar_text_streams", streams)
+        settings_key = _settings_key(text_settings)
+        geometries_key = tuple(geometries)
+        laparams_key = _laparams_key(pdf)
+        page_numbers_key = tuple(page_numbers) if page_numbers is not None else None
+        key = (settings_key, geometries_key, laparams_key, page_numbers_key)
+        if streams is not None and key in streams:
+            return streams[key]
+        rust_doc = getattr(doc, "_rust_doc", None) or doc
+
+        def _stream_factory() -> Iterable[_TextStreamItem]:
+            native_doc = cast("_NativePDFDocument", rust_doc)
+            return cast(
+                "Iterable[_TextStreamItem]",
+                _extract_text_stream(
+                    native_doc,
+                    geometries,
+                    text_settings=text_settings,
+                    laparams=(
+                        getattr(pdf, "laparams", None) if pdf is not None else None
+                    ),
+                    page_numbers=page_numbers,
+                    maxpages=0,
+                    caching=getattr(doc, "caching", True),
+                ),
+            )
+
+        wrapped = _BolivarTextStream(_stream_factory)
+        if streams is not None:
+            streams[key] = wrapped
+        return wrapped
+
+    def _get_words_stream(
+        pdf: object | None,
+        doc: _DocLike,
+        text_settings: dict[str, Any] | None,
+        geometries: Sequence[_PageGeometry],
+        page_numbers: Sequence[int] | None,
+    ) -> _BolivarWordsStream:
+        streams: dict[tuple[object, ...], _BolivarWordsStream] | None = None
+        if pdf is not None:
+            streams = getattr(pdf, "_bolivar_words_streams", None)
+            if streams is None:
+                streams = {}
+                _set_attr(pdf, "_bolivar_words_streams", streams)
+        settings_key = _settings_key(text_settings)
+        geometries_key = tuple(geometries)
+        laparams_key = _laparams_key(pdf)
+        page_numbers_key = tuple(page_numbers) if page_numbers is not None else None
+        key = (settings_key, geometries_key, laparams_key, page_numbers_key)
+        if streams is not None and key in streams:
+            return streams[key]
+        rust_doc = getattr(doc, "_rust_doc", None) or doc
+
+        def _stream_factory() -> Iterable[_WordsStreamItem]:
+            native_doc = cast("_NativePDFDocument", rust_doc)
+            return cast(
+                "Iterable[_WordsStreamItem]",
+                _extract_words_stream(
+                    native_doc,
+                    geometries,
+                    text_settings=text_settings,
+                    laparams=(
+                        getattr(pdf, "laparams", None) if pdf is not None else None
+                    ),
+                    page_numbers=page_numbers,
+                    maxpages=0,
+                    caching=getattr(doc, "caching", True),
+                ),
+            )
+
+        wrapped = _BolivarWordsStream(_stream_factory)
+        if streams is not None:
+            streams[key] = wrapped
+        return wrapped
+
     if not already_patched:
+        _orig_extract_text = page_mod.Page.extract_text
+        _orig_extract_words = page_mod.Page.extract_words
 
         def extract_tables_from_page(
             page: _PageLike,
@@ -350,6 +565,70 @@ def _apply_patch(module: ModuleType) -> bool:
         _set_attr(page_mod.Page, "extract_tables", _extract_tables)
         _mark_patched(_extract_table)
         _set_attr(page_mod.Page, "extract_table", _extract_table)
+
+        def _extract_text(self: _PageLike, **kwargs: object) -> str:
+            if not getattr(self, "is_original", True):
+                return cast("str", _orig_extract_text(self, **kwargs))
+            if not hasattr(self, "page_obj") or not hasattr(self, "page_number"):
+                return cast("str", _orig_extract_text(self, **kwargs))
+            text_kwargs = cast("dict[str, Any]", dict(kwargs))
+            if not _can_use_rust_text(text_kwargs):
+                return cast("str", _orig_extract_text(self, **kwargs))
+            text_kwargs.pop("auto_rtl", None)
+            page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
+            pdf = self.pdf
+            doc: _DocLike | None = pdf.doc if pdf else None
+            if doc is None:
+                doc = getattr(self.page_obj, "doc", None)
+            if doc is None:
+                return cast("str", _orig_extract_text(self, **kwargs))
+            base_geoms = _get_base_geometries(pdf, doc)
+            geoms = _build_geometries(doc, page_index, self, base=base_geoms)
+            pages = getattr(pdf, "pages", None) if pdf is not None else None
+            page_numbers = (
+                list(getattr(pages, "_page_numbers", [])) if pages is not None else None
+            )
+            stream = _get_text_stream(
+                pdf, doc, text_kwargs or None, geoms, page_numbers
+            )
+            text = stream.get(page_index)
+            if text is None:
+                return ""
+            return text
+
+        def _extract_words(self: _PageLike, **kwargs: object) -> _Words:
+            if not getattr(self, "is_original", True):
+                return cast("_Words", _orig_extract_words(self, **kwargs))
+            if not hasattr(self, "page_obj") or not hasattr(self, "page_number"):
+                return cast("_Words", _orig_extract_words(self, **kwargs))
+            word_kwargs = cast("dict[str, Any]", dict(kwargs))
+            if not _can_use_rust_words(word_kwargs):
+                return cast("_Words", _orig_extract_words(self, **kwargs))
+            word_kwargs.pop("return_chars", None)
+            word_kwargs.pop("extra_attrs", None)
+            page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
+            pdf = self.pdf
+            doc: _DocLike | None = pdf.doc if pdf else None
+            if doc is None:
+                doc = getattr(self.page_obj, "doc", None)
+            if doc is None:
+                return cast("_Words", _orig_extract_words(self, **kwargs))
+            base_geoms = _get_base_geometries(pdf, doc)
+            geoms = _build_geometries(doc, page_index, self, base=base_geoms)
+            pages = getattr(pdf, "pages", None) if pdf is not None else None
+            page_numbers = (
+                list(getattr(pages, "_page_numbers", [])) if pages is not None else None
+            )
+            stream = _get_words_stream(
+                pdf, doc, word_kwargs or None, geoms, page_numbers
+            )
+            words = stream.get(page_index)
+            return words or []
+
+        _mark_patched(_extract_text)
+        _set_attr(page_mod.Page, "extract_text", _extract_text)
+        _mark_patched(_extract_words)
+        _set_attr(page_mod.Page, "extract_words", _extract_words)
 
     class BolivarLazyPages(list[object]):
         def __init__(self, pdf: _PdfLike) -> None:

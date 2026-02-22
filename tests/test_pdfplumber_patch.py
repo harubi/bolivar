@@ -264,6 +264,62 @@ def test_extract_tables_reuses_table_stream(monkeypatch):
     assert calls["count"] == 1
 
 
+def test_extract_text_reuses_text_stream(monkeypatch):
+    import bolivar._bolivar as _bolivar
+
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    calls = {"count": 0}
+    target = _bolivar._extract_text_stream
+
+    def profiler(frame, event, arg):
+        if event == "c_call" and arg is target:
+            calls["count"] += 1
+        return profiler
+
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    sys.setprofile(profiler)
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            _ = pdf.pages[0].extract_text()
+            _ = pdf.pages[1].extract_text()
+    finally:
+        sys.setprofile(None)
+
+    assert calls["count"] == 1
+
+
+def test_extract_words_reuses_words_stream(monkeypatch):
+    import bolivar._bolivar as _bolivar
+
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    calls = {"count": 0}
+    target = _bolivar._extract_words_stream
+
+    def profiler(frame, event, arg):
+        if event == "c_call" and arg is target:
+            calls["count"] += 1
+        return profiler
+
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    sys.setprofile(profiler)
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            _ = pdf.pages[0].extract_words()
+            _ = pdf.pages[1].extract_words()
+    finally:
+        sys.setprofile(None)
+
+    assert calls["count"] == 1
+
+
 def test_extract_tables_stream_cache_is_bounded(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(

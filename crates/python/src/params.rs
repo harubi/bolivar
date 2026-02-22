@@ -159,7 +159,17 @@ pub fn apply_text_settings_from_dict(
                 let val: String = v.extract()?;
                 settings.char_dir_rotated = Some(parse_text_dir(&val)?);
             }
-            "split_at_punctuation" => settings.split_at_punctuation = v.extract()?,
+            "split_at_punctuation" => {
+                if let Ok(enabled) = v.extract::<bool>() {
+                    settings.split_at_punctuation = if enabled {
+                        r##"!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"##.to_string()
+                    } else {
+                        String::new()
+                    };
+                } else {
+                    settings.split_at_punctuation = v.extract()?;
+                }
+            }
             "expand_ligatures" => settings.expand_ligatures = v.extract()?,
             "layout" => settings.layout = v.extract()?,
             _ => {}
@@ -176,6 +186,26 @@ pub fn apply_text_settings_from_dict(
     }
 
     Ok(())
+}
+
+/// Parse text settings from a Python object.
+pub fn parse_text_settings(
+    py: Python<'_>,
+    text_settings: Option<Py<PyAny>>,
+) -> PyResult<TextSettings> {
+    let mut settings = TextSettings::default();
+    let Some(obj) = text_settings else {
+        return Ok(settings);
+    };
+    let obj = obj.bind(py);
+    if obj.is_none() {
+        return Ok(settings);
+    }
+    let dict = obj
+        .cast::<PyDict>()
+        .map_err(|_| PyValueError::new_err("text_settings must be a dict when provided"))?;
+    apply_text_settings_from_dict(&mut settings, dict)?;
+    Ok(settings)
 }
 
 /// Parse explicit lines from a Python object.
