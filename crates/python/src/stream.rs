@@ -23,7 +23,6 @@ use tokio::sync::{Mutex, mpsc};
 use crate::document::{PyPDFDocument, pdf_input_from_py};
 use crate::layout::ltpage_to_py;
 use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings, parse_text_settings};
-
 fn text_dir_to_str(direction: TextDir) -> &'static str {
     match direction {
         TextDir::Ttb => "ttb",
