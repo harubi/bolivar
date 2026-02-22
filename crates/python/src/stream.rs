@@ -8,17 +8,45 @@ use bolivar_core::api::stream::{
     DEFAULT_STREAM_BUFFER_CAPACITY, TableStream,
     extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
     extract_tables_stream_from_doc_with_geometries as core_extract_tables_stream_from_doc_with_geometries,
+    extract_text_pages_from_doc_with_geometries as core_extract_text_pages_from_doc_with_geometries,
+    extract_words_pages_from_doc_with_geometries as core_extract_words_pages_from_doc_with_geometries,
 };
 use bolivar_core::error::Result as CoreResult;
 use bolivar_core::high_level::{ExtractOptions, extract_pages_stream as core_extract_pages_stream};
 use bolivar_core::layout::LTPage;
+use bolivar_core::table::{TextDir, WordObj};
 use pyo3::exceptions::{PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use tokio::sync::{Mutex, mpsc};
 
 use crate::document::{PyPDFDocument, pdf_input_from_py};
 use crate::layout::ltpage_to_py;
-use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings};
+use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings, parse_text_settings};
+
+fn text_dir_to_str(direction: TextDir) -> &'static str {
+    match direction {
+        TextDir::Ttb => "ttb",
+        TextDir::Btt => "btt",
+        TextDir::Ltr => "ltr",
+        TextDir::Rtl => "rtl",
+    }
+}
+
+fn word_to_dict(py: Python<'_>, word: WordObj) -> PyResult<Py<PyAny>> {
+    let out = PyDict::new(py);
+    out.set_item("text", word.text)?;
+    out.set_item("x0", word.x0)?;
+    out.set_item("x1", word.x1)?;
+    out.set_item("top", word.top)?;
+    out.set_item("doctop", word.doctop)?;
+    out.set_item("bottom", word.bottom)?;
+    out.set_item("upright", word.upright)?;
+    out.set_item("height", word.height)?;
+    out.set_item("width", word.width)?;
+    out.set_item("direction", text_dir_to_str(word.direction))?;
+    Ok(out.into_any().unbind())
+}
 
 #[pyclass]
 pub struct AsyncPageStream {
@@ -267,6 +295,83 @@ pub fn extract_tables_stream(
     })
 }
 
+/// Extract per-page text in page-index order using Rust layout+text extraction.
+#[pyfunction(name = "_extract_text_stream")]
+#[pyo3(signature = (doc, geometries, text_settings = None, laparams = None, page_numbers = None, maxpages = 0, caching = true))]
+pub fn extract_text_stream(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    geometries: &Bound<'_, PyAny>,
+    text_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+) -> PyResult<Vec<(usize, String)>> {
+    let settings = parse_text_settings(py, text_settings)?;
+    let geoms = parse_page_geometries(geometries)?;
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers,
+        maxpages,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+    };
+
+    py.detach(|| {
+        core_extract_text_pages_from_doc_with_geometries(
+            Arc::clone(&doc.inner),
+            options,
+            settings,
+            geoms,
+        )
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract text: {e}")))
+    })
+}
+
+/// Extract per-page words in page-index order using Rust layout+word extraction.
+#[pyfunction(name = "_extract_words_stream")]
+#[pyo3(signature = (doc, geometries, text_settings = None, laparams = None, page_numbers = None, maxpages = 0, caching = true))]
+pub fn extract_words_stream(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    geometries: &Bound<'_, PyAny>,
+    text_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+) -> PyResult<Vec<(usize, Vec<Py<PyAny>>)>> {
+    let settings = parse_text_settings(py, text_settings)?;
+    let geoms = parse_page_geometries(geometries)?;
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers,
+        maxpages,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+    };
+
+    let words: Vec<(usize, Vec<WordObj>)> = py.detach(|| {
+        core_extract_words_pages_from_doc_with_geometries(
+            Arc::clone(&doc.inner),
+            options,
+            settings,
+            geoms,
+        )
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract words: {e}")))
+    })?;
+
+    let mut out: Vec<(usize, Vec<Py<PyAny>>)> = Vec::with_capacity(words.len());
+    for (page_idx, page_words) in words {
+        let mut row: Vec<Py<PyAny>> = Vec::with_capacity(page_words.len());
+        for word in page_words {
+            row.push(word_to_dict(py, word)?);
+        }
+        out.push((page_idx, row));
+    }
+    Ok(out)
+}
 /// Register stream-related functions with the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(async_runtime_poc, m)?)?;
@@ -274,5 +379,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_pages_async_from_document, m)?)?;
     m.add_class::<PyTableStream>()?;
     m.add_function(wrap_pyfunction!(extract_tables_stream, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_text_stream, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_words_stream, m)?)?;
     Ok(())
 }
