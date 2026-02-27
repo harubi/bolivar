@@ -4,8 +4,8 @@
 
 use super::lexer::{ContentLexer, Keyword, PSBaseParser, PSToken, name_from_bytes};
 use crate::error::{PdfError, Result};
-use crate::pdftypes::{PDFObjRef, PDFObject};
-use std::collections::HashMap;
+use crate::pdftypes::{PDFDict, PDFName, PDFObjRef, PDFObject};
+use rustc_hash::FxHashMap;
 
 /// PDF Parser - parses PDF object syntax
 ///
@@ -127,7 +127,7 @@ impl<'a> PDFParser<'a> {
 
     /// Parse dict contents until >>
     fn parse_dict(&mut self) -> Result<PDFObject> {
-        let mut dict = HashMap::new();
+        let mut dict = FxHashMap::default();
 
         loop {
             let token = self.next_token()?.ok_or(PdfError::UnexpectedEof)?;
@@ -215,7 +215,7 @@ impl PDFContentParser {
                             let dict_contents = std::mem::take(&mut operands);
                             operands = context_stack.pop().unwrap_or_default();
                             // Convert to dict
-                            let mut dict = HashMap::new();
+                            let mut dict = FxHashMap::default();
                             let mut iter = dict_contents.into_iter();
                             while let Some(key) = iter.next() {
                                 if let PDFObject::Name(name) = key
@@ -240,7 +240,7 @@ impl PDFContentParser {
                                 }
                             }
                             // Convert params to dict
-                            let mut dict = HashMap::new();
+                            let mut dict = FxHashMap::default();
                             let mut iter = img_params.into_iter();
                             while let Some(key) = iter.next() {
                                 if let PDFObject::Name(name) = key
@@ -299,7 +299,7 @@ impl PDFContentParser {
                 Ok(PDFObject::Array(objs?))
             }
             PSToken::Dict(d) => {
-                let mut map = HashMap::new();
+                let mut map = FxHashMap::default();
                 for (k, v) in d {
                     map.insert(k, Self::ps_to_pdf(v)?);
                 }

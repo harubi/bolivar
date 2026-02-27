@@ -4,7 +4,8 @@
 
 use crate::error::{PdfError, Result};
 use crate::simd::U8_LANES;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use smol_str::SmolStr;
 use std::simd::prelude::*;
 use std::sync::Arc;
 
@@ -15,14 +16,14 @@ use std::sync::Arc;
 /// variable names, property names and dictionary keys.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PSLiteral {
-    name: String,
+    name: SmolStr,
 }
 
 impl PSLiteral {
     /// Create a new literal with the given name.
     pub fn new(name: &str) -> Self {
         Self {
-            name: name.to_string(),
+            name: name.into(),
         }
     }
 
@@ -659,7 +660,7 @@ pub enum PSToken {
     /// Boolean value
     Bool(bool),
     /// Literal name (e.g., /Name)
-    Literal(String),
+    Literal(SmolStr),
     /// Keyword/operator (e.g., begin, end, BT)
     Keyword(Keyword),
     /// String (literal or hex)
@@ -667,7 +668,7 @@ pub enum PSToken {
     /// Array
     Array(Vec<Self>),
     /// Dictionary
-    Dict(HashMap<String, Self>),
+    Dict(FxHashMap<SmolStr, Self>),
 }
 
 /// Buffer size for reading (matches pdfminer.six)
@@ -1630,12 +1631,12 @@ fn find_line_end(data: &[u8]) -> Option<usize> {
     None
 }
 
-pub(crate) fn name_from_bytes(bytes: &[u8]) -> String {
+pub(crate) fn name_from_bytes(bytes: &[u8]) -> SmolStr {
     let mut name = String::with_capacity(bytes.len());
     for &b in bytes {
         name.push(char::from(b));
     }
-    name
+    name.into()
 }
 
 impl PSBaseParser<'static> {
@@ -1726,7 +1727,7 @@ impl<'a> PSStackParser<'a> {
                 PSToken::Keyword(Keyword::DictEnd) => {
                     if let Some((dict_pos, objs)) = self.end_context("dict") {
                         // Convert pairs to dictionary
-                        let mut dict = HashMap::new();
+                        let mut dict = FxHashMap::default();
                         let mut iter = objs.into_iter();
                         while let Some(key) = iter.next() {
                             if let PSToken::Literal(name) = key

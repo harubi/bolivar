@@ -7,17 +7,17 @@ use super::cmap::{
     parse_tounicode_cmap,
 };
 use super::truetype::create_unicode_map_from_ttf;
-use crate::pdftypes::{PDFObjRef, PDFObject};
-use std::collections::HashMap;
+use crate::pdftypes::{PDFDict, PDFName, PDFObjRef, PDFObject};
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 /// Type alias for font width dictionaries.
 /// Maps CID (u32) to optional width (f64).
 /// None represents an invalid/missing width entry.
-pub type FontWidthDict = HashMap<u32, Option<f64>>;
+pub type FontWidthDict = FxHashMap<u32, Option<f64>>;
 
 type VerticalDisp = (Option<f64>, f64);
-type VerticalDispMap = HashMap<u32, VerticalDisp>;
+type VerticalDispMap = FxHashMap<u32, VerticalDisp>;
 type VerticalDispData = (VerticalDisp, VerticalDispMap);
 
 /// Character displacement for vertical fonts.
@@ -80,7 +80,7 @@ pub trait PDFFont {
 ///
 /// A simple font implementation that returns CID as string for to_unichr.
 pub struct MockPdfFont {
-    descriptor: HashMap<String, PDFObject>,
+    descriptor: PDFDict,
     widths: FontWidthDict,
     default_width: f64,
 }
@@ -88,7 +88,7 @@ pub struct MockPdfFont {
 impl MockPdfFont {
     /// Create a new mock font.
     pub const fn new(
-        descriptor: HashMap<String, PDFObject>,
+        descriptor: PDFDict,
         widths: FontWidthDict,
         default_width: f64,
     ) -> Self {
@@ -101,7 +101,7 @@ impl MockPdfFont {
 
     /// Get the descriptor (unused in tests, but matches Python).
     #[allow(dead_code)]
-    pub const fn descriptor(&self) -> &HashMap<String, PDFObject> {
+    pub const fn descriptor(&self) -> &PDFDict {
         &self.descriptor
     }
 }
@@ -142,11 +142,11 @@ impl PDFFont for MockPdfFont {
 /// - Format 2: `[cid_start, cid_end, width]` - range with same width
 ///
 /// The optional resolver function resolves PDFObjRef to their target objects.
-pub fn get_widths<F>(seq: &[PDFObject], resolver: Option<&F>) -> HashMap<u32, f64>
+pub fn get_widths<F>(seq: &[PDFObject], resolver: Option<&F>) -> FxHashMap<u32, f64>
 where
     F: Fn(&PDFObjRef) -> Option<PDFObject>,
 {
-    let mut widths: HashMap<u32, f64> = HashMap::new();
+    let mut widths: FxHashMap<u32, f64> = FxHashMap::default();
     let mut r: Vec<f64> = Vec::new();
 
     for v in seq {
@@ -282,7 +282,7 @@ pub struct PDFCIDFont {
     /// Unicode map for CID to Unicode conversion (from ToUnicode stream)
     pub unicode_map: Option<DynUnicodeMap>,
     /// Simple encoding map for simple fonts (byte code → Unicode string)
-    pub cid2unicode: Option<Arc<HashMap<u8, String>>>,
+    pub cid2unicode: Option<Arc<FxHashMap<u8, String>>>,
     /// Whether this is a vertical writing font
     pub vertical: bool,
     /// Default width for characters
@@ -290,7 +290,7 @@ pub struct PDFCIDFont {
     /// Width map: CID -> width
     pub widths: FontWidthDict,
     /// Displacement map for vertical fonts: CID -> (vx, vy)
-    pub disps: HashMap<u32, (Option<f64>, f64)>,
+    pub disps: FxHashMap<u32, (Option<f64>, f64)>,
     /// Default displacement for vertical fonts: (vx, vy) where vx can be None
     pub default_disp: (Option<f64>, f64),
     /// Font descent (from FontDescriptor)
@@ -308,7 +308,7 @@ impl PDFCIDFont {
     ///
     /// * `spec` - Font specification dictionary
     /// * `tounicode_data` - Optional decoded ToUnicode stream data
-    pub fn new(spec: &HashMap<String, PDFObject>, tounicode_data: Option<&[u8]>) -> Self {
+    pub fn new(spec: &PDFDict, tounicode_data: Option<&[u8]>) -> Self {
         Self::new_with_ttf_and_cid2unicode(spec, tounicode_data, None, false, None, None)
     }
 
@@ -321,7 +321,7 @@ impl PDFCIDFont {
     /// * `ttf_data` - Optional decoded TrueType font file data (FontFile2)
     /// * `is_type0` - True if this is a Type0 (CID) font; CID fonts don't use cid2unicode
     pub fn new_with_ttf(
-        spec: &HashMap<String, PDFObject>,
+        spec: &PDFDict,
         tounicode_data: Option<&[u8]>,
         ttf_data: Option<&[u8]>,
         is_type0: bool,
@@ -338,12 +338,12 @@ impl PDFCIDFont {
     }
 
     pub fn new_with_ttf_and_cid2unicode(
-        spec: &HashMap<String, PDFObject>,
+        spec: &PDFDict,
         tounicode_data: Option<&[u8]>,
         ttf_data: Option<&[u8]>,
         is_type0: bool,
         fallback_fontname: Option<String>,
-        cid2unicode_override: Option<Arc<HashMap<u8, String>>>,
+        cid2unicode_override: Option<Arc<FxHashMap<u8, String>>>,
     ) -> Self {
         let cmap = Self::get_cmap_from_spec(spec);
         let vertical = match &cmap {
@@ -429,7 +429,7 @@ impl PDFCIDFont {
 
         let obj_to_name = |obj: &PDFObject| -> Option<String> {
             if let Ok(name) = obj.as_name() {
-                Some(name.to_string())
+                Some(name.to_string().into())
             } else if let Ok(bytes) = obj.as_string() {
                 String::from_utf8(bytes.to_vec()).ok()
             } else {
@@ -466,12 +466,12 @@ impl PDFCIDFont {
     /// Parse vertical displacement info from DW2 and W2.
     /// Returns (default_disp, disps_map)
     fn parse_vertical_disps(
-        spec: &HashMap<String, PDFObject>,
+        spec: &PDFDict,
         is_vertical: bool,
     ) -> VerticalDispData {
         if !is_vertical {
             // Horizontal font - use 0 displacement
-            return ((None, 0.0), HashMap::new());
+            return ((None, 0.0), FxHashMap::default());
         }
 
         // Parse DW2 - default vertical displacement [vy, w]
@@ -487,13 +487,13 @@ impl PDFCIDFont {
 
         // TODO: Parse W2 array for per-CID vertical displacements
         // For now, use empty map - most fonts use default displacement
-        let disps = HashMap::new();
+        let disps = FxHashMap::default();
 
         ((None, default_vy), disps)
     }
 
     /// Get descent from FontDescriptor.
-    fn get_descent_from_descriptor(spec: &HashMap<String, PDFObject>) -> f64 {
+    fn get_descent_from_descriptor(spec: &PDFDict) -> f64 {
         // Try to get FontDescriptor
         if let Some(PDFObject::Dict(desc)) = spec.get("FontDescriptor")
             && let Some(descent) = desc.get("Descent").and_then(|d| d.as_num().ok())
@@ -506,7 +506,7 @@ impl PDFCIDFont {
     }
 
     /// Build cid2unicode map from font's Encoding entry.
-    fn build_cid2unicode(spec: &HashMap<String, PDFObject>) -> Option<Arc<HashMap<u8, String>>> {
+    fn build_cid2unicode(spec: &PDFDict) -> Option<Arc<FxHashMap<u8, String>>> {
         use super::encoding::EncodingDB;
 
         let encoding_obj = spec.get("Encoding");
@@ -555,7 +555,7 @@ impl PDFCIDFont {
                     }
                 }
                 PDFObject::Name(name) => {
-                    result.push(DiffEntry::Name(name.clone()));
+                    result.push(DiffEntry::Name(name.to_string().into()));
                 }
                 _ => {}
             }
@@ -565,7 +565,7 @@ impl PDFCIDFont {
     }
 
     /// Extract cidcoding (Registry-Ordering) from CIDSystemInfo.
-    fn get_cidcoding(spec: &HashMap<String, PDFObject>) -> Option<String> {
+    fn get_cidcoding(spec: &PDFDict) -> Option<String> {
         let cid_system_info = spec.get("CIDSystemInfo")?;
         let dict = match cid_system_info {
             PDFObject::Dict(d) => d,
@@ -590,8 +590,8 @@ impl PDFCIDFont {
     /// Handles two formats:
     /// - CID fonts: Use "W" array with complex structure
     /// - Simple fonts (Type1, TrueType): Use "Widths" array with FirstChar/LastChar
-    fn parse_widths(spec: &HashMap<String, PDFObject>) -> FontWidthDict {
-        let mut result = FontWidthDict::new();
+    fn parse_widths(spec: &PDFDict) -> FontWidthDict {
+        let mut result = FontWidthDict::default();
 
         // CID fonts use W array
         if let Some(PDFObject::Array(w_array)) = spec.get("W") {
@@ -621,7 +621,7 @@ impl PDFCIDFont {
     }
 
     /// Get default width from spec.
-    fn get_default_width(spec: &HashMap<String, PDFObject>, is_vertical: bool) -> f64 {
+    fn get_default_width(spec: &PDFDict, is_vertical: bool) -> f64 {
         if is_vertical {
             // For vertical fonts, use DW2[1] (width component) which defaults to -1000
             // DW2 format is [vy, w] per PDF spec
@@ -649,7 +649,7 @@ impl PDFCIDFont {
     /// 1. Name (PSLiteral in Python) - e.g., /Identity-H
     /// 2. Stream with CMapName as Name - e.g., stream with /CMapName /Identity-H
     /// 3. Stream with CMapName as String - e.g., stream with /CMapName (Identity-H)
-    fn get_cmap_from_spec(spec: &HashMap<String, PDFObject>) -> DynCMap {
+    fn get_cmap_from_spec(spec: &PDFDict) -> DynCMap {
         let encoding = spec.get("Encoding");
 
         // Extract the CMap name from various encoding formats
@@ -684,14 +684,14 @@ impl PDFCIDFont {
             Some(name) if CMapDB::is_cjk_2byte_cmap(name) => {
                 let mut cmap = CMap::new();
                 cmap.set_vertical(CMapDB::is_vertical(name));
-                cmap.attrs.insert("CMapName".to_string(), name.to_string());
+                cmap.attrs.insert("CMapName".to_string(), name.to_string().into());
                 cmap.add_cid_range(&[0x00, 0x00], &[0xFF, 0xFF], 0);
                 DynCMap::CMap(Box::new(cmap))
             }
             Some(name) => {
                 let mut cmap = CMap::new();
                 cmap.set_vertical(CMapDB::is_vertical(name));
-                cmap.attrs.insert("CMapName".to_string(), name.to_string());
+                cmap.attrs.insert("CMapName".to_string(), name.to_string().into());
                 DynCMap::CMap(Box::new(cmap))
             }
             None => DynCMap::CMap(Box::default()),
@@ -807,9 +807,9 @@ mod tests {
 
     #[test]
     fn cid2unicode_override_is_used() {
-        let mut spec = HashMap::new();
+        let mut spec = FxHashMap::default();
         spec.insert("Subtype".to_string(), PDFObject::Name("Type1".to_string()));
-        let mut map = HashMap::new();
+        let mut map = FxHashMap::default();
         map.insert(65u8, "A".to_string());
         let override_map = Some(Arc::new(map));
 

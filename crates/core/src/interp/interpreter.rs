@@ -11,10 +11,12 @@
 use crate::cmapdb::{CMap, CMapDB};
 use crate::error::{PdfError, Result};
 use crate::pdfcolor::{PDFColorSpace, PREDEFINED_COLORSPACE};
-use crate::pdftypes::{PDFObject, PDFStream};
+use crate::pdftypes::{PDFDict, PDFName, PDFObject, PDFStream};
 use crate::psparser::{Keyword, PSLiteral, PSToken};
 use bytes::Bytes;
-use std::collections::{HashMap, VecDeque};
+use rustc_hash::FxHashMap;
+use smol_str::SmolStr;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 /// Token types produced by PDFContentParser.
@@ -26,7 +28,7 @@ pub enum ContentToken {
     Keyword(Keyword),
     /// An inline image with dictionary and data
     InlineImage {
-        dict: HashMap<String, PSToken>,
+        dict: FxHashMap<PDFName, PSToken>,
         data: Vec<u8>,
     },
 }
@@ -332,7 +334,7 @@ impl SegmentedContentLexer {
             Ok(s) => s,
             Err(e) => String::from_utf8_lossy(&e.into_bytes()).into_owned(),
         };
-        Ok(PSToken::Literal(name))
+        Ok(PSToken::Literal(name.into()))
     }
 
     fn parse_number(&mut self, start_pos: usize) -> Result<PSToken> {
@@ -785,8 +787,8 @@ impl PDFContentParser {
     }
 
     /// Build dictionary from key-value pairs
-    fn build_dict(items: Vec<PSToken>) -> HashMap<String, PSToken> {
-        let mut dict = HashMap::new();
+    fn build_dict(items: Vec<PSToken>) -> FxHashMap<PDFName, PSToken> {
+        let mut dict = FxHashMap::default();
         let mut iter = items.into_iter();
         while let Some(key) = iter.next() {
             if let PSToken::Literal(name) = key
@@ -799,8 +801,8 @@ impl PDFContentParser {
     }
 
     /// Build dictionary from collected operands (for inline images)
-    fn build_inline_dict(&self) -> HashMap<String, PSToken> {
-        let mut dict = HashMap::new();
+    fn build_inline_dict(&self) -> FxHashMap<PDFName, PSToken> {
+        let mut dict = FxHashMap::default();
         let mut iter = self.operand_stack.iter();
         while let Some((_, key)) = iter.next() {
             if let PSToken::Literal(name) = key
@@ -813,7 +815,7 @@ impl PDFContentParser {
     }
 
     /// Determine end-of-stream marker for inline image.
-    fn get_inline_eos(&self, dict: &HashMap<String, PSToken>) -> Vec<u8> {
+    fn get_inline_eos(&self, dict: &FxHashMap<PDFName, PSToken>) -> Vec<u8> {
         let filter = dict.get("F").or_else(|| dict.get("Filter"));
 
         if let Some(PSToken::Literal(name)) = filter
@@ -888,7 +890,7 @@ pub struct PDFResourceManager {
     /// Whether caching is enabled
     caching: bool,
     /// Cached fonts: objid -> FontId
-    cached_fonts: HashMap<u64, FontId>,
+    cached_fonts: FxHashMap<u64, FontId>,
     /// Counter for generating unique font IDs
     next_font_id: FontId,
 }
@@ -903,7 +905,7 @@ impl PDFResourceManager {
     pub fn with_caching(caching: bool) -> Self {
         Self {
             caching,
-            cached_fonts: HashMap::new(),
+            cached_fonts: FxHashMap::default(),
             next_font_id: 1,
         }
     }
@@ -936,7 +938,7 @@ impl PDFResourceManager {
     /// if already loaded. Otherwise creates a new font entry.
     ///
     /// Returns a FontId that can be used to reference the font.
-    pub fn get_font(&mut self, objid: Option<u64>, _spec: &HashMap<String, PDFObject>) -> FontId {
+    pub fn get_font(&mut self, objid: Option<u64>, _spec: &PDFDict) -> FontId {
         // Check cache if objid provided and caching enabled
         if let Some(id) = objid
             && self.caching
@@ -1032,15 +1034,15 @@ pub struct PDFPageInterpreter<'a, D: PDFDevice> {
     /// Current point for path operations (used by v operator)
     pub(crate) current_point: Option<(f64, f64)>,
     /// Font map: font name -> PDFCIDFont
-    pub(crate) fontmap: HashMap<String, std::sync::Arc<crate::pdffont::PDFCIDFont>>,
+    pub(crate) fontmap: FxHashMap<PDFName, std::sync::Arc<crate::pdffont::PDFCIDFont>>,
     /// Current resources dictionary (for XObject lookup fallback)
-    pub(crate) resources: HashMap<String, PDFObject>,
+    pub(crate) resources: PDFDict,
     /// XObject map: name -> stream
-    pub(crate) xobjmap: HashMap<String, PDFStream>,
+    pub(crate) xobjmap: FxHashMap<PDFName, PDFStream>,
     /// Inline image counter
     pub(crate) inline_image_id: usize,
     /// Stack of active form XObjects to prevent recursion
-    pub(crate) xobj_stack: Vec<String>,
+    pub(crate) xobj_stack: Vec<PDFName>,
     /// Document reference for resolving XObject resources
     pub(crate) doc: Option<&'a crate::pdfdocument::PDFDocument>,
 }
@@ -1058,9 +1060,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             graphicstate: PDFGraphicState::new(),
             curpath: Vec::new(),
             current_point: None,
-            fontmap: HashMap::new(),
-            resources: HashMap::new(),
-            xobjmap: HashMap::new(),
+            fontmap: FxHashMap::default(),
+            resources: FxHashMap::default(),
+            xobjmap: FxHashMap::default(),
             inline_image_id: 0,
             xobj_stack: Vec::new(),
             doc: None,
@@ -1112,7 +1114,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Port of PDFPageInterpreter.init_resources from pdfminer.six
     pub fn init_resources(
         &mut self,
-        resources: &HashMap<String, PDFObject>,
+        resources: &PDFDict,
         doc: Option<&'a crate::pdfdocument::PDFDocument>,
     ) {
         self.fontmap.clear();
@@ -1175,10 +1177,10 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     if let Some(mut dspec) = descendant_spec {
                         // Copy ToUnicode and Encoding from Type0 to descendant
                         if let Some(v) = spec.get("ToUnicode") {
-                            dspec.insert("ToUnicode".to_string(), v.clone());
+                            dspec.insert("ToUnicode".into(), v.clone());
                         }
                         if let Some(v) = spec.get("Encoding") {
-                            dspec.insert("Encoding".to_string(), v.clone());
+                            dspec.insert("Encoding".into(), v.clone());
                         }
                         let tounicode = Self::extract_tounicode(&dspec, doc);
                         (dspec, tounicode)
@@ -1193,14 +1195,14 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
                 // Resolve Encoding reference if present (needed for Type1 fonts with custom encodings)
                 let mut final_spec = final_spec;
-                let mut cached_encoding: Option<Arc<HashMap<u8, String>>> = None;
+                let mut cached_encoding: Option<Arc<FxHashMap<u8, String>>> = None;
                 if let Some(PDFObject::Ref(r)) = final_spec.get("Encoding").cloned()
                     && let Some(doc) = doc
                 {
                     let objid = r.objid;
                     if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r)) {
                         cached_encoding = doc.get_or_build_font_encoding(objid, resolved.as_ref());
-                        final_spec.insert("Encoding".to_string(), resolved.as_ref().clone());
+                        final_spec.insert("Encoding".into(), resolved.as_ref().clone());
                     }
                 }
 
@@ -1209,7 +1211,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     && let Some(doc) = doc
                     && let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r))
                 {
-                    final_spec.insert("Widths".to_string(), resolved.as_ref().clone());
+                    final_spec.insert("Widths".into(), resolved.as_ref().clone());
                 }
 
                 // Resolve W (CID font widths) reference if present
@@ -1217,7 +1219,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     && let Some(doc) = doc
                     && let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r))
                 {
-                    final_spec.insert("W".to_string(), resolved.as_ref().clone());
+                    final_spec.insert("W".into(), resolved.as_ref().clone());
                 }
 
                 // Resolve FontDescriptor reference if present (needed for accurate ascent/descent)
@@ -1225,7 +1227,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     && let Some(doc) = doc
                     && let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r))
                 {
-                    final_spec.insert("FontDescriptor".to_string(), resolved.as_ref().clone());
+                    final_spec.insert("FontDescriptor".into(), resolved.as_ref().clone());
                 }
 
                 // Extract FontFile2 (TrueType font data) if available
@@ -1237,11 +1239,11 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     tounicode_data.as_deref(),
                     ttf_data.as_deref(),
                     subtype == "Type0",
-                    Some(fontid.clone()),
+                    Some(fontid.to_string().into()),
                     cached_encoding,
                 );
                 self.fontmap
-                    .insert(fontid.clone(), std::sync::Arc::new(font));
+                    .insert(fontid.to_string().into(), std::sync::Arc::new(font));
             }
         }
 
@@ -1287,7 +1289,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     if let Some(doc) = doc {
                         Self::resolve_jbig2_globals(&mut stream, doc);
                     }
-                    self.xobjmap.insert(xobjid.clone(), stream);
+                    self.xobjmap.insert(xobjid.to_string().into(), stream);
                 }
             }
         }
@@ -1295,9 +1297,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
     /// Get the first descendant font spec from a Type0 font.
     fn get_descendant_font_spec(
-        spec: &HashMap<String, PDFObject>,
+        spec: &PDFDict,
         doc: Option<&crate::pdfdocument::PDFDocument>,
-    ) -> Option<HashMap<String, PDFObject>> {
+    ) -> Option<PDFDict> {
         let dfonts = spec.get("DescendantFonts")?;
 
         // Resolve if reference
@@ -1370,7 +1372,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                             .unwrap_or(PDFObject::Ref(r)),
                         other => other,
                     };
-                    dict.insert("JBIG2Globals".to_string(), resolved);
+                    dict.insert("JBIG2Globals".into(), resolved);
                 }
                 PDFObject::Dict(dict)
             }
@@ -1390,13 +1392,13 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
         if let Some(params) = stream.get("DecodeParms").cloned() {
             let resolved = Self::resolve_decode_parms(params, doc);
-            stream.attrs.insert("DecodeParms".to_string(), resolved);
+            stream.attrs.insert("DecodeParms".into(), resolved);
         }
     }
 
     /// Extract ToUnicode stream data from font spec.
     fn extract_tounicode(
-        spec: &HashMap<String, PDFObject>,
+        spec: &PDFDict,
         doc: Option<&crate::pdfdocument::PDFDocument>,
     ) -> Option<Vec<u8>> {
         let tounicode = spec.get("ToUnicode")?;
@@ -1434,7 +1436,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     ///
     /// Follows the chain: spec["FontDescriptor"]["FontFile2"]
     fn extract_fontfile2(
-        spec: &HashMap<String, PDFObject>,
+        spec: &PDFDict,
         doc: Option<&crate::pdfdocument::PDFDocument>,
     ) -> Option<Vec<u8>> {
         // Get FontDescriptor
@@ -1583,7 +1585,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     operand_stack.clear();
                 }
                 ContentToken::InlineImage { dict, data } => {
-                    let mut attrs = HashMap::new();
+                    let mut attrs = FxHashMap::default();
                     for (key, value) in dict {
                         let obj = match value {
                             PSToken::Int(n) => PDFObject::Int(n),
@@ -1606,7 +1608,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                                 PDFObject::Array(vals)
                             }
                             PSToken::Dict(d) => {
-                                let mut map = HashMap::new();
+                                let mut map = FxHashMap::default();
                                 for (k, v) in d {
                                     let vobj = match v {
                                         PSToken::Int(n) => PDFObject::Int(n),
@@ -1633,7 +1635,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                             _ => key.as_str(),
                         }
                         .to_string();
-                        attrs.insert(key, obj);
+                        attrs.insert(key.into(), obj);
                     }
                     let stream = PDFStream::new(attrs, data);
                     let name = format!("inline{}", self.inline_image_id);
@@ -1660,7 +1662,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 Some(PDFStackValue::Array(values))
             }
             PSToken::Dict(map) => {
-                let mut values = HashMap::new();
+                let mut values = FxHashMap::default();
                 for (key, val) in map.iter() {
                     if let Some(v) = Self::pstoken_to_stackvalue(val) {
                         values.insert(key.clone(), v);
@@ -1687,7 +1689,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 Some(PDFStackValue::Array(values))
             }
             PDFObject::Dict(map) => {
-                let mut values = HashMap::new();
+                let mut values = FxHashMap::default();
                 for (key, val) in map.iter() {
                     if let Some(v) = self.pdfobject_to_stackvalue(val) {
                         values.insert(key.clone(), v);
@@ -1707,7 +1709,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         }
     }
 
-    fn properties_dict(&self) -> Option<HashMap<String, PDFObject>> {
+    fn properties_dict(&self) -> Option<PDFDict> {
         match self.resources.get("Properties") {
             Some(PDFObject::Dict(d)) => Some(d.clone()),
             Some(PDFObject::Ref(r)) => {
@@ -1728,7 +1730,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     fn props_from_token(&self, token: Option<PSToken>) -> PDFStackT {
-        let mut props = HashMap::new();
+        let mut props = FxHashMap::default();
         match token {
             Some(PSToken::Dict(map)) => {
                 for (key, val) in map {
@@ -2066,10 +2068,10 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         })
     }
 
-    fn pop_name(args: &mut Vec<PSToken>) -> Option<String> {
+    fn pop_name(args: &mut Vec<PSToken>) -> Option<crate::pdftypes::PDFName> {
         args.pop().and_then(|t| match t {
             PSToken::Literal(s) => Some(s),
-            PSToken::Keyword(k) => std::str::from_utf8(k.as_bytes()).ok().map(String::from),
+            PSToken::Keyword(k) => std::str::from_utf8(k.as_bytes()).ok().map(|s| s.into()),
             _ => None,
         })
     }

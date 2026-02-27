@@ -7,7 +7,7 @@
 use bolivar_core::error::Result;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdfpage::PDFPage;
-use bolivar_core::pdftypes::PDFObject;
+use bolivar_core::pdftypes::{PDFDict, PDFName, PDFObject};
 use clap::{ArgAction, ArgGroup, Parser};
 use memmap2::Mmap;
 use std::collections::{HashMap, HashSet};
@@ -420,7 +420,7 @@ fn extract_embedded_files_from_tree(
 fn extract_single_embedded(
     doc: &PDFDocument,
     filename: &str,
-    filespec: &HashMap<String, PDFObject>,
+    filespec: &PDFDict,
     extractdir: &str,
 ) -> Result<()> {
     // Get the actual filename

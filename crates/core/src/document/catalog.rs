@@ -12,15 +12,15 @@ use super::page::PageIndex;
 use super::security::{PDFSecurityHandler, create_security_handler};
 use crate::error::{PdfError, Result};
 use crate::font::encoding::{DiffEntry, EncodingDB};
-use crate::model::objects::PDFObject;
+use crate::model::objects::{PDFDict, PDFName, PDFObject};
 use crate::parser::pdf_parser::PDFParser;
 use crate::simd::U8_LANES;
 use bytes::Bytes;
 use indexmap::IndexMap;
 use memmap2::Mmap;
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::simd::prelude::*;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
@@ -130,7 +130,7 @@ struct XRef {
     /// Map from object ID to XRef entry
     offsets: HashMap<u32, XRefEntry>,
     /// Trailer dictionary
-    trailer: HashMap<String, PDFObject>,
+    trailer: PDFDict,
     /// Whether this xref was loaded via fallback (object scanning)
     is_fallback: bool,
 }
@@ -177,12 +177,12 @@ impl PdfBytes {
 pub struct PDFDocument {
     data: PdfBytes,
     xrefs: Vec<XRef>,
-    catalog: HashMap<String, PDFObject>,
-    info: Vec<HashMap<String, PDFObject>>,
+    catalog: PDFDict,
+    info: Vec<PDFDict>,
     cache: Mutex<ObjectCache>,
     page_cache: Mutex<PageCache>,
-    font_encoding_cache: Mutex<HashMap<u32, Arc<HashMap<u8, String>>>>,
-    objstm_index: RwLock<Option<HashMap<u32, (u32, usize)>>>,
+    font_encoding_cache: Mutex<FxHashMap<u32, Arc<FxHashMap<u8, String>>>>,
+    objstm_index: RwLock<Option<FxHashMap<u32, (u32, usize)>>>,
     security_handler: Option<Box<dyn PDFSecurityHandler + Send + Sync>>,
     page_index: OnceLock<PageIndex>,
 }
@@ -192,11 +192,11 @@ impl PDFDocument {
         let mut doc = Self {
             data,
             xrefs: Vec::new(),
-            catalog: HashMap::new(),
+            catalog: FxHashMap::default(),
             info: Vec::new(),
             cache: Mutex::new(ObjectCache::new(cache_capacity)),
             page_cache: Mutex::new(PageCache::new(DEFAULT_PAGE_CACHE_CAPACITY)),
-            font_encoding_cache: Mutex::new(HashMap::new()),
+            font_encoding_cache: Mutex::new(FxHashMap::default()),
             objstm_index: RwLock::new(None),
             security_handler: None,
             page_index: OnceLock::new(),
@@ -297,7 +297,7 @@ impl PDFDocument {
                     }
                 }
                 PDFObject::Name(name) => {
-                    result.push(DiffEntry::Name(name.clone()));
+                    result.push(DiffEntry::Name(name.to_string().into()));
                 }
                 _ => {}
             }
@@ -306,7 +306,7 @@ impl PDFDocument {
         Some(result)
     }
 
-    fn build_font_encoding(encoding: &PDFObject) -> Option<HashMap<u8, String>> {
+    fn build_font_encoding(encoding: &PDFObject) -> Option<FxHashMap<u8, String>> {
         match encoding {
             PDFObject::Name(name) => Some(EncodingDB::get_encoding(name, None)),
             PDFObject::Dict(dict) => {
@@ -328,7 +328,7 @@ impl PDFDocument {
         &self,
         objid: u32,
         encoding: &PDFObject,
-    ) -> Option<Arc<HashMap<u8, String>>> {
+    ) -> Option<Arc<FxHashMap<u8, String>>> {
         if let Ok(cache) = self.font_encoding_cache.lock()
             && let Some(entry) = cache.get(&objid)
         {
@@ -1403,7 +1403,7 @@ impl PDFDocument {
         }
 
         let re = Regex::new(r"(\d+)\s+(\d+)\s+obj\b").unwrap();
-        let mut index: HashMap<u32, (u32, usize)> = HashMap::new();
+        let mut index: FxHashMap<u32, (u32, usize)> = FxHashMap::default();
         for cap in re.captures_iter(self.data.as_slice()) {
             let stream_objid: u32 = match std::str::from_utf8(&cap[1])
                 .ok()
@@ -1497,7 +1497,7 @@ impl PDFDocument {
                 PDFObject::Array(decrypted_arr)
             }
             PDFObject::Dict(dict) => {
-                let decrypted_dict: HashMap<String, PDFObject> = dict
+                let decrypted_dict: PDFDict = dict
                     .into_iter()
                     .map(|(k, v)| (k, self.decrypt_object(v, objid, genno)))
                     .collect();
@@ -1505,7 +1505,7 @@ impl PDFDocument {
             }
             PDFObject::Stream(mut stream) => {
                 // Decrypt stream attributes (they may contain strings)
-                let decrypted_attrs: HashMap<String, PDFObject> = stream
+                let decrypted_attrs: PDFDict = stream
                     .attrs
                     .clone()
                     .into_iter()
@@ -1793,12 +1793,12 @@ impl PDFDocument {
     }
 
     /// Get document catalog.
-    pub const fn catalog(&self) -> &HashMap<String, PDFObject> {
+    pub const fn catalog(&self) -> &PDFDict {
         &self.catalog
     }
 
     /// Get document info dictionaries.
-    pub const fn info(&self) -> &Vec<HashMap<String, PDFObject>> {
+    pub const fn info(&self) -> &Vec<PDFDict> {
         &self.info
     }
 
@@ -1912,7 +1912,7 @@ impl PDFDocument {
     /// Iterate over all xref trailers.
     ///
     /// Returns tuples of (is_fallback, trailer_dict).
-    pub fn get_trailers(&self) -> impl Iterator<Item = (bool, &HashMap<String, PDFObject>)> {
+    pub fn get_trailers(&self) -> impl Iterator<Item = (bool, &PDFDict)> {
         self.xrefs.iter().map(|x| (x.is_fallback, &x.trailer))
     }
 
@@ -2008,7 +2008,7 @@ impl PDFDocument {
 pub struct PageLabels<'a> {
     #[allow(dead_code)]
     doc: &'a PDFDocument,
-    ranges: Vec<(i64, HashMap<String, PDFObject>)>,
+    ranges: Vec<(i64, PDFDict)>,
     range_idx: usize,
     current_value: i64,
     current_page: i64,
@@ -2032,7 +2032,7 @@ impl<'a> PageLabels<'a> {
         // Ensure it starts at 0
         let mut ranges = ranges;
         if ranges[0].0 != 0 {
-            ranges.insert(0, (0, HashMap::new()));
+            ranges.insert(0, (0, FxHashMap::default()));
         }
 
         let mut labels = Self {
@@ -2053,8 +2053,8 @@ impl<'a> PageLabels<'a> {
 
     fn parse_number_tree(
         doc: &PDFDocument,
-        dict: &HashMap<String, PDFObject>,
-    ) -> Result<Vec<(i64, HashMap<String, PDFObject>)>> {
+        dict: &PDFDict,
+    ) -> Result<Vec<(i64, PDFDict)>> {
         let mut items = Vec::new();
 
         // Check for Nums (leaf node)

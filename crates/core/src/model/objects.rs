@@ -4,7 +4,13 @@
 
 use crate::error::{PdfError, Result};
 use bytes::Bytes;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use smol_str::SmolStr;
+
+/// Alias for PDF name strings (optimized with SmolStr).
+pub type PDFName = SmolStr;
+/// Alias for PDF dictionary objects (optimized with FxHashMap).
+pub type PDFDict = FxHashMap<PDFName, PDFObject>;
 
 /// PDF Object types - the fundamental value type in PDF.
 #[derive(Debug, Clone, PartialEq)]
@@ -18,13 +24,13 @@ pub enum PDFObject {
     /// Real (floating point) value
     Real(f64),
     /// Name object (e.g., /Type, /Font)
-    Name(String),
+    Name(PDFName),
     /// String (byte array)
     String(Vec<u8>),
     /// Array of objects
     Array(Vec<Self>),
     /// Dictionary (name -> object mapping)
-    Dict(HashMap<String, Self>),
+    Dict(PDFDict),
     /// Stream (dictionary + binary data)
     Stream(Box<PDFStream>),
     /// Indirect object reference
@@ -85,7 +91,7 @@ impl PDFObject {
     /// Get as name string
     pub fn as_name(&self) -> Result<&str> {
         match self {
-            Self::Name(s) => Ok(s),
+            Self::Name(s) => Ok(s.as_str()),
             _ => Err(PdfError::TypeError {
                 expected: "name",
                 got: self.type_name(),
@@ -116,7 +122,7 @@ impl PDFObject {
     }
 
     /// Get as dictionary
-    pub const fn as_dict(&self) -> Result<&HashMap<String, Self>> {
+    pub const fn as_dict(&self) -> Result<&FxHashMap<SmolStr, Self>> {
         match self {
             Self::Dict(d) => Ok(d),
             _ => Err(PdfError::TypeError {
@@ -185,7 +191,7 @@ impl PDFObjRef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PDFStream {
     /// Stream dictionary attributes
-    pub attrs: HashMap<String, PDFObject>,
+    pub attrs: PDFDict,
     /// Raw (possibly encoded) data
     rawdata: Bytes,
     /// Whether rawdata has already been decrypted
@@ -200,7 +206,7 @@ pub struct PDFStream {
 
 impl PDFStream {
     /// Create a new stream.
-    pub fn new(attrs: HashMap<String, PDFObject>, rawdata: impl Into<Bytes>) -> Self {
+    pub fn new(attrs: PDFDict, rawdata: impl Into<Bytes>) -> Self {
         Self {
             attrs,
             rawdata: rawdata.into(),
@@ -298,7 +304,7 @@ pub fn list_value(obj: &PDFObject) -> Result<&Vec<PDFObject>> {
 }
 
 /// Get dictionary value from object.
-pub fn dict_value(obj: &PDFObject) -> Result<&HashMap<String, PDFObject>> {
+pub fn dict_value(obj: &PDFObject) -> Result<&PDFDict> {
     obj.as_dict()
 }
 
