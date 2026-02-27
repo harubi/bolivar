@@ -767,7 +767,7 @@ impl<'a> PDFLayoutAnalyzer<'a> {
     }
 
     /// Get colorspace name(s) from image stream.
-    fn get_image_colorspace(&self, stream: &PDFStream) -> Vec<String> {
+    fn get_image_colorspace(&self, stream: &PDFStream) -> Vec<crate::pdftypes::PDFName> {
         match stream.get_any(&["ColorSpace", "CS"]) {
             Some(crate::pdftypes::PDFObject::Name(name)) => vec![name.clone()],
             Some(crate::pdftypes::PDFObject::Array(arr)) => arr

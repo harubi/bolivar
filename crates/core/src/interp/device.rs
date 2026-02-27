@@ -8,10 +8,10 @@
 
 use crate::pdfcolor::PDFColorSpace;
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
-use crate::pdftypes::PDFStream;
+use crate::pdftypes::{PDFName, PDFStream};
 use crate::psparser::PSLiteral;
 use crate::utils::{Matrix, Point, Rect, enc, mult_matrix, translate_matrix};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::io::Write;
 
 /// Sequence of text elements that can contain numbers (positioning) or bytes (character data).
@@ -27,7 +27,7 @@ pub enum PDFTextSeqItem {
 }
 
 /// Stack type for PDF operations (matches Python's PDFStackT).
-pub type PDFStackT = HashMap<String, PDFStackValue>;
+pub type PDFStackT = FxHashMap<PDFName, PDFStackValue>;
 
 /// Values that can appear on the PDF stack.
 #[derive(Debug, Clone)]
@@ -35,10 +35,10 @@ pub enum PDFStackValue {
     Int(i64),
     Real(f64),
     Bool(bool),
-    Name(String),
+    Name(PDFName),
     String(Vec<u8>),
     Array(Vec<Self>),
-    Dict(HashMap<String, Self>),
+    Dict(FxHashMap<PDFName, Self>),
 }
 
 /// Path segment for graphics operations.

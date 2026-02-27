@@ -4,15 +4,15 @@
 //! https://github.com/adobe-type-tools/agl-specification#2-the-mapping
 
 use crate::error::{PdfError, Result};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::LazyLock;
 
 /// Adobe Glyph List data embedded at compile time
 const GLYPHLIST_DATA: &str = include_str!("glyphlist.txt");
 
 /// Lazily initialized glyph name to Unicode character map
-static GLYPH_TO_CHAR: LazyLock<HashMap<&'static str, char>> = LazyLock::new(|| {
-    let mut map = HashMap::with_capacity(4500);
+static GLYPH_TO_CHAR: LazyLock<FxHashMap<&'static str, char>> = LazyLock::new(|| {
+    let mut map = FxHashMap::with_capacity_and_hasher(4500, Default::default());
     for line in GLYPHLIST_DATA.lines() {
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -28,7 +28,7 @@ static GLYPH_TO_CHAR: LazyLock<HashMap<&'static str, char>> = LazyLock::new(|| {
 });
 
 /// Return the glyph name to Unicode map.
-pub fn glyphname2unicode() -> &'static HashMap<&'static str, char> {
+pub fn glyphname2unicode() -> &'static FxHashMap<&'static str, char> {
     &GLYPH_TO_CHAR
 }
 
@@ -139,10 +139,10 @@ impl EncodingDB {
     ///   - A glyph name (String) to place at current position
     ///
     /// Invalid differences are silently ignored per PDF spec.
-    pub fn get_encoding(name: &str, differences: Option<&[DiffEntry]>) -> HashMap<u8, String> {
+    pub fn get_encoding(name: &str, differences: Option<&[DiffEntry]>) -> FxHashMap<u8, String> {
         use super::latin_enc::ENCODING;
 
-        let mut encoding = HashMap::with_capacity(256);
+        let mut encoding = FxHashMap::with_capacity_and_hasher(256, Default::default());
 
         // Determine which column to use based on encoding name
         let col_idx = match name {
@@ -199,13 +199,15 @@ impl EncodingDB {
     }
 }
 
+use smol_str::SmolStr;
+
 /// Entry in a Differences array
 #[derive(Debug, Clone)]
 pub enum DiffEntry {
     /// A code position
     Code(u8),
     /// A glyph name
-    Name(String),
+    Name(SmolStr),
 }
 
 #[cfg(test)]

@@ -17,12 +17,12 @@
 //! - MP: Marked content point
 //! - DP: Marked content point with property dict
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::interp::device::{PDFDevice, PDFStackT, PathSegment};
 use crate::interp::interpreter::PDFPageInterpreter;
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
-use crate::pdftypes::PDFObject;
+use crate::pdftypes::{PDFDict, PDFName, PDFObject};
 use crate::psparser::PSLiteral;
 use crate::utils::{MATRIX_IDENTITY, Matrix, mult_matrix};
 
@@ -34,9 +34,9 @@ pub(crate) struct InterpreterState {
     pub(crate) graphicstate: PDFGraphicState,
     pub(crate) curpath: Vec<PathSegment>,
     pub(crate) current_point: Option<(f64, f64)>,
-    pub(crate) fontmap: HashMap<String, std::sync::Arc<crate::pdffont::PDFCIDFont>>,
-    pub(crate) resources: HashMap<String, PDFObject>,
-    pub(crate) xobjmap: HashMap<String, crate::pdftypes::PDFStream>,
+    pub(crate) fontmap: FxHashMap<PDFName, std::sync::Arc<crate::pdffont::PDFCIDFont>>,
+    pub(crate) resources: PDFDict,
+    pub(crate) xobjmap: FxHashMap<PDFName, crate::pdftypes::PDFStream>,
 }
 
 #[allow(non_snake_case)]
@@ -48,7 +48,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Do - Invoke named XObject (images or form XObjects).
     ///
     /// PDF operator: `Do`
-    pub fn do_Do(&mut self, xobjid: String) {
+    pub fn do_Do(&mut self, xobjid: PDFName) {
         if std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1") {
             eprintln!("Do XObject: {}", xobjid);
         }
@@ -120,7 +120,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Render content streams with specific resources and CTM.
     pub(crate) fn render_contents(
         &mut self,
-        resources: HashMap<String, PDFObject>,
+        resources: PDFDict,
         streams: Vec<Vec<u8>>,
         ctm: Matrix,
     ) {
@@ -159,7 +159,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     /// Resolve a resources object to a dictionary.
-    pub(crate) fn resolve_resources(&self, obj: &PDFObject) -> Option<HashMap<String, PDFObject>> {
+    pub(crate) fn resolve_resources(&self, obj: &PDFObject) -> Option<PDFDict> {
         match obj {
             PDFObject::Dict(d) => Some(d.clone()),
             PDFObject::Ref(r) => {

@@ -4,7 +4,7 @@
 
 use super::catalog::PDFDocument;
 use crate::error::{PdfError, Result};
-use crate::model::objects::PDFObject;
+use crate::model::objects::{PDFDict, PDFName, PDFObject};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -56,7 +56,7 @@ pub struct PDFPage {
     /// Page object ID
     pub pageid: u32,
     /// Page attributes dictionary
-    pub attrs: HashMap<String, PDFObject>,
+    pub attrs: PDFDict,
     /// Page label (logical page number)
     pub label: Option<String>,
     /// Media box (physical page size)
@@ -74,7 +74,7 @@ pub struct PDFPage {
     /// Page annotations
     pub annots: Option<PDFObject>,
     /// Page resources
-    pub resources: HashMap<String, PDFObject>,
+    pub resources: PDFDict,
     /// Page content streams (decoded data)
     pub contents: Vec<Vec<u8>>,
     /// User unit (PDF 1.6) - scales default user space units. Default is 1.0.
@@ -110,7 +110,7 @@ impl PDFPage {
     /// Create a page from attributes.
     fn from_attrs(
         pageid: u32,
-        attrs: HashMap<String, PDFObject>,
+        attrs: PDFDict,
         label: Option<String>,
         doc: &PDFDocument,
     ) -> Result<Self> {
@@ -161,7 +161,7 @@ impl PDFPage {
     /// Contents can be a single stream or an array of streams.
     /// Returns decoded data from all content streams.
     pub(crate) fn parse_contents(
-        attrs: &HashMap<String, PDFObject>,
+        attrs: &PDFDict,
         doc: &PDFDocument,
     ) -> Vec<Vec<u8>> {
         let contents_obj = match attrs.get("Contents") {
@@ -208,7 +208,7 @@ impl PDFPage {
     }
 
     fn parse_box(
-        attrs: &HashMap<String, PDFObject>,
+        attrs: &PDFDict,
         key: &str,
         doc: &PDFDocument,
     ) -> Option<[f64; 4]> {
@@ -243,7 +243,7 @@ struct InheritedNode {
 impl InheritedNode {
     fn from_dict(
         parent: Option<Arc<InheritedNode>>,
-        dict: &HashMap<String, PDFObject>,
+        dict: &PDFDict,
     ) -> Arc<Self> {
         Arc::new(Self {
             parent,
@@ -286,26 +286,26 @@ impl InheritedNode {
         })
     }
 
-    fn apply_to(&self, dest: &mut HashMap<String, PDFObject>) {
+    fn apply_to(&self, dest: &mut PDFDict) {
         if !dest.contains_key("Resources")
             && let Some(val) = self.resolve_resources()
         {
-            dest.insert("Resources".to_string(), val.clone());
+            dest.insert("Resources".into(), val.clone());
         }
         if !dest.contains_key("MediaBox")
             && let Some(val) = self.resolve_mediabox()
         {
-            dest.insert("MediaBox".to_string(), val.clone());
+            dest.insert("MediaBox".into(), val.clone());
         }
         if !dest.contains_key("CropBox")
             && let Some(val) = self.resolve_cropbox()
         {
-            dest.insert("CropBox".to_string(), val.clone());
+            dest.insert("CropBox".into(), val.clone());
         }
         if !dest.contains_key("Rotate")
             && let Some(val) = self.resolve_rotate()
         {
-            dest.insert("Rotate".to_string(), val.clone());
+            dest.insert("Rotate".into(), val.clone());
         }
     }
 }

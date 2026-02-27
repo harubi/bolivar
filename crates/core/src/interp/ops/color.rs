@@ -134,13 +134,13 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
                 if args.is_empty() {
                     // Colored tiling pattern (PaintType=1): just pattern name
-                    self.graphicstate.scolor = Color::PatternColored(pattern_name);
+                    self.graphicstate.scolor = Color::PatternColored(pattern_name.to_string());
                 } else {
                     // Uncolored tiling pattern (PaintType=2): color components + pattern name
                     let base_color = Self::parse_color_components(args);
                     if let Some(base) = base_color {
                         self.graphicstate.scolor =
-                            Color::PatternUncolored(Box::new(base), pattern_name);
+                            Color::PatternUncolored(Box::new(base), pattern_name.to_string());
                     }
                 }
             }
@@ -179,13 +179,13 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
                 if args.is_empty() {
                     // Colored tiling pattern (PaintType=1): just pattern name
-                    self.graphicstate.ncolor = Color::PatternColored(pattern_name);
+                    self.graphicstate.ncolor = Color::PatternColored(pattern_name.to_string());
                 } else {
                     // Uncolored tiling pattern (PaintType=2): color components + pattern name
                     let base_color = Self::parse_color_components(args);
                     if let Some(base) = base_color {
                         self.graphicstate.ncolor =
-                            Color::PatternUncolored(Box::new(base), pattern_name);
+                            Color::PatternUncolored(Box::new(base), pattern_name.to_string());
                     }
                 }
             }
