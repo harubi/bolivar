@@ -7,6 +7,7 @@ use bolivar_core::arena::PageArena;
 use bolivar_core::high_level::{
     ExtractOptions, extract_pages_with_document as core_extract_pages_with_document,
     extract_pages_with_images_with_document as core_extract_pages_with_images_with_document,
+    extract_tables_for_page_indexed as core_extract_tables_for_page_indexed,
     extract_text_with_document as core_extract_text_with_document,
 };
 use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
@@ -19,7 +20,7 @@ use std::fs::File;
 
 use crate::document::{PdfInput, PyPDFDocument, PyPDFPage, pdf_input_from_py};
 use crate::layout::{PyLTPage, ltpage_to_py};
-use crate::params::{PyLAParams, parse_bbox, parse_table_settings};
+use crate::params::{PyLAParams, parse_bbox, parse_page_geometry, parse_table_settings};
 
 /// Process a PDF page and return its layout.
 ///
@@ -425,6 +426,34 @@ fn objects_to_chars_edges(
     Ok((chars, edges))
 }
 
+/// Extract tables for a single indexed page.
+#[pyfunction(name = "_extract_tables_for_page_indexed")]
+#[pyo3(signature = (doc, page_index, geometry, table_settings = None, laparams = None, caching = true))]
+pub fn extract_tables_for_page_indexed(
+    py: Python<'_>,
+    doc: &PyPDFDocument,
+    page_index: usize,
+    geometry: &Bound<'_, PyAny>,
+    table_settings: Option<Py<PyAny>>,
+    laparams: Option<&PyLAParams>,
+    caching: bool,
+) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
+    let settings = parse_table_settings(py, table_settings)?;
+    let geom = parse_page_geometry(geometry)?;
+    let options = ExtractOptions {
+        password: String::new(),
+        page_numbers: None,
+        maxpages: 0,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+    };
+
+    py.detach(|| {
+        core_extract_tables_for_page_indexed(&doc.inner, page_index, &geom, options, &settings)
+    })
+    .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {e}")))
+}
+
 /// Extract tables from page objects.
 #[pyfunction(name = "_extract_tables_from_page_objects")]
 #[pyo3(signature = (objects, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, force_crop = false))]
@@ -695,6 +724,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_pages_with_images_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tables_for_page_indexed, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_from_page_objects, m)?)?;
     m.add_function(wrap_pyfunction!(repair_pdf, m)?)?;
     Ok(())

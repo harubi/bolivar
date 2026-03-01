@@ -766,6 +766,14 @@ def _extract_tables_stream(
     maxpages: int = 0,
     caching: bool = True,
 ) -> PyTableStream: ...
+def _extract_tables_for_page_indexed(
+    doc: PDFDocument,
+    page_index: int,
+    geometry: Any,
+    table_settings: dict[str, Any] | None = None,
+    laparams: LAParams | None = None,
+    caching: bool = True,
+) -> list[list[list[str | None]]]: ...
 def _extract_tables_from_page_objects(
     objects: dict[str, Any],
     page_bbox: Any,

@@ -157,6 +157,9 @@ if TYPE_CHECKING:
         __version__ as __version__,
     )
     from bolivar._bolivar import (
+        _extract_tables_for_page_indexed as _extract_tables_for_page_indexed,
+    )
+    from bolivar._bolivar import (
         _extract_tables_from_page_objects as _extract_tables_from_page_objects,
     )
     from bolivar._bolivar import (
@@ -387,6 +390,13 @@ def _extract_tables_stream(*args: object, **kwargs: object) -> object:
     """Internal table stream bridge used by the pdfplumber shim."""
     native = load_native_api()
     fn = native._extract_tables_stream
+    return fn(*args, **kwargs)
+
+
+def _extract_tables_for_page_indexed(*args: object, **kwargs: object) -> object:
+    """Internal single-page indexed extractor used by the pdfplumber shim."""
+    native = load_native_api()
+    fn = native._extract_tables_for_page_indexed
     return fn(*args, **kwargs)
 
 
