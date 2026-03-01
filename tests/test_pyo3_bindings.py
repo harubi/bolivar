@@ -163,6 +163,13 @@ def test_extract_tables_from_document_pages_preserves_order():
     assert not hasattr(bolivar, "extract_tables_from_document_pages")
 
 
+def test_native_api_exposes_extract_tables_for_page_indexed():
+    import bolivar._native_api as native_api
+
+    assert hasattr(native_api, "_extract_tables_for_page_indexed")
+    assert callable(native_api._extract_tables_for_page_indexed)
+
+
 def test_threads_kw_rejected_in_python_bindings():
     import bolivar
 
@@ -204,7 +211,7 @@ def test_high_level_memoryview():
 def test_extract_tables_settings_affects_output():
     import pdfplumber
 
-    pdf_path = ROOT / "references/pdfplumber/tests/pdfs/senate-expenditures.pdf"
+    pdf_path = ROOT / "crates/core/tests/fixtures/pdfplumber/issue-192-example.pdf"
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
         base_settings = {
@@ -220,21 +227,20 @@ def test_extract_tables_settings_affects_output():
     assert t_tol
     assert t[-1] != t_tol[-1]
 
-    def test_ltpage_iter_returns_layout_items(self):
-        """LTPage can be iterated to get layout items"""
-        from bolivar import PDFDocument, LAParams, process_page
+def test_ltpage_iter_returns_layout_items():
+    """LTPage can be iterated to get layout items"""
+    from bolivar import PDFDocument, LAParams, process_page
 
-        pdf_path = FIXTURES_DIR / "simple1.pdf"
-        pdf_bytes = pdf_path.read_bytes()
-        doc = PDFDocument(pdf_bytes)
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    doc = PDFDocument(pdf_bytes)
 
-        pages = list(doc.get_pages())
-        laparams = LAParams()
-        ltpage = process_page(doc, pages[0], laparams)
+    pages = list(doc.get_pages())
+    laparams = LAParams()
+    ltpage = process_page(doc, pages[0], laparams)
 
-        items = list(ltpage)
-        # simple1.pdf should have some items
-        assert len(items) >= 0
+    items = list(ltpage)
+    assert isinstance(items, list)
 
 
 class TestLTChar:
