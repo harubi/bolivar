@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, sync_channel};
+use std::thread::JoinHandle;
 
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
@@ -35,6 +36,21 @@ static STREAM_USAGE_ENABLED: std::sync::atomic::AtomicBool =
 #[cfg(test)]
 static STREAM_USAGE_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
     std::sync::OnceLock::new();
+#[cfg(test)]
+static STREAM_WORKER_LIFECYCLE_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+static STREAM_WORKERS_STARTED: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+static STREAM_WORKERS_EXITED: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+static STREAM_WORKERS_ACTIVE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+static STREAM_WORKER_LIFECYCLE_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
 
 #[cfg(test)]
 fn record_stream_usage() {
@@ -61,6 +77,63 @@ pub(crate) fn stream_usage_test_guard() -> std::sync::MutexGuard<'static, ()> {
         .expect("stream usage test lock")
 }
 
+#[cfg(test)]
+pub(crate) fn set_stream_worker_lifecycle_enabled(enabled: bool) {
+    STREAM_WORKER_LIFECYCLE_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn reset_stream_worker_lifecycle_counters() {
+    STREAM_WORKERS_STARTED.store(0, Ordering::Relaxed);
+    STREAM_WORKERS_EXITED.store(0, Ordering::Relaxed);
+    STREAM_WORKERS_ACTIVE.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn stream_worker_lifecycle_counts() -> (usize, usize, usize) {
+    (
+        STREAM_WORKERS_STARTED.load(Ordering::Relaxed),
+        STREAM_WORKERS_EXITED.load(Ordering::Relaxed),
+        STREAM_WORKERS_ACTIVE.load(Ordering::Relaxed),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn stream_worker_lifecycle_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    STREAM_WORKER_LIFECYCLE_TEST_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .expect("stream worker lifecycle test lock")
+}
+
+#[cfg(test)]
+struct StreamWorkerLifecycleCounter {
+    tracked: bool,
+}
+
+#[cfg(test)]
+impl StreamWorkerLifecycleCounter {
+    fn start() -> Self {
+        if STREAM_WORKER_LIFECYCLE_ENABLED.load(Ordering::Relaxed) {
+            STREAM_WORKERS_STARTED.fetch_add(1, Ordering::Relaxed);
+            STREAM_WORKERS_ACTIVE.fetch_add(1, Ordering::Relaxed);
+            Self { tracked: true }
+        } else {
+            Self { tracked: false }
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for StreamWorkerLifecycleCounter {
+    fn drop(&mut self) {
+        if self.tracked {
+            STREAM_WORKERS_EXITED.fetch_add(1, Ordering::Relaxed);
+            STREAM_WORKERS_ACTIVE.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
 type StreamItem = (usize, Result<LTPage>);
 
 fn build_page_order(doc: &PDFDocument, options: &ExtractOptions) -> Vec<usize> {
@@ -85,7 +158,7 @@ fn build_page_order(doc: &PDFDocument, options: &ExtractOptions) -> Vec<usize> {
 }
 
 pub struct PageStream {
-    rx: Receiver<StreamItem>,
+    rx: Option<Receiver<StreamItem>>,
     order: Vec<usize>,
     next_pos: usize,
     buffer: BTreeMap<usize, Result<LTPage>>,
@@ -93,10 +166,11 @@ pub struct PageStream {
     failed: bool,
     max_buffered: usize,
     cancel: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
 }
 
 pub struct TableStream {
-    rx: Receiver<(usize, Result<PageTables>)>,
+    rx: Option<Receiver<(usize, Result<PageTables>)>>,
     order: Vec<usize>,
     next_pos: usize,
     buffer: BTreeMap<usize, Result<PageTables>>,
@@ -104,6 +178,7 @@ pub struct TableStream {
     failed: bool,
     max_buffered: usize,
     cancel: Arc<AtomicBool>,
+    worker: Option<JoinHandle<()>>,
 }
 
 impl TableStream {
@@ -111,9 +186,10 @@ impl TableStream {
         rx: Receiver<(usize, Result<PageTables>)>,
         order: Vec<usize>,
         cancel: Arc<AtomicBool>,
+        worker: JoinHandle<()>,
     ) -> Self {
         Self {
-            rx,
+            rx: Some(rx),
             order,
             next_pos: 0,
             buffer: BTreeMap::new(),
@@ -121,6 +197,7 @@ impl TableStream {
             failed: false,
             max_buffered: 0,
             cancel,
+            worker: Some(worker),
         }
     }
 }
@@ -152,7 +229,15 @@ impl Iterator for TableStream {
                 return None;
             }
 
-            match self.rx.recv() {
+            let recv_result = match self.rx.as_ref() {
+                Some(rx) => rx.recv(),
+                None => {
+                    self.done = true;
+                    return None;
+                }
+            };
+
+            match recv_result {
                 Ok((page_idx, result)) => {
                     self.buffer.insert(page_idx, result);
                     if self.buffer.len() > self.max_buffered {
@@ -170,13 +255,22 @@ impl Iterator for TableStream {
 impl Drop for TableStream {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
+        self.rx.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
 impl PageStream {
-    fn new(rx: Receiver<StreamItem>, order: Vec<usize>, cancel: Arc<AtomicBool>) -> Self {
+    fn new(
+        rx: Receiver<StreamItem>,
+        order: Vec<usize>,
+        cancel: Arc<AtomicBool>,
+        worker: JoinHandle<()>,
+    ) -> Self {
         Self {
-            rx,
+            rx: Some(rx),
             order,
             next_pos: 0,
             buffer: BTreeMap::new(),
@@ -184,6 +278,7 @@ impl PageStream {
             failed: false,
             max_buffered: 0,
             cancel,
+            worker: Some(worker),
         }
     }
 
@@ -219,7 +314,15 @@ impl Iterator for PageStream {
                 return None;
             }
 
-            match self.rx.recv() {
+            let recv_result = match self.rx.as_ref() {
+                Some(rx) => rx.recv(),
+                None => {
+                    self.done = true;
+                    return None;
+                }
+            };
+
+            match recv_result {
                 Ok((page_idx, result)) => {
                     self.buffer.insert(page_idx, result);
                     if self.buffer.len() > self.max_buffered {
@@ -237,6 +340,10 @@ impl Iterator for PageStream {
 impl Drop for PageStream {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
+        self.rx.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -269,7 +376,10 @@ pub fn extract_pages_stream_from_doc(
     let next_index = Arc::new(AtomicUsize::new(0));
     let next_index_worker = Arc::clone(&next_index);
 
-    std::thread::spawn(move || {
+    let worker = std::thread::spawn(move || {
+        #[cfg(test)]
+        let _worker_lifecycle = StreamWorkerLifecycleCounter::start();
+
         pool.install(|| {
             (0..thread_count).into_par_iter().for_each(|_| {
                 let mut arena = PageArena::new();
@@ -311,7 +421,7 @@ pub fn extract_pages_stream_from_doc(
         });
     });
 
-    Ok(PageStream::new(rx, order, cancel))
+    Ok(PageStream::new(rx, order, cancel, worker))
 }
 
 pub fn extract_tables_stream_from_doc(
@@ -497,7 +607,10 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
     let next_index_worker = Arc::clone(&next_index);
     let geom_worker = geometries.clone();
 
-    std::thread::spawn(move || {
+    let worker = std::thread::spawn(move || {
+        #[cfg(test)]
+        let _worker_lifecycle = StreamWorkerLifecycleCounter::start();
+
         pool.install(|| {
             (0..thread_count).into_par_iter().for_each(|_| {
                 let mut arena = PageArena::new();
@@ -579,7 +692,7 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
         });
     });
 
-    Ok(TableStream::new(rx, order, cancel))
+    Ok(TableStream::new(rx, order, cancel, worker))
 }
 
 #[cfg(test)]
@@ -665,6 +778,41 @@ mod tests {
         out.extend_from_slice(b"\n%%EOF");
 
         out
+    }
+
+    fn spawn_drop_probe_worker(
+        cancel: Arc<AtomicBool>,
+        finished: Arc<AtomicBool>,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            while !cancel.load(Ordering::Relaxed) {
+                std::thread::yield_now();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            finished.store(true, Ordering::Relaxed);
+        })
+    }
+
+    #[test]
+    fn page_stream_drop_joins_worker_on_early_drop() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let finished = Arc::new(AtomicBool::new(false));
+        let worker = spawn_drop_probe_worker(Arc::clone(&cancel), Arc::clone(&finished));
+        let (_tx, rx) = sync_channel::<StreamItem>(1);
+        let stream = PageStream::new(rx, Vec::new(), cancel, worker);
+        drop(stream);
+        assert!(finished.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn table_stream_drop_joins_worker_on_early_drop() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let finished = Arc::new(AtomicBool::new(false));
+        let worker = spawn_drop_probe_worker(Arc::clone(&cancel), Arc::clone(&finished));
+        let (_tx, rx) = sync_channel::<(usize, Result<PageTables>)>(1);
+        let stream = TableStream::new(rx, Vec::new(), cancel, worker);
+        drop(stream);
+        assert!(finished.load(Ordering::Relaxed));
     }
 
     #[test]
@@ -760,5 +908,60 @@ mod tests {
 
         assert_eq!(out.len(), 2);
         assert_eq!(usage, 0);
+    }
+
+    #[test]
+    fn table_stream_early_drop_releases_real_workers() {
+        let _guard = stream_worker_lifecycle_test_guard();
+
+        let pdf = build_minimal_pdf_with_pages(64);
+        let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
+
+        set_stream_worker_lifecycle_enabled(true);
+        reset_stream_worker_lifecycle_counters();
+
+        let baseline = stream_worker_lifecycle_counts().2;
+        let stream_count = 16usize;
+        let mut streams = Vec::with_capacity(stream_count);
+
+        for i in 0..stream_count {
+            let mut settings = TableSettings::default();
+            let i_f = i as f64;
+            settings.snap_x_tolerance = 2.0 + i_f * 0.10;
+            settings.snap_y_tolerance = 2.2 + i_f * 0.10;
+            settings.join_x_tolerance = 1.5 + i_f * 0.07;
+            settings.join_y_tolerance = 1.7 + i_f * 0.07;
+            settings.edge_min_length = 3.0 + i_f * 0.15;
+            settings.edge_min_length_prefilter = 1.0 + i_f * 0.05;
+            settings.intersection_x_tolerance = 2.5 + i_f * 0.09;
+            settings.intersection_y_tolerance = 2.7 + i_f * 0.09;
+
+            let mut stream = extract_tables_stream_from_doc_with_settings(
+                Arc::clone(&doc),
+                ExtractOptions::default(),
+                settings,
+            )
+            .unwrap();
+            let _ = stream.next();
+            streams.push(stream);
+        }
+
+        drop(streams);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            let (_, _, active) = stream_worker_lifecycle_counts();
+            if active == baseline || std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let (started, exited, active) = stream_worker_lifecycle_counts();
+        set_stream_worker_lifecycle_enabled(false);
+
+        assert_eq!(started, stream_count);
+        assert_eq!(active, baseline);
+        assert_eq!(started, exited);
     }
 }
