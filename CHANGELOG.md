@@ -1,3 +1,29 @@
+## [1.6.0](https://github.com/harubi/bolivar/compare/v1.5.2...v1.6.0) (2026-03-04)
+
+### Features
+
+* **jvm:** add Kotlin facade and UniFFI bindings ([7fd7c25](https://github.com/harubi/bolivar/commit/7fd7c257433b09f6379bd40aa8013abce81cc9ac))
+
+### Bug Fixes
+
+* **core:** harden stream worker lifecycle on drop ([2591e8f](https://github.com/harubi/bolivar/commit/2591e8fb23ec3e9507ee0a4386692dbe875981d0))
+* **python:** align bindings with PDFDict ([2d6a9ef](https://github.com/harubi/bolivar/commit/2d6a9ef843b5df199dfc2f1b1f8dc98762e2459f))
+* **python:** enforce single-page table extraction contract ([e8fee22](https://github.com/harubi/bolivar/commit/e8fee228fb69542ec3a853ef884ced8b819e1c2d))
+* **python:** match pdfplumber parity for normalization and text flow ([17949e4](https://github.com/harubi/bolivar/commit/17949e498d6012e553bff7b90a124a0acb332c56))
+* **uniffi:** use PDFDict in page geometry tests ([d228b08](https://github.com/harubi/bolivar/commit/d228b08cb609330d89bd511f06d5212a6db4c837))
+
+### Performance Improvements
+
+* **core:** reduce PDF object allocation ([b410af2](https://github.com/harubi/bolivar/commit/b410af274a02984ee7ae5c2b8eb771c4d67a4952))
+
+### Code Refactoring
+
+* **core:** align dict/name types across core and tests ([9cc25b5](https://github.com/harubi/bolivar/commit/9cc25b51d4c013a09c8e63aa261807e7e8216b60))
+
+### Tests
+
+* **parity:** harden parity runner and fixture-dependent tests ([6db12b7](https://github.com/harubi/bolivar/commit/6db12b7bfbecb58d6adc01b5960b4a933dbb6ebe))
+
 ## [1.5.2](https://github.com/harubi/bolivar/compare/v1.5.1...v1.5.2) (2026-02-22)
 
 ### Performance Improvements
