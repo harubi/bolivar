@@ -2051,10 +2051,7 @@ impl<'a> PageLabels<'a> {
         Ok(labels)
     }
 
-    fn parse_number_tree(
-        doc: &PDFDocument,
-        dict: &PDFDict,
-    ) -> Result<Vec<(i64, PDFDict)>> {
+    fn parse_number_tree(doc: &PDFDocument, dict: &PDFDict) -> Result<Vec<(i64, PDFDict)>> {
         let mut items = Vec::new();
 
         // Check for Nums (leaf node)

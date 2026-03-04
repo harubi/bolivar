@@ -22,9 +22,7 @@ pub struct PSLiteral {
 impl PSLiteral {
     /// Create a new literal with the given name.
     pub fn new(name: &str) -> Self {
-        Self {
-            name: name.into(),
-        }
+        Self { name: name.into() }
     }
 
     /// Get the literal's name.
