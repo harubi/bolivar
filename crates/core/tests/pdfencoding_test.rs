@@ -5,50 +5,43 @@
 #![allow(non_snake_case)]
 
 use bolivar_core::pdffont::PDFCIDFont;
-use bolivar_core::pdftypes::{PDFObject, PDFStream};
-use std::collections::HashMap;
+use bolivar_core::pdftypes::{PDFDict, PDFObject, PDFStream};
 
 /// Helper to create a PDFStream with CMapName as Name (PSLiteral equivalent)
 fn make_stream_with_name(cmap_name: &str) -> PDFObject {
-    let mut attrs = HashMap::new();
-    attrs.insert(
-        "CMapName".to_string(),
-        PDFObject::Name(cmap_name.to_string()),
-    );
+    let mut attrs = PDFDict::default();
+    attrs.insert("CMapName".into(), PDFObject::Name(cmap_name.into()));
     PDFObject::Stream(Box::new(PDFStream::new(attrs, vec![])))
 }
 
 /// Helper to create a PDFStream with CMapName as String (byte string)
 fn make_stream_with_string(cmap_name: &str) -> PDFObject {
-    let mut attrs = HashMap::new();
+    let mut attrs = PDFDict::default();
     attrs.insert(
-        "CMapName".to_string(),
+        "CMapName".into(),
         PDFObject::String(cmap_name.as_bytes().to_vec()),
     );
     PDFObject::Stream(Box::new(PDFStream::new(attrs, vec![])))
 }
 
 /// Helper to create font spec with Encoding as Name (PSLiteral)
-fn make_spec_name(encoding_name: &str) -> HashMap<String, PDFObject> {
-    let mut spec = HashMap::new();
-    spec.insert(
-        "Encoding".to_string(),
-        PDFObject::Name(encoding_name.to_string()),
-    );
+fn make_spec_name(encoding_name: &str) -> PDFDict {
+    let mut spec = PDFDict::default();
+    spec.insert("Encoding".into(), PDFObject::Name(encoding_name.into()));
     spec
 }
 
 /// Helper to create font spec with Encoding as PDFStream with Name CMapName
-fn make_spec_stream_name(cmap_name: &str) -> HashMap<String, PDFObject> {
-    let mut spec = HashMap::new();
-    spec.insert("Encoding".to_string(), make_stream_with_name(cmap_name));
+fn make_spec_stream_name(cmap_name: &str) -> PDFDict {
+    let mut spec = PDFDict::default();
+    spec.insert("Encoding".into(), make_stream_with_name(cmap_name));
     spec
 }
 
 /// Helper to create font spec with Encoding as PDFStream with String CMapName
-fn make_spec_stream_string(cmap_name: &str) -> HashMap<String, PDFObject> {
-    let mut spec = HashMap::new();
-    spec.insert("Encoding".to_string(), make_stream_with_string(cmap_name));
+fn make_spec_stream_string(cmap_name: &str) -> PDFDict {
+    let mut spec = PDFDict::default();
+    spec.insert("Encoding".into(), make_stream_with_string(cmap_name));
     spec
 }
 
@@ -226,7 +219,7 @@ fn test_encoding_DLIdentV_as_stream() {
 
 #[test]
 fn test_font_without_spec() {
-    let spec = HashMap::new();
+    let spec = PDFDict::default();
     let font = PDFCIDFont::new(&spec, None);
     assert!(font.cmap.is_cmap(), "Expected CMap for empty spec");
 }

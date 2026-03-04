@@ -10,7 +10,6 @@ use crate::pdftypes::{PDFDict, PDFName, PDFObject, PDFStream};
 use crate::simd::U8_LANES;
 use crate::{PdfError, Result};
 use flate2::read::ZlibDecoder;
-use rustc_hash::FxHashMap;
 use std::fs::{self, File};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -552,7 +551,7 @@ fn apply_png_predictor_impl(
                     current_row[i] = row_data[i].wrapping_add(paeth);
                 }
             }
-            _ => return Err(PdfError::DecodeError("invalid PNG predictor".to_string())),
+            _ => return Err(PdfError::DecodeError("invalid PNG predictor".into())),
         }
 
         result.extend_from_slice(&current_row);
@@ -766,14 +765,14 @@ mod tests {
 
     #[test]
     fn expected_image_len_caps_large_images() {
-        let colorspace = vec!["DeviceRGB".to_string()];
+        let colorspace = vec!["DeviceRGB".into()];
         let len = expected_image_len(10_000, 10_000, 8, &colorspace).unwrap();
         assert_eq!(len, MAX_IMAGE_DECODED_BYTES);
     }
 
     #[test]
     fn expected_image_len_small_images_unchanged() {
-        let colorspace = vec!["DeviceRGB".to_string()];
+        let colorspace = vec!["DeviceRGB".into()];
         let len = expected_image_len(100, 100, 8, &colorspace).unwrap();
         assert_eq!(len, 100 * 100 * 3);
     }

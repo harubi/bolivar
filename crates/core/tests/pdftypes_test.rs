@@ -3,8 +3,7 @@
 //! Based on pdfminer.six pdftypes.py functionality.
 
 use bolivar_core::pdfdocument::PDFDocument;
-use bolivar_core::pdftypes::{PDFObjRef, PDFObject, PDFStream};
-use std::collections::HashMap;
+use bolivar_core::pdftypes::{PDFDict, PDFObjRef, PDFObject, PDFStream};
 
 // === PDFObject type tests ===
 
@@ -46,7 +45,7 @@ fn test_object_num_coercion() {
 
 #[test]
 fn test_object_name() {
-    let obj = PDFObject::Name("Type".to_string());
+    let obj = PDFObject::Name("Type".into());
     assert_eq!(obj.as_name().unwrap(), "Type");
     assert!(PDFObject::Null.as_name().is_err());
 }
@@ -73,9 +72,9 @@ fn test_object_array() {
 
 #[test]
 fn test_object_dict() {
-    let mut m = HashMap::new();
-    m.insert("Type".to_string(), PDFObject::Name("Page".to_string()));
-    m.insert("Count".to_string(), PDFObject::Int(5));
+    let mut m = PDFDict::default();
+    m.insert("Type".into(), PDFObject::Name("Page".into()));
+    m.insert("Count".into(), PDFObject::Int(5));
 
     let dict = PDFObject::Dict(m);
     let inner = dict.as_dict().unwrap();
@@ -104,8 +103,8 @@ fn test_objref_in_object() {
 
 #[test]
 fn test_stream_creation() {
-    let mut attrs = HashMap::new();
-    attrs.insert("Length".to_string(), PDFObject::Int(100));
+    let mut attrs = PDFDict::default();
+    attrs.insert("Length".into(), PDFObject::Int(100));
 
     let stream = PDFStream::new(attrs, b"raw data".to_vec());
     assert_eq!(stream.get_rawdata(), b"raw data");
@@ -113,12 +112,9 @@ fn test_stream_creation() {
 
 #[test]
 fn test_stream_attrs() {
-    let mut attrs = HashMap::new();
-    attrs.insert("Length".to_string(), PDFObject::Int(100));
-    attrs.insert(
-        "Filter".to_string(),
-        PDFObject::Name("FlateDecode".to_string()),
-    );
+    let mut attrs = PDFDict::default();
+    attrs.insert("Length".into(), PDFObject::Int(100));
+    attrs.insert("Filter".into(), PDFObject::Name("FlateDecode".into()));
 
     let stream = PDFStream::new(attrs, b"compressed".to_vec());
     assert_eq!(stream.attrs.get("Length").unwrap().as_int().unwrap(), 100);
@@ -188,8 +184,8 @@ fn test_list_value() {
 #[test]
 fn test_dict_value() {
     use bolivar_core::pdftypes::dict_value;
-    let mut m = HashMap::new();
-    m.insert("key".to_string(), PDFObject::Int(123));
+    let mut m = PDFDict::default();
+    m.insert("key".into(), PDFObject::Int(123));
     let dict = PDFObject::Dict(m);
     let d = dict_value(&dict).unwrap();
     assert!(d.contains_key("key"));

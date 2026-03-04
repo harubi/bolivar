@@ -7,7 +7,7 @@ use super::cmap::{
     parse_tounicode_cmap,
 };
 use super::truetype::create_unicode_map_from_ttf;
-use crate::pdftypes::{PDFDict, PDFName, PDFObjRef, PDFObject};
+use crate::pdftypes::{PDFDict, PDFObjRef, PDFObject};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -425,7 +425,7 @@ impl PDFCIDFont {
 
         let obj_to_name = |obj: &PDFObject| -> Option<String> {
             if let Ok(name) = obj.as_name() {
-                Some(name.to_string().into())
+                Some(name.to_string())
             } else if let Ok(bytes) = obj.as_string() {
                 String::from_utf8(bytes.to_vec()).ok()
             } else {
@@ -677,16 +677,14 @@ impl PDFCIDFont {
             Some(name) if CMapDB::is_cjk_2byte_cmap(name) => {
                 let mut cmap = CMap::new();
                 cmap.set_vertical(CMapDB::is_vertical(name));
-                cmap.attrs
-                    .insert("CMapName".to_string(), name.to_string().into());
+                cmap.attrs.insert("CMapName".to_string(), name.to_string());
                 cmap.add_cid_range(&[0x00, 0x00], &[0xFF, 0xFF], 0);
                 DynCMap::CMap(Box::new(cmap))
             }
             Some(name) => {
                 let mut cmap = CMap::new();
                 cmap.set_vertical(CMapDB::is_vertical(name));
-                cmap.attrs
-                    .insert("CMapName".to_string(), name.to_string().into());
+                cmap.attrs.insert("CMapName".to_string(), name.to_string());
                 DynCMap::CMap(Box::new(cmap))
             }
             None => DynCMap::CMap(Box::default()),
@@ -796,16 +794,16 @@ impl PDFFont for PDFCIDFont {
 #[cfg(test)]
 mod tests {
     use super::{PDFCIDFont, PDFFont};
-    use crate::model::objects::PDFObject;
-    use std::collections::HashMap;
+    use crate::model::objects::{PDFDict, PDFObject};
+    use rustc_hash::FxHashMap;
     use std::sync::Arc;
 
     #[test]
     fn cid2unicode_override_is_used() {
-        let mut spec = FxHashMap::default();
-        spec.insert("Subtype".to_string(), PDFObject::Name("Type1".to_string()));
+        let mut spec = PDFDict::default();
+        spec.insert("Subtype".into(), PDFObject::Name("Type1".into()));
         let mut map = FxHashMap::default();
-        map.insert(65u8, "A".to_string());
+        map.insert(65u8, "A".into());
         let override_map = Some(Arc::new(map));
 
         let font =

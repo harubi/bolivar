@@ -66,12 +66,12 @@ impl<'a> NumberTree<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use crate::pdftypes::PDFDict;
 
     fn make_dict(pairs: Vec<(&str, PDFObject)>) -> PDFObject {
-        let mut map = HashMap::new();
+        let mut map = PDFDict::default();
         for (k, v) in pairs {
-            map.insert(k.to_string(), v);
+            map.insert(k.into(), v);
         }
         PDFObject::Dict(map)
     }
@@ -80,7 +80,7 @@ mod tests {
     fn test_basic_number_tree() {
         let obj = make_dict(vec![(
             "Nums",
-            PDFObject::Array(vec![PDFObject::Int(0), PDFObject::Name("zero".to_string())]),
+            PDFObject::Array(vec![PDFObject::Int(0), PDFObject::Name("zero".into())]),
         )]);
 
         let tree = NumberTree::new(&obj).unwrap();

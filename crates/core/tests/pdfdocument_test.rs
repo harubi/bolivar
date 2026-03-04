@@ -15,9 +15,19 @@ const SIMPLE1_PDF: &[u8] = include_bytes!("fixtures/simple1.pdf");
 const ENCRYPTED_NO_ID_PDF: &[u8] = include_bytes!("fixtures/encryption/encrypted_doc_no_id.pdf");
 const PAGELABELS_PDF: &[u8] = include_bytes!("fixtures/contrib/pagelabels.pdf");
 const ANNOTATIONS_PDF: &[u8] = include_bytes!("fixtures/contrib/issue-1082-annotations.pdf");
-const IMAGE_STRUCTURE_PDF: &[u8] =
-    include_bytes!("../../../references/pdfplumber/tests/pdfs/image_structure.pdf");
 const OBJSTM_DICT_SEGMENT: &[u8] = b"/First 60/Filter/FlateDecode/Length 382";
+
+fn image_structure_pdf() -> Option<Vec<u8>> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("references")
+        .join("pdfplumber")
+        .join("tests")
+        .join("pdfs")
+        .join("image_structure.pdf");
+    std::fs::read(path).ok()
+}
 
 fn replace_once_fixed_len(input: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
     assert_eq!(
@@ -158,7 +168,10 @@ fn test_annotations() {
 /// Ensure objects stored in object streams can be resolved via xref streams.
 #[test]
 fn test_getobj_struct_tree_root_from_objstm() {
-    let doc = PDFDocument::new(IMAGE_STRUCTURE_PDF, "").expect("Failed to parse PDF");
+    let Some(image_structure_pdf) = image_structure_pdf() else {
+        return;
+    };
+    let doc = PDFDocument::new(&image_structure_pdf, "").expect("Failed to parse PDF");
 
     let obj = doc
         .getobj(11)
@@ -171,8 +184,11 @@ fn test_getobj_struct_tree_root_from_objstm() {
 
 #[test]
 fn test_getobj_objstm_negative_first_does_not_panic() {
+    let Some(image_structure_pdf) = image_structure_pdf() else {
+        return;
+    };
     let pdf = replace_once_fixed_len(
-        IMAGE_STRUCTURE_PDF,
+        &image_structure_pdf,
         OBJSTM_DICT_SEGMENT,
         b"/First -1/Filter/FlateDecode/Length 382",
     );
@@ -181,8 +197,11 @@ fn test_getobj_objstm_negative_first_does_not_panic() {
 
 #[test]
 fn test_getobj_objstm_first_beyond_data_len_does_not_panic() {
+    let Some(image_structure_pdf) = image_structure_pdf() else {
+        return;
+    };
     let pdf = replace_once_fixed_len(
-        IMAGE_STRUCTURE_PDF,
+        &image_structure_pdf,
         OBJSTM_DICT_SEGMENT,
         b"/First 999/Filter/FlateDecode/Length 38",
     );
@@ -191,8 +210,11 @@ fn test_getobj_objstm_first_beyond_data_len_does_not_panic() {
 
 #[test]
 fn test_getobj_objstm_object_offset_beyond_data_len_does_not_panic() {
+    let Some(image_structure_pdf) = image_structure_pdf() else {
+        return;
+    };
     let pdf = replace_once_fixed_len(
-        IMAGE_STRUCTURE_PDF,
+        &image_structure_pdf,
         OBJSTM_DICT_SEGMENT,
         b"/First 760/Filter/FlateDecode/Length 38",
     );

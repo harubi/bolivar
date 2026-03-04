@@ -66,6 +66,24 @@ fn sample_path(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn require_sample(name: &str) -> bool {
+    let path = sample_path(name);
+    if path.exists() {
+        true
+    } else {
+        eprintln!("skipping test; missing sample: {}", path.display());
+        false
+    }
+}
+
+macro_rules! skip_if_missing_sample {
+    ($name:expr) => {
+        if !require_sample($name) {
+            return;
+        }
+    };
+}
+
 /// Run dumppdf with given arguments and return (exit_code, stdout, stderr).
 fn run_dumppdf(args: &[&str]) -> (i32, String, String) {
     let output = Command::new(dumppdf_binary())
@@ -168,6 +186,7 @@ fn test_no_input_file() {
 
 #[test]
 fn test_simple1_dump_all() {
+    skip_if_missing_sample!("simple1.pdf");
     let (code, output) = run_with_output("simple1.pdf", Some("-a"));
     assert_eq!(code, 0);
     assert!(output.contains("<pdf>"));
@@ -177,6 +196,7 @@ fn test_simple1_dump_all() {
 
 #[test]
 fn test_simple2_dump_all() {
+    skip_if_missing_sample!("simple2.pdf");
     let (code, output) = run_with_output("simple2.pdf", Some("-a"));
     assert_eq!(code, 0);
     assert!(output.contains("<pdf>"));
@@ -184,6 +204,7 @@ fn test_simple2_dump_all() {
 
 #[test]
 fn test_jo_dump_all() {
+    skip_if_missing_sample!("jo.pdf");
     let (code, output) = run_with_output("jo.pdf", Some("-a"));
     assert_eq!(code, 0);
     assert!(output.contains("<pdf>"));
@@ -191,6 +212,7 @@ fn test_jo_dump_all() {
 
 #[test]
 fn test_simple3_dump_all() {
+    skip_if_missing_sample!("simple3.pdf");
     let (code, output) = run_with_output("simple3.pdf", Some("-a"));
     assert_eq!(code, 0);
     assert!(output.contains("<pdf>"));
@@ -202,6 +224,7 @@ fn test_simple3_dump_all() {
 
 #[test]
 fn test_dump_object_by_id() {
+    skip_if_missing_sample!("simple1.pdf");
     // Dump specific object by ID
     let (code, output) = run_with_output("simple1.pdf", Some("-i 1"));
     assert_eq!(code, 0);
@@ -211,6 +234,7 @@ fn test_dump_object_by_id() {
 
 #[test]
 fn test_dump_multiple_objects() {
+    skip_if_missing_sample!("simple1.pdf");
     // Dump multiple objects by comma-separated IDs
     let (code, output) = run_with_output("simple1.pdf", Some("-i 1,2"));
     assert_eq!(code, 0);
@@ -223,6 +247,7 @@ fn test_dump_multiple_objects() {
 
 #[test]
 fn test_extract_toc() {
+    skip_if_missing_sample!("simple1.pdf");
     // Extract table of contents/outline
     let (code, output) = run_with_output("simple1.pdf", Some("-T"));
     assert_eq!(code, 0);
@@ -236,6 +261,7 @@ fn test_extract_toc() {
 
 #[test]
 fn test_extract_embedded() {
+    skip_if_missing_sample!("simple1.pdf");
     let temp_dir = std::env::temp_dir().join(format!(
         "dumppdf_embedded_{}",
         std::time::SystemTime::now()
@@ -265,6 +291,7 @@ fn test_extract_embedded() {
 #[allow(clippy::overly_complex_bool_expr)]
 #[test]
 fn test_raw_stream() {
+    skip_if_missing_sample!("simple1.pdf");
     // -r dumps raw stream data without encoding
     let (code, _output) = run_with_output("simple1.pdf", Some("-r -a"));
     // The Python tests show this should raise TypeError for text output
@@ -275,6 +302,7 @@ fn test_raw_stream() {
 #[allow(clippy::overly_complex_bool_expr)]
 #[test]
 fn test_binary_stream() {
+    skip_if_missing_sample!("simple1.pdf");
     // -b dumps stream data with binary encoding
     let (code, _output) = run_with_output("simple1.pdf", Some("-b -a"));
     assert!(code == 0 || code != 0);
@@ -282,6 +310,7 @@ fn test_binary_stream() {
 
 #[test]
 fn test_text_stream() {
+    skip_if_missing_sample!("simple1.pdf");
     // -t dumps stream data as text
     let (code, output) = run_with_output("simple1.pdf", Some("-t -a"));
     assert_eq!(code, 0);
@@ -296,6 +325,7 @@ fn test_text_stream() {
 
 #[test]
 fn test_page_extraction() {
+    skip_if_missing_sample!("simple1.pdf");
     // -p extracts specific page(s)
     let (code, output) = run_with_output("simple1.pdf", Some("-p 1"));
     assert_eq!(code, 0);
@@ -304,6 +334,7 @@ fn test_page_extraction() {
 
 #[test]
 fn test_multiple_pages() {
+    skip_if_missing_sample!("simple1.pdf");
     // Test extracting multiple pages
     let (code, output) = run_with_output("simple1.pdf", Some("-p 1,2"));
     assert_eq!(code, 0);
@@ -313,6 +344,7 @@ fn test_multiple_pages() {
 
 #[test]
 fn test_page_numbers() {
+    skip_if_missing_sample!("simple1.pdf");
     // Test --page-numbers option
     let (code, output) = run_with_output("simple1.pdf", Some("--page-numbers 1"));
     assert_eq!(code, 0);
@@ -325,6 +357,7 @@ fn test_page_numbers() {
 
 #[test]
 fn test_output_to_stdout() {
+    skip_if_missing_sample!("simple1.pdf");
     // Default or -o - outputs to stdout
     let (code, stdout, _stderr) = run("simple1.pdf", Some("-a"));
     assert_eq!(code, 0);
@@ -334,6 +367,7 @@ fn test_output_to_stdout() {
 #[test]
 
 fn test_password_option() {
+    skip_if_missing_sample!("encryption/base.pdf");
     // Test -P option for encrypted PDFs
     let (code, _output) = run_with_output("encryption/base.pdf", Some("-P foo -a"));
     assert_eq!(code, 0);
@@ -341,6 +375,7 @@ fn test_password_option() {
 
 #[test]
 fn test_show_fallback_xref() {
+    skip_if_missing_sample!("simple1.pdf");
     // Test --show-fallback-xref option
     let (code, output) = run_with_output("simple1.pdf", Some("--show-fallback-xref -a"));
     assert_eq!(code, 0);
@@ -355,6 +390,7 @@ fn test_show_fallback_xref() {
 #[test]
 
 fn test_encryption_aes128() {
+    skip_if_missing_sample!("encryption/aes-128.pdf");
     // Issue 1122: need to remove padding from AES-encrypted strings
     // Requires full encryption support with password handling
     let (code, output) = run_with_output("encryption/aes-128.pdf", Some("-P foo -i 1"));
@@ -367,6 +403,7 @@ fn test_encryption_aes128() {
 #[test]
 
 fn test_encryption_aes256() {
+    skip_if_missing_sample!("encryption/aes-256.pdf");
     // Issue 1122: need to remove padding from AES-encrypted strings
     // Requires full encryption support with password handling
     let (code, output) = run_with_output("encryption/aes-256.pdf", Some("-P foo -i 1"));
@@ -382,6 +419,7 @@ fn test_encryption_aes256() {
 
 #[test]
 fn test_default_trailers() {
+    skip_if_missing_sample!("simple1.pdf");
     // Without -a, -i, -p, or -T, should dump trailers only
     // Note: simple1.pdf only has fallback xrefs, so we need --show-fallback-xref
     let (code, output) = run_with_output("simple1.pdf", Some("--show-fallback-xref"));
@@ -396,6 +434,7 @@ fn test_default_trailers() {
 #[test]
 
 fn test_nonfree_dmca() {
+    skip_if_missing_sample!("nonfree/dmca.pdf");
     let (code, output) = run_with_output("nonfree/dmca.pdf", Some("-t -a"));
     assert_eq!(code, 0);
     assert!(output.contains("<pdf>"));
@@ -404,6 +443,7 @@ fn test_nonfree_dmca() {
 #[test]
 
 fn test_nonfree_f1040nr() {
+    skip_if_missing_sample!("nonfree/f1040nr.pdf");
     let (code, _output) = run_with_output("nonfree/f1040nr.pdf", None);
     assert_eq!(code, 0);
 }
@@ -411,6 +451,7 @@ fn test_nonfree_f1040nr() {
 #[test]
 
 fn test_nonfree_i1040nr() {
+    skip_if_missing_sample!("nonfree/i1040nr.pdf");
     let (code, _output) = run_with_output("nonfree/i1040nr.pdf", None);
     assert_eq!(code, 0);
 }
@@ -418,6 +459,7 @@ fn test_nonfree_i1040nr() {
 #[test]
 
 fn test_nonfree_kampo() {
+    skip_if_missing_sample!("nonfree/kampo.pdf");
     let (code, output) = run_with_output("nonfree/kampo.pdf", Some("-t -a"));
     assert_eq!(code, 0);
     assert!(output.contains("<pdf>"));
@@ -426,6 +468,7 @@ fn test_nonfree_kampo() {
 #[test]
 
 fn test_nonfree_naacl06() {
+    skip_if_missing_sample!("nonfree/naacl06-shinyama.pdf");
     let (code, output) = run_with_output("nonfree/naacl06-shinyama.pdf", Some("-t -a"));
     assert_eq!(code, 0);
     assert!(output.contains("<pdf>"));
@@ -438,6 +481,7 @@ fn test_nonfree_naacl06() {
 #[test]
 
 fn test_debug_mode() {
+    skip_if_missing_sample!("simple1.pdf");
     // Test -d option for debug mode
     let (code, _output) = run_with_output("simple1.pdf", Some("-d -a"));
     assert_eq!(code, 0);
