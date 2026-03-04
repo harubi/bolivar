@@ -829,6 +829,9 @@ def extract_text(
             words,
             line_cluster_key,
             y_tolerance if line_dir_render in ("ttb", "btt") else x_tolerance,
+            preserve_order=bool(
+                kwargs.get("presorted", False) or kwargs.get("use_text_flow", False)
+            ),
         )
 
         out = TextMap(
