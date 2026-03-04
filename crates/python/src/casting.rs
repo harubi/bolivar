@@ -1,7 +1,7 @@
 //! Casting helpers for pdfminer.casting compatibility.
 
 use bolivar_core::casting as core_casting;
-use bolivar_core::pdftypes::PDFObject;
+use bolivar_core::pdftypes::{PDFDict, PDFObject};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PySequence, PySequenceMethods};
 
@@ -25,11 +25,11 @@ fn obj_to_pdf(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<PDFObject> {
         return Some(PDFObject::String(s.into_bytes()));
     }
     if let Ok(dict) = obj.cast::<PyDict>() {
-        let mut map = std::collections::HashMap::new();
+        let mut map = PDFDict::default();
         for (k, v) in dict.iter() {
             let key: String = k.extract().ok()?;
             let value = obj_to_pdf(py, &v)?;
-            map.insert(key, value);
+            map.insert(key.into(), value);
         }
         return Some(PDFObject::Dict(map));
     }

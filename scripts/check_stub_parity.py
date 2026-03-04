@@ -28,7 +28,8 @@ def extract_all_names(path: Path) -> list[str]:
                         return [
                             elt.value
                             for elt in node.value.elts
-                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                            if isinstance(elt, ast.Constant)
+                            and isinstance(elt.value, str)
                         ]
     return []
 

@@ -11,6 +11,7 @@ use bolivar_core::high_level::{
     extract_text_with_document as core_extract_text_with_document,
 };
 use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
+use bolivar_core::pdftypes::PDFDict;
 use bolivar_core::table::{CharObj, EdgeObj, Orientation, PageGeometry};
 use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
@@ -64,7 +65,7 @@ pub fn process_page(
         // This is a workaround since we can't store references across Python calls
         let core_page = bolivar_core::pdfpage::PDFPage {
             pageid,
-            attrs: std::collections::HashMap::new(),
+            attrs: PDFDict::default(),
             label,
             mediabox,
             cropbox,
