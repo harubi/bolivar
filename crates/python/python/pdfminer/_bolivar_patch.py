@@ -3,6 +3,7 @@ import importlib.machinery
 import logging
 import sys
 import threading
+from unicodedata import normalize as normalize_unicode
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Sequence
 from io import BufferedReader, BytesIO
 from operator import index as to_index
@@ -510,6 +511,11 @@ def _apply_patch(module: ModuleType) -> bool:
             text = stream.get(page_index)
             if text is None:
                 return ""
+            unicode_norm = (
+                getattr(pdf, "unicode_norm", None) if pdf is not None else None
+            )
+            if isinstance(unicode_norm, str) and unicode_norm:
+                text = normalize_unicode(unicode_norm, text)
             return text
 
         def _extract_words(self: _PageLike, **kwargs: object) -> _Words:
