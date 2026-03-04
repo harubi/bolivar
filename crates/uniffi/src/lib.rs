@@ -638,7 +638,7 @@ mod tests {
     use super::*;
     use bolivar_core::layout::{LTChar, LTTextLineHorizontal, TextLineElement, TextLineType};
     use bolivar_core::pdfpage::PDFPage;
-    use std::collections::HashMap;
+    use bolivar_core::pdftypes::PDFDict;
     mod common {
         include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/common/mod.rs"));
     }
@@ -647,7 +647,7 @@ mod tests {
     fn page_geometry_uses_cropbox_and_mediabox_from_pdf_page() {
         let page = PDFPage {
             pageid: 1,
-            attrs: HashMap::new(),
+            attrs: PDFDict::default(),
             label: None,
             mediabox: Some([0.0, 0.0, 200.0, 200.0]),
             cropbox: Some([50.0, 50.0, 150.0, 150.0]),
@@ -656,7 +656,7 @@ mod tests {
             artbox: None,
             rotate: 0,
             annots: None,
-            resources: HashMap::new(),
+            resources: PDFDict::default(),
             contents: Vec::new(),
             user_unit: 1.0,
         };
