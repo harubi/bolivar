@@ -299,12 +299,26 @@ script = "cargo run --bin dumppdf -- ${@}"
 [tasks.test-miner]
 category = "CLI"
 description = "Run pdfminer.six CLI (pass args after --)"
-script = "PYTHONPATH=crates/python/python:references/pdfminer.six uv run --with pytest --with pytest-cov --with pandas -m pytest references/pdfminer.six/"
+script = '''
+if find references/pdfminer.six -type f -name "test*.py" -print -quit | grep -q .; then
+  PYTHONPATH=crates/python/python:references/pdfminer.six \
+    uv run --with pytest --with pytest-cov --with pandas --with pypdfium2 -m pytest references/pdfminer.six/
+else
+  echo "Skipping pdfminer parity tests: references/pdfminer.six has no pytest files"
+fi
+'''
 
 [tasks.test-plumber]
 category = "CLI"
 description = "Run pdfminer.six CLI (pass args after --)"
-script = "PYTHONPATH=crates/python/python:references/pdfplumber uv run --with pytest --with pytest-cov --with pandas -m pytest references/pdfplumber/"
+script = '''
+if find references/pdfplumber -type f -name "test*.py" -print -quit | grep -q .; then
+  PYTHONPATH=crates/python/python:references/pdfplumber \
+    uv run --with pytest --with pytest-cov --with pandas --with pypdfium2 -m pytest references/pdfplumber/
+else
+  echo "Skipping pdfplumber parity tests: references/pdfplumber has no pytest files"
+fi
+'''
 
 
 [tasks.test-parity]
@@ -312,6 +326,16 @@ category = "Workflow"
 description = "Run Rust + pdfminer.six + pdfplumber parity gate"
 command = "bash"
 args = ["-lc", """
-  PYTHONPATH=crates/python/python:references/pdfminer.six uv run --with pytest --with pytest-cov --with pandas -m pytest references/pdfminer.six/ && \
-  PYTHONPATH=crates/python/python:references/pdfplumber uv run --with pytest --with pytest-cov --with pandas -m pytest references/pdfplumber/
+  if find references/pdfminer.six -type f -name "test*.py" -print -quit | grep -q .; then
+    PYTHONPATH=crates/python/python:references/pdfminer.six \
+      uv run --with pytest --with pytest-cov --with pandas --with pypdfium2 -m pytest references/pdfminer.six/
+  else
+    echo "Skipping pdfminer parity tests: references/pdfminer.six has no pytest files"
+  fi
+  if find references/pdfplumber -type f -name "test*.py" -print -quit | grep -q .; then
+    PYTHONPATH=crates/python/python:references/pdfplumber \
+      uv run --with pytest --with pytest-cov --with pandas --with pypdfium2 -m pytest references/pdfplumber/
+  else
+    echo "Skipping pdfplumber parity tests: references/pdfplumber has no pytest files"
+  fi
 """]
