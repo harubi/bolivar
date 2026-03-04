@@ -15,7 +15,6 @@ use crate::pdftypes::{PDFDict, PDFName, PDFObject, PDFStream};
 use crate::psparser::{Keyword, PSLiteral, PSToken};
 use bytes::Bytes;
 use rustc_hash::FxHashMap;
-use smol_str::SmolStr;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -1239,7 +1238,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     tounicode_data.as_deref(),
                     ttf_data.as_deref(),
                     subtype == "Type0",
-                    Some(fontid.to_string().into()),
+                    Some(fontid.to_string()),
                     cached_encoding,
                 );
                 self.fontmap

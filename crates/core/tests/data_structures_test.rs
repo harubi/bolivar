@@ -3,14 +3,13 @@
 //! Based on pdfminer.six data_structures.py functionality.
 
 use bolivar_core::data_structures::NumberTree;
-use bolivar_core::pdftypes::PDFObject;
-use std::collections::HashMap;
+use bolivar_core::pdftypes::{PDFDict, PDFObject};
 
 /// Helper to create a dict PDFObject
 fn make_dict(pairs: Vec<(&str, PDFObject)>) -> PDFObject {
-    let mut map = HashMap::new();
+    let mut map = PDFDict::default();
     for (k, v) in pairs {
-        map.insert(k.to_string(), v);
+        map.insert(k.into(), v);
     }
     PDFObject::Dict(map)
 }
@@ -24,11 +23,11 @@ fn test_number_tree_simple_nums() {
         "Nums",
         PDFObject::Array(vec![
             PDFObject::Int(0),
-            PDFObject::Name("a".to_string()),
+            PDFObject::Name("a".into()),
             PDFObject::Int(1),
-            PDFObject::Name("b".to_string()),
+            PDFObject::Name("b".into()),
             PDFObject::Int(2),
-            PDFObject::Name("c".to_string()),
+            PDFObject::Name("c".into()),
         ]),
     )]);
 
@@ -51,11 +50,11 @@ fn test_number_tree_out_of_order() {
         "Nums",
         PDFObject::Array(vec![
             PDFObject::Int(5),
-            PDFObject::Name("five".to_string()),
+            PDFObject::Name("five".into()),
             PDFObject::Int(1),
-            PDFObject::Name("one".to_string()),
+            PDFObject::Name("one".into()),
             PDFObject::Int(3),
-            PDFObject::Name("three".to_string()),
+            PDFObject::Name("three".into()),
         ]),
     )]);
 
@@ -80,9 +79,9 @@ fn test_number_tree_with_kids() {
         "Nums",
         PDFObject::Array(vec![
             PDFObject::Int(0),
-            PDFObject::Name("first".to_string()),
+            PDFObject::Name("first".into()),
             PDFObject::Int(1),
-            PDFObject::Name("second".to_string()),
+            PDFObject::Name("second".into()),
         ]),
     )]);
 
@@ -91,9 +90,9 @@ fn test_number_tree_with_kids() {
         "Nums",
         PDFObject::Array(vec![
             PDFObject::Int(2),
-            PDFObject::Name("third".to_string()),
+            PDFObject::Name("third".into()),
             PDFObject::Int(3),
-            PDFObject::Name("fourth".to_string()),
+            PDFObject::Name("fourth".into()),
         ]),
     )]);
 
@@ -119,12 +118,12 @@ fn test_number_tree_nested_kids() {
     // Three-level deep structure: root -> intermediate -> leaves
     let leaf1 = make_dict(vec![(
         "Nums",
-        PDFObject::Array(vec![PDFObject::Int(0), PDFObject::Name("zero".to_string())]),
+        PDFObject::Array(vec![PDFObject::Int(0), PDFObject::Name("zero".into())]),
     )]);
 
     let leaf2 = make_dict(vec![(
         "Nums",
-        PDFObject::Array(vec![PDFObject::Int(1), PDFObject::Name("one".to_string())]),
+        PDFObject::Array(vec![PDFObject::Int(1), PDFObject::Name("one".into())]),
     )]);
 
     let intermediate = make_dict(vec![("Kids", PDFObject::Array(vec![leaf1, leaf2]))]);
@@ -146,13 +145,13 @@ fn test_number_tree_mixed_nums_and_kids() {
     // Tree with both Nums and Kids at the same level
     let child = make_dict(vec![(
         "Nums",
-        PDFObject::Array(vec![PDFObject::Int(10), PDFObject::Name("ten".to_string())]),
+        PDFObject::Array(vec![PDFObject::Int(10), PDFObject::Name("ten".into())]),
     )]);
 
     let root = make_dict(vec![
         (
             "Nums",
-            PDFObject::Array(vec![PDFObject::Int(0), PDFObject::Name("zero".to_string())]),
+            PDFObject::Array(vec![PDFObject::Int(0), PDFObject::Name("zero".into())]),
         ),
         ("Kids", PDFObject::Array(vec![child])),
     ]);
@@ -213,8 +212,8 @@ fn test_number_tree_invalid_not_dict() {
 fn test_number_tree_with_dict_values() {
     // NumberTree with dictionary values (like page label dicts)
     let label_dict = make_dict(vec![
-        ("S", PDFObject::Name("r".to_string())), // Roman numerals
-        ("St", PDFObject::Int(1)),               // Start at 1
+        ("S", PDFObject::Name("r".into())), // Roman numerals
+        ("St", PDFObject::Int(1)),          // Start at 1
     ]);
 
     let obj = make_dict(vec![(
@@ -244,9 +243,9 @@ fn test_number_tree_with_limits() {
             "Nums",
             PDFObject::Array(vec![
                 PDFObject::Int(0),
-                PDFObject::Name("start".to_string()),
+                PDFObject::Name("start".into()),
                 PDFObject::Int(5),
-                PDFObject::Name("end".to_string()),
+                PDFObject::Name("end".into()),
             ]),
         ),
     ]);

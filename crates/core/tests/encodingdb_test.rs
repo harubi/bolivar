@@ -162,8 +162,8 @@ fn test_get_encoding_with_invalid_differences() {
     // In Python: invalid_differences = [PSLiteral("ubuntu"), PSLiteral("1234")]
     // Invalid differences don't have a valid code position preceding them
     let invalid_differences: Vec<DiffEntry> = vec![
-        DiffEntry::Name("ubuntu".to_string()), // Invalid - no code position before it
-        DiffEntry::Name("1234".to_string()),   // Invalid - no code position before it
+        DiffEntry::Name("ubuntu".into()), // Invalid - no code position before it
+        DiffEntry::Name("1234".into()),   // Invalid - no code position before it
     ];
 
     // Should not panic, invalid differences silently ignored

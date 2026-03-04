@@ -19,7 +19,7 @@ fn test_content_lexer_basic_tokens() {
         tokens,
         vec![
             PSToken::Keyword(Keyword::BT),
-            PSToken::Literal("F1".to_string()),
+            PSToken::Literal("F1".into()),
             PSToken::Int(12),
             PSToken::Keyword(Keyword::Tf),
             PSToken::String(b"Hello".to_vec()),
@@ -61,7 +61,7 @@ fn test_content_lexer_hex_string_odd_digits() {
 fn test_content_lexer_literal_hex_escape() {
     let data = b"/foo#5fbar";
     let tokens = collect_tokens(data);
-    assert_eq!(tokens, vec![PSToken::Literal("foo_bar".to_string())]);
+    assert_eq!(tokens, vec![PSToken::Literal("foo_bar".into())]);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn test_content_lexer_literal_non_utf8_bytes() {
     let data = b"/A#80B";
     let tokens = collect_tokens(data);
     let expected = format!("A{}B", '\u{80}');
-    assert_eq!(tokens, vec![PSToken::Literal(expected)]);
+    assert_eq!(tokens, vec![PSToken::Literal(expected.into())]);
 }
 
 #[test]

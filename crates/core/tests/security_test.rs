@@ -2,12 +2,11 @@
 //!
 //! Port of pdfminer.six encryption tests.
 
-use bolivar_core::pdftypes::PDFObject;
+use bolivar_core::pdftypes::{PDFDict, PDFObject};
 use bolivar_core::security::{
     PDFSecurityHandler, PDFStandardSecurityHandlerV2, PDFStandardSecurityHandlerV5,
     create_security_handler,
 };
-use std::collections::HashMap;
 
 // Test data from tests/fixtures/encryption/rc4-40.pdf
 // V=1, R=2, 40-bit key, password="foo"
@@ -46,15 +45,8 @@ const RC4_128_DOCID: [u8; 16] = [
 ];
 
 /// Helper to build an encrypt dict from test constants.
-fn make_encrypt_dict(
-    v: i64,
-    r: i64,
-    p: i64,
-    length: i64,
-    o: &[u8],
-    u: &[u8],
-) -> HashMap<String, PDFObject> {
-    let mut dict = HashMap::new();
+fn make_encrypt_dict(v: i64, r: i64, p: i64, length: i64, o: &[u8], u: &[u8]) -> PDFDict {
+    let mut dict = PDFDict::default();
     dict.insert("V".into(), PDFObject::Int(v));
     dict.insert("R".into(), PDFObject::Int(r));
     dict.insert("P".into(), PDFObject::Int(p));
@@ -69,7 +61,7 @@ fn make_encrypt_dict(
 
 #[test]
 fn test_create_handler_returns_none_for_empty() {
-    let encrypt: HashMap<String, PDFObject> = HashMap::new();
+    let encrypt: PDFDict = PDFDict::default();
     let id: Vec<Vec<u8>> = vec![];
     let result = create_security_handler(&encrypt, &id, "");
     assert!(result.is_ok());
@@ -78,7 +70,7 @@ fn test_create_handler_returns_none_for_empty() {
 
 #[test]
 fn test_create_handler_errors_on_unsupported_version() {
-    let mut encrypt: HashMap<String, PDFObject> = HashMap::new();
+    let mut encrypt: PDFDict = PDFDict::default();
     encrypt.insert("V".into(), PDFObject::Int(99));
     encrypt.insert("R".into(), PDFObject::Int(99));
     encrypt.insert("O".into(), PDFObject::String(vec![0; 32]));
@@ -345,7 +337,7 @@ fn test_decrypt_stream_uses_decrypt() {
     let handler = PDFStandardSecurityHandlerV2::new(&encrypt, &doc_id, "foo").unwrap();
 
     let data = b"test stream";
-    let attrs: HashMap<String, PDFObject> = HashMap::new();
+    let attrs: PDFDict = PDFDict::default();
     let result1 = handler.decrypt(1, 0, data, Some(&attrs));
     let result2 = handler.decrypt_stream(1, 0, data, &attrs);
 
@@ -432,8 +424,8 @@ fn make_aes256_encrypt_dict(
     u: &[u8],
     oe: &[u8],
     ue: &[u8],
-) -> HashMap<String, PDFObject> {
-    let mut dict = HashMap::new();
+) -> PDFDict {
+    let mut dict = PDFDict::default();
     dict.insert("V".into(), PDFObject::Int(v));
     dict.insert("R".into(), PDFObject::Int(r));
     dict.insert("P".into(), PDFObject::Int(p));
@@ -447,12 +439,12 @@ fn make_aes256_encrypt_dict(
     dict.insert("StmF".into(), PDFObject::Name("StdCF".into()));
 
     // Build CF dict with StdCF filter using AESV3
-    let mut stdcf = HashMap::new();
+    let mut stdcf = PDFDict::default();
     stdcf.insert("CFM".into(), PDFObject::Name("AESV3".into()));
     stdcf.insert("Length".into(), PDFObject::Int(32));
     stdcf.insert("AuthEvent".into(), PDFObject::Name("DocOpen".into()));
 
-    let mut cf = HashMap::new();
+    let mut cf = PDFDict::default();
     cf.insert("StdCF".into(), PDFObject::Dict(stdcf));
 
     dict.insert("CF".into(), PDFObject::Dict(cf));

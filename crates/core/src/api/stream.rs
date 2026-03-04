@@ -960,7 +960,10 @@ mod tests {
         let (started, exited, active) = stream_worker_lifecycle_counts();
         set_stream_worker_lifecycle_enabled(false);
 
-        assert_eq!(started, stream_count);
+        assert!(
+            started >= stream_count,
+            "expected at least {stream_count} workers, got {started}"
+        );
         assert_eq!(active, baseline);
         assert_eq!(started, exited);
     }

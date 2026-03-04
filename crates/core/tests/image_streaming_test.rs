@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::io::Write;
 use std::time::SystemTime;
 
 use bolivar_core::image::ImageWriter;
-use bolivar_core::pdftypes::{PDFObject, PDFStream};
+use bolivar_core::pdftypes::{PDFDict, PDFObject, PDFStream};
 use flate2::{Compression, write::ZlibEncoder};
 
 fn make_temp_dir(prefix: &str) -> std::path::PathBuf {
@@ -25,18 +24,12 @@ fn zlib_compress(data: &[u8]) -> Vec<u8> {
 
 #[test]
 fn test_image_decode_rejects_oversize() {
-    let mut attrs = HashMap::new();
-    attrs.insert(
-        "Filter".to_string(),
-        PDFObject::Name("FlateDecode".to_string()),
-    );
-    attrs.insert("Width".to_string(), PDFObject::Int(2));
-    attrs.insert("Height".to_string(), PDFObject::Int(2));
-    attrs.insert("BitsPerComponent".to_string(), PDFObject::Int(8));
-    attrs.insert(
-        "ColorSpace".to_string(),
-        PDFObject::Name("DeviceGray".to_string()),
-    );
+    let mut attrs = PDFDict::default();
+    attrs.insert("Filter".into(), PDFObject::Name("FlateDecode".into()));
+    attrs.insert("Width".into(), PDFObject::Int(2));
+    attrs.insert("Height".into(), PDFObject::Int(2));
+    attrs.insert("BitsPerComponent".into(), PDFObject::Int(8));
+    attrs.insert("ColorSpace".into(), PDFObject::Name("DeviceGray".into()));
 
     // 2x2 DeviceGray expects 4 bytes, but we compress 10 bytes.
     let raw = zlib_compress(&[0u8; 10]);
@@ -49,7 +42,7 @@ fn test_image_decode_rejects_oversize() {
         &stream,
         (Some(2), Some(2)),
         8,
-        &["DeviceGray".to_string()],
+        &["DeviceGray".into()],
     );
 
     let _ = std::fs::remove_dir_all(&outdir);

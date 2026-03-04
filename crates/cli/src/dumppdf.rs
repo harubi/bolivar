@@ -7,7 +7,7 @@
 use bolivar_core::error::Result;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdfpage::PDFPage;
-use bolivar_core::pdftypes::{PDFDict, PDFName, PDFObject};
+use bolivar_core::pdftypes::{PDFDict, PDFObject};
 use clap::{ArgAction, ArgGroup, Parser};
 use memmap2::Mmap;
 use std::collections::{HashMap, HashSet};

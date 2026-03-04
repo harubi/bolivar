@@ -567,19 +567,15 @@ fn test_resource_manager_get_colorspace_unknown() {
 /// Test: Font caching - same objid returns cached font.
 #[test]
 fn test_resource_manager_font_caching() {
-    use bolivar_core::pdftypes::PDFObject;
-    use std::collections::HashMap;
+    use bolivar_core::pdftypes::{PDFDict, PDFObject};
 
     let mut rsrcmgr = PDFResourceManager::new();
 
     // Create a mock font spec
-    let mut spec = HashMap::new();
-    spec.insert("Type".to_string(), PDFObject::Name("Font".to_string()));
-    spec.insert("Subtype".to_string(), PDFObject::Name("Type1".to_string()));
-    spec.insert(
-        "BaseFont".to_string(),
-        PDFObject::Name("Helvetica".to_string()),
-    );
+    let mut spec = PDFDict::default();
+    spec.insert("Type".into(), PDFObject::Name("Font".into()));
+    spec.insert("Subtype".into(), PDFObject::Name("Type1".into()));
+    spec.insert("BaseFont".into(), PDFObject::Name("Helvetica".into()));
 
     // Get font with objid 1
     let objid = 1u64;
@@ -594,18 +590,14 @@ fn test_resource_manager_font_caching() {
 /// Test: Font caching - None objid doesn't cache.
 #[test]
 fn test_resource_manager_font_no_cache_without_objid() {
-    use bolivar_core::pdftypes::PDFObject;
-    use std::collections::HashMap;
+    use bolivar_core::pdftypes::{PDFDict, PDFObject};
 
     let mut rsrcmgr = PDFResourceManager::new();
 
-    let mut spec = HashMap::new();
-    spec.insert("Type".to_string(), PDFObject::Name("Font".to_string()));
-    spec.insert("Subtype".to_string(), PDFObject::Name("Type1".to_string()));
-    spec.insert(
-        "BaseFont".to_string(),
-        PDFObject::Name("Helvetica".to_string()),
-    );
+    let mut spec = PDFDict::default();
+    spec.insert("Type".into(), PDFObject::Name("Font".into()));
+    spec.insert("Subtype".into(), PDFObject::Name("Type1".into()));
+    spec.insert("BaseFont".into(), PDFObject::Name("Helvetica".into()));
 
     // Get font without objid
     let font_id_1 = rsrcmgr.get_font(None, &spec);
@@ -619,18 +611,14 @@ fn test_resource_manager_font_no_cache_without_objid() {
 /// Test: Font caching disabled - same objid creates new font each time.
 #[test]
 fn test_resource_manager_font_caching_disabled() {
-    use bolivar_core::pdftypes::PDFObject;
-    use std::collections::HashMap;
+    use bolivar_core::pdftypes::{PDFDict, PDFObject};
 
     let mut rsrcmgr = PDFResourceManager::with_caching(false);
 
-    let mut spec = HashMap::new();
-    spec.insert("Type".to_string(), PDFObject::Name("Font".to_string()));
-    spec.insert("Subtype".to_string(), PDFObject::Name("Type1".to_string()));
-    spec.insert(
-        "BaseFont".to_string(),
-        PDFObject::Name("Helvetica".to_string()),
-    );
+    let mut spec = PDFDict::default();
+    spec.insert("Type".into(), PDFObject::Name("Font".into()));
+    spec.insert("Subtype".into(), PDFObject::Name("Type1".into()));
+    spec.insert("BaseFont".into(), PDFObject::Name("Helvetica".into()));
 
     let objid = 1u64;
     let font_id_1 = rsrcmgr.get_font(Some(objid), &spec);
@@ -1982,7 +1970,7 @@ fn test_interpreter_bdc_calls_begin_tag_with_props() {
 
     // BDC with tag name and properties dict
     let tag = PSLiteral::new("P");
-    let props = std::collections::HashMap::new(); // Empty props for now, just testing it's passed
+    let props = bolivar_core::pdfdevice::PDFStackT::default(); // Empty props for now, just testing it's passed
     interp.do_BDC(&tag, &props);
 
     assert_eq!(device.tags_begun.len(), 1);

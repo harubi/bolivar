@@ -4,10 +4,12 @@
 
 use super::catalog::PDFDocument;
 use crate::error::{PdfError, Result};
-use crate::model::objects::{PDFDict, PDFName, PDFObject};
-use std::collections::{HashMap, HashSet};
+use crate::model::objects::{PDFDict, PDFObject};
+use std::collections::HashSet;
 use std::sync::Arc;
 
+#[cfg(test)]
+use std::collections::HashMap;
 #[cfg(test)]
 use std::sync::{Mutex, OnceLock};
 
@@ -591,23 +593,22 @@ impl<'a> Iterator for PageIterator<'a> {
 #[cfg(test)]
 mod tests {
     use super::InheritedNode;
-    use crate::model::objects::PDFObject;
-    use std::collections::HashMap;
+    use crate::model::objects::{PDFDict, PDFObject};
 
     #[test]
     fn test_inherited_node_apply_to_fills_missing() {
-        let mut root = HashMap::new();
-        root.insert("MediaBox".to_string(), PDFObject::Name("root".into()));
-        root.insert("Rotate".to_string(), PDFObject::Int(90));
+        let mut root = PDFDict::default();
+        root.insert("MediaBox".into(), PDFObject::Name("root".into()));
+        root.insert("Rotate".into(), PDFObject::Int(90));
 
-        let mut mid = HashMap::new();
-        mid.insert("Resources".to_string(), PDFObject::Name("mid".into()));
+        let mut mid = PDFDict::default();
+        mid.insert("Resources".into(), PDFObject::Name("mid".into()));
 
         let root_node = InheritedNode::from_dict(None, &root);
         let mid_node = InheritedNode::from_dict(Some(root_node), &mid);
 
-        let mut leaf = HashMap::new();
-        leaf.insert("Resources".to_string(), PDFObject::Name("leaf".into()));
+        let mut leaf = PDFDict::default();
+        leaf.insert("Resources".into(), PDFObject::Name("leaf".into()));
 
         mid_node.apply_to(&mut leaf);
 

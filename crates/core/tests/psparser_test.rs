@@ -36,10 +36,10 @@ fn expected_tokens() -> Vec<(usize, PSToken)> {
         (16, Keyword(Kw::DoubleQuote)),
         (19, Keyword(Kw::Unknown(b"@".to_vec()))),
         (21, Keyword(Kw::Unknown(b"#".to_vec()))),
-        (23, Literal("a".to_string())),
-        (25, Literal("BCD".to_string())),
-        (30, Literal("Some_Name".to_string())),
-        (41, Literal("foo_xbaa".to_string())), // #5f = '_', #xb is invalid so 'x' stays
+        (23, Literal("a".into())),
+        (25, Literal("BCD".into())),
+        (30, Literal("Some_Name".into())),
+        (41, Literal("foo_xbaa".into())), // #5f = '_', #xb is invalid so 'x' stays
         (54, Int(0)),
         (56, Int(1)),
         (59, Int(-2)),
@@ -59,8 +59,8 @@ fn expected_tokens() -> Vec<(usize, PSToken)> {
         (199, String(b"@@ ".to_vec())),      // <404020> with spaces
         (211, String(b"\xab\xcd\x00\x12\x34\x05".to_vec())), // hex with odd digit
         (226, Keyword(Kw::Unknown(b"func".to_vec()))),
-        (230, Literal("a".to_string())),
-        (232, Literal("b".to_string())),
+        (230, Literal("a".into())),
+        (232, Literal("b".into())),
         (234, Keyword(Kw::BraceOpen)),
         (235, String(b"c".to_vec())),
         (238, Keyword(Kw::Unknown(b"do*".to_vec()))),
@@ -72,7 +72,7 @@ fn expected_tokens() -> Vec<(usize, PSToken)> {
         (254, Keyword(Kw::Unknown(b"!".to_vec()))),
         (256, Keyword(Kw::ArrayEnd)),
         (258, Keyword(Kw::DictStart)),
-        (261, Literal("foo".to_string())),
+        (261, Literal("foo".into())),
         (266, String(b"bar".to_vec())),
         (272, Keyword(Kw::DictEnd)),
     ]
@@ -120,12 +120,11 @@ fn test_tokenization() {
 /// Matches Python's OBJS list exactly (27 objects)
 fn expected_objects() -> Vec<(usize, PSToken)> {
     use PSToken::*;
-    use std::collections::HashMap;
     vec![
-        (23, Literal("a".to_string())),
-        (25, Literal("BCD".to_string())),
-        (30, Literal("Some_Name".to_string())),
-        (41, Literal("foo_xbaa".to_string())),
+        (23, Literal("a".into())),
+        (25, Literal("BCD".into())),
+        (30, Literal("Some_Name".into())),
+        (41, Literal("foo_xbaa".into())),
         (54, Int(0)),
         (56, Int(1)),
         (59, Int(-2)),
@@ -144,8 +143,8 @@ fn expected_objects() -> Vec<(usize, PSToken)> {
         (194, String(b" ".to_vec())),
         (199, String(b"@@ ".to_vec())),
         (211, String(b"\xab\xcd\x00\x12\x34\x05".to_vec())),
-        (230, Literal("a".to_string())),
-        (232, Literal("b".to_string())),
+        (230, Literal("a".into())),
+        (232, Literal("b".into())),
         // Proc {(c)do*} becomes Array([String(b"c")])
         (234, Array(vec![String(b"c".to_vec())])),
         // Array [ 1 (z) ! ] - ! is a keyword that's not pushed as object
@@ -154,8 +153,8 @@ fn expected_objects() -> Vec<(usize, PSToken)> {
         (
             258,
             Dict({
-                let mut d = HashMap::new();
-                d.insert("foo".to_string(), String(b"bar".to_vec()));
+                let mut d = rustc_hash::FxHashMap::default();
+                d.insert("foo".into(), String(b"bar".to_vec()));
                 d
             }),
         ),

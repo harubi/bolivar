@@ -12,7 +12,7 @@ use super::page::PageIndex;
 use super::security::{PDFSecurityHandler, create_security_handler};
 use crate::error::{PdfError, Result};
 use crate::font::encoding::{DiffEntry, EncodingDB};
-use crate::model::objects::{PDFDict, PDFName, PDFObject};
+use crate::model::objects::{PDFDict, PDFObject};
 use crate::parser::pdf_parser::PDFParser;
 use crate::simd::U8_LANES;
 use bytes::Bytes;
@@ -2100,7 +2100,7 @@ impl<'a> PageLabels<'a> {
         self.style = dict
             .get("S")
             .and_then(|s| s.as_name().ok())
-            .map(|s| s.to_string());
+            .map(|s| s.into());
 
         // Get prefix
         self.prefix = dict
@@ -2427,7 +2427,7 @@ mod tests {
 
         let pdf = build_minimal_pdf_with_pages(1);
         let doc = PDFDocument::new(pdf, "").unwrap();
-        let encoding = PDFObject::Name("WinAnsiEncoding".to_string());
+        let encoding = PDFObject::Name("WinAnsiEncoding".into());
 
         let a = doc.get_or_build_font_encoding(42, &encoding).unwrap();
         let b = doc.get_or_build_font_encoding(42, &encoding).unwrap();

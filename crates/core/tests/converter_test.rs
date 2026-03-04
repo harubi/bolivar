@@ -14,9 +14,8 @@ use bolivar_core::layout::{
 use bolivar_core::pdfcolor::PDFColorSpace;
 use bolivar_core::pdffont::{FontWidthDict, PDFFont};
 use bolivar_core::pdfstate::PDFGraphicState;
-use bolivar_core::pdftypes::{PDFObject, PDFStream};
+use bolivar_core::pdftypes::{PDFDict, PDFObject, PDFStream};
 use bolivar_core::utils::MATRIX_IDENTITY;
-use std::collections::HashMap;
 use std::io::Cursor;
 
 fn sample_rtl_page() -> LTPage {
@@ -478,7 +477,7 @@ mod layout_analyzer_tests {
 
     impl TestFont {
         fn new() -> Self {
-            let mut widths = FontWidthDict::new();
+            let mut widths = FontWidthDict::default();
             // Standard ASCII character widths (approximate for Courier-like)
             for cid in 32..127 {
                 widths.insert(cid, Some(600.0));
@@ -633,14 +632,11 @@ mod layout_analyzer_tests {
         analyzer.begin_figure("Fig1", (10.0, 10.0, 100.0, 100.0), MATRIX_IDENTITY);
 
         // Create a minimal image stream
-        let mut attrs = HashMap::new();
-        attrs.insert("Width".to_string(), PDFObject::Int(100));
-        attrs.insert("Height".to_string(), PDFObject::Int(50));
-        attrs.insert("BitsPerComponent".to_string(), PDFObject::Int(8));
-        attrs.insert(
-            "ColorSpace".to_string(),
-            PDFObject::Name("DeviceRGB".to_string()),
-        );
+        let mut attrs = PDFDict::default();
+        attrs.insert("Width".into(), PDFObject::Int(100));
+        attrs.insert("Height".into(), PDFObject::Int(50));
+        attrs.insert("BitsPerComponent".into(), PDFObject::Int(8));
+        attrs.insert("ColorSpace".into(), PDFObject::Name("DeviceRGB".into()));
         let stream = PDFStream::new(attrs, vec![]);
 
         analyzer.render_image("test_image", &stream);
@@ -656,9 +652,9 @@ mod layout_analyzer_tests {
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
         // Note: NOT in a figure
 
-        let mut attrs = HashMap::new();
-        attrs.insert("Width".to_string(), PDFObject::Int(100));
-        attrs.insert("Height".to_string(), PDFObject::Int(50));
+        let mut attrs = PDFDict::default();
+        attrs.insert("Width".into(), PDFObject::Int(100));
+        attrs.insert("Height".into(), PDFObject::Int(50));
         let stream = PDFStream::new(attrs, vec![]);
 
         analyzer.render_image("test_image", &stream);
@@ -674,11 +670,11 @@ mod layout_analyzer_tests {
         analyzer.begin_page((0.0, 0.0, 612.0, 792.0), MATRIX_IDENTITY);
         analyzer.begin_figure("Fig1", (10.0, 10.0, 100.0, 100.0), MATRIX_IDENTITY);
 
-        let mut attrs = HashMap::new();
-        attrs.insert("Width".to_string(), PDFObject::Int(100));
-        attrs.insert("Height".to_string(), PDFObject::Int(50));
-        attrs.insert("ImageMask".to_string(), PDFObject::Bool(true));
-        attrs.insert("BitsPerComponent".to_string(), PDFObject::Int(1));
+        let mut attrs = PDFDict::default();
+        attrs.insert("Width".into(), PDFObject::Int(100));
+        attrs.insert("Height".into(), PDFObject::Int(50));
+        attrs.insert("ImageMask".into(), PDFObject::Bool(true));
+        attrs.insert("BitsPerComponent".into(), PDFObject::Int(1));
         let stream = PDFStream::new(attrs, vec![]);
 
         analyzer.render_image("mask_image", &stream);
@@ -1101,8 +1097,8 @@ mod marked_content_tests {
 
         // Begin marked content with MCID
         let tag = PSLiteral::new("Span");
-        let mut props = PDFStackT::new();
-        props.insert("MCID".to_string(), PDFStackValue::Int(42));
+        let mut props = PDFStackT::default();
+        props.insert("MCID".into(), PDFStackValue::Int(42));
         aggregator.begin_tag(&tag, Some(&props));
 
         // Should now have MCID 42
@@ -1123,15 +1119,15 @@ mod marked_content_tests {
 
         // Outer marked content with MCID 1
         let tag_outer = PSLiteral::new("P");
-        let mut props_outer = PDFStackT::new();
-        props_outer.insert("MCID".to_string(), PDFStackValue::Int(1));
+        let mut props_outer = PDFStackT::default();
+        props_outer.insert("MCID".into(), PDFStackValue::Int(1));
         aggregator.begin_tag(&tag_outer, Some(&props_outer));
         assert_eq!(aggregator.current_mcid(), Some(1));
 
         // Inner marked content with MCID 2
         let tag_inner = PSLiteral::new("Span");
-        let mut props_inner = PDFStackT::new();
-        props_inner.insert("MCID".to_string(), PDFStackValue::Int(2));
+        let mut props_inner = PDFStackT::default();
+        props_inner.insert("MCID".into(), PDFStackValue::Int(2));
         aggregator.begin_tag(&tag_inner, Some(&props_inner));
         assert_eq!(aggregator.current_mcid(), Some(2));
 
@@ -1174,8 +1170,8 @@ mod marked_content_tests {
 
         // Begin marked content with MCID
         let tag = PSLiteral::new("P");
-        let mut props = PDFStackT::new();
-        props.insert("MCID".to_string(), PDFStackValue::Int(42));
+        let mut props = PDFStackT::default();
+        props.insert("MCID".into(), PDFStackValue::Int(42));
         analyzer.begin_tag(&tag, Some(&props));
 
         // Verify current_mcid returns 42
@@ -1219,8 +1215,8 @@ mod marked_content_tests {
 
         // Begin marked content with MCID
         let tag = PSLiteral::new("P");
-        let mut props = PDFStackT::new();
-        props.insert("MCID".to_string(), PDFStackValue::Int(42));
+        let mut props = PDFStackT::default();
+        props.insert("MCID".into(), PDFStackValue::Int(42));
         aggregator.begin_tag(&tag, Some(&props));
 
         // Create text state with minimal config

@@ -4,7 +4,7 @@
 
 use super::lexer::{ContentLexer, Keyword, PSBaseParser, PSToken, name_from_bytes};
 use crate::error::{PdfError, Result};
-use crate::pdftypes::{PDFDict, PDFName, PDFObjRef, PDFObject};
+use crate::pdftypes::{PDFObjRef, PDFObject};
 use rustc_hash::FxHashMap;
 
 /// PDF Parser - parses PDF object syntax

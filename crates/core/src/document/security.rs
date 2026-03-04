@@ -5,7 +5,7 @@
 use super::saslprep::saslprep;
 use crate::codec::aes::{aes_cbc_decrypt, aes_cbc_encrypt, unpad_aes};
 use crate::codec::arcfour::Arcfour;
-use crate::model::objects::{PDFDict, PDFObject};
+use crate::model::objects::PDFDict;
 use crate::{PdfError, Result};
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
