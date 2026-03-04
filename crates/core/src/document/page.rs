@@ -160,10 +160,7 @@ impl PDFPage {
     ///
     /// Contents can be a single stream or an array of streams.
     /// Returns decoded data from all content streams.
-    pub(crate) fn parse_contents(
-        attrs: &PDFDict,
-        doc: &PDFDocument,
-    ) -> Vec<Vec<u8>> {
+    pub(crate) fn parse_contents(attrs: &PDFDict, doc: &PDFDocument) -> Vec<Vec<u8>> {
         let contents_obj = match attrs.get("Contents") {
             Some(obj) => obj,
             None => return Vec::new(),
@@ -207,11 +204,7 @@ impl PDFPage {
         }
     }
 
-    fn parse_box(
-        attrs: &PDFDict,
-        key: &str,
-        doc: &PDFDocument,
-    ) -> Option<[f64; 4]> {
+    fn parse_box(attrs: &PDFDict, key: &str, doc: &PDFDocument) -> Option<[f64; 4]> {
         let obj = attrs.get(key)?;
         Self::parse_box_obj(obj, doc)
     }
@@ -241,10 +234,7 @@ struct InheritedNode {
 }
 
 impl InheritedNode {
-    fn from_dict(
-        parent: Option<Arc<InheritedNode>>,
-        dict: &PDFDict,
-    ) -> Arc<Self> {
+    fn from_dict(parent: Option<Arc<InheritedNode>>, dict: &PDFDict) -> Arc<Self> {
         Arc::new(Self {
             parent,
             resources: dict.get("Resources").cloned(),

@@ -1,10 +1,10 @@
-use std::alloc::System;
-use std::hint::black_box;
-use stats_alloc::StatsAlloc;
-use stats_alloc_helper::{LockedAllocator, memory_measured};
 use bolivar_core::document::PDFDocument;
 use bolivar_core::high_level::{ExtractOptions, extract_text_with_document};
 use bolivar_core::layout::LAParams;
+use stats_alloc::StatsAlloc;
+use stats_alloc_helper::{LockedAllocator, memory_measured};
+use std::alloc::System;
+use std::hint::black_box;
 
 #[global_allocator]
 static GLOBAL: LockedAllocator<System> = LockedAllocator::new(StatsAlloc::system());

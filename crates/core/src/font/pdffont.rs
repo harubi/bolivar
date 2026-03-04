@@ -87,11 +87,7 @@ pub struct MockPdfFont {
 
 impl MockPdfFont {
     /// Create a new mock font.
-    pub const fn new(
-        descriptor: PDFDict,
-        widths: FontWidthDict,
-        default_width: f64,
-    ) -> Self {
+    pub const fn new(descriptor: PDFDict, widths: FontWidthDict, default_width: f64) -> Self {
         Self {
             descriptor,
             widths,
@@ -465,10 +461,7 @@ impl PDFCIDFont {
 
     /// Parse vertical displacement info from DW2 and W2.
     /// Returns (default_disp, disps_map)
-    fn parse_vertical_disps(
-        spec: &PDFDict,
-        is_vertical: bool,
-    ) -> VerticalDispData {
+    fn parse_vertical_disps(spec: &PDFDict, is_vertical: bool) -> VerticalDispData {
         if !is_vertical {
             // Horizontal font - use 0 displacement
             return ((None, 0.0), FxHashMap::default());
@@ -684,14 +677,16 @@ impl PDFCIDFont {
             Some(name) if CMapDB::is_cjk_2byte_cmap(name) => {
                 let mut cmap = CMap::new();
                 cmap.set_vertical(CMapDB::is_vertical(name));
-                cmap.attrs.insert("CMapName".to_string(), name.to_string().into());
+                cmap.attrs
+                    .insert("CMapName".to_string(), name.to_string().into());
                 cmap.add_cid_range(&[0x00, 0x00], &[0xFF, 0xFF], 0);
                 DynCMap::CMap(Box::new(cmap))
             }
             Some(name) => {
                 let mut cmap = CMap::new();
                 cmap.set_vertical(CMapDB::is_vertical(name));
-                cmap.attrs.insert("CMapName".to_string(), name.to_string().into());
+                cmap.attrs
+                    .insert("CMapName".to_string(), name.to_string().into());
                 DynCMap::CMap(Box::new(cmap))
             }
             None => DynCMap::CMap(Box::default()),

@@ -269,10 +269,7 @@ fn expected_image_len_uncapped(
     w.checked_mul(h)?.checked_mul(channels)
 }
 
-fn predictor_overhead(
-    filters: &[(String, Option<PDFDict>)],
-    height: i32,
-) -> usize {
+fn predictor_overhead(filters: &[(String, Option<PDFDict>)], height: i32) -> usize {
     if height <= 0 {
         return 0;
     }
