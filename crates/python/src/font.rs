@@ -13,9 +13,9 @@ use bolivar_core::font::encoding::{DiffEntry, name2unicode as core_name2unicode}
 use bolivar_core::font::latin_enc::ENCODING as LATIN_ENCODING;
 use bolivar_core::font::metrics::FONT_METRICS;
 use bolivar_core::font::pdffont::{
-    MockPdfFont, PDFCIDFont, PDFFont as CorePDFFont, get_widths as core_get_widths,
+    FontWidthDict, MockPdfFont, PDFCIDFont, PDFFont as CorePDFFont, get_widths as core_get_widths,
 };
-use bolivar_core::pdftypes::PDFObject;
+use bolivar_core::pdftypes::{PDFDict, PDFObject};
 use flate2::read::GzDecoder;
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{PyKeyError, PyTypeError, PyValueError};
@@ -481,7 +481,7 @@ impl PyEncodingDB {
                     if let Ok(code) = item.extract::<u8>() {
                         entries.push(DiffEntry::Code(code));
                     } else if let Some(name) = psliteral_name(&item) {
-                        entries.push(DiffEntry::Name(name));
+                        entries.push(DiffEntry::Name(name.into()));
                     }
                 }
             }
@@ -568,7 +568,7 @@ impl PyPDFFont {
         let widths_dict = widths
             .cast::<PyDict>()
             .map_err(|_| PyTypeError::new_err("widths must be a dict"))?;
-        let mut width_map: HashMap<u32, Option<f64>> = HashMap::new();
+        let mut width_map = FontWidthDict::default();
         for (k, v) in widths_dict.iter() {
             let key = if let Ok(i) = k.extract::<u32>() {
                 Some(i)
@@ -585,7 +585,7 @@ impl PyPDFFont {
                 }
             }
         }
-        let descriptor_map: HashMap<String, PDFObject> = HashMap::new();
+        let descriptor_map: PDFDict = PDFDict::default();
         Ok(Self {
             inner: MockPdfFont::new(descriptor_map, width_map, default_width),
         })
@@ -620,11 +620,11 @@ impl PyPDFCIDFont {
         let spec_dict = spec
             .cast::<PyDict>()
             .map_err(|_| PyTypeError::new_err("spec must be a dict"))?;
-        let mut map = HashMap::new();
+        let mut map = PDFDict::default();
         for (k, v) in spec_dict.iter() {
             let key: String = k.extract()?;
             let value = py_to_pdf_object(py, &v)?;
-            map.insert(key, value);
+            map.insert(key.into(), value);
         }
         Ok(Self {
             inner: PDFCIDFont::new(&map, None),

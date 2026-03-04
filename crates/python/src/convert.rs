@@ -5,7 +5,7 @@
 
 use bolivar_core::parser::PSToken;
 use bolivar_core::pdfdocument::PDFDocument;
-use bolivar_core::pdftypes::{PDFObject, PDFStream};
+use bolivar_core::pdftypes::{PDFDict, PDFObject, PDFStream};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PySequenceMethods};
@@ -45,9 +45,9 @@ pub fn pdf_object_to_py_internal(
         PDFObject::Real(f) => Ok(f.into_pyobject(py)?.to_owned().into_any().unbind()),
         PDFObject::Name(n) => {
             if name_as_psliteral {
-                name_to_psliteral(py, n)
+                name_to_psliteral(py, n.as_str())
             } else {
-                Ok(n.clone().into_pyobject(py)?.to_owned().into_any().unbind())
+                Ok(n.as_str().into_pyobject(py)?.to_owned().into_any().unbind())
             }
         }
         PDFObject::String(s) => {
@@ -73,7 +73,7 @@ pub fn pdf_object_to_py_internal(
             let py_dict = PyDict::new(py);
             for (k, v) in dict.iter() {
                 py_dict.set_item(
-                    k,
+                    k.as_str(),
                     pdf_object_to_py_internal(
                         py,
                         v,
@@ -202,17 +202,17 @@ pub fn py_to_pdf_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFO
         return Ok(PDFObject::String(bytes.as_bytes().to_vec()));
     }
     if let Some(name) = psliteral_name(obj) {
-        return Ok(PDFObject::Name(name));
+        return Ok(PDFObject::Name(name.into()));
     }
     if let Ok(s) = obj.extract::<String>() {
-        return Ok(PDFObject::Name(s));
+        return Ok(PDFObject::Name(s.into()));
     }
     if let Ok(dict) = obj.cast::<PyDict>() {
-        let mut map = HashMap::new();
+        let mut map = PDFDict::default();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;
             let value = py_to_pdf_object(py, &v)?;
-            map.insert(key, value);
+            map.insert(key.into(), value);
         }
         return Ok(PDFObject::Dict(map));
     }
@@ -281,7 +281,7 @@ pub fn pstoken_to_py(py: Python<'_>, token: PSToken) -> PyResult<Py<PyAny>> {
         PSToken::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any().unbind()),
         PSToken::Int(i) => Ok(i.into_pyobject(py)?.to_owned().into_any().unbind()),
         PSToken::Real(f) => Ok(f.into_pyobject(py)?.to_owned().into_any().unbind()),
-        PSToken::Literal(name) => intern_psliteral(py, name.into_bytes()),
+        PSToken::Literal(name) => intern_psliteral(py, name.as_bytes().to_vec()),
         PSToken::Keyword(kw) => intern_pskeyword(py, kw.as_bytes().to_vec()),
         PSToken::String(bytes) => Ok(PyBytes::new(py, &bytes).into_any().unbind()),
         PSToken::Array(items) => {
@@ -367,7 +367,7 @@ impl PyPDFStream {
                 resolve_refs,
                 py_doc,
             )?;
-            py_dict.set_item(k, py_val)?;
+            py_dict.set_item(k.as_str(), py_val)?;
         }
         Ok(Self {
             stream: stream.clone(),

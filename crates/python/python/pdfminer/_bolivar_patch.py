@@ -444,7 +444,9 @@ def _apply_patch(module: ModuleType) -> bool:
                     page_index,
                     _page_geom(page),
                     table_settings=table_settings,
-                    laparams=(getattr(pdf, "laparams", None) if pdf is not None else None),
+                    laparams=(
+                        getattr(pdf, "laparams", None) if pdf is not None else None
+                    ),
                     caching=getattr(doc, "caching", True),
                 )
                 return cast("_Tables", tables)
@@ -501,10 +503,7 @@ def _apply_patch(module: ModuleType) -> bool:
                 return cast("str", _orig_extract_text(self, **kwargs))
             base_geoms = _get_base_geometries(pdf, doc)
             geoms = _build_geometries(doc, page_index, self, base=base_geoms)
-            pages = getattr(pdf, "pages", None) if pdf is not None else None
-            page_numbers = (
-                list(getattr(pages, "_page_numbers", [])) if pages is not None else None
-            )
+            page_numbers = [page_index]
             stream = _get_text_stream(
                 pdf, doc, text_kwargs or None, geoms, page_numbers
             )
@@ -532,10 +531,7 @@ def _apply_patch(module: ModuleType) -> bool:
                 return cast("_Words", _orig_extract_words(self, **kwargs))
             base_geoms = _get_base_geometries(pdf, doc)
             geoms = _build_geometries(doc, page_index, self, base=base_geoms)
-            pages = getattr(pdf, "pages", None) if pdf is not None else None
-            page_numbers = (
-                list(getattr(pages, "_page_numbers", [])) if pages is not None else None
-            )
+            page_numbers = [page_index]
             stream = _get_words_stream(
                 pdf, doc, word_kwargs or None, geoms, page_numbers
             )

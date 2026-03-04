@@ -227,6 +227,7 @@ def test_extract_tables_settings_affects_output():
     assert t_tol
     assert t[-1] != t_tol[-1]
 
+
 def test_ltpage_iter_returns_layout_items():
     """LTPage can be iterated to get layout items"""
     from bolivar import PDFDocument, LAParams, process_page

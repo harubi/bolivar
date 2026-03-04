@@ -112,7 +112,9 @@ def test_page_init_prefers_direct_boxes_without_attrs(monkeypatch):
 
         @property
         def attrs(self):
-            raise AssertionError("Page.__init__ should not touch attrs for direct boxes")
+            raise AssertionError(
+                "Page.__init__ should not touch attrs for direct boxes"
+            )
 
     page = pdfplumber.page.Page(
         pdf=object(),
@@ -232,7 +234,9 @@ def test_extract_tables_calls_indexed_single_page_backend(monkeypatch):
         )
         return [[["indexed"]]]
 
-    monkeypatch.setattr(native_api, "_extract_tables_stream", _fake_extract_tables_stream)
+    monkeypatch.setattr(
+        native_api, "_extract_tables_stream", _fake_extract_tables_stream
+    )
     monkeypatch.setattr(
         native_api,
         "_extract_tables_for_page_indexed",
@@ -247,7 +251,9 @@ def test_extract_tables_calls_indexed_single_page_backend(monkeypatch):
     )
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
-        expected_page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
+        expected_page_index = getattr(
+            page.page_obj, "_page_index", page.page_number - 1
+        )
         got = page.extract_tables({"vertical_strategy": "lines"})
 
     assert got == [[["indexed"]]]
@@ -352,8 +358,12 @@ def test_extract_tables_original_page_falls_back_to_page_objects_when_indexed_sy
         calls["page_objects"] += 1
         return [[["fallback"]]]
 
-    monkeypatch.setattr(native_api, "_extract_tables_stream", _fake_extract_tables_stream)
-    monkeypatch.setattr(native_api, "_extract_tables_for_page_indexed", _missing_indexed)
+    monkeypatch.setattr(
+        native_api, "_extract_tables_stream", _fake_extract_tables_stream
+    )
+    monkeypatch.setattr(
+        native_api, "_extract_tables_for_page_indexed", _missing_indexed
+    )
     monkeypatch.setattr(
         native_api,
         "_extract_tables_from_page_objects",
@@ -401,7 +411,7 @@ def test_extract_text_reuses_text_stream(monkeypatch):
     finally:
         sys.setprofile(prior_profiler)
 
-    assert calls["count"] == 1
+    assert calls["count"] == 2
 
 
 def test_extract_words_reuses_words_stream(monkeypatch):
@@ -430,7 +440,7 @@ def test_extract_words_reuses_words_stream(monkeypatch):
     finally:
         sys.setprofile(prior_profiler)
 
-    assert calls["count"] == 1
+    assert calls["count"] == 2
 
 
 def test_extract_tables_does_not_create_table_stream_cache(monkeypatch):
@@ -481,7 +491,12 @@ def test_extract_tables_uses_bolivar_single_page_indexed(monkeypatch):
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
         page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
-        geometry = (tuple(page.bbox), tuple(page.mediabox), float(page.initial_doctop), False)
+        geometry = (
+            tuple(page.bbox),
+            tuple(page.mediabox),
+            float(page.initial_doctop),
+            False,
+        )
         try:
             expected = native_api._extract_tables_for_page_indexed(
                 pdf.doc._rust_doc,

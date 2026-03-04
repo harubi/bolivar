@@ -7,7 +7,7 @@ use bolivar_core::parser::{
     PSStackParser as CorePSStackParser,
 };
 use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
-use bolivar_core::pdftypes::{PDFObject, PDFStream};
+use bolivar_core::pdftypes::{PDFDict, PDFObject, PDFStream};
 use bytes::Bytes;
 use memmap2::Mmap;
 use pyo3::buffer::PyBuffer;
@@ -275,7 +275,7 @@ impl PyPDFResourceManager {
         {
             objid_opt = Some(val);
         }
-        let spec_dict: HashMap<String, PDFObject> = HashMap::new();
+        let spec_dict: PDFDict = PDFDict::default();
         Ok(self.inner.get_font(objid_opt, &spec_dict))
     }
 }
@@ -459,11 +459,11 @@ impl PyPDFStream {
         rawdata: &Bound<'_, PyAny>,
         doc: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
-        let mut map = HashMap::new();
+        let mut map = PDFDict::default();
         for (k, v) in attrs.iter() {
             let key: String = k.extract()?;
             let value = py_to_pdf_object(py, &v)?;
-            map.insert(key, value);
+            map.insert(key.into(), value);
         }
         let data = if let Ok(bytes) = rawdata.cast::<PyBytes>() {
             bytes.as_bytes().to_vec()
@@ -677,7 +677,7 @@ impl PyPDFDocument {
                     true,
                     Some(&py_doc),
                 )?;
-                py_dict.set_item(k, py_val)?;
+                py_dict.set_item(k.as_str(), py_val)?;
             }
             out.push(py_dict.into_any().unbind());
         }
@@ -703,7 +703,7 @@ impl PyPDFDocument {
                     false,
                     Some(&py_doc),
                 )?;
-                py_dict.set_item(k, py_val)?;
+                py_dict.set_item(k.as_str(), py_val)?;
             }
             out.push(py_dict.into_any().unbind());
         }
@@ -744,7 +744,7 @@ impl PyPDFDocument {
                 false,
                 Some(&py_doc),
             )?;
-            py_dict.set_item(k, py_val)?;
+            py_dict.set_item(k.as_str(), py_val)?;
         }
         Ok(py_dict.into_any().unbind())
     }
@@ -847,9 +847,7 @@ impl PyPDFPage {
         self.core.get_contents(&self.doc)
     }
 
-    pub(crate) fn core_resources(
-        &self,
-    ) -> std::collections::HashMap<String, bolivar_core::pdftypes::PDFObject> {
+    pub(crate) fn core_resources(&self) -> bolivar_core::pdftypes::PDFDict {
         self.core.resources.clone()
     }
 
@@ -870,7 +868,7 @@ impl PyPDFPage {
                     true,
                     self.py_doc.as_ref(),
                 )?;
-                attrs_dict.set_item(k, py_val)?;
+                attrs_dict.set_item(k.as_str(), py_val)?;
             }
             let obj = attrs_dict.into_any().unbind();
             *guard = Some(obj.clone_ref(py));
@@ -896,7 +894,7 @@ impl PyPDFPage {
                     false,
                     self.py_doc.as_ref(),
                 )?;
-                resources_dict.set_item(k, py_val)?;
+                resources_dict.set_item(k.as_str(), py_val)?;
             }
             let obj = resources_dict.into_any().unbind();
             *guard = Some(obj.clone_ref(py));

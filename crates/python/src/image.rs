@@ -3,6 +3,7 @@
 use std::sync::Mutex;
 
 use bolivar_core::image::ImageWriter;
+use bolivar_core::pdftypes::PDFName;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -37,7 +38,11 @@ impl PyImageWriter {
         let srcsize = srcsize
             .map(|(w, h)| (Some(w), Some(h)))
             .unwrap_or((None, None));
-        let colorspace = colorspace.unwrap_or_default();
+        let colorspace: Vec<PDFName> = colorspace
+            .unwrap_or_default()
+            .into_iter()
+            .map(Into::into)
+            .collect();
         self.inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("ImageWriter mutex poisoned"))?
