@@ -30,6 +30,8 @@ _TextStreamItem: TypeAlias = tuple[int, str]
 _TextStreamFactory: TypeAlias = Callable[[], Iterable[_TextStreamItem]]
 _WordsStreamItem: TypeAlias = tuple[int, _Words]
 _WordsStreamFactory: TypeAlias = Callable[[], Iterable[_WordsStreamItem]]
+_TablesStreamItem: TypeAlias = tuple[int, _Tables]
+_TablesStreamFactory: TypeAlias = Callable[[], Iterable[_TablesStreamItem]]
 _SliceIndex: TypeAlias = slice
 _OutFile: TypeAlias = str | bytes | int | PathLike[str] | PathLike[bytes]
 _RepairInput: TypeAlias = (
@@ -117,6 +119,7 @@ def _apply_patch(module: ModuleType) -> bool:
     already_patched = getattr(page_mod.Page.extract_tables, "_bolivar_patched", False)
 
     from bolivar._native_api import (
+        _extract_tables_stream,
         _extract_tables_for_page_indexed,
         _extract_tables_from_page_objects,
         _extract_text_stream,
@@ -165,6 +168,7 @@ def _apply_patch(module: ModuleType) -> bool:
         base = _base_geometries(doc)
         if pdf is not None:
             _set_attr(pdf, "_bolivar_table_geom_base", base)
+            _set_attr(pdf, "_bolivar_table_geom_base_key", tuple(base))
         return base
 
     def _build_geometries(
@@ -175,9 +179,13 @@ def _apply_patch(module: ModuleType) -> bool:
     ) -> list[_PageGeometry]:
         if base is None:
             base = _base_geometries(doc)
-        geoms = list(base)
         current = _page_geom(page)
-        if 0 <= page_index < len(geoms) and geoms[page_index] != current:
+        if not (0 <= page_index < len(base)):
+            return base
+        if base[page_index] == current:
+            return base
+        geoms = list(base)
+        if geoms[page_index] != current:
             geoms[page_index] = current
         return geoms
 
@@ -307,6 +315,56 @@ def _apply_patch(module: ModuleType) -> bool:
                     self._evict_cache(idx)
                 return self._cache.get(page_index)
 
+    class _BolivarTablesStream:
+        def __init__(
+            self,
+            stream_factory: _TablesStreamFactory,
+            cache_limit: int = _TEXT_STREAM_CACHE_LIMIT,
+        ) -> None:
+            self._stream_factory = stream_factory
+            self._stream = iter(stream_factory())
+            self._cache: dict[int, _Tables] = {}
+            self._done = False
+            self._lock = threading.Lock()
+            self._max_index_seen = -1
+            self._cache_limit = max(int(cache_limit), 0)
+
+        def _evict_cache(self, newest_index: int) -> None:
+            if self._cache_limit <= 0:
+                self._cache.clear()
+                return
+            keep_from = newest_index - (self._cache_limit - 1)
+            for key in list(self._cache.keys()):
+                if key < keep_from:
+                    self._cache.pop(key, None)
+
+        def _get_from_fresh_stream(self, page_index: int) -> _Tables | None:
+            stream = iter(self._stream_factory())
+            for idx, tables in stream:
+                if idx == page_index:
+                    return tables
+                if idx > page_index:
+                    break
+            return None
+
+        def get(self, page_index: int) -> _Tables | None:
+            with self._lock:
+                if page_index in self._cache:
+                    return self._cache[page_index]
+                if page_index < self._max_index_seen or self._done:
+                    return self._get_from_fresh_stream(page_index)
+                while page_index not in self._cache:
+                    try:
+                        idx, tables = next(self._stream)
+                    except StopIteration:
+                        self._done = True
+                        break
+                    self._cache[idx] = tables
+                    if idx > self._max_index_seen:
+                        self._max_index_seen = idx
+                    self._evict_cache(idx)
+                return self._cache.get(page_index)
+
     def _can_use_rust_text(kwargs: dict[str, Any]) -> bool:
         if kwargs.get("auto_rtl") is False:
             return False
@@ -410,6 +468,58 @@ def _apply_patch(module: ModuleType) -> bool:
             streams[key] = wrapped
         return wrapped
 
+    def _get_table_stream(
+        pdf: object | None,
+        doc: _DocLike,
+        table_settings: dict[str, Any] | None,
+        geometries: Sequence[_PageGeometry],
+        page_numbers: Sequence[int] | None,
+    ) -> _BolivarTablesStream:
+        streams: dict[tuple[object, ...], _BolivarTablesStream] | None = None
+        if pdf is not None:
+            streams = getattr(pdf, "_bolivar_table_streams", None)
+            if streams is None:
+                streams = {}
+                _set_attr(pdf, "_bolivar_table_streams", streams)
+        settings_key = _settings_key(table_settings)
+        geometries_key: object
+        if (
+            pdf is not None
+            and geometries is getattr(pdf, "_bolivar_table_geom_base", None)
+            and hasattr(pdf, "_bolivar_table_geom_base_key")
+        ):
+            geometries_key = getattr(pdf, "_bolivar_table_geom_base_key")
+        else:
+            geometries_key = tuple(geometries)
+        laparams_key = _laparams_key(pdf)
+        page_numbers_key = tuple(page_numbers) if page_numbers is not None else None
+        key = (settings_key, geometries_key, laparams_key, page_numbers_key)
+        if streams is not None and key in streams:
+            return streams[key]
+        rust_doc = getattr(doc, "_rust_doc", None) or doc
+
+        def _stream_factory() -> Iterable[_TablesStreamItem]:
+            native_doc = cast("_NativePDFDocument", rust_doc)
+            return cast(
+                "Iterable[_TablesStreamItem]",
+                _extract_tables_stream(
+                    native_doc,
+                    geometries,
+                    table_settings=table_settings,
+                    laparams=(
+                        getattr(pdf, "laparams", None) if pdf is not None else None
+                    ),
+                    page_numbers=page_numbers,
+                    maxpages=0,
+                    caching=getattr(doc, "caching", True),
+                ),
+            )
+
+        wrapped = _BolivarTablesStream(_stream_factory)
+        if streams is not None:
+            streams[key] = wrapped
+        return wrapped
+
     if not already_patched:
         _orig_extract_text = page_mod.Page.extract_text
         _orig_extract_words = page_mod.Page.extract_words
@@ -437,6 +547,17 @@ def _apply_patch(module: ModuleType) -> bool:
                 doc = getattr(page.page_obj, "doc", None)
             if doc is None:
                 raise PdfminerException("pdf document missing")
+            base_geoms = _get_base_geometries(pdf, doc)
+            geoms = _build_geometries(doc, page_index, page, base=base_geoms)
+            try:
+                stream = _get_table_stream(
+                    pdf, doc, table_settings, geoms, page_numbers=None
+                )
+                tables = stream.get(page_index)
+                if tables is not None:
+                    return tables
+            except AttributeError:
+                pass
             rust_doc = getattr(doc, "_rust_doc", None) or doc
             native_doc = cast("_NativePDFDocument", rust_doc)
             try:

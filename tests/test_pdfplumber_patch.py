@@ -210,28 +210,36 @@ def test_extract_tables_avoids_document_wide_extraction(monkeypatch):
         _ = page0.extract_tables()
 
 
-def test_extract_tables_calls_indexed_single_page_backend(monkeypatch):
+def test_extract_tables_calls_stream_backend_for_original_page(monkeypatch):
     import bolivar._native_api as native_api
 
-    calls = {"stream_count": 0, "indexed": []}
+    calls = {"stream": [], "indexed_count": 0}
 
-    def _fake_extract_tables_stream(*args, **kwargs):
-        calls["stream_count"] += 1
-        return iter(())
-
-    def _fake_extract_tables_for_page_indexed(
-        doc, page_index, geometry, table_settings=None, laparams=None, caching=True
+    def _fake_extract_tables_stream(
+        doc,
+        geometries,
+        table_settings=None,
+        laparams=None,
+        page_numbers=None,
+        maxpages=0,
+        caching=True,
     ):
-        calls["indexed"].append(
+        calls["stream"].append(
             {
                 "doc": doc,
-                "page_index": page_index,
-                "geometry": geometry,
+                "geometries": geometries,
                 "table_settings": table_settings,
                 "laparams": laparams,
+                "page_numbers": page_numbers,
+                "maxpages": maxpages,
                 "caching": caching,
             }
         )
+        return iter(((0, [[["streamed"]]]),))
+
+    def _fake_extract_tables_for_page_indexed(*args, **kwargs):
+        del args, kwargs
+        calls["indexed_count"] += 1
         return [[["indexed"]]]
 
     monkeypatch.setattr(
@@ -251,23 +259,62 @@ def test_extract_tables_calls_indexed_single_page_backend(monkeypatch):
     )
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
-        expected_page_index = getattr(
-            page.page_obj, "_page_index", page.page_number - 1
-        )
         got = page.extract_tables({"vertical_strategy": "lines"})
 
-    assert got == [[["indexed"]]]
-    assert calls["stream_count"] == 0
-    assert len(calls["indexed"]) == 1
-    call = calls["indexed"][0]
-    assert call["page_index"] == expected_page_index
-    assert call["geometry"] == (
-        tuple(page.bbox),
-        tuple(page.mediabox),
-        float(page.initial_doctop),
-        False,
-    )
+    assert got == [[["streamed"]]]
+    assert calls["indexed_count"] == 0
+    assert len(calls["stream"]) == 1
+    call = calls["stream"][0]
     assert call["table_settings"] == {"vertical_strategy": "lines"}
+    assert call["page_numbers"] is None
+
+
+def test_extract_tables_reuses_stream_across_adjacent_original_pages(monkeypatch):
+    import bolivar._native_api as native_api
+
+    calls = {"stream_count": 0, "indexed_count": 0}
+
+    def _fake_extract_tables_stream(
+        doc,
+        geometries,
+        table_settings=None,
+        laparams=None,
+        page_numbers=None,
+        maxpages=0,
+        caching=True,
+    ):
+        del doc, geometries, table_settings, laparams, page_numbers, maxpages, caching
+        calls["stream_count"] += 1
+        return iter(((0, [[["p0"]]]), (1, [[["p1"]]])))
+
+    def _fake_extract_tables_for_page_indexed(*args, **kwargs):
+        del args, kwargs
+        calls["indexed_count"] += 1
+        return [[["indexed"]]]
+
+    monkeypatch.setattr(
+        native_api, "_extract_tables_stream", _fake_extract_tables_stream
+    )
+    monkeypatch.setattr(
+        native_api,
+        "_extract_tables_for_page_indexed",
+        _fake_extract_tables_for_page_indexed,
+    )
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        got0 = pdf.pages[0].extract_tables({"vertical_strategy": "lines"})
+        got1 = pdf.pages[1].extract_tables({"vertical_strategy": "lines"})
+
+    assert got0 == [[["p0"]]]
+    assert got1 == [[["p1"]]]
+    assert calls["stream_count"] == 1
+    assert calls["indexed_count"] == 0
 
 
 def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
@@ -332,18 +379,21 @@ def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
     assert call["force_crop"] is True
 
 
-def test_extract_tables_original_page_falls_back_to_page_objects_when_indexed_symbol_missing(
+def test_extract_tables_original_page_falls_back_to_page_objects_when_stream_and_indexed_symbols_missing(
     monkeypatch,
 ):
     import bolivar._native_api as native_api
 
-    calls = {"stream_count": 0, "page_objects": 0}
+    calls = {"stream_count": 0, "indexed_count": 0, "page_objects": 0}
 
     def _fake_extract_tables_stream(*args, **kwargs):
+        del args, kwargs
         calls["stream_count"] += 1
-        return iter(())
+        raise AttributeError("missing stream symbol")
 
     def _missing_indexed(*args, **kwargs):
+        del args, kwargs
+        calls["indexed_count"] += 1
         raise AttributeError("missing native symbol")
 
     def _fake_extract_tables_from_page_objects(
@@ -382,7 +432,8 @@ def test_extract_tables_original_page_falls_back_to_page_objects_when_indexed_sy
 
     assert got == [[["fallback"]]]
     assert calls["page_objects"] == 1
-    assert calls["stream_count"] == 0
+    assert calls["stream_count"] == 1
+    assert calls["indexed_count"] == 1
 
 
 def test_extract_text_reuses_text_stream(monkeypatch):
@@ -443,7 +494,7 @@ def test_extract_words_reuses_words_stream(monkeypatch):
     assert calls["count"] == 2
 
 
-def test_extract_tables_does_not_create_table_stream_cache(monkeypatch):
+def test_extract_tables_creates_table_stream_cache_for_original_pages(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
         os.path.dirname(__file__),
@@ -452,7 +503,8 @@ def test_extract_tables_does_not_create_table_stream_cache(monkeypatch):
     )
     with pdfplumber.open(pdf_path) as pdf:
         _ = pdf.pages[0].extract_tables()
-        assert not hasattr(pdf, "_bolivar_table_streams")
+        assert hasattr(pdf, "_bolivar_table_streams")
+        assert isinstance(pdf._bolivar_table_streams, dict)
 
 
 def test_extract_tables_rejects_threads_kw(monkeypatch):
@@ -479,7 +531,7 @@ def test_pdfplumber_repair_honors_falsey_outfile(monkeypatch):
         pdfplumber.repair.repair(pdf_path, outfile="")
 
 
-def test_extract_tables_uses_bolivar_single_page_indexed(monkeypatch):
+def test_extract_tables_matches_bolivar_stream_default(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     import bolivar._native_api as native_api
 
@@ -491,20 +543,44 @@ def test_extract_tables_uses_bolivar_single_page_indexed(monkeypatch):
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
         page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
-        geometry = (
-            tuple(page.bbox),
-            tuple(page.mediabox),
-            float(page.initial_doctop),
-            False,
-        )
+        boxes = pdf.doc.page_mediaboxes()
+        doctops = []
+        running = 0.0
+        for box in boxes:
+            doctops.append(running)
+            running += box[3] - box[1]
+        geometries = [
+            (tuple(box), tuple(box), doctop, False)
+            for box, doctop in zip(boxes, doctops, strict=False)
+        ]
         try:
-            expected = native_api._extract_tables_for_page_indexed(
+            expected = None
+            stream = native_api._extract_tables_stream(
                 pdf.doc._rust_doc,
-                page_index,
-                geometry,
+                geometries,
                 laparams=pdf.laparams,
                 caching=pdf.doc.caching,
             )
+            for idx, tables in stream:
+                if idx == page_index:
+                    expected = tables
+                    break
+                if idx > page_index:
+                    break
+            if expected is None:
+                geometry = (
+                    tuple(page.bbox),
+                    tuple(page.mediabox),
+                    float(page.initial_doctop),
+                    False,
+                )
+                expected = native_api._extract_tables_for_page_indexed(
+                    pdf.doc._rust_doc,
+                    page_index,
+                    geometry,
+                    laparams=pdf.laparams,
+                    caching=pdf.doc.caching,
+                )
         except AttributeError:
             expected = native_api._extract_tables_from_page_objects(
                 page.objects,
