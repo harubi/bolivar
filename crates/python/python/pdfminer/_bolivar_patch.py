@@ -3,7 +3,6 @@ import importlib.machinery
 import logging
 import sys
 import threading
-from unicodedata import normalize as normalize_unicode
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Sequence
 from io import BufferedReader, BytesIO
 from operator import index as to_index
@@ -18,6 +17,7 @@ from typing import (
     cast,
     overload,
 )
+from unicodedata import normalize as normalize_unicode
 
 _Number: TypeAlias = int | float
 _PageBox: TypeAlias = tuple[_Number, ...]
@@ -119,9 +119,9 @@ def _apply_patch(module: ModuleType) -> bool:
     already_patched = getattr(page_mod.Page.extract_tables, "_bolivar_patched", False)
 
     from bolivar._native_api import (
-        _extract_tables_stream,
         _extract_tables_for_page_indexed,
         _extract_tables_from_page_objects,
+        _extract_tables_stream,
         _extract_text_stream,
         _extract_words_stream,
     )
@@ -488,7 +488,7 @@ def _apply_patch(module: ModuleType) -> bool:
             and geometries is getattr(pdf, "_bolivar_table_geom_base", None)
             and hasattr(pdf, "_bolivar_table_geom_base_key")
         ):
-            geometries_key = getattr(pdf, "_bolivar_table_geom_base_key")
+            geometries_key = pdf._bolivar_table_geom_base_key
         else:
             geometries_key = tuple(geometries)
         laparams_key = _laparams_key(pdf)
