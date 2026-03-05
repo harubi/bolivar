@@ -35,7 +35,7 @@ fn build_up_predictor_data(seed: u64, row_bytes: usize, rows: usize) -> Vec<u8> 
     let mut data = Vec::with_capacity(rows * (row_bytes + 1));
     let mut state = seed.max(1);
     for _ in 0..rows {
-        data.push(2);
+        data.extend(std::iter::once(2_u8));
         for _ in 0..row_bytes {
             data.push((next_u64(&mut state) & 0xff) as u8);
         }
