@@ -1,3 +1,13 @@
+## [1.6.1](https://github.com/harubi/bolivar/compare/v1.6.0...v1.6.1) (2026-03-05)
+
+### Performance Improvements
+
+* **pdfplumber:** make extract_tables use stream backend ([88a7956](https://github.com/harubi/bolivar/commit/88a7956bc5a1622d8fc51261da2df40866987e3f))
+
+### Miscellaneous Chores
+
+* **deps:** add pandas and pypdfium2 to typecheck group ([68893d6](https://github.com/harubi/bolivar/commit/68893d620ea7bd1a383ccfebc56ff3c08a8e8dc4))
+
 ## [1.6.0](https://github.com/harubi/bolivar/compare/v1.5.2...v1.6.0) (2026-03-04)
 
 ### Features
