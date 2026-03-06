@@ -1,7 +1,14 @@
 //! Tests for Rust table extraction (ported from pdfplumber table.py logic)
 
 use bolivar_core::layout::{LTChar, LTItem, LTLine, LTPage};
-use bolivar_core::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
+use bolivar_core::table::{PageGeometry, TableSettings, TableStrategy, extract_tables_from_ltpage};
+
+#[test]
+fn table_probe_policy_uses_typed_strategy() {
+    let settings = TableSettings::default();
+    assert_eq!(settings.vertical_strategy, TableStrategy::Lines);
+    assert_eq!(settings.horizontal_strategy, TableStrategy::Lines);
+}
 
 #[test]
 fn test_extract_tables_simple_grid() {

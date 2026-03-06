@@ -114,8 +114,8 @@ pub struct EdgeObj {
 #[derive(Clone, Debug)]
 pub struct TableSettings {
     pub probe_policy: TableProbePolicy,
-    pub vertical_strategy: String,
-    pub horizontal_strategy: String,
+    pub vertical_strategy: TableStrategy,
+    pub horizontal_strategy: TableStrategy,
     pub explicit_vertical_lines: Vec<ExplicitLine>,
     pub explicit_horizontal_lines: Vec<ExplicitLine>,
     pub snap_x_tolerance: f64,
@@ -135,8 +135,8 @@ impl Default for TableSettings {
     fn default() -> Self {
         Self {
             probe_policy: TableProbePolicy::Auto,
-            vertical_strategy: "lines".to_string(),
-            horizontal_strategy: "lines".to_string(),
+            vertical_strategy: TableStrategy::Lines,
+            horizontal_strategy: TableStrategy::Lines,
             explicit_vertical_lines: Vec::new(),
             explicit_horizontal_lines: Vec::new(),
             snap_x_tolerance: DEFAULT_SNAP_TOLERANCE,
@@ -150,6 +150,34 @@ impl Default for TableSettings {
             intersection_x_tolerance: 3.0,
             intersection_y_tolerance: 3.0,
             text_settings: TextSettings::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TableStrategy {
+    Lines,
+    LinesStrict,
+    Text,
+    Explicit,
+}
+
+impl TableStrategy {
+    pub const fn uses_text(self) -> bool {
+        matches!(self, Self::Text)
+    }
+}
+
+impl std::str::FromStr for TableStrategy {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "lines" => Ok(Self::Lines),
+            "lines_strict" => Ok(Self::LinesStrict),
+            "text" => Ok(Self::Text),
+            "explicit" => Ok(Self::Explicit),
+            _ => Err(()),
         }
     }
 }
