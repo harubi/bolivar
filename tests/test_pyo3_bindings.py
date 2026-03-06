@@ -122,6 +122,45 @@ class TestProcessPage:
         assert ltpage.pageid >= 1
 
 
+def test_process_page_matches_document_page_zero() -> None:
+    import bolivar
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    doc = bolivar.PDFDocument(pdf_bytes)
+    page = doc.get_page(0)
+
+    single = bolivar.process_page(doc, page)
+    batch = bolivar.process_pages(doc)[0]
+
+    assert single.pageid == batch.pageid
+
+
+def test_process_pages_uses_existing_document() -> None:
+    import bolivar
+
+    pdf_path = FIXTURES_DIR / "encryption" / "rc4-40.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    doc = bolivar.PDFDocument(pdf_bytes, password="foo")
+
+    pages = bolivar.process_pages(doc)
+    assert len(pages) == 1
+
+
+def test_extract_pages_bytes_and_path_match(tmp_path: Path) -> None:
+    import bolivar
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    path = tmp_path / "sample.pdf"
+    path.write_bytes(pdf_bytes)
+
+    from_bytes = bolivar.extract_pages(pdf_bytes)
+    from_path = bolivar.extract_pages_from_path(str(path))
+
+    assert [page.pageid for page in from_bytes] == [page.pageid for page in from_path]
+
+
 class TestLTPage:
     """Test LTPage layout type"""
 

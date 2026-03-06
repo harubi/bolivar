@@ -37,6 +37,86 @@ def test_pdfplumber_patch_default_on(monkeypatch):
     )
 
 
+def test_pdfplumber_extract_tables_uses_single_page_native_path(monkeypatch):
+    import bolivar._native_api as native_api
+
+    calls = {"stream": 0, "indexed": 0}
+
+    def _fail_extract_tables_stream(*args, **kwargs):
+        del args, kwargs
+        calls["stream"] += 1
+        raise AssertionError("expected single-page native extraction")
+
+    def _fake_extract_tables_for_page_indexed(*args, **kwargs):
+        del args, kwargs
+        calls["indexed"] += 1
+        return [[["indexed"]]]
+
+    monkeypatch.setattr(native_api, "_extract_tables_stream", _fail_extract_tables_stream)
+    monkeypatch.setattr(
+        native_api,
+        "_extract_tables_for_page_indexed",
+        _fake_extract_tables_for_page_indexed,
+    )
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        tables = page.extract_tables()
+
+    assert tables == [[["indexed"]]]
+    assert calls["indexed"] == 1
+    assert calls["stream"] == 0
+
+
+def test_pdfplumber_extract_tables_rejects_unknown_setting(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+
+    with pdfplumber.open(pdf_path) as pdf:
+        with pytest.raises(TypeError):
+            pdf.pages[0].extract_tables({"strategy": "x"})
+
+
+@pytest.mark.parametrize(
+    ("settings", "message"),
+    [
+        (
+            {"vertical_strategy": "x"},
+            "vertical_strategy must be one of{lines,lines_strict,text,explicit}",
+        ),
+        (
+            {"vertical_strategy": "explicit", "explicit_vertical_lines": []},
+            "If vertical_strategy == 'explicit'",
+        ),
+        (
+            {"join_tolerance": -1},
+            "Table setting 'join_tolerance' cannot be negative",
+        ),
+    ],
+)
+def test_pdfplumber_extract_tables_validates_settings(monkeypatch, settings, message):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+
+    with pdfplumber.open(pdf_path) as pdf:
+        with pytest.raises(ValueError, match=message):
+            pdf.pages[0].extract_tables(settings)
+
+
 def test_pdfplumber_patch_default_on_without_reload(monkeypatch):
     # Clean import state so pdfminer/__init__.py runs
     for name in list(sys.modules.keys()):
@@ -210,7 +290,23 @@ def test_extract_tables_avoids_document_wide_extraction(monkeypatch):
         _ = page0.extract_tables()
 
 
-def test_extract_tables_calls_stream_backend_for_original_page(monkeypatch):
+def test_random_page_extract_tables_does_not_replay_document_stream(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        second = pdf.pages[1].extract_tables()
+        first = pdf.pages[0].extract_tables()
+        assert not hasattr(pdf, "_bolivar_table_streams")
+
+    assert isinstance(second, list)
+    assert isinstance(first, list)
+
+
+def test_extract_tables_calls_indexed_backend_for_original_page(monkeypatch):
     import bolivar._native_api as native_api
 
     calls = {"stream": [], "indexed_count": 0}
@@ -261,15 +357,12 @@ def test_extract_tables_calls_stream_backend_for_original_page(monkeypatch):
         page = pdf.pages[0]
         got = page.extract_tables({"vertical_strategy": "lines"})
 
-    assert got == [[["streamed"]]]
-    assert calls["indexed_count"] == 0
-    assert len(calls["stream"]) == 1
-    call = calls["stream"][0]
-    assert call["table_settings"] == {"vertical_strategy": "lines"}
-    assert call["page_numbers"] is None
+    assert got == [[["indexed"]]]
+    assert calls["indexed_count"] == 1
+    assert len(calls["stream"]) == 0
 
 
-def test_extract_tables_reuses_stream_across_adjacent_original_pages(monkeypatch):
+def test_extract_tables_calls_indexed_backend_for_each_original_page(monkeypatch):
     import bolivar._native_api as native_api
 
     calls = {"stream_count": 0, "indexed_count": 0}
@@ -311,10 +404,10 @@ def test_extract_tables_reuses_stream_across_adjacent_original_pages(monkeypatch
         got0 = pdf.pages[0].extract_tables({"vertical_strategy": "lines"})
         got1 = pdf.pages[1].extract_tables({"vertical_strategy": "lines"})
 
-    assert got0 == [[["p0"]]]
-    assert got1 == [[["p1"]]]
-    assert calls["stream_count"] == 1
-    assert calls["indexed_count"] == 0
+    assert got0 == [[["indexed"]]]
+    assert got1 == [[["indexed"]]]
+    assert calls["stream_count"] == 0
+    assert calls["indexed_count"] == 2
 
 
 def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
@@ -379,7 +472,7 @@ def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
     assert call["force_crop"] is True
 
 
-def test_extract_tables_original_page_falls_back_to_page_objects_when_stream_and_indexed_symbols_missing(
+def test_extract_tables_original_page_falls_back_to_page_objects_when_indexed_symbol_missing(
     monkeypatch,
 ):
     import bolivar._native_api as native_api
@@ -432,69 +525,35 @@ def test_extract_tables_original_page_falls_back_to_page_objects_when_stream_and
 
     assert got == [[["fallback"]]]
     assert calls["page_objects"] == 1
-    assert calls["stream_count"] == 1
+    assert calls["stream_count"] == 0
     assert calls["indexed_count"] == 1
 
 
-def test_extract_text_reuses_text_stream(monkeypatch):
-    import bolivar._bolivar as _bolivar
-
+def test_repeated_page_extract_text_is_stable(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
-    calls = {"count": 0}
-    target = _bolivar._extract_text_stream
-
-    def profiler(frame, event, arg):
-        if event == "c_call" and arg is target:
-            calls["count"] += 1
-        return profiler
-
     pdf_path = os.path.join(
         os.path.dirname(__file__),
         "..",
         "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
     )
-    prior_profiler = sys.getprofile()
-    sys.setprofile(profiler)
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            _ = pdf.pages[0].extract_text()
-            _ = pdf.pages[1].extract_text()
-    finally:
-        sys.setprofile(prior_profiler)
-
-    assert calls["count"] == 2
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        assert page.extract_text() == page.extract_text()
 
 
-def test_extract_words_reuses_words_stream(monkeypatch):
-    import bolivar._bolivar as _bolivar
-
+def test_repeated_page_extract_words_is_stable(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
-    calls = {"count": 0}
-    target = _bolivar._extract_words_stream
-
-    def profiler(frame, event, arg):
-        if event == "c_call" and arg is target:
-            calls["count"] += 1
-        return profiler
-
     pdf_path = os.path.join(
         os.path.dirname(__file__),
         "..",
         "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
     )
-    prior_profiler = sys.getprofile()
-    sys.setprofile(profiler)
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            _ = pdf.pages[0].extract_words()
-            _ = pdf.pages[1].extract_words()
-    finally:
-        sys.setprofile(prior_profiler)
-
-    assert calls["count"] == 2
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        assert page.extract_words() == page.extract_words()
 
 
-def test_extract_tables_creates_table_stream_cache_for_original_pages(monkeypatch):
+def test_extract_tables_does_not_create_table_stream_cache_for_original_pages(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
         os.path.dirname(__file__),
@@ -503,8 +562,7 @@ def test_extract_tables_creates_table_stream_cache_for_original_pages(monkeypatc
     )
     with pdfplumber.open(pdf_path) as pdf:
         _ = pdf.pages[0].extract_tables()
-        assert hasattr(pdf, "_bolivar_table_streams")
-        assert isinstance(pdf._bolivar_table_streams, dict)
+        assert not hasattr(pdf, "_bolivar_table_streams")
 
 
 def test_extract_tables_rejects_threads_kw(monkeypatch):

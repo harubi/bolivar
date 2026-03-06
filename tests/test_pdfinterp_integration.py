@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pdfminer.layout import LTTextBoxHorizontal
 from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
 from pdfminer.pdfpage import PDFPage
 from pdfminer.pdfparser import PDFParser
@@ -35,6 +36,19 @@ def test_interpreter_produces_layout():
     interp = PDFPageInterpreter(rsrc, device)
     interp.process_page(page)
     assert device.get_result() is not None
+
+
+def test_interpreter_without_laparams_keeps_raw_layout_items():
+    _, page = _load_first_page()
+    rsrc = PDFResourceManager()
+    device = PDFPageAggregator(rsrc)
+    interp = PDFPageInterpreter(rsrc, device)
+
+    interp.process_page(page)
+    layout = device.get_result()
+
+    assert layout is not None
+    assert not any(isinstance(obj, LTTextBoxHorizontal) for obj in layout._objs)
 
 
 def test_interpreter_does_not_cache_pages():

@@ -26,7 +26,8 @@ def _load_stub_symbols() -> set[str]:
     return symbols
 
 
-def test_stream_exports_are_present_in_native_stub() -> None:
+def test_removed_legacy_surface_is_absent_from_stubs() -> None:
     symbols = _load_stub_symbols()
-    assert "extract_pages_async_from_document" in symbols
+    assert "async_runtime_poc" not in symbols
+    assert "extract_pages_async_from_document" not in symbols
     assert "PyTableStream" in symbols

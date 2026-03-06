@@ -12,6 +12,13 @@ def test_public_bolivar_table_entrypoints_are_removed() -> None:
     assert not hasattr(bolivar, "_extract_tables_core")
 
 
+def test_public_bolivar_surface_stays_trimmed() -> None:
+    import bolivar
+
+    assert not hasattr(bolivar, "extract_tables_from_document")
+    assert not hasattr(bolivar, "extract_tables_stream_from_document")
+
+
 def test_pdfplumber_async_table_extraction_still_works() -> None:
     import pdfplumber
 
