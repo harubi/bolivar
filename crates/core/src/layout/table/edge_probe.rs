@@ -30,7 +30,7 @@ pub(crate) fn should_skip_tables(settings: &TableSettings, has_edges: bool) -> b
 }
 
 fn uses_text_strategy(settings: &TableSettings) -> bool {
-    settings.vertical_strategy == "text" || settings.horizontal_strategy == "text"
+    settings.vertical_strategy.uses_text() || settings.horizontal_strategy.uses_text()
 }
 
 #[cfg(test)]

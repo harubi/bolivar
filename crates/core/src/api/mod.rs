@@ -12,6 +12,7 @@
 //! ```
 
 pub mod high_level;
+pub mod pipeline;
 pub mod stream;
 
 // Re-export for convenience

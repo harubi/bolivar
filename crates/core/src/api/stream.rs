@@ -6,25 +6,22 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, sync_channel};
 use std::thread::JoinHandle;
 
-use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 
+use crate::api::pipeline::{ExecutionPlan, validate_geometry_count};
 use crate::arena::PageArena;
 use crate::converter::{PDFPageAggregator, PDFTableCollector};
-use crate::error::{PdfError, Result};
+use crate::error::Result;
 use crate::layout::{LAParams, LTPage};
 use crate::pdfdocument::PDFDocument;
 use crate::pdfinterp::PDFResourceManager;
-use crate::pdfpage::PDFPage;
 use crate::table::edge_probe::{page_has_edges, should_skip_tables};
 use crate::table::{
     PageGeometry, TableSettings, TextSettings, WordObj, collect_table_objects_from_arena,
     extract_tables_from_objects, extract_text_from_objects, extract_words_from_objects,
 };
 
-use super::high_level::{
-    ExtractOptions, PageTables, default_thread_count, process_page, process_page_arena,
-};
+use super::high_level::{ExtractOptions, PageTables, process_page, process_page_arena};
 
 pub const DEFAULT_STREAM_BUFFER_CAPACITY: usize = 50;
 
@@ -135,27 +132,6 @@ impl Drop for StreamWorkerLifecycleCounter {
 }
 
 type StreamItem = (usize, Result<LTPage>);
-
-fn build_page_order(doc: &PDFDocument, options: &ExtractOptions) -> Vec<usize> {
-    let mut order = Vec::new();
-    let page_count = doc.page_index().len();
-    let mut selected = 0usize;
-
-    for page_idx in 0..page_count {
-        if let Some(ref nums) = options.page_numbers
-            && !nums.contains(&page_idx)
-        {
-            continue;
-        }
-        if options.maxpages > 0 && selected >= options.maxpages {
-            break;
-        }
-        order.push(page_idx);
-        selected += 1;
-    }
-
-    order
-}
 
 pub struct PageStream {
     rx: Option<Receiver<StreamItem>>,
@@ -358,16 +334,17 @@ pub fn extract_pages_stream_from_doc(
         options.laparams = Some(LAParams::default());
     }
 
+    let plan = ExecutionPlan::new(
+        doc.page_index().len(),
+        options.page_numbers.as_deref(),
+        options.maxpages,
+    );
     let laparams = options.laparams.clone();
     let caching = options.caching;
-    let order = build_page_order(doc.as_ref(), &options);
+    let order = plan.order.clone();
     let work_order = order.clone();
-
-    let thread_count = default_thread_count();
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(thread_count)
-        .build()
-        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+    let worker_count = plan.worker_count;
+    let pool = plan.build_pool()?;
 
     let (tx, rx) = sync_channel(DEFAULT_STREAM_BUFFER_CAPACITY);
     let cancel = Arc::new(AtomicBool::new(false));
@@ -381,7 +358,7 @@ pub fn extract_pages_stream_from_doc(
         let _worker_lifecycle = StreamWorkerLifecycleCounter::start();
 
         pool.install(|| {
-            (0..thread_count).into_par_iter().for_each(|_| {
+            (0..worker_count).into_par_iter().for_each(|_| {
                 let mut arena = PageArena::new();
                 loop {
                     if cancel_worker.load(Ordering::Relaxed) {
@@ -392,8 +369,8 @@ pub fn extract_pages_stream_from_doc(
                         break;
                     }
                     let page_idx = work_order[pos];
-                    let page = match PDFPage::get_page_by_index(doc_worker.as_ref(), page_idx) {
-                        Ok(page) => Arc::new(page),
+                    let page = match doc_worker.get_page_cached(page_idx) {
+                        Ok(page) => page,
                         Err(e) => {
                             if tx.send((page_idx, Err(e))).is_err() {
                                 cancel_worker.store(true, Ordering::Relaxed);
@@ -401,14 +378,17 @@ pub fn extract_pages_stream_from_doc(
                             continue;
                         }
                     };
-                    doc_worker.cache_page(page_idx, Arc::clone(&page));
 
                     arena.reset();
                     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                     let mut aggregator =
                         PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                    let ltpage =
-                        process_page(&page, &mut aggregator, &mut rsrcmgr, doc_worker.as_ref());
+                    let ltpage = process_page(
+                        page.as_ref(),
+                        &mut aggregator,
+                        &mut rsrcmgr,
+                        doc_worker.as_ref(),
+                    );
                     if cancel_worker.load(Ordering::Relaxed) {
                         return;
                     }
@@ -450,14 +430,12 @@ pub fn extract_tables_stream_from_doc_with_geometries(
     settings: TableSettings,
     geometries: Vec<PageGeometry>,
 ) -> Result<TableStream> {
-    let geom_count = doc.page_index().len();
-    if geometries.len() != geom_count {
-        return Err(PdfError::DecodeError(format!(
-            "geometry count mismatch: expected {}, got {}",
-            geom_count,
-            geometries.len()
-        )));
-    }
+    let plan = ExecutionPlan::new(
+        doc.page_index().len(),
+        options.page_numbers.as_deref(),
+        options.maxpages,
+    );
+    validate_geometry_count(&plan.order, geometries.len())?;
     extract_tables_stream_from_doc_with_geometries_internal(
         doc,
         options,
@@ -473,42 +451,36 @@ pub fn extract_text_pages_from_doc_with_geometries(
     settings: TextSettings,
     geometries: Vec<PageGeometry>,
 ) -> Result<Vec<(usize, String)>> {
-    let geom_count = doc.page_index().len();
-    if geometries.len() != geom_count {
-        return Err(PdfError::DecodeError(format!(
-            "geometry count mismatch: expected {}, got {}",
-            geom_count,
-            geometries.len()
-        )));
-    }
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
 
-    let order = build_page_order(doc.as_ref(), &options);
+    let plan = ExecutionPlan::new(
+        doc.page_index().len(),
+        options.page_numbers.as_deref(),
+        options.maxpages,
+    );
+    validate_geometry_count(&plan.order, geometries.len())?;
     let laparams = options.laparams.clone();
     let caching = options.caching;
-
-    let thread_count = default_thread_count();
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(thread_count)
-        .build()
-        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+    let pool = plan.build_pool()?;
+    let order = plan.order;
 
     let mut results: Vec<(usize, String)> = pool.install(|| {
         order
             .par_iter()
-            .map(|&page_idx| {
-                let page = PDFPage::get_page_by_index(doc.as_ref(), page_idx)?;
+            .enumerate()
+            .map(|(selected_idx, &page_idx)| {
+                let page = doc.get_page_cached(page_idx)?;
                 let mut arena = PageArena::new();
                 arena.reset();
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                 let mut collector =
                     PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
                 let page_arena =
-                    process_page_arena(&page, &mut collector, &mut rsrcmgr, doc.as_ref())?;
+                    process_page_arena(page.as_ref(), &mut collector, &mut rsrcmgr, doc.as_ref())?;
                 let arena_lookup = collector.arena_lookup();
-                let geom = &geometries[page_idx];
+                let geom = &geometries[selected_idx];
                 let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
                 Ok((
                     page_idx,
@@ -529,42 +501,36 @@ pub fn extract_words_pages_from_doc_with_geometries(
     settings: TextSettings,
     geometries: Vec<PageGeometry>,
 ) -> Result<Vec<(usize, Vec<WordObj>)>> {
-    let geom_count = doc.page_index().len();
-    if geometries.len() != geom_count {
-        return Err(PdfError::DecodeError(format!(
-            "geometry count mismatch: expected {}, got {}",
-            geom_count,
-            geometries.len()
-        )));
-    }
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
 
-    let order = build_page_order(doc.as_ref(), &options);
+    let plan = ExecutionPlan::new(
+        doc.page_index().len(),
+        options.page_numbers.as_deref(),
+        options.maxpages,
+    );
+    validate_geometry_count(&plan.order, geometries.len())?;
     let laparams = options.laparams.clone();
     let caching = options.caching;
-
-    let thread_count = default_thread_count();
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(thread_count)
-        .build()
-        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+    let pool = plan.build_pool()?;
+    let order = plan.order;
 
     let mut results: Vec<(usize, Vec<WordObj>)> = pool.install(|| {
         order
             .par_iter()
-            .map(|&page_idx| {
-                let page = PDFPage::get_page_by_index(doc.as_ref(), page_idx)?;
+            .enumerate()
+            .map(|(selected_idx, &page_idx)| {
+                let page = doc.get_page_cached(page_idx)?;
                 let mut arena = PageArena::new();
                 arena.reset();
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                 let mut collector =
                     PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
                 let page_arena =
-                    process_page_arena(&page, &mut collector, &mut rsrcmgr, doc.as_ref())?;
+                    process_page_arena(page.as_ref(), &mut collector, &mut rsrcmgr, doc.as_ref())?;
                 let arena_lookup = collector.arena_lookup();
-                let geom = &geometries[page_idx];
+                let geom = &geometries[selected_idx];
                 let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
                 Ok((
                     page_idx,
@@ -588,16 +554,17 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
         options.laparams = Some(LAParams::default());
     }
 
+    let plan = ExecutionPlan::new(
+        doc.page_index().len(),
+        options.page_numbers.as_deref(),
+        options.maxpages,
+    );
     let laparams = options.laparams.clone();
     let caching = options.caching;
-    let order = build_page_order(doc.as_ref(), &options);
+    let order = plan.order.clone();
     let work_order = order.clone();
-
-    let thread_count = default_thread_count();
-    let pool = ThreadPoolBuilder::new()
-        .num_threads(thread_count)
-        .build()
-        .map_err(|e| PdfError::DecodeError(e.to_string()))?;
+    let worker_count = plan.worker_count;
+    let pool = plan.build_pool()?;
 
     let (tx, rx) = sync_channel(DEFAULT_STREAM_BUFFER_CAPACITY);
     let cancel = Arc::new(AtomicBool::new(false));
@@ -612,7 +579,7 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
         let _worker_lifecycle = StreamWorkerLifecycleCounter::start();
 
         pool.install(|| {
-            (0..thread_count).into_par_iter().for_each(|_| {
+            (0..worker_count).into_par_iter().for_each(|_| {
                 let mut arena = PageArena::new();
                 loop {
                     if cancel_worker.load(Ordering::Relaxed) {
@@ -623,8 +590,8 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                         break;
                     }
                     let page_idx = work_order[pos];
-                    let page = match PDFPage::get_page_by_index(doc_worker.as_ref(), page_idx) {
-                        Ok(page) => Arc::new(page),
+                    let page = match doc_worker.get_page_cached(page_idx) {
+                        Ok(page) => page,
                         Err(e) => {
                             if tx.send((page_idx, Err(e))).is_err() {
                                 cancel_worker.store(true, Ordering::Relaxed);
@@ -632,7 +599,6 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                             continue;
                         }
                     };
-                    doc_worker.cache_page(page_idx, Arc::clone(&page));
 
                     let has_edges = page_has_edges(&page, doc_worker.as_ref(), caching);
                     if should_skip_tables(&settings, has_edges) {
@@ -651,7 +617,7 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                     let mut collector =
                         PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
                     let page_arena = process_page_arena(
-                        &page,
+                        page.as_ref(),
                         &mut collector,
                         &mut rsrcmgr,
                         doc_worker.as_ref(),
@@ -660,7 +626,7 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                         Ok(page_arena) => {
                             let arena_lookup = collector.arena_lookup();
                             let geom = match geom_worker.as_ref() {
-                                Some(geoms) => geoms[page_idx].clone(),
+                                Some(geoms) => geoms[pos].clone(),
                                 None => PageGeometry {
                                     page_bbox: page_arena.bbox,
                                     mediabox: page_arena.bbox,

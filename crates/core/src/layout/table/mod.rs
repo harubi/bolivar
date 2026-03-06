@@ -17,7 +17,7 @@ mod types;
 // Re-export public types
 pub use types::{
     BBox, CharObj, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableProbePolicy,
-    TableSettings, TextDir, TextSettings, WordObj,
+    TableSettings, TableStrategy, TextDir, TextSettings, WordObj,
 };
 
 pub(crate) use collector::collect_table_objects_from_arena;

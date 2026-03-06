@@ -1,6 +1,12 @@
 use bolivar_core::api::ExtractOptions;
-use bolivar_core::api::stream::extract_tables_stream_from_doc;
+use bolivar_core::api::pipeline;
+use bolivar_core::api::stream::{
+    extract_tables_stream_from_doc, extract_tables_stream_from_doc_with_geometries,
+};
 use bolivar_core::document::PDFDocument;
+use bolivar_core::high_level::extract_tables_with_document_geometries;
+use bolivar_core::table::{PageGeometry, TableSettings};
+use std::sync::Arc;
 
 fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
     let mut out = Vec::new();
@@ -79,4 +85,46 @@ fn test_table_stream_orders_pages() {
     let results: Vec<_> = stream.collect::<Result<Vec<_>, _>>().unwrap();
     let page_ids: Vec<usize> = results.iter().map(|(idx, _)| *idx).collect();
     assert_eq!(page_ids, vec![0, 1, 2]);
+}
+
+#[test]
+fn planner_rejects_geometry_count_mismatch_against_selected_pages() {
+    let err = pipeline::validate_geometry_count(&[0, 2], 3).unwrap_err();
+    assert!(err.to_string().contains("geometry count mismatch"));
+}
+
+#[test]
+fn batch_and_stream_tables_match_for_selected_pages() {
+    let pdf = build_minimal_pdf_with_pages(2);
+    let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
+    let options = ExtractOptions {
+        page_numbers: Some(vec![0]),
+        ..ExtractOptions::default()
+    };
+    let settings = TableSettings::default();
+    let geometry = PageGeometry {
+        page_bbox: (0.0, 0.0, 200.0, 200.0),
+        mediabox: (0.0, 0.0, 200.0, 200.0),
+        initial_doctop: 0.0,
+        force_crop: false,
+    };
+
+    let batch = extract_tables_with_document_geometries(
+        Arc::clone(&doc),
+        options.clone(),
+        &settings,
+        std::slice::from_ref(&geometry),
+    )
+    .unwrap();
+    let stream = extract_tables_stream_from_doc_with_geometries(
+        Arc::clone(&doc),
+        options,
+        settings,
+        vec![geometry],
+    )
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
+
+    assert_eq!(batch.len(), stream.len());
 }

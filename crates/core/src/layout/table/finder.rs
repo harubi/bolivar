@@ -17,8 +17,8 @@ use super::grid::{Table, cells_to_tables, intersections_to_cells};
 use super::intersections::edges_to_intersections;
 use super::text::{extract_text, extract_words};
 use super::types::{
-    BBox, CharObj, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TextSettings,
-    WordObj,
+    BBox, CharObj, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TableStrategy,
+    TextSettings, WordObj,
 };
 use crate::layout::types::{LTItem, LTPage, TextBoxType, TextLineElement, TextLineType};
 
@@ -272,11 +272,11 @@ impl<'a> TableFinder<'a> {
     fn get_edges(&self) -> Vec<EdgeObj> {
         let settings = &self.settings;
 
-        let v_strat = settings.vertical_strategy.as_str();
-        let h_strat = settings.horizontal_strategy.as_str();
+        let v_strat = settings.vertical_strategy;
+        let h_strat = settings.horizontal_strategy;
 
         let mut words: Vec<WordObj> = Vec::new();
-        if v_strat == "text" || h_strat == "text" {
+        if v_strat.uses_text() || h_strat.uses_text() {
             words = extract_words(&self.chars, &settings.text_settings, self.arena);
         }
 
@@ -317,22 +317,27 @@ impl<'a> TableFinder<'a> {
         }
 
         let mut v_base = Vec::new();
-        if v_strat == "lines" {
-            v_base = filter_edges(
-                self.edges.clone(),
-                Some(Orientation::Vertical),
-                None,
-                settings.edge_min_length_prefilter,
-            );
-        } else if v_strat == "lines_strict" {
-            v_base = filter_edges(
-                self.edges.clone(),
-                Some(Orientation::Vertical),
-                Some("line"),
-                settings.edge_min_length_prefilter,
-            );
-        } else if v_strat == "text" {
-            v_base = words_to_edges_v(&words, settings.min_words_vertical);
+        match v_strat {
+            TableStrategy::Lines => {
+                v_base = filter_edges(
+                    self.edges.clone(),
+                    Some(Orientation::Vertical),
+                    None,
+                    settings.edge_min_length_prefilter,
+                );
+            }
+            TableStrategy::LinesStrict => {
+                v_base = filter_edges(
+                    self.edges.clone(),
+                    Some(Orientation::Vertical),
+                    Some("line"),
+                    settings.edge_min_length_prefilter,
+                );
+            }
+            TableStrategy::Text => {
+                v_base = words_to_edges_v(&words, settings.min_words_vertical);
+            }
+            TableStrategy::Explicit => {}
         }
 
         let mut v = v_base;
@@ -375,22 +380,27 @@ impl<'a> TableFinder<'a> {
         }
 
         let mut h_base = Vec::new();
-        if h_strat == "lines" {
-            h_base = filter_edges(
-                self.edges.clone(),
-                Some(Orientation::Horizontal),
-                None,
-                settings.edge_min_length_prefilter,
-            );
-        } else if h_strat == "lines_strict" {
-            h_base = filter_edges(
-                self.edges.clone(),
-                Some(Orientation::Horizontal),
-                Some("line"),
-                settings.edge_min_length_prefilter,
-            );
-        } else if h_strat == "text" {
-            h_base = words_to_edges_h(&words, settings.min_words_horizontal);
+        match h_strat {
+            TableStrategy::Lines => {
+                h_base = filter_edges(
+                    self.edges.clone(),
+                    Some(Orientation::Horizontal),
+                    None,
+                    settings.edge_min_length_prefilter,
+                );
+            }
+            TableStrategy::LinesStrict => {
+                h_base = filter_edges(
+                    self.edges.clone(),
+                    Some(Orientation::Horizontal),
+                    Some("line"),
+                    settings.edge_min_length_prefilter,
+                );
+            }
+            TableStrategy::Text => {
+                h_base = words_to_edges_h(&words, settings.min_words_horizontal);
+            }
+            TableStrategy::Explicit => {}
         }
 
         let mut h = h_base;

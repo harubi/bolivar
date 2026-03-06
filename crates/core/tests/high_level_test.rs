@@ -5,8 +5,13 @@
 //! - extract_text_to_fp() - text extraction to writer
 //! - extract_pages() - iterator over pages
 
-use bolivar_core::high_level::{ExtractOptions, extract_pages, extract_text, extract_text_to_fp};
+use bolivar_core::api::pipeline;
+use bolivar_core::high_level::{
+    ExtractOptions, extract_pages, extract_pages_stream, extract_pages_with_document, extract_text,
+    extract_text_to_fp,
+};
 use bolivar_core::layout::LAParams;
+use bolivar_core::pdfdocument::PDFDocument;
 use std::io::Cursor;
 
 // ============================================================================
@@ -399,6 +404,60 @@ fn test_extract_pages_order_is_stable() {
     assert_eq!(first_pages.len(), second_pages.len());
     for (a, b) in first_pages.iter().zip(second_pages.iter()) {
         assert_eq!(a.bbox(), b.bbox());
+    }
+}
+
+#[test]
+fn extract_pages_with_document_uses_supplied_document() {
+    let pdf_path = fixture_path("encryption/rc4-40.pdf");
+    let pdf_data = std::fs::read(&pdf_path)
+        .unwrap_or_else(|_| panic!("Failed to read {}", pdf_path.display()));
+    let doc = PDFDocument::new(&pdf_data, "foo").unwrap();
+
+    let pages = extract_pages_with_document(&doc, ExtractOptions::default()).unwrap();
+
+    assert_eq!(pages.len(), 1);
+}
+
+#[test]
+fn extract_pages_with_document_reuses_document_cache() {
+    let pdf_data = build_minimal_pdf_with_pages(1);
+    let doc = PDFDocument::new(&pdf_data, "").unwrap();
+
+    assert!(doc.get_cached_page(0).is_none());
+
+    let pages = extract_pages_with_document(&doc, ExtractOptions::default()).unwrap();
+
+    assert_eq!(pages.len(), 1);
+    let cached = doc
+        .get_cached_page(0)
+        .expect("expected extraction to populate the supplied document cache");
+    let cached_again = doc.get_page_cached(0).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&cached, &cached_again));
+}
+
+#[test]
+fn planner_applies_page_numbers_then_maxpages_in_order() {
+    let order = pipeline::select_pages(5, Some(vec![4, 1, 3]), 2);
+    assert_eq!(order, vec![1, 3]);
+}
+
+#[test]
+fn batch_and_stream_pages_match_for_same_document() {
+    let pdf = build_minimal_pdf_with_pages(3);
+    let options = ExtractOptions::default();
+    let batch = extract_pages(&pdf, Some(options.clone()))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let stream = extract_pages_stream(&pdf, Some(options))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(batch.len(), stream.len());
+    for (batch_page, stream_page) in batch.iter().zip(stream.iter()) {
+        assert_eq!(batch_page.bbox(), stream_page.bbox());
     }
 }
 

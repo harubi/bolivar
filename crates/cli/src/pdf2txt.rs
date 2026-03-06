@@ -13,7 +13,9 @@ use bolivar_core::high_level::{
 };
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfdocument::PDFDocument;
-use bolivar_core::table::{ExplicitLine, TableProbePolicy, TableSettings, TextDir, TextSettings};
+use bolivar_core::table::{
+    ExplicitLine, TableProbePolicy, TableSettings, TableStrategy, TextDir, TextSettings,
+};
 use clap::{ArgAction, Parser, ValueEnum};
 use memmap2::Mmap;
 use serde::Deserialize;
@@ -285,6 +287,14 @@ fn parse_text_dir(value: &str) -> Result<TextDir> {
         .map_err(|_| PdfError::DecodeError(format!("invalid text direction: {value}")))
 }
 
+fn parse_table_strategy(value: &str, field: &str) -> Result<TableStrategy> {
+    TableStrategy::from_str(value).map_err(|_| {
+        PdfError::DecodeError(format!(
+            "{field} must be one of lines, lines_strict, text, explicit"
+        ))
+    })
+}
+
 fn apply_text_settings_patch(settings: &mut TextSettings, patch: TextSettingsPatch) -> Result<()> {
     if let Some(v) = patch.x_tolerance {
         settings.x_tolerance = v;
@@ -339,10 +349,10 @@ fn apply_table_settings_patch(
     patch: TableSettingsPatch,
 ) -> Result<()> {
     if let Some(v) = patch.vertical_strategy {
-        settings.vertical_strategy = v;
+        settings.vertical_strategy = parse_table_strategy(&v, "vertical_strategy")?;
     }
     if let Some(v) = patch.horizontal_strategy {
-        settings.horizontal_strategy = v;
+        settings.horizontal_strategy = parse_table_strategy(&v, "horizontal_strategy")?;
     }
     if let Some(lines) = patch.explicit_vertical_lines {
         settings.explicit_vertical_lines = lines.into_iter().map(ExplicitLine::Coord).collect();
@@ -438,11 +448,11 @@ fn build_table_settings(args: &Args, json_file_override: Option<&str>) -> Result
 
     if let Some(ref v) = args.table_vertical_strategy {
         has_override = true;
-        settings.vertical_strategy = v.clone();
+        settings.vertical_strategy = parse_table_strategy(v, "vertical_strategy")?;
     }
     if let Some(ref v) = args.table_horizontal_strategy {
         has_override = true;
-        settings.horizontal_strategy = v.clone();
+        settings.horizontal_strategy = parse_table_strategy(v, "horizontal_strategy")?;
     }
     if let Some(ref v) = args.table_explicit_vertical_lines {
         has_override = true;
@@ -922,7 +932,7 @@ mod tests {
         let mut args = test_args_with_table_settings(json_file, json_inline);
         args.table_vertical_strategy = Some("text".to_string());
         let settings = build_table_settings(&args, Some(json_file)).unwrap();
-        assert_eq!(settings.vertical_strategy, "text");
+        assert_eq!(settings.vertical_strategy, TableStrategy::Text);
         assert!((settings.snap_x_tolerance - 5.0).abs() < 1e-9);
     }
 
