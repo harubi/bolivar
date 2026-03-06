@@ -782,21 +782,31 @@ def _extract_tables_from_page_objects(
     table_settings: dict[str, Any] | None = None,
     force_crop: bool = False,
 ) -> list[list[list[str | None]]]: ...
+def _extract_text_stream(
+    doc: PDFDocument,
+    geometries: Sequence[Any],
+    text_settings: dict[str, Any] | None = None,
+    laparams: LAParams | None = None,
+    page_numbers: Sequence[int] | None = None,
+    maxpages: int = 0,
+    caching: bool = True,
+) -> list[tuple[int, str]]: ...
+def _extract_words_stream(
+    doc: PDFDocument,
+    geometries: Sequence[Any],
+    text_settings: dict[str, Any] | None = None,
+    laparams: LAParams | None = None,
+    page_numbers: Sequence[int] | None = None,
+    maxpages: int = 0,
+    caching: bool = True,
+) -> list[tuple[int, list[dict[str, Any]]]]: ...
 def repair_pdf(data: bytes | bytearray | BinaryIO, /) -> bytes: ...
 
 # ── stream.rs ────────────────────────────────────────────────────────────
 
-def async_runtime_poc() -> Any: ...
 def extract_pages_async(
     data: bytes | bytearray | BinaryIO,
     password: str = "",
-    page_numbers: Sequence[int] | None = None,
-    maxpages: int = 0,
-    caching: bool = True,
-    laparams: LAParams | None = None,
-) -> _AsyncPageStream: ...
-def extract_pages_async_from_document(
-    doc: PDFDocument,
     page_numbers: Sequence[int] | None = None,
     maxpages: int = 0,
     caching: bool = True,
