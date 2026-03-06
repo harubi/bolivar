@@ -2,6 +2,7 @@
 //!
 //! Provides PyPDFDocument, PyPDFPage, and parser classes with lazy page loading.
 
+use bolivar_core::high_level::ExtractOptions;
 use bolivar_core::parser::{
     PDFParser as CorePDFParser, PSBaseParser as CorePSBaseParser,
     PSStackParser as CorePSStackParser,
@@ -23,6 +24,7 @@ use crate::convert::{
     intern_pskeyword, intern_psliteral, pdf_object_to_py, pdf_object_to_py_internal,
     pdf_object_to_py_simple, ps_exception, ps_name_to_bytes, pstoken_to_py, py_to_pdf_object,
 };
+use crate::params::PyLAParams;
 
 /// Helper enum for PDF input data.
 pub enum PdfInput {
@@ -61,6 +63,63 @@ pub fn pdf_input_from_py(data: &Bound<'_, PyAny>) -> PyResult<PdfInput> {
     } else {
         Ok(PdfInput::Owned(buf.to_vec(data.py())?))
     }
+}
+
+pub(crate) const fn cache_capacity(caching: bool) -> usize {
+    if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
+}
+
+pub(crate) fn open_document_from_input(
+    _py: Python<'_>,
+    data: &Bound<'_, PyAny>,
+    password: &str,
+    caching: bool,
+) -> PyResult<Arc<PDFDocument>> {
+    let doc = match pdf_input_from_py(data)? {
+        PdfInput::Shared(bytes) => {
+            PDFDocument::new_from_bytes_with_cache(bytes, password, cache_capacity(caching))
+        }
+        PdfInput::Owned(bytes) => {
+            PDFDocument::new_with_cache(bytes, password, cache_capacity(caching))
+        }
+    }
+    .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+    Ok(Arc::new(doc))
+}
+
+pub(crate) fn open_document_from_path(
+    path: &str,
+    password: &str,
+    caching: bool,
+) -> PyResult<Arc<PDFDocument>> {
+    let file = File::open(path)
+        .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
+    // Safety: the file handle remains open for the duration of the map.
+    let mmap = unsafe { Mmap::map(&file) }
+        .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
+    let doc = PDFDocument::new_from_mmap_with_cache(mmap, password, cache_capacity(caching))
+        .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+    Ok(Arc::new(doc))
+}
+
+pub(crate) fn build_extract_options(
+    password: &str,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+    laparams: Option<&PyLAParams>,
+) -> ExtractOptions {
+    let mut options = ExtractOptions {
+        password: password.to_string(),
+        page_numbers,
+        maxpages,
+        caching,
+        laparams: laparams.map(|p| p.clone().into()),
+    };
+    if options.laparams.is_none() {
+        options.laparams = Some(bolivar_core::layout::LAParams::default());
+    }
+    options
 }
 
 /// Read bytes and optional path from a Python file-like object.
@@ -548,16 +607,8 @@ impl PyPDFDocument {
     #[new]
     #[pyo3(signature = (data, password = "", caching = true))]
     pub fn new(data: &Bound<'_, PyAny>, password: &str, caching: bool) -> PyResult<Self> {
-        let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
-        let doc = match pdf_input_from_py(data)? {
-            PdfInput::Shared(bytes) => {
-                PDFDocument::new_from_bytes_with_cache(bytes, password, cache_capacity)
-            }
-            PdfInput::Owned(bytes) => PDFDocument::new_with_cache(bytes, password, cache_capacity),
-        }
-        .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
         Ok(Self {
-            inner: Arc::new(doc),
+            inner: open_document_from_input(data.py(), data, password, caching)?,
             resolved_cache: Mutex::new(HashMap::new()),
         })
     }
@@ -581,16 +632,8 @@ impl PyPDFDocument {
         password: &str,
         caching: bool,
     ) -> PyResult<Self> {
-        let file = File::open(path)
-            .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
-        // Safety: the file handle remains open for the duration of the map.
-        let mmap = unsafe { Mmap::map(&file) }
-            .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-        let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
-        let doc = PDFDocument::new_from_mmap_with_cache(mmap, password, cache_capacity)
-            .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
         Ok(Self {
-            inner: Arc::new(doc),
+            inner: open_document_from_path(path, password, caching)?,
             resolved_cache: Mutex::new(HashMap::new()),
         })
     }
@@ -611,6 +654,7 @@ impl PyPDFDocument {
             pages.push(PyPDFPage::from_core(
                 py,
                 Arc::new(page),
+                idx,
                 Arc::clone(&slf.inner),
                 Some(&py_doc),
             )?);
@@ -652,7 +696,7 @@ impl PyPDFDocument {
             .inner
             .get_page_cached(index)
             .map_err(|e| PyValueError::new_err(format!("Failed to get page {}: {}", index, e)))?;
-        PyPDFPage::from_core(py, page, Arc::clone(&slf.inner), Some(&py_doc))
+        PyPDFPage::from_core(py, page, index, Arc::clone(&slf.inner), Some(&py_doc))
     }
 
     /// Get document info dictionaries.
@@ -806,6 +850,7 @@ pub struct PyPDFPage {
     /// Page label (logical page number)
     #[pyo3(get)]
     pub label: Option<String>,
+    pub(crate) page_index: usize,
     core: Arc<bolivar_core::pdfpage::PDFPage>,
     doc: Arc<PDFDocument>,
     /// Page annotations (resolved to Python objects)
@@ -822,6 +867,7 @@ impl PyPDFPage {
     pub fn from_core(
         py: Python<'_>,
         page: Arc<bolivar_core::pdfpage::PDFPage>,
+        page_index: usize,
         doc: Arc<PDFDocument>,
         py_doc: Option<&Py<PyAny>>,
     ) -> PyResult<Self> {
@@ -834,6 +880,7 @@ impl PyPDFPage {
             artbox: page.artbox.map(|b| (b[0], b[1], b[2], b[3])),
             rotate: page.rotate,
             label: page.label.clone(),
+            page_index,
             core: page,
             doc,
             annots_list: Mutex::new(None),
@@ -841,14 +888,6 @@ impl PyPDFPage {
             resources_dict: Mutex::new(None),
             py_doc: py_doc.map(|p| p.clone_ref(py)),
         })
-    }
-
-    pub(crate) fn core_contents(&self) -> Vec<Vec<u8>> {
-        self.core.get_contents(&self.doc)
-    }
-
-    pub(crate) fn core_resources(&self) -> bolivar_core::pdftypes::PDFDict {
-        self.core.resources.clone()
     }
 
     fn ensure_attrs(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {

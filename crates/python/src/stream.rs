@@ -2,27 +2,24 @@
 
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use bolivar_core::api::stream::{
-    DEFAULT_STREAM_BUFFER_CAPACITY, TableStream,
-    extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
+    PageStream, TableStream, extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
     extract_tables_stream_from_doc_with_geometries as core_extract_tables_stream_from_doc_with_geometries,
     extract_text_pages_from_doc_with_geometries as core_extract_text_pages_from_doc_with_geometries,
     extract_words_pages_from_doc_with_geometries as core_extract_words_pages_from_doc_with_geometries,
 };
 use bolivar_core::error::Result as CoreResult;
-use bolivar_core::high_level::{ExtractOptions, extract_pages_stream as core_extract_pages_stream};
 use bolivar_core::layout::LTPage;
 use bolivar_core::table::{TextDir, WordObj};
 use pyo3::exceptions::{PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use tokio::sync::{Mutex, mpsc};
 
-use crate::document::{PyPDFDocument, pdf_input_from_py};
+use crate::document::{PyPDFDocument, build_extract_options, open_document_from_input};
 use crate::layout::ltpage_to_py;
 use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings, parse_text_settings};
+
 fn text_dir_to_str(direction: TextDir) -> &'static str {
     match direction {
         TextDir::Ttb => "ttb",
@@ -47,11 +44,67 @@ fn word_to_dict(py: Python<'_>, word: WordObj) -> PyResult<Py<PyAny>> {
     Ok(out.into_any().unbind())
 }
 
+enum AsyncStreamStep<T> {
+    Item(T),
+    End,
+    Error(String),
+}
+
+struct AsyncStreamState<S> {
+    stream: Option<S>,
+    done: bool,
+}
+
+impl<S> AsyncStreamState<S> {
+    const fn new(stream: S) -> Self {
+        Self {
+            stream: Some(stream),
+            done: false,
+        }
+    }
+
+    fn close(&mut self) {
+        self.done = true;
+        self.stream.take();
+    }
+
+    #[cfg(test)]
+    const fn is_done(&self) -> bool {
+        self.done
+    }
+}
+
+impl<S> AsyncStreamState<S>
+where
+    S: Iterator<Item = CoreResult<LTPage>>,
+{
+    fn next_step(&mut self) -> AsyncStreamStep<LTPage> {
+        if self.done {
+            return AsyncStreamStep::End;
+        }
+
+        let Some(stream) = self.stream.as_mut() else {
+            self.done = true;
+            return AsyncStreamStep::End;
+        };
+
+        match stream.next() {
+            Some(Ok(page)) => AsyncStreamStep::Item(page),
+            Some(Err(err)) => {
+                self.close();
+                AsyncStreamStep::Error(format!("Failed to extract pages: {err}"))
+            }
+            None => {
+                self.close();
+                AsyncStreamStep::End
+            }
+        }
+    }
+}
+
 #[pyclass]
 pub struct AsyncPageStream {
-    rx: Arc<Mutex<mpsc::Receiver<CoreResult<LTPage>>>>,
-    done: Arc<AtomicBool>,
-    cancel: Arc<AtomicBool>,
+    state: Arc<StdMutex<AsyncStreamState<PageStream>>>,
 }
 
 #[pymethods]
@@ -61,42 +114,45 @@ impl AsyncPageStream {
     }
 
     fn __anext__<'py>(&'py mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let rx = Arc::clone(&self.rx);
-        let done = Arc::clone(&self.done);
-        let cancel = Arc::clone(&self.cancel);
+        let locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
+        let state = Arc::clone(&self.state);
 
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            if done.load(Ordering::Relaxed) {
-                return Err(PyStopAsyncIteration::new_err(()));
-            }
+        pyo3_async_runtimes::tokio::future_into_py_with_locals(py, locals, async move {
+            let next = tokio::task::spawn_blocking(move || {
+                let mut guard = state
+                    .lock()
+                    .map_err(|_| String::from("page stream lock poisoned"))?;
+                Ok::<_, String>(guard.next_step())
+            })
+            .await
+            .map_err(|err| PyValueError::new_err(format!("page stream task failed: {err}")))?;
 
-            let mut guard = rx.lock().await;
-            match guard.recv().await {
-                Some(Ok(page)) => Python::attach(|py| {
+            match next.map_err(PyValueError::new_err)? {
+                AsyncStreamStep::Item(page) => Python::attach(|py| {
                     let py_page = Py::new(py, ltpage_to_py(page))?;
                     Ok(py_page.into_any())
                 }),
-                Some(Err(err)) => {
-                    cancel.store(true, Ordering::Relaxed);
-                    done.store(true, Ordering::Relaxed);
-                    Err(PyValueError::new_err(format!(
-                        "Failed to extract pages: {err}"
-                    )))
-                }
-                None => {
-                    done.store(true, Ordering::Relaxed);
-                    Err(PyStopAsyncIteration::new_err(()))
-                }
+                AsyncStreamStep::End => Err(PyStopAsyncIteration::new_err(())),
+                AsyncStreamStep::Error(message) => Err(PyValueError::new_err(message)),
             }
         })
     }
 
     fn aclose<'py>(&'py self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let cancel = Arc::clone(&self.cancel);
-        let done = Arc::clone(&self.done);
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            cancel.store(true, Ordering::Relaxed);
-            done.store(true, Ordering::Relaxed);
+        let locals = pyo3_async_runtimes::tokio::get_current_locals(py)?;
+        let state = Arc::clone(&self.state);
+
+        pyo3_async_runtimes::tokio::future_into_py_with_locals(py, locals, async move {
+            tokio::task::spawn_blocking(move || {
+                let mut guard = state
+                    .lock()
+                    .map_err(|_| String::from("page stream lock poisoned"))?;
+                guard.close();
+                Ok::<_, String>(())
+            })
+            .await
+            .map_err(|err| PyValueError::new_err(format!("page stream task failed: {err}")))?
+            .map_err(PyValueError::new_err)?;
             Ok(())
         })
     }
@@ -104,7 +160,9 @@ impl AsyncPageStream {
 
 impl Drop for AsyncPageStream {
     fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
+        if let Ok(mut guard) = self.state.lock() {
+            guard.close();
+        }
     }
 }
 
@@ -151,12 +209,6 @@ impl PyTableStream {
     }
 }
 
-/// Async runtime sanity check for pyo3-async-runtimes.
-#[pyfunction]
-pub fn async_runtime_poc(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
-    pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(42_u32) })
-}
-
 /// Extract pages asynchronously from PDF bytes.
 #[pyfunction]
 #[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
@@ -168,93 +220,13 @@ pub fn extract_pages_async(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<AsyncPageStream> {
-    let options = ExtractOptions {
-        password: password.to_string(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
-
-    let stream = match pdf_input_from_py(data)? {
-        crate::document::PdfInput::Shared(bytes) => {
-            core_extract_pages_stream(bytes.as_ref(), Some(options))
-                .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {e}")))?
-        }
-        crate::document::PdfInput::Owned(bytes) => core_extract_pages_stream(&bytes, Some(options))
-            .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {e}")))?,
-    };
-
-    let (tx, rx) = mpsc::channel(DEFAULT_STREAM_BUFFER_CAPACITY);
-    let cancel = Arc::new(AtomicBool::new(false));
-    let cancel_worker = Arc::clone(&cancel);
-
-    std::thread::spawn(move || {
-        for item in stream {
-            if cancel_worker.load(Ordering::Relaxed) {
-                return;
-            }
-            let is_err = item.is_err();
-            if tx.blocking_send(item).is_err() {
-                return;
-            }
-            if is_err {
-                return;
-            }
-        }
-    });
-
-    Ok(AsyncPageStream {
-        rx: Arc::new(Mutex::new(rx)),
-        done: Arc::new(AtomicBool::new(false)),
-        cancel,
-    })
-}
-
-/// Extract pages asynchronously from an existing PDFDocument.
-#[pyfunction]
-#[pyo3(signature = (doc, page_numbers = None, maxpages = 0, caching = true, laparams = None))]
-pub fn extract_pages_async_from_document(
-    doc: &PyPDFDocument,
-    page_numbers: Option<Vec<usize>>,
-    maxpages: usize,
-    caching: bool,
-    laparams: Option<&PyLAParams>,
-) -> PyResult<AsyncPageStream> {
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
-
-    let stream = core_extract_pages_stream_from_doc(Arc::clone(&doc.inner), options)
+    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
+    let doc = open_document_from_input(data.py(), data, password, caching)?;
+    let stream = core_extract_pages_stream_from_doc(doc, options)
         .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {e}")))?;
 
-    let (tx, rx) = mpsc::channel(DEFAULT_STREAM_BUFFER_CAPACITY);
-    let cancel = Arc::new(AtomicBool::new(false));
-    let cancel_worker = Arc::clone(&cancel);
-
-    std::thread::spawn(move || {
-        for item in stream {
-            if cancel_worker.load(Ordering::Relaxed) {
-                return;
-            }
-            let is_err = item.is_err();
-            if tx.blocking_send(item).is_err() {
-                return;
-            }
-            if is_err {
-                return;
-            }
-        }
-    });
-
     Ok(AsyncPageStream {
-        rx: Arc::new(Mutex::new(rx)),
-        done: Arc::new(AtomicBool::new(false)),
-        cancel,
+        state: Arc::new(StdMutex::new(AsyncStreamState::new(stream))),
     })
 }
 
@@ -273,13 +245,7 @@ pub fn extract_tables_stream(
 ) -> PyResult<PyTableStream> {
     let settings = parse_table_settings(py, table_settings)?;
     let geoms = parse_page_geometries(geometries)?;
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
+    let options = build_extract_options("", page_numbers, maxpages, caching, laparams);
 
     let stream = core_extract_tables_stream_from_doc_with_geometries(
         Arc::clone(&doc.inner),
@@ -309,13 +275,7 @@ pub fn extract_text_stream(
 ) -> PyResult<Vec<(usize, String)>> {
     let settings = parse_text_settings(py, text_settings)?;
     let geoms = parse_page_geometries(geometries)?;
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
+    let options = build_extract_options("", page_numbers, maxpages, caching, laparams);
 
     py.detach(|| {
         core_extract_text_pages_from_doc_with_geometries(
@@ -343,13 +303,7 @@ pub fn extract_words_stream(
 ) -> PyResult<Vec<(usize, Vec<Py<PyAny>>)>> {
     let settings = parse_text_settings(py, text_settings)?;
     let geoms = parse_page_geometries(geometries)?;
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
+    let options = build_extract_options("", page_numbers, maxpages, caching, laparams);
 
     let words: Vec<(usize, Vec<WordObj>)> = py.detach(|| {
         core_extract_words_pages_from_doc_with_geometries(
@@ -373,12 +327,50 @@ pub fn extract_words_stream(
 }
 /// Register stream-related functions with the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(async_runtime_poc, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages_async, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_pages_async_from_document, m)?)?;
     m.add_class::<PyTableStream>()?;
     m.add_function(wrap_pyfunction!(extract_tables_stream, m)?)?;
     m.add_function(wrap_pyfunction!(extract_text_stream, m)?)?;
     m.add_function(wrap_pyfunction!(extract_words_stream, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AsyncStreamState;
+    use bolivar_core::error::Result as CoreResult;
+    use bolivar_core::layout::LTPage;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct ProbeStream {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Iterator for ProbeStream {
+        type Item = CoreResult<LTPage>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            None
+        }
+    }
+
+    impl Drop for ProbeStream {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn async_stream_state_close_drops_owned_stream() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let mut state = AsyncStreamState::new(ProbeStream {
+            dropped: Arc::clone(&dropped),
+        });
+
+        state.close();
+
+        assert!(state.is_done());
+        assert!(dropped.load(Ordering::Relaxed));
+    }
 }

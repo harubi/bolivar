@@ -139,9 +139,6 @@ if TYPE_CHECKING:
         PSStackParser as PSStackParser,
     )
     from bolivar._bolivar import (
-        PyTableStream as PyTableStream,
-    )
-    from bolivar._bolivar import (
         TagExtractor as TagExtractor,
     )
     from bolivar._bolivar import (
@@ -163,6 +160,15 @@ if TYPE_CHECKING:
         _extract_tables_from_page_objects as _extract_tables_from_page_objects,
     )
     from bolivar._bolivar import (
+        _extract_tables_stream as _extract_tables_stream,
+    )
+    from bolivar._bolivar import (
+        _extract_text_stream as _extract_text_stream,
+    )
+    from bolivar._bolivar import (
+        _extract_words_stream as _extract_words_stream,
+    )
+    from bolivar._bolivar import (
         apply_matrix_pt as apply_matrix_pt,
     )
     from bolivar._bolivar import (
@@ -175,9 +181,6 @@ if TYPE_CHECKING:
         asciihexdecode as asciihexdecode,
     )
     from bolivar._bolivar import (
-        async_runtime_poc as async_runtime_poc,
-    )
-    from bolivar._bolivar import (
         decode_text as decode_text,
     )
     from bolivar._bolivar import (
@@ -185,9 +188,6 @@ if TYPE_CHECKING:
     )
     from bolivar._bolivar import (
         extract_pages_async as extract_pages_async,
-    )
-    from bolivar._bolivar import (
-        extract_pages_async_from_document as extract_pages_async_from_document,
     )
     from bolivar._bolivar import (
         extract_pages_from_path as extract_pages_from_path,
@@ -337,7 +337,6 @@ __all__ = [
     "PSLiteral",
     "PSStackParser",
     "Plane",
-    "PyTableStream",
     "TagExtractor",
     "TextConverter",
     "UnicodeMap",
@@ -347,11 +346,9 @@ __all__ = [
     "apply_matrix_rect",
     "ascii85decode",
     "asciihexdecode",
-    "async_runtime_poc",
     "decode_text",
     "extract_pages",
     "extract_pages_async",
-    "extract_pages_async_from_document",
     "extract_pages_from_path",
     "extract_pages_with_images",
     "extract_pages_with_images_from_path",
@@ -385,44 +382,19 @@ __all__ = [
     "unpad_aes",
 ]
 
+_PUBLIC_EXPORTS = tuple(__all__)
 
-def _extract_tables_stream(*args: object, **kwargs: object) -> object:
-    """Internal table stream bridge used by the pdfplumber shim."""
-    native = load_native_api()
-    fn = native._extract_tables_stream
-    return fn(*args, **kwargs)
-
-
-def _extract_tables_for_page_indexed(*args: object, **kwargs: object) -> object:
-    """Internal single-page indexed extractor used by the pdfplumber shim."""
-    native = load_native_api()
-    fn = native._extract_tables_for_page_indexed
-    return fn(*args, **kwargs)
-
-
-def _extract_tables_from_page_objects(*args: object, **kwargs: object) -> object:
-    """Internal filtered-page extractor used by the pdfplumber shim."""
-    native = load_native_api()
-    fn = native._extract_tables_from_page_objects
-    return fn(*args, **kwargs)
-
-
-def _extract_text_stream(*args: object, **kwargs: object) -> object:
-    """Internal text stream bridge used by the pdfplumber shim."""
-    native = load_native_api()
-    fn = native._extract_text_stream
-    return fn(*args, **kwargs)
-
-
-def _extract_words_stream(*args: object, **kwargs: object) -> object:
-    """Internal word stream bridge used by the pdfplumber shim."""
-    native = load_native_api()
-    fn = native._extract_words_stream
-    return fn(*args, **kwargs)
+_INTERNAL_BRIDGE_EXPORTS = (
+    "_extract_tables_stream",
+    "_extract_tables_for_page_indexed",
+    "_extract_tables_from_page_objects",
+    "_extract_text_stream",
+    "_extract_words_stream",
+)
 
 
 def __getattr__(name: str) -> object:
-    if name not in __all__:
+    if name not in _PUBLIC_EXPORTS and name not in _INTERNAL_BRIDGE_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     native = load_native_api()
     try:

@@ -33,9 +33,6 @@ if TYPE_CHECKING:
         __version__ as __version__,
     )
     from bolivar._bolivar import (
-        async_runtime_poc as async_runtime_poc,
-    )
-    from bolivar._bolivar import (
         extract_pages as extract_pages,
     )
     from bolivar._bolivar import (
@@ -73,7 +70,6 @@ __all__ = [
     "PDFDocument",
     "PDFPage",
     "__version__",
-    "async_runtime_poc",
     "extract_pages",
     "extract_pages_async",
     "extract_pages_from_path",

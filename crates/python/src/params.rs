@@ -4,9 +4,10 @@
 //! for table and text extraction settings.
 
 use bolivar_core::table::{
-    BBox, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TextDir, TextSettings,
+    BBox, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TableStrategy, TextDir,
+    TextSettings,
 };
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySequence};
 
@@ -293,6 +294,57 @@ pub fn parse_table_settings(
     py: Python<'_>,
     table_settings: Option<Py<PyAny>>,
 ) -> PyResult<TableSettings> {
+    fn unexpected_table_setting(name: &str) -> PyErr {
+        PyTypeError::new_err(format!(
+            "TableSettings.__init__() got an unexpected keyword argument '{name}'"
+        ))
+    }
+
+    fn parse_table_strategy(
+        value: &Bound<'_, PyAny>,
+        orientation: &str,
+    ) -> PyResult<TableStrategy> {
+        let value: String = value.extract()?;
+        value.parse().map_err(|_| {
+            PyValueError::new_err(format!(
+                "{orientation}_strategy must be one of{{lines,lines_strict,text,explicit}}"
+            ))
+        })
+    }
+
+    fn extract_non_negative_f64(value: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
+        let parsed: f64 = value.extract()?;
+        if parsed < 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "Table setting '{name}' cannot be negative"
+            )));
+        }
+        Ok(parsed)
+    }
+
+    fn extract_non_negative_usize(value: &Bound<'_, PyAny>, name: &str) -> PyResult<usize> {
+        let parsed: isize = value.extract()?;
+        if parsed < 0 {
+            return Err(PyValueError::new_err(format!(
+                "Table setting '{name}' cannot be negative"
+            )));
+        }
+        Ok(parsed as usize)
+    }
+
+    fn validate_explicit_lines(
+        strategy: TableStrategy,
+        line_count: usize,
+        orientation: &str,
+    ) -> PyResult<()> {
+        if strategy == TableStrategy::Explicit && line_count < 2 {
+            return Err(PyValueError::new_err(format!(
+                "If {orientation}_strategy == 'explicit', explicit_{orientation}_lines must be specified as a list/tuple of two or more floats/ints."
+            )));
+        }
+        Ok(())
+    }
+
     let mut settings = TableSettings::default();
     let Some(obj) = table_settings else {
         return Ok(settings);
@@ -317,33 +369,61 @@ pub fn parse_table_settings(
         }
 
         match key.as_str() {
-            "vertical_strategy" => settings.vertical_strategy = v.extract()?,
-            "horizontal_strategy" => settings.horizontal_strategy = v.extract()?,
+            "vertical_strategy" => {
+                settings.vertical_strategy = parse_table_strategy(&v, "vertical")?;
+            }
+            "horizontal_strategy" => {
+                settings.horizontal_strategy = parse_table_strategy(&v, "horizontal")?;
+            }
             "snap_tolerance" => {
-                let val: f64 = v.extract()?;
+                let val = extract_non_negative_f64(&v, "snap_tolerance")?;
                 settings.snap_x_tolerance = val;
                 settings.snap_y_tolerance = val;
             }
-            "snap_x_tolerance" => settings.snap_x_tolerance = v.extract()?,
-            "snap_y_tolerance" => settings.snap_y_tolerance = v.extract()?,
+            "snap_x_tolerance" => {
+                settings.snap_x_tolerance = extract_non_negative_f64(&v, "snap_x_tolerance")?;
+            }
+            "snap_y_tolerance" => {
+                settings.snap_y_tolerance = extract_non_negative_f64(&v, "snap_y_tolerance")?;
+            }
             "join_tolerance" => {
-                let val: f64 = v.extract()?;
+                let val = extract_non_negative_f64(&v, "join_tolerance")?;
                 settings.join_x_tolerance = val;
                 settings.join_y_tolerance = val;
             }
-            "join_x_tolerance" => settings.join_x_tolerance = v.extract()?,
-            "join_y_tolerance" => settings.join_y_tolerance = v.extract()?,
-            "edge_min_length" => settings.edge_min_length = v.extract()?,
-            "edge_min_length_prefilter" => settings.edge_min_length_prefilter = v.extract()?,
-            "min_words_vertical" => settings.min_words_vertical = v.extract()?,
-            "min_words_horizontal" => settings.min_words_horizontal = v.extract()?,
+            "join_x_tolerance" => {
+                settings.join_x_tolerance = extract_non_negative_f64(&v, "join_x_tolerance")?;
+            }
+            "join_y_tolerance" => {
+                settings.join_y_tolerance = extract_non_negative_f64(&v, "join_y_tolerance")?;
+            }
+            "edge_min_length" => {
+                settings.edge_min_length = extract_non_negative_f64(&v, "edge_min_length")?;
+            }
+            "edge_min_length_prefilter" => {
+                settings.edge_min_length_prefilter =
+                    extract_non_negative_f64(&v, "edge_min_length_prefilter")?;
+            }
+            "min_words_vertical" => {
+                settings.min_words_vertical = extract_non_negative_usize(&v, "min_words_vertical")?;
+            }
+            "min_words_horizontal" => {
+                settings.min_words_horizontal =
+                    extract_non_negative_usize(&v, "min_words_horizontal")?;
+            }
             "intersection_tolerance" => {
-                let val: f64 = v.extract()?;
+                let val = extract_non_negative_f64(&v, "intersection_tolerance")?;
                 settings.intersection_x_tolerance = val;
                 settings.intersection_y_tolerance = val;
             }
-            "intersection_x_tolerance" => settings.intersection_x_tolerance = v.extract()?,
-            "intersection_y_tolerance" => settings.intersection_y_tolerance = v.extract()?,
+            "intersection_x_tolerance" => {
+                settings.intersection_x_tolerance =
+                    extract_non_negative_f64(&v, "intersection_x_tolerance")?;
+            }
+            "intersection_y_tolerance" => {
+                settings.intersection_y_tolerance =
+                    extract_non_negative_f64(&v, "intersection_y_tolerance")?;
+            }
             "text_settings" => {
                 if !v.is_none() {
                     let ts_dict = v.cast::<PyDict>().map_err(|_| {
@@ -363,9 +443,20 @@ pub fn parse_table_settings(
             "explicit_horizontal_lines" => {
                 settings.explicit_horizontal_lines = parse_explicit_lines(py, &v)?;
             }
-            _ => {}
+            _ => return Err(unexpected_table_setting(&key)),
         }
     }
+
+    validate_explicit_lines(
+        settings.vertical_strategy,
+        settings.explicit_vertical_lines.len(),
+        "vertical",
+    )?;
+    validate_explicit_lines(
+        settings.horizontal_strategy,
+        settings.explicit_horizontal_lines.len(),
+        "horizontal",
+    )?;
 
     settings.text_settings = text_settings;
     Ok(settings)

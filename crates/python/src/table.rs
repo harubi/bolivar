@@ -5,21 +5,21 @@
 
 use bolivar_core::arena::PageArena;
 use bolivar_core::high_level::{
-    ExtractOptions, extract_pages_with_document as core_extract_pages_with_document,
+    extract_layout_for_page as core_extract_layout_for_page,
+    extract_pages_with_document as core_extract_pages_with_document,
     extract_pages_with_images_with_document as core_extract_pages_with_images_with_document,
-    extract_tables_for_page_indexed as core_extract_tables_for_page_indexed,
+    extract_tables_for_page as core_extract_tables_for_page,
     extract_text_with_document as core_extract_text_with_document,
 };
-use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
-use bolivar_core::pdftypes::PDFDict;
 use bolivar_core::table::{CharObj, EdgeObj, Orientation, PageGeometry};
-use memmap2::Mmap;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PySequence};
-use std::fs::File;
 
-use crate::document::{PdfInput, PyPDFDocument, PyPDFPage, pdf_input_from_py};
+use crate::document::{
+    PyPDFDocument, PyPDFPage, build_extract_options, open_document_from_input,
+    open_document_from_path,
+};
 use crate::layout::{PyLTPage, ltpage_to_py};
 use crate::params::{PyLAParams, parse_bbox, parse_page_geometry, parse_table_settings};
 
@@ -41,52 +41,9 @@ pub fn process_page(
     laparams: Option<&PyLAParams>,
 ) -> PyResult<PyLTPage> {
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-    let pageid = page.pageid;
-    let label = page.label.clone();
-    let mediabox = page.mediabox.map(|b| [b.0, b.1, b.2, b.3]);
-    let cropbox = page.cropbox.map(|b| [b.0, b.1, b.2, b.3]);
-    let bleedbox = page.bleedbox.map(|b| [b.0, b.1, b.2, b.3]);
-    let trimbox = page.trimbox.map(|b| [b.0, b.1, b.2, b.3]);
-    let artbox = page.artbox.map(|b| [b.0, b.1, b.2, b.3]);
-    let rotate = page.rotate;
-    let resources = page.core_resources();
-    let contents = page.core_contents();
-
-    let ltpage = py.detach(|| {
-        // Create resource manager
-        let mut rsrcmgr = bolivar_core::pdfinterp::PDFResourceManager::with_caching(true);
-        let mut arena = PageArena::new();
-
-        // Create aggregator for this page
-        let mut aggregator =
-            bolivar_core::converter::PDFPageAggregator::new(la, pageid as i32, &mut arena);
-
-        // Recreate the core PDFPage with contents
-        // This is a workaround since we can't store references across Python calls
-        let core_page = bolivar_core::pdfpage::PDFPage {
-            pageid,
-            attrs: PDFDict::default(),
-            label,
-            mediabox,
-            cropbox,
-            bleedbox,
-            trimbox,
-            artbox,
-            rotate,
-            annots: None,
-            resources,
-            contents,
-            user_unit: 1.0,
-        };
-
-        // Create interpreter and process page
-        let mut interpreter =
-            bolivar_core::pdfinterp::PDFPageInterpreter::new(&mut rsrcmgr, &mut aggregator);
-        interpreter.process_page(&core_page, Some(&doc.inner));
-
-        // Get the result as an owned LTPage
-        aggregator.get_result().clone()
-    });
+    let ltpage = py
+        .detach(|| core_extract_layout_for_page(&doc.inner, page.page_index, la, true))
+        .map_err(|e| PyValueError::new_err(format!("Failed to process page: {e}")))?;
 
     Ok(ltpage_to_py(ltpage))
 }
@@ -105,14 +62,7 @@ pub fn process_pages(
     doc: &PyPDFDocument,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<PyLTPage>> {
-    let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
-        laparams: la,
-    };
+    let options = build_extract_options("", None, 0, true, laparams);
 
     let pages = py
         .detach(|| core_extract_pages_with_document(&doc.inner, options))
@@ -441,18 +391,10 @@ pub fn extract_tables_for_page_indexed(
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
     let geom = parse_page_geometry(geometry)?;
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
+    let options = build_extract_options("", None, 0, caching, laparams);
 
-    py.detach(|| {
-        core_extract_tables_for_page_indexed(&doc.inner, page_index, &geom, options, &settings)
-    })
-    .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {e}")))
+    py.detach(|| core_extract_tables_for_page(&doc.inner, page_index, &geom, options, &settings))
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {e}")))
 }
 
 /// Extract tables from page objects.
@@ -508,26 +450,9 @@ pub fn extract_text(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<String> {
-    let options = ExtractOptions {
-        password: password.to_string(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
-    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
-    let result = match pdf_input_from_py(data)? {
-        PdfInput::Shared(bytes) => {
-            let doc = PDFDocument::new_from_bytes_with_cache(bytes, password, cache_capacity)
-                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-            py.detach(|| core_extract_text_with_document(&doc, options))
-        }
-        PdfInput::Owned(bytes) => {
-            let doc = PDFDocument::new_with_cache(bytes, password, cache_capacity)
-                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-            py.detach(|| core_extract_text_with_document(&doc, options))
-        }
-    };
+    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
+    let doc = open_document_from_input(py, data, password, caching)?;
+    let result = py.detach(|| core_extract_text_with_document(doc.as_ref(), options));
     result.map_err(|e| PyValueError::new_err(format!("Failed to extract text: {}", e)))
 }
 
@@ -543,24 +468,10 @@ pub fn extract_text_from_path(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<String> {
-    let file = File::open(path)
-        .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
-    // Safety: the file handle remains open for the duration of the map.
-    let mmap = unsafe { Mmap::map(&file) }
-        .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
-    let doc = PDFDocument::new_from_mmap_with_cache(mmap, password, cache_capacity)
-        .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+    let doc = open_document_from_path(path, password, caching)?;
+    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
 
-    let options = ExtractOptions {
-        password: password.to_string(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
-
-    let result = py.detach(|| core_extract_text_with_document(&doc, options));
+    let result = py.detach(|| core_extract_text_with_document(doc.as_ref(), options));
     result.map_err(|e| PyValueError::new_err(format!("Failed to extract text: {}", e)))
 }
 
@@ -576,27 +487,11 @@ pub fn extract_pages(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<PyLTPage>> {
-    let options = ExtractOptions {
-        password: password.to_string(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
-    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
-    let pages = match pdf_input_from_py(data)? {
-        PdfInput::Shared(bytes) => {
-            let doc = PDFDocument::new_from_bytes_with_cache(bytes, password, cache_capacity)
-                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-            py.detach(|| core_extract_pages_with_document(&doc, options))
-        }
-        PdfInput::Owned(bytes) => {
-            let doc = PDFDocument::new_with_cache(bytes, password, cache_capacity)
-                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-            py.detach(|| core_extract_pages_with_document(&doc, options))
-        }
-    }
-    .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
+    let doc = open_document_from_input(py, data, password, caching)?;
+    let pages = py
+        .detach(|| core_extract_pages_with_document(doc.as_ref(), options))
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
@@ -613,27 +508,11 @@ pub fn extract_pages_with_images(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<PyLTPage>> {
-    let options = ExtractOptions {
-        password: password.to_string(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
-    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
-    let pages = match pdf_input_from_py(data)? {
-        PdfInput::Shared(bytes) => {
-            let doc = PDFDocument::new_from_bytes_with_cache(bytes, password, cache_capacity)
-                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-            py.detach(|| core_extract_pages_with_images_with_document(&doc, options, output_dir))
-        }
-        PdfInput::Owned(bytes) => {
-            let doc = PDFDocument::new_with_cache(bytes, password, cache_capacity)
-                .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-            py.detach(|| core_extract_pages_with_images_with_document(&doc, options, output_dir))
-        }
-    }
-    .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
+    let doc = open_document_from_input(py, data, password, caching)?;
+    let pages = py
+        .detach(|| core_extract_pages_with_images_with_document(doc.as_ref(), options, output_dir))
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
@@ -649,29 +528,11 @@ pub fn extract_pages_from_path(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<PyLTPage>> {
-    let file = File::open(path)
-        .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
-    // Safety: the file handle remains open for the duration of the map.
-    let mmap = unsafe { Mmap::map(&file) }
-        .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
-    let doc = PDFDocument::new_from_mmap_with_cache(mmap, password, cache_capacity)
-        .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-
-    let mut options = ExtractOptions {
-        password: password.to_string(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
-    // Match pdfminer.high_level.extract_pages default behavior.
-    if options.laparams.is_none() {
-        options.laparams = Some(bolivar_core::layout::LAParams::default());
-    }
+    let doc = open_document_from_path(path, password, caching)?;
+    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
 
     let pages = py
-        .detach(|| core_extract_pages_with_document(&doc, options))
+        .detach(|| core_extract_pages_with_document(doc.as_ref(), options))
         .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
@@ -689,28 +550,11 @@ pub fn extract_pages_with_images_from_path(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<PyLTPage>> {
-    let file = File::open(path)
-        .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
-    // Safety: the file handle remains open for the duration of the map.
-    let mmap = unsafe { Mmap::map(&file) }
-        .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-    let cache_capacity = if caching { DEFAULT_CACHE_CAPACITY } else { 0 };
-    let doc = PDFDocument::new_from_mmap_with_cache(mmap, password, cache_capacity)
-        .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
-
-    let mut options = ExtractOptions {
-        password: password.to_string(),
-        page_numbers,
-        maxpages,
-        caching,
-        laparams: laparams.map(|p| p.clone().into()),
-    };
-    if options.laparams.is_none() {
-        options.laparams = Some(bolivar_core::layout::LAParams::default());
-    }
+    let doc = open_document_from_path(path, password, caching)?;
+    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
 
     let pages = py
-        .detach(|| core_extract_pages_with_images_with_document(&doc, options, output_dir))
+        .detach(|| core_extract_pages_with_images_with_document(doc.as_ref(), options, output_dir))
         .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
