@@ -238,16 +238,14 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
 
     let plan = ExecutionPlan::new(doc.page_index().len(), page_numbers, maxpages);
     let pool = plan.build_pool()?;
-    let selected_pages = plan
-        .order
-        .into_iter()
-        .map(|page_idx| doc.get_page_cached(page_idx).map(|page| (page_idx, page)))
-        .collect::<Result<Vec<_>>>()?;
-
     let mut results: Vec<(usize, Result<LTPage>)> = pool.install(|| {
-        selected_pages
-            .into_par_iter()
-            .map_init(PageArena::new, |arena, (page_idx, page)| {
+        plan.order
+            .par_iter()
+            .map_init(PageArena::new, |arena, &page_idx| {
+                let page = match doc.get_page_cached(page_idx) {
+                    Ok(page) => page,
+                    Err(e) => return (page_idx, Err(e)),
+                };
                 arena.reset();
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                 let mut aggregator =
