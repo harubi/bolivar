@@ -39,17 +39,6 @@ def build_minimal_pdf_with_pages(page_count: int) -> bytes:
 
     return "".join(out).encode()
 
-
-def test_pyo3_async_runtimes_poc():
-    from bolivar import async_runtime_poc
-
-    async def run_poc():
-        return await async_runtime_poc()
-
-    result = asyncio.run(run_poc())
-    assert result == 42
-
-
 def test_extract_pages_async_ordered():
     from bolivar import extract_pages_async
 
@@ -63,3 +52,33 @@ def test_extract_pages_async_ordered():
 
     page_ids = asyncio.run(collect_pages())
     assert page_ids == [1, 2, 3]
+
+
+def test_extract_pages_async_aclose_stops_iteration():
+    from bolivar import extract_pages_async
+
+    pdf_data = build_minimal_pdf_with_pages(3)
+
+    async def run() -> int:
+        stream = extract_pages_async(pdf_data)
+        await stream.aclose()
+        count = 0
+        async for _page in stream:
+            count += 1
+        return count
+
+    assert asyncio.run(run()) == 0
+
+
+def test_extract_pages_async_drop_cancels_cleanly():
+    from bolivar import extract_pages_async
+
+    pdf_data = build_minimal_pdf_with_pages(5)
+
+    async def run() -> None:
+        stream = extract_pages_async(pdf_data)
+        page = await anext(stream)
+        assert page.pageid == 1
+        await stream.aclose()
+
+    asyncio.run(run())
