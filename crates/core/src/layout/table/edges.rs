@@ -177,14 +177,14 @@ pub fn merge_edges(
 }
 
 /// Filter edges by orientation, type, and minimum length.
-pub fn filter_edges(
-    edges: Vec<EdgeObj>,
+pub fn filter_edges_ref(
+    edges: &[EdgeObj],
     orientation: Option<Orientation>,
     edge_type: Option<&str>,
     min_length: f64,
 ) -> Vec<EdgeObj> {
     edges
-        .into_iter()
+        .iter()
         .filter(|e| {
             let dim = if e.orientation == Some(Orientation::Vertical) {
                 e.height
@@ -201,7 +201,18 @@ pub fn filter_edges(
             };
             et_ok && orient_ok && dim >= min_length
         })
+        .cloned()
         .collect()
+}
+
+/// Filter edges by orientation, type, and minimum length.
+pub fn filter_edges(
+    edges: Vec<EdgeObj>,
+    orientation: Option<Orientation>,
+    edge_type: Option<&str>,
+    min_length: f64,
+) -> Vec<EdgeObj> {
+    filter_edges_ref(&edges, orientation, edge_type, min_length)
 }
 
 /// Convert a rectangle to four edges.
@@ -392,4 +403,64 @@ pub fn words_to_edges_v(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj
         object_type: "word_edge",
     });
     edges
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{filter_edges, filter_edges_ref};
+    use crate::layout::table::{EdgeObj, Orientation};
+
+    fn edge(
+        orientation: Orientation,
+        object_type: &'static str,
+        width: f64,
+        height: f64,
+    ) -> EdgeObj {
+        EdgeObj {
+            x0: 0.0,
+            x1: width,
+            top: 0.0,
+            bottom: height,
+            width,
+            height,
+            orientation: Some(orientation),
+            object_type,
+        }
+    }
+
+    #[test]
+    fn filter_edges_ref_matches_owned_filter() {
+        let edges = vec![
+            edge(Orientation::Horizontal, "line", 10.0, 0.0),
+            edge(Orientation::Horizontal, "rect_edge", 2.0, 0.0),
+            edge(Orientation::Vertical, "line", 0.0, 12.0),
+            edge(Orientation::Vertical, "curve_edge", 0.0, 1.0),
+        ];
+
+        let expected = filter_edges(
+            edges.clone(),
+            Some(Orientation::Vertical),
+            Some("line"),
+            3.0,
+        );
+        let actual = filter_edges_ref(&edges, Some(Orientation::Vertical), Some("line"), 3.0);
+
+        let as_key = |edge: &EdgeObj| {
+            (
+                edge.orientation,
+                edge.object_type,
+                edge.x0,
+                edge.x1,
+                edge.top,
+                edge.bottom,
+                edge.width,
+                edge.height,
+            )
+        };
+
+        assert_eq!(
+            actual.iter().map(as_key).collect::<Vec<_>>(),
+            expected.iter().map(as_key).collect::<Vec<_>>()
+        );
+    }
 }
