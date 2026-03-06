@@ -9,8 +9,8 @@ use crate::utils::{HasBBox, Rect};
 
 use super::clustering::{bbox_overlap, bbox_overlap_strict};
 use super::edges::{
-    clip_edge_to_bbox, curve_to_edges, filter_edges, merge_edges, rect_to_edges, words_to_edges_h,
-    words_to_edges_v,
+    clip_edge_to_bbox, curve_to_edges, filter_edges, filter_edges_ref, merge_edges, rect_to_edges,
+    words_to_edges_h, words_to_edges_v,
 };
 use super::geometry::{to_top_left_bbox, to_top_left_bboxes_batch};
 use super::grid::{Table, cells_to_tables, intersections_to_cells};
@@ -319,16 +319,16 @@ impl<'a> TableFinder<'a> {
         let mut v_base = Vec::new();
         match v_strat {
             TableStrategy::Lines => {
-                v_base = filter_edges(
-                    self.edges.clone(),
+                v_base = filter_edges_ref(
+                    &self.edges,
                     Some(Orientation::Vertical),
                     None,
                     settings.edge_min_length_prefilter,
                 );
             }
             TableStrategy::LinesStrict => {
-                v_base = filter_edges(
-                    self.edges.clone(),
+                v_base = filter_edges_ref(
+                    &self.edges,
                     Some(Orientation::Vertical),
                     Some("line"),
                     settings.edge_min_length_prefilter,
@@ -382,16 +382,16 @@ impl<'a> TableFinder<'a> {
         let mut h_base = Vec::new();
         match h_strat {
             TableStrategy::Lines => {
-                h_base = filter_edges(
-                    self.edges.clone(),
+                h_base = filter_edges_ref(
+                    &self.edges,
                     Some(Orientation::Horizontal),
                     None,
                     settings.edge_min_length_prefilter,
                 );
             }
             TableStrategy::LinesStrict => {
-                h_base = filter_edges(
-                    self.edges.clone(),
+                h_base = filter_edges_ref(
+                    &self.edges,
                     Some(Orientation::Horizontal),
                     Some("line"),
                     settings.edge_min_length_prefilter,
