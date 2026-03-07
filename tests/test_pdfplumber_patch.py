@@ -541,6 +541,22 @@ def test_repeated_page_extract_text_is_stable(monkeypatch):
         assert page.extract_text() == page.extract_text()
 
 
+def test_extract_text_raises_when_native_page_output_is_missing(monkeypatch):
+    import bolivar._native_api as native_api
+
+    monkeypatch.setattr(native_api, "_extract_text_stream", lambda *args, **kwargs: [])
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        with pytest.raises(RuntimeError, match="missing text for page"):
+            page.extract_text()
+
+
 def test_repeated_page_extract_words_is_stable(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
@@ -551,6 +567,22 @@ def test_repeated_page_extract_words_is_stable(monkeypatch):
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
         assert page.extract_words() == page.extract_words()
+
+
+def test_extract_words_raises_when_native_page_output_is_missing(monkeypatch):
+    import bolivar._native_api as native_api
+
+    monkeypatch.setattr(native_api, "_extract_words_stream", lambda *args, **kwargs: [])
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        with pytest.raises(RuntimeError, match="missing words for page"):
+            page.extract_words()
 
 
 def test_extract_tables_does_not_create_table_stream_cache_for_original_pages(monkeypatch):

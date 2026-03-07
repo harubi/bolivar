@@ -176,11 +176,11 @@ class PDFPage:
     def get_pages(
         cls,
         fp: BinaryIO | bytes | bytearray,
-        page_numbers: Container[int] | None = None,
+        pagenos: Container[int] | None = None,
         maxpages: int = 0,
         password: bytes | str = b"",
         caching: bool = True,
-        check_extractable: bool = True,
+        check_extractable: bool = False,
     ) -> Generator[PDFPage, None, None]:
         """Legacy interface for iterating pages.
 
@@ -192,9 +192,11 @@ class PDFPage:
         parser = PDFParser(fp)
         doc = PDFDocument(parser, password=password, caching=caching)
 
+        yielded = 0
         for i, page in enumerate(cls.create_pages(doc)):
-            if page_numbers is not None and i not in page_numbers:
+            if pagenos and i not in pagenos:
                 continue
-            if maxpages > 0 and i >= maxpages:
+            if maxpages > 0 and yielded >= maxpages:
                 break
             yield page
+            yielded += 1

@@ -11,7 +11,7 @@ use rayon::prelude::*;
 use crate::api::pipeline::{ExecutionPlan, validate_geometry_count};
 use crate::arena::PageArena;
 use crate::converter::{PDFPageAggregator, PDFTableCollector};
-use crate::error::Result;
+use crate::error::{PdfError, Result};
 use crate::layout::{LAParams, LTPage};
 use crate::pdfdocument::PDFDocument;
 use crate::pdfinterp::PDFResourceManager;
@@ -133,6 +133,12 @@ impl Drop for StreamWorkerLifecycleCounter {
 
 type StreamItem = (usize, Result<LTPage>);
 
+fn premature_stream_close_error(stream_name: &str, page_idx: usize) -> PdfError {
+    PdfError::DecodeError(format!(
+        "{stream_name} closed before expected page {page_idx} arrived"
+    ))
+}
+
 pub struct PageStream {
     rx: Option<Receiver<StreamItem>>,
     order: Vec<usize>,
@@ -202,14 +208,16 @@ impl Iterator for TableStream {
             }
 
             if self.done {
-                return None;
+                self.failed = true;
+                self.cancel.store(true, Ordering::Relaxed);
+                return Some(Err(premature_stream_close_error("table stream", expected)));
             }
 
             let recv_result = match self.rx.as_ref() {
                 Some(rx) => rx.recv(),
                 None => {
                     self.done = true;
-                    return None;
+                    continue;
                 }
             };
 
@@ -287,14 +295,16 @@ impl Iterator for PageStream {
             }
 
             if self.done {
-                return None;
+                self.failed = true;
+                self.cancel.store(true, Ordering::Relaxed);
+                return Some(Err(premature_stream_close_error("page stream", expected)));
             }
 
             let recv_result = match self.rx.as_ref() {
                 Some(rx) => rx.recv(),
                 None => {
                     self.done = true;
-                    return None;
+                    continue;
                 }
             };
 
@@ -665,6 +675,10 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
 mod tests {
     use super::*;
 
+    fn sample_page(page_idx: usize) -> LTPage {
+        LTPage::new(page_idx as i32 + 1, (0.0, 0.0, 200.0, 200.0), 0.0)
+    }
+
     fn full_page_geometries(page_count: usize) -> Vec<PageGeometry> {
         let geom = PageGeometry {
             page_bbox: (0.0, 0.0, 200.0, 200.0),
@@ -759,6 +773,10 @@ mod tests {
         })
     }
 
+    fn spawn_finished_worker() -> std::thread::JoinHandle<()> {
+        std::thread::spawn(|| {})
+    }
+
     #[test]
     fn page_stream_drop_joins_worker_on_early_drop() {
         let cancel = Arc::new(AtomicBool::new(false));
@@ -771,6 +789,25 @@ mod tests {
     }
 
     #[test]
+    fn page_stream_errors_when_channel_closes_before_expected_pages_arrive() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = sync_channel::<StreamItem>(2);
+        tx.send((0, Ok(sample_page(0)))).unwrap();
+        drop(tx);
+
+        let err = PageStream::new(rx, vec![0, 1], cancel, spawn_finished_worker())
+            .collect::<Result<Vec<_>>>()
+            .unwrap_err();
+
+        match err {
+            crate::error::PdfError::DecodeError(message) => {
+                assert!(message.contains("page 1"), "unexpected message: {message}");
+            }
+            other => panic!("expected DecodeError, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn table_stream_drop_joins_worker_on_early_drop() {
         let cancel = Arc::new(AtomicBool::new(false));
         let finished = Arc::new(AtomicBool::new(false));
@@ -779,6 +816,25 @@ mod tests {
         let stream = TableStream::new(rx, Vec::new(), cancel, worker);
         drop(stream);
         assert!(finished.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn table_stream_errors_when_channel_closes_before_expected_pages_arrive() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = sync_channel::<(usize, Result<PageTables>)>(2);
+        tx.send((0, Ok(Vec::new()))).unwrap();
+        drop(tx);
+
+        let err = TableStream::new(rx, vec![0, 1], cancel, spawn_finished_worker())
+            .collect::<Result<Vec<_>>>()
+            .unwrap_err();
+
+        match err {
+            crate::error::PdfError::DecodeError(message) => {
+                assert!(message.contains("page 1"), "unexpected message: {message}");
+            }
+            other => panic!("expected DecodeError, got {other:?}"),
+        }
     }
 
     #[test]

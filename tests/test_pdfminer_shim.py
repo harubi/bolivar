@@ -14,6 +14,52 @@ PDFPLUMBER_PDFS = FIXTURES_DIR / "pdfplumber"
 NONFREE_PDFS = FIXTURES_DIR / "nonfree"
 
 
+def build_minimal_pdf_with_pages(page_count: int) -> bytes:
+    out = []
+    offsets = []
+    page_ids = list(range(1, page_count + 1))
+    contents_start = page_count + 1
+    catalog_id = (2 * page_count) + 1
+    pages_id = catalog_id + 1
+
+    def push(obj: str) -> None:
+        offsets.append(sum(len(part) for part in out))
+        out.append(obj)
+
+    out.append("%PDF-1.4\n")
+
+    for i in range(page_count):
+        page_id = page_ids[i]
+        contents_id = contents_start + i
+        push(
+            f"{page_id} 0 obj\n<< /Type /Page /Parent {pages_id} 0 R /MediaBox [0 0 200 200] /Contents {contents_id} 0 R >>\nendobj\n"
+        )
+
+    for i in range(page_count):
+        contents_id = contents_start + i
+        push(f"{contents_id} 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n")
+
+    push(f"{catalog_id} 0 obj\n<< /Type /Catalog /Pages {pages_id} 0 R >>\nendobj\n")
+
+    kids = " ".join(f"{page_id} 0 R" for page_id in page_ids)
+    push(
+        f"{pages_id} 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {page_count} >>\nendobj\n"
+    )
+
+    xref_pos = sum(len(part) for part in out)
+    obj_count = len(offsets)
+    out.append(f"xref\n0 {obj_count + 1}\n0000000000 65535 f \n")
+    for offset in offsets:
+        out.append(f"{offset:010} 00000 n \n")
+    out.append("trailer\n<< /Size ")
+    out.append(str(obj_count + 1))
+    out.append(f" /Root {catalog_id} 0 R >>\nstartxref\n")
+    out.append(str(xref_pos))
+    out.append("\n%%EOF")
+
+    return "".join(out).encode()
+
+
 class TestPDFParser:
     """Test pdfminer.pdfparser.PDFParser shim"""
 
@@ -166,6 +212,45 @@ class TestPDFPage:
             doc = PDFDocument(parser)
             pages = list(PDFPage.create_pages(doc))
             assert len(pages) >= 1
+
+    def test_get_pages_signature_uses_upstream_keywords(self):
+        from inspect import signature
+        from pdfminer.pdfpage import PDFPage
+
+        params = signature(PDFPage.get_pages).parameters
+
+        assert "pagenos" in params
+        assert "page_numbers" not in params
+        assert params["check_extractable"].default is False
+
+    def test_get_pages_applies_maxpages_after_pagenos_filter(self):
+        from io import BytesIO
+        from pdfminer.pdfpage import PDFPage
+
+        pdf_bytes = build_minimal_pdf_with_pages(5)
+        pages = list(PDFPage.get_pages(BytesIO(pdf_bytes), pagenos={3}, maxpages=1))
+
+        assert len(pages) == 1
+        assert pages[0].pageid == 4
+
+    def test_get_pages_rejects_legacy_page_numbers_keyword(self):
+        from io import BytesIO
+        from pdfminer.pdfpage import PDFPage
+
+        pdf_bytes = build_minimal_pdf_with_pages(5)
+
+        with pytest.raises(TypeError, match="page_numbers"):
+            list(PDFPage.get_pages(BytesIO(pdf_bytes), page_numbers={3}, maxpages=1))
+
+    def test_get_pages_treats_empty_pagenos_as_no_filter(self):
+        from io import BytesIO
+        from pdfminer.pdfpage import PDFPage
+
+        pdf_bytes = build_minimal_pdf_with_pages(5)
+        pages = list(PDFPage.get_pages(BytesIO(pdf_bytes), pagenos=set(), maxpages=1))
+
+        assert len(pages) == 1
+        assert pages[0].pageid == 1
 
     def test_page_attrs_resolved(self):
         """PDFPage attrs should have resolved values for pdfplumber compatibility."""

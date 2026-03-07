@@ -248,7 +248,7 @@ def _apply_patch(module: ModuleType) -> bool:
                 return text
             if idx > page_index:
                 break
-        return ""
+        raise RuntimeError(f"missing text for page {page.page_number}")
 
     def _extract_words_for_page(
         page: _PageLike,
@@ -277,7 +277,7 @@ def _apply_patch(module: ModuleType) -> bool:
                 return words
             if idx > page_index:
                 break
-        return []
+        raise RuntimeError(f"missing words for page {page.page_number}")
 
     if not already_patched:
         _orig_extract_text = page_mod.Page.extract_text
