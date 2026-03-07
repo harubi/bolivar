@@ -337,8 +337,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::AsyncStreamState;
-    use bolivar_core::error::Result as CoreResult;
+    use super::{AsyncStreamState, AsyncStreamStep};
+    use bolivar_core::error::{PdfError, Result as CoreResult};
     use bolivar_core::layout::LTPage;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -372,5 +372,33 @@ mod tests {
 
         assert!(state.is_done());
         assert!(dropped.load(Ordering::Relaxed));
+    }
+
+    struct ErrorStream;
+
+    impl Iterator for ErrorStream {
+        type Item = CoreResult<LTPage>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            Some(Err(PdfError::DecodeError(
+                "stream closed before expected page 1 arrived".to_string(),
+            )))
+        }
+    }
+
+    #[test]
+    fn async_stream_state_reports_underlying_stream_error() {
+        let mut state = AsyncStreamState::new(ErrorStream);
+
+        match state.next_step() {
+            AsyncStreamStep::Error(message) => {
+                assert!(message.contains("page 1"), "unexpected message: {message}");
+            }
+            AsyncStreamStep::Item(_) => panic!("expected stream error"),
+            AsyncStreamStep::End => panic!("expected stream error"),
+        }
+
+        assert!(state.is_done());
+        assert!(matches!(state.next_step(), AsyncStreamStep::End));
     }
 }
