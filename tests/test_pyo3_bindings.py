@@ -245,6 +245,26 @@ def test_native_api_dir_exposes_public_manifest() -> None:
     assert set(BRIDGE_EXPORTS).isdisjoint(names)
 
 
+def test_loaded_native_extension_surface_matches_manifest() -> None:
+    import bolivar._bolivar as native_extension
+    from bolivar._export_manifest import (
+        BRIDGE_EXPORTS,
+        NATIVE_EXTENSION_EXPORTS,
+        PUBLIC_EXPORTS,
+    )
+
+    actual_names = {
+        name for name in dir(native_extension) if not name.startswith("__")
+    }
+    expected_names = set(PUBLIC_EXPORTS) | set(BRIDGE_EXPORTS) | set(
+        NATIVE_EXTENSION_EXPORTS
+    )
+    public_dunder_names = {"__version__"}
+
+    assert hasattr(native_extension, "__version__")
+    assert actual_names == expected_names - public_dunder_names
+
+
 def test_extract_tables_from_document_pages_preserves_order():
     import bolivar
 
