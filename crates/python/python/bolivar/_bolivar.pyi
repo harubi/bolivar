@@ -788,15 +788,14 @@ def _extract_tables_for_compat_page(
     table_settings: dict[str, Any] | None = None,
     force_crop: bool = False,
 ) -> list[list[list[str | None]]]: ...
-def _extract_words_stream(
+def _extract_words_for_page_indexed(
     doc: PDFDocument,
-    geometries: Sequence[Any],
+    page_index: int,
+    geometry: Any,
     text_settings: dict[str, Any] | None = None,
     laparams: LAParams | None = None,
-    page_numbers: Sequence[int] | None = None,
-    maxpages: int = 0,
     caching: bool = True,
-) -> list[tuple[int, list[dict[str, Any]]]]: ...
+) -> list[dict[str, Any]] | None: ...
 def repair_pdf(data: bytes | bytearray | BinaryIO, /) -> bytes: ...
 
 # ── stream.rs ────────────────────────────────────────────────────────────

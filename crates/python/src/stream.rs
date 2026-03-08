@@ -16,7 +16,7 @@ use pyo3::types::PyDict;
 
 use crate::document::{PyPDFDocument, build_extract_options, open_document_from_input};
 use crate::layout::ltpage_to_py;
-use crate::params::{PyLAParams, parse_page_geometries, parse_text_settings};
+use crate::params::{PyLAParams, parse_page_geometry, parse_text_settings};
 
 fn text_dir_to_str(direction: TextDir) -> &'static str {
     match direction {
@@ -185,47 +185,50 @@ pub fn extract_pages_async(
     })
 }
 
-/// Extract per-page words in page-index order using Rust layout+word extraction.
-#[pyfunction(name = "_extract_words_stream")]
-#[pyo3(signature = (doc, geometries, text_settings = None, laparams = None, page_numbers = None, maxpages = 0, caching = true))]
-pub fn extract_words_stream(
+/// Extract words for a single page using Rust layout+word extraction.
+#[pyfunction(name = "_extract_words_for_page_indexed")]
+#[pyo3(signature = (doc, page_index, geometry, text_settings = None, laparams = None, caching = true))]
+pub fn extract_words_for_page_indexed(
     py: Python<'_>,
     doc: &PyPDFDocument,
-    geometries: &Bound<'_, PyAny>,
+    page_index: usize,
+    geometry: &Bound<'_, PyAny>,
     text_settings: Option<Py<PyAny>>,
     laparams: Option<&PyLAParams>,
-    page_numbers: Option<Vec<usize>>,
-    maxpages: usize,
     caching: bool,
-) -> PyResult<Vec<(usize, Vec<Py<PyAny>>)>> {
+) -> PyResult<Option<Vec<Py<PyAny>>>> {
     let settings = parse_text_settings(py, text_settings)?;
-    let geoms = parse_page_geometries(geometries)?;
-    let options = build_extract_options("", page_numbers, maxpages, caching, laparams);
+    let geom = parse_page_geometry(geometry)?;
+    let options = build_extract_options("", Some(vec![page_index]), 0, caching, laparams);
 
     let words: Vec<(usize, Vec<WordObj>)> = py.detach(|| {
         core_extract_words_pages_from_doc_with_geometries(
             Arc::clone(&doc.inner),
             options,
             settings,
-            geoms,
+            vec![geom],
         )
         .map_err(|e| PyValueError::new_err(format!("Failed to extract words: {e}")))
     })?;
 
-    let mut out: Vec<(usize, Vec<Py<PyAny>>)> = Vec::with_capacity(words.len());
     for (page_idx, page_words) in words {
+        if page_idx != page_index {
+            continue;
+        }
+
         let mut row: Vec<Py<PyAny>> = Vec::with_capacity(page_words.len());
         for word in page_words {
             row.push(word_to_dict(py, word)?);
         }
-        out.push((page_idx, row));
+        return Ok(Some(row));
     }
-    Ok(out)
+
+    Ok(None)
 }
 /// Register stream-related functions with the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_pages_async, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_words_stream, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_words_for_page_indexed, m)?)?;
     Ok(())
 }
 

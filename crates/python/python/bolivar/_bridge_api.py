@@ -15,7 +15,7 @@ if TYPE_CHECKING:
         _extract_tables_for_compat_page as _extract_tables_for_compat_page,
     )
     from bolivar._bolivar import (
-        _extract_words_stream as _extract_words_stream,
+        _extract_words_for_page_indexed as _extract_words_for_page_indexed,
     )
 
 _NATIVE_MODULE: ModuleType | None = None
@@ -32,7 +32,7 @@ def load_bridge_api() -> ModuleType:
 __all__ = [
     "_extract_tables_for_page_indexed",
     "_extract_tables_for_compat_page",
-    "_extract_words_stream",
+    "_extract_words_for_page_indexed",
 ]
 
 _BRIDGE_EXPORTS = frozenset(__all__)

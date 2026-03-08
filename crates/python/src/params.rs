@@ -584,20 +584,6 @@ pub fn parse_page_geometry(obj: &Bound<'_, PyAny>) -> PyResult<PageGeometry> {
     })
 }
 
-/// Parse page geometries from a Python sequence.
-pub fn parse_page_geometries(geometries: &Bound<'_, PyAny>) -> PyResult<Vec<PageGeometry>> {
-    let seq = geometries
-        .cast::<PySequence>()
-        .map_err(|_| PyValueError::new_err("geometries must be a list/tuple"))?;
-    let len = seq.len().unwrap_or(0);
-    let mut out = Vec::with_capacity(len as usize);
-    for idx in 0..len {
-        let item = seq.get_item(idx)?;
-        out.push(parse_page_geometry(&item)?);
-    }
-    Ok(out)
-}
-
 /// Register the params module classes with the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLAParams>()?;

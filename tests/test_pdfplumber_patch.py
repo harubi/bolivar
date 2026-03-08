@@ -639,10 +639,41 @@ def test_repeated_page_extract_words_is_stable(monkeypatch):
         assert page.extract_words() == page.extract_words()
 
 
+def test_extract_words_calls_indexed_backend_for_original_page(monkeypatch):
+    import bolivar._bridge_api as bridge_api
+
+    calls = []
+
+    def _fake_extract_words_for_page_indexed(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return [{"text": "indexed"}]
+
+    monkeypatch.setattr(
+        bridge_api,
+        "_extract_words_for_page_indexed",
+        _fake_extract_words_for_page_indexed,
+    )
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        words = pdf.pages[0].extract_words()
+
+    assert words == [{"text": "indexed"}]
+    assert len(calls) == 1
+
+
 def test_extract_words_raises_when_native_page_output_is_missing(monkeypatch):
     import bolivar._bridge_api as bridge_api
 
-    monkeypatch.setattr(bridge_api, "_extract_words_stream", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        bridge_api,
+        "_extract_words_for_page_indexed",
+        lambda *args, **kwargs: None,
+    )
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
         os.path.dirname(__file__),
