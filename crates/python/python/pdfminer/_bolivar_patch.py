@@ -54,7 +54,10 @@ class _PageLike(Protocol):
     initial_doctop: _Number
     page_obj: object
     page_number: int
-    objects: dict[str, Any]
+    chars: list[dict[str, Any]]
+    lines: list[dict[str, Any]]
+    rects: list[dict[str, Any]]
+    curves: list[dict[str, Any]]
     pdf: _PdfLike | None
 
 
