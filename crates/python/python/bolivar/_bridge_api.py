@@ -18,9 +18,6 @@ if TYPE_CHECKING:
         _extract_tables_stream as _extract_tables_stream,
     )
     from bolivar._bolivar import (
-        _extract_text_stream as _extract_text_stream,
-    )
-    from bolivar._bolivar import (
         _extract_words_stream as _extract_words_stream,
     )
 
@@ -39,7 +36,6 @@ __all__ = [
     "_extract_tables_stream",
     "_extract_tables_for_page_indexed",
     "_extract_tables_from_page_objects",
-    "_extract_text_stream",
     "_extract_words_stream",
 ]
 

@@ -580,20 +580,32 @@ def test_repeated_page_extract_text_is_stable(monkeypatch):
         assert page.extract_text() == page.extract_text()
 
 
-def test_extract_text_raises_when_native_page_output_is_missing(monkeypatch):
-    import bolivar._bridge_api as bridge_api
-
-    monkeypatch.setattr(bridge_api, "_extract_text_stream", lambda *args, **kwargs: [])
+def test_extract_text_matches_issue_192_upstream_lines(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
         os.path.dirname(__file__),
         "..",
-        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+        "crates/core/tests/fixtures/pdfplumber/issue-192-example.pdf",
     )
+    expected_lines = [
+        "Agaaaaa: AAAA AAA/Aaabaaab 77-2A8A-2076",
+        "AabaaAA aambaa6 618-647173-54",
+        "-AOAAAAAAAAA-A",
+        "Aabba7 Aabababa ab Aaaaaamaaba",
+        "AAAAA",
+        "20Aab 3123 Aababbaa Aaga 09ab 101",
+        "Aaaabaa 8.8 Aaaaagaaabab Aababaabbab Amaabmaab 5",
+        "8gabaaaaaA",
+        "Ababg Aaaambaab Aaabab (Aaab Agaba = 56 Aaga) Aabbaw-ag Aaabab",
+        "Agabaa 9 ba 7 Agaba 3+",
+    ]
+
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
-        with pytest.raises(RuntimeError, match="missing text for page"):
-            page.extract_text()
+        lines = page.extract_text().splitlines()
+
+    assert len(lines) == 66
+    assert lines[:10] == expected_lines
 
 
 def test_repeated_page_extract_words_is_stable(monkeypatch):

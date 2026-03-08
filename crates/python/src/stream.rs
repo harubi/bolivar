@@ -6,7 +6,6 @@ use std::sync::Mutex as StdMutex;
 use bolivar_core::api::stream::{
     PageStream, TableStream, extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
     extract_tables_stream_from_doc_with_geometries as core_extract_tables_stream_from_doc_with_geometries,
-    extract_text_pages_from_doc_with_geometries as core_extract_text_pages_from_doc_with_geometries,
     extract_words_pages_from_doc_with_geometries as core_extract_words_pages_from_doc_with_geometries,
 };
 use bolivar_core::error::Result as CoreResult;
@@ -260,34 +259,6 @@ pub fn extract_tables_stream(
     })
 }
 
-/// Extract per-page text in page-index order using Rust layout+text extraction.
-#[pyfunction(name = "_extract_text_stream")]
-#[pyo3(signature = (doc, geometries, text_settings = None, laparams = None, page_numbers = None, maxpages = 0, caching = true))]
-pub fn extract_text_stream(
-    py: Python<'_>,
-    doc: &PyPDFDocument,
-    geometries: &Bound<'_, PyAny>,
-    text_settings: Option<Py<PyAny>>,
-    laparams: Option<&PyLAParams>,
-    page_numbers: Option<Vec<usize>>,
-    maxpages: usize,
-    caching: bool,
-) -> PyResult<Vec<(usize, String)>> {
-    let settings = parse_text_settings(py, text_settings)?;
-    let geoms = parse_page_geometries(geometries)?;
-    let options = build_extract_options("", page_numbers, maxpages, caching, laparams);
-
-    py.detach(|| {
-        core_extract_text_pages_from_doc_with_geometries(
-            Arc::clone(&doc.inner),
-            options,
-            settings,
-            geoms,
-        )
-        .map_err(|e| PyValueError::new_err(format!("Failed to extract text: {e}")))
-    })
-}
-
 /// Extract per-page words in page-index order using Rust layout+word extraction.
 #[pyfunction(name = "_extract_words_stream")]
 #[pyo3(signature = (doc, geometries, text_settings = None, laparams = None, page_numbers = None, maxpages = 0, caching = true))]
@@ -330,7 +301,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_pages_async, m)?)?;
     m.add_class::<PyTableStream>()?;
     m.add_function(wrap_pyfunction!(extract_tables_stream, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_text_stream, m)?)?;
     m.add_function(wrap_pyfunction!(extract_words_stream, m)?)?;
     Ok(())
 }

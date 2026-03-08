@@ -17,7 +17,6 @@ from typing import (
     cast,
     overload,
 )
-from unicodedata import normalize as normalize_unicode
 
 _Number: TypeAlias = int | float
 _PageBox: TypeAlias = tuple[_Number, ...]
@@ -115,7 +114,6 @@ def _apply_patch(module: ModuleType) -> bool:
     from bolivar._bridge_api import (
         _extract_tables_for_page_indexed,
         _extract_tables_from_page_objects,
-        _extract_text_stream,
         _extract_words_stream,
     )
     from pdfplumber.utils.exceptions import PdfminerException
@@ -206,12 +204,6 @@ def _apply_patch(module: ModuleType) -> bool:
             pass
         return repr(laparams)
 
-    def _can_use_rust_text(kwargs: dict[str, Any]) -> bool:
-        if kwargs.get("auto_rtl") is False:
-            return False
-        allowed = {"auto_rtl"}
-        return not any(key not in allowed for key in kwargs)
-
     def _can_use_rust_words(kwargs: dict[str, Any]) -> bool:
         if kwargs.get("return_chars"):
             return False
@@ -220,35 +212,6 @@ def _apply_patch(module: ModuleType) -> bool:
             return False
         allowed = {"return_chars", "extra_attrs"}
         return not any(key not in allowed for key in kwargs)
-
-    def _extract_text_for_page(
-        page: _PageLike,
-        pdf: object | None,
-        doc: _DocLike,
-        page_index: int,
-        text_settings: dict[str, Any] | None,
-    ) -> str:
-        rust_doc = getattr(doc, "_rust_doc", None) or doc
-        native_doc = cast("_NativePDFDocument", rust_doc)
-        geometry = _page_geom(page)
-        stream = cast(
-            "Iterable[tuple[int, str]]",
-            _extract_text_stream(
-                native_doc,
-                [geometry],
-                text_settings=text_settings,
-                laparams=getattr(pdf, "laparams", None) if pdf is not None else None,
-                page_numbers=[page_index],
-                maxpages=0,
-                caching=getattr(doc, "caching", True),
-            ),
-        )
-        for idx, text in stream:
-            if idx == page_index:
-                return text
-            if idx > page_index:
-                break
-        raise RuntimeError(f"missing text for page {page.page_number}")
 
     def _extract_words_for_page(
         page: _PageLike,
@@ -280,7 +243,6 @@ def _apply_patch(module: ModuleType) -> bool:
         raise RuntimeError(f"missing words for page {page.page_number}")
 
     if not already_patched:
-        _orig_extract_text = page_mod.Page.extract_text
         _orig_extract_words = page_mod.Page.extract_words
 
         def extract_tables_from_page(
@@ -352,32 +314,6 @@ def _apply_patch(module: ModuleType) -> bool:
         _mark_patched(_extract_table)
         _set_attr(page_mod.Page, "extract_table", _extract_table)
 
-        def _extract_text(self: _PageLike, **kwargs: object) -> str:
-            if not getattr(self, "is_original", True):
-                return cast("str", _orig_extract_text(self, **kwargs))
-            if not hasattr(self, "page_obj") or not hasattr(self, "page_number"):
-                return cast("str", _orig_extract_text(self, **kwargs))
-            text_kwargs = cast("dict[str, Any]", dict(kwargs))
-            if not _can_use_rust_text(text_kwargs):
-                return cast("str", _orig_extract_text(self, **kwargs))
-            text_kwargs.pop("auto_rtl", None)
-            page_index = getattr(self.page_obj, "_page_index", self.page_number - 1)
-            pdf = self.pdf
-            doc: _DocLike | None = pdf.doc if pdf else None
-            if doc is None:
-                doc = getattr(self.page_obj, "doc", None)
-            if doc is None:
-                return cast("str", _orig_extract_text(self, **kwargs))
-            text = _extract_text_for_page(
-                self, pdf, doc, page_index, text_kwargs or None
-            )
-            unicode_norm = (
-                getattr(pdf, "unicode_norm", None) if pdf is not None else None
-            )
-            if isinstance(unicode_norm, str) and unicode_norm:
-                text = normalize_unicode(unicode_norm, text)
-            return text
-
         def _extract_words(self: _PageLike, **kwargs: object) -> _Words:
             if not getattr(self, "is_original", True):
                 return cast("_Words", _orig_extract_words(self, **kwargs))
@@ -399,8 +335,6 @@ def _apply_patch(module: ModuleType) -> bool:
                 self, pdf, doc, page_index, word_kwargs or None
             )
 
-        _mark_patched(_extract_text)
-        _set_attr(page_mod.Page, "extract_text", _extract_text)
         _mark_patched(_extract_words)
         _set_attr(page_mod.Page, "extract_words", _extract_words)
 
