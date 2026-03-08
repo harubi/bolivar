@@ -23,6 +23,7 @@ PDFStackT = (
     bool | int | float | bytes | str | list[Any] | dict[str, Any] | tuple[Any, ...]
 )
 PatternColor = str | tuple[float | tuple[float, ...], str]
+_Matrix = tuple[float, float, float, float, float, float]
 
 
 # Rust-backed resource manager (drop-in compatible API).
@@ -96,6 +97,9 @@ class PDFPageInterpreter:
 
     def init_state(self, ctm: object) -> None:
         self.ctm = ctm
+        set_ctm = getattr(self.device, "set_ctm", None)
+        if callable(set_ctm):
+            set_ctm(ctm)
 
     def push(self, obj: PDFStackT) -> None:
         self._stack.append(obj)
@@ -206,6 +210,26 @@ class PDFPageInterpreter:
             self.device._receive_layout(ltpage)
             return
 
-        raise AttributeError(
-            f"{type(self.device).__name__} must implement _receive_layout or _process_page"
-        )
+        ctm = self._page_ctm(page)
+        begin_page = getattr(self.device, "begin_page", None)
+        if callable(begin_page):
+            begin_page(page, ctm)
+        self.init_resources(getattr(page, "resources", {}))
+        self.init_state(ctm)
+        end_page = getattr(self.device, "end_page", None)
+        if callable(end_page):
+            end_page(page)
+
+    @staticmethod
+    def _page_ctm(page: _PageLike) -> _Matrix:
+        mediabox = getattr(page, "mediabox", None)
+        if not isinstance(mediabox, (list, tuple)) or len(mediabox) != 4:
+            return (1, 0, 0, 1, 0, 0)
+        x0, y0, x1, y1 = (float(value) for value in mediabox)
+        if page.rotate == 90:
+            return (0, -1, 1, 0, -y0, x1)
+        if page.rotate == 180:
+            return (-1, 0, 0, -1, x1, y1)
+        if page.rotate == 270:
+            return (0, 1, -1, 0, y1, -x0)
+        return (1, 0, 0, 1, -x0, -y0)
