@@ -488,12 +488,10 @@ def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
 
     def _fake_extract_tables_for_compat_page(
         objects,
-        page_bbox,
-        mediabox,
-        initial_doctop=0.0,
+        geometry,
         table_settings=None,
-        force_crop=False,
     ):
+        page_bbox, mediabox, initial_doctop, force_crop = geometry
         calls["page_objects"].append(
             {
                 "objects": objects,
@@ -553,13 +551,12 @@ def test_extract_tables_original_page_requires_indexed_backend(
 
     def _fake_extract_tables_for_compat_page(
         objects,
-        page_bbox,
-        mediabox,
-        initial_doctop=0.0,
+        geometry,
         table_settings=None,
-        force_crop=False,
     ):
-        del objects, page_bbox, mediabox, initial_doctop, force_crop
+        del objects
+        _, _, _, force_crop = geometry
+        assert force_crop is True
         calls["page_objects"] += 1
         return [[["fallback"]]]
 
@@ -585,6 +582,32 @@ def test_extract_tables_original_page_requires_indexed_backend(
 
     assert calls["page_objects"] == 0
     assert calls["indexed_count"] == 1
+
+
+def test_extract_tables_compat_helper_rejects_original_geometry(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    import bolivar._bridge_api as bridge_api
+
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        with pytest.raises(
+            ValueError,
+            match="compat table helper requires cropped or filtered geometry",
+        ):
+            bridge_api._extract_tables_for_compat_page(
+                page.objects,
+                (
+                    tuple(page.bbox),
+                    tuple(page.mediabox),
+                    float(page.initial_doctop),
+                    False,
+                ),
+            )
 
 
 def test_repeated_page_extract_text_is_stable(monkeypatch):
