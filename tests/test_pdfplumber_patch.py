@@ -84,6 +84,30 @@ def test_pdfplumber_embedded_font_geometry_matches_upstream(monkeypatch):
     assert first_match["bottom"] == pytest.approx(87.2971, abs=1e-3)
 
 
+def test_pdfplumber_grayscale_non_stroking_color_matches_upstream(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/nics-background-checks-2015-11.pdf",
+    )
+
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        char_color = page.chars[0]["non_stroking_color"]
+        word_color = page.extract_words(return_chars=True)[0]["chars"][0][
+            "non_stroking_color"
+        ]
+        line_color = page.extract_text_lines()[0]["chars"][0]["non_stroking_color"]
+
+    assert char_color == (0,)
+    assert word_color == (0,)
+    assert line_color == (0,)
+    assert type(char_color[0]) is int
+    assert type(word_color[0]) is int
+    assert type(line_color[0]) is int
+
+
 def test_pdfplumber_extract_tables_uses_single_page_native_path(monkeypatch):
     import bolivar._bridge_api as bridge_api
 
