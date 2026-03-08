@@ -211,6 +211,37 @@ def test_extract_tables_bindings_removed_from_top_level():
     assert not hasattr(bolivar, "extract_text_from_page")
 
 
+def test_bolivar_public_exports_match_manifest() -> None:
+    import bolivar
+
+    assert set(bolivar.__all__) == {
+        "LAParams",
+        "LTChar",
+        "LTPage",
+        "PDFDocument",
+        "PDFPage",
+        "__version__",
+        "extract_pages",
+        "extract_pages_async",
+        "extract_pages_from_path",
+        "extract_pages_with_images",
+        "extract_pages_with_images_from_path",
+        "extract_text",
+        "extract_text_from_path",
+        "process_page",
+        "process_pages",
+        "repair_pdf",
+    }
+
+
+def test_native_api_excludes_bridge_only_helpers() -> None:
+    import bolivar._native_api as native
+
+    assert not hasattr(native, "_extract_tables_for_page_indexed")
+    assert not hasattr(native, "_extract_tables_for_compat_page")
+    assert not hasattr(native, "_extract_words_for_page_indexed")
+
+
 def test_extract_tables_from_document_pages_preserves_order():
     import bolivar
 
