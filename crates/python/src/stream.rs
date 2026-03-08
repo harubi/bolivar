@@ -221,7 +221,7 @@ pub fn extract_pages_async(
     laparams: Option<&PyLAParams>,
 ) -> PyResult<AsyncPageStream> {
     let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
-    let doc = open_document_from_input(data.py(), data, password, caching)?;
+    let doc = open_document_from_input(data.py(), data, password, caching, true)?;
     let stream = core_extract_pages_stream_from_doc(doc, options)
         .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {e}")))?;
 

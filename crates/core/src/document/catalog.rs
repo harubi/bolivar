@@ -225,7 +225,12 @@ pub struct PDFDocument {
 }
 
 impl PDFDocument {
-    fn new_with_cache_inner(data: PdfBytes, password: &str, cache_capacity: usize) -> Result<Self> {
+    fn new_with_cache_inner(
+        data: PdfBytes,
+        password: &str,
+        cache_capacity: usize,
+        allow_xref_fallback: bool,
+    ) -> Result<Self> {
         let mut doc = Self {
             data,
             xrefs: Vec::new(),
@@ -238,7 +243,7 @@ impl PDFDocument {
             security_handler: None,
             page_index: OnceLock::new(),
         };
-        doc.parse(password)?;
+        doc.parse(password, allow_xref_fallback)?;
         Ok(doc)
     }
 
@@ -253,10 +258,21 @@ impl PDFDocument {
         password: &str,
         cache_capacity: usize,
     ) -> Result<Self> {
+        Self::new_with_cache_and_fallback(data, password, cache_capacity, true)
+    }
+
+    /// Create a new PDFDocument with an explicit object cache capacity and fallback policy.
+    pub fn new_with_cache_and_fallback<D: AsRef<[u8]>>(
+        data: D,
+        password: &str,
+        cache_capacity: usize,
+        allow_xref_fallback: bool,
+    ) -> Result<Self> {
         Self::new_with_cache_inner(
             PdfBytes::Owned(Bytes::copy_from_slice(data.as_ref())),
             password,
             cache_capacity,
+            allow_xref_fallback,
         )
     }
 
@@ -271,10 +287,21 @@ impl PDFDocument {
         password: &str,
         cache_capacity: usize,
     ) -> Result<Self> {
+        Self::new_from_mmap_with_cache_and_fallback(mmap, password, cache_capacity, true)
+    }
+
+    /// Create a new PDFDocument from a memory-mapped PDF with cache capacity and fallback policy.
+    pub fn new_from_mmap_with_cache_and_fallback(
+        mmap: Mmap,
+        password: &str,
+        cache_capacity: usize,
+        allow_xref_fallback: bool,
+    ) -> Result<Self> {
         Self::new_with_cache_inner(
             PdfBytes::Shared(Bytes::from_owner(mmap)),
             password,
             cache_capacity,
+            allow_xref_fallback,
         )
     }
 
@@ -289,7 +316,22 @@ impl PDFDocument {
         password: &str,
         cache_capacity: usize,
     ) -> Result<Self> {
-        Self::new_with_cache_inner(PdfBytes::Shared(data), password, cache_capacity)
+        Self::new_from_bytes_with_cache_and_fallback(data, password, cache_capacity, true)
+    }
+
+    /// Create a new PDFDocument from shared bytes with cache capacity and fallback policy.
+    pub fn new_from_bytes_with_cache_and_fallback(
+        data: Bytes,
+        password: &str,
+        cache_capacity: usize,
+        allow_xref_fallback: bool,
+    ) -> Result<Self> {
+        Self::new_with_cache_inner(
+            PdfBytes::Shared(data),
+            password,
+            cache_capacity,
+            allow_xref_fallback,
+        )
     }
 
     /// Returns the raw PDF bytes.
@@ -388,7 +430,7 @@ impl PDFDocument {
     }
 
     /// Parse the PDF document structure.
-    fn parse(&mut self, password: &str) -> Result<()> {
+    fn parse(&mut self, password: &str, allow_xref_fallback: bool) -> Result<()> {
         // Find startxref
         let startxref = self.find_startxref();
 
@@ -402,7 +444,7 @@ impl PDFDocument {
         }
 
         // Fallback: scan file for objects
-        if !loaded {
+        if !loaded && allow_xref_fallback {
             let xref = self.load_xref_fallback()?;
             self.xrefs.push(xref);
         }
@@ -449,6 +491,12 @@ impl PDFDocument {
             {
                 self.info.push(dict.clone());
             }
+        }
+
+        if !allow_xref_fallback && self.catalog.is_empty() {
+            return Err(PdfError::SyntaxError(
+                "No /Root object! - Is this really a PDF?".into(),
+            ));
         }
 
         Ok(())
@@ -553,6 +601,9 @@ impl PDFDocument {
 
     /// Load xref table at given position.
     fn load_xref_at(&self, pos: usize) -> Result<XRef> {
+        if pos >= self.data.as_slice().len() {
+            return Err(PdfError::NoValidXRef);
+        }
         let data = &self.data.as_slice()[pos..];
 
         // Check if it starts with "xref" (traditional) or a number (xref stream)
@@ -2425,6 +2476,22 @@ mod tests {
         out
     }
 
+    fn break_startxref(mut pdf: Vec<u8>) -> Vec<u8> {
+        const MARKER: &[u8] = b"startxref\n";
+        let start = pdf
+            .windows(MARKER.len())
+            .rposition(|window| window == MARKER)
+            .expect("startxref marker present");
+        let line_start = start + MARKER.len();
+        let line_end = pdf[line_start..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|offset| line_start + offset)
+            .expect("startxref line terminator present");
+        pdf.splice(line_start..line_end, b"999999".iter().copied());
+        pdf
+    }
+
     #[test]
     fn test_get_page_cached_reuses_page() {
         let pdf = build_minimal_pdf_with_pages(2);
@@ -2436,6 +2503,26 @@ mod tests {
 
         let _ = doc.get_page_cached(0).unwrap();
         assert_eq!(take_page_create_count(&doc), 0);
+    }
+
+    #[test]
+    fn test_fallback_controls_xref_recovery() {
+        let pdf = break_startxref(build_minimal_pdf_with_pages(1));
+
+        let recovered =
+            PDFDocument::new_with_cache_and_fallback(pdf.clone(), "", DEFAULT_CACHE_CAPACITY, true)
+                .unwrap();
+        assert_eq!(recovered.page_index().len(), 1);
+
+        let err = PDFDocument::new_with_cache_and_fallback(
+            pdf,
+            "",
+            DEFAULT_CACHE_CAPACITY,
+            false,
+        )
+        .err()
+        .expect("fallback-disabled parse should fail");
+        assert!(err.to_string().contains("No /Root object"));
     }
 
     /// Test that PDFDocument can be created from owned data and stored.

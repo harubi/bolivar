@@ -74,14 +74,21 @@ pub(crate) fn open_document_from_input(
     data: &Bound<'_, PyAny>,
     password: &str,
     caching: bool,
+    fallback: bool,
 ) -> PyResult<Arc<PDFDocument>> {
     let doc = match pdf_input_from_py(data)? {
-        PdfInput::Shared(bytes) => {
-            PDFDocument::new_from_bytes_with_cache(bytes, password, cache_capacity(caching))
-        }
-        PdfInput::Owned(bytes) => {
-            PDFDocument::new_with_cache(bytes, password, cache_capacity(caching))
-        }
+        PdfInput::Shared(bytes) => PDFDocument::new_from_bytes_with_cache_and_fallback(
+            bytes,
+            password,
+            cache_capacity(caching),
+            fallback,
+        ),
+        PdfInput::Owned(bytes) => PDFDocument::new_with_cache_and_fallback(
+            bytes,
+            password,
+            cache_capacity(caching),
+            fallback,
+        ),
     }
     .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
     Ok(Arc::new(doc))
@@ -91,14 +98,20 @@ pub(crate) fn open_document_from_path(
     path: &str,
     password: &str,
     caching: bool,
+    fallback: bool,
 ) -> PyResult<Arc<PDFDocument>> {
     let file = File::open(path)
         .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
     // Safety: the file handle remains open for the duration of the map.
     let mmap = unsafe { Mmap::map(&file) }
         .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-    let doc = PDFDocument::new_from_mmap_with_cache(mmap, password, cache_capacity(caching))
-        .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+    let doc = PDFDocument::new_from_mmap_with_cache_and_fallback(
+        mmap,
+        password,
+        cache_capacity(caching),
+        fallback,
+    )
+    .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
     Ok(Arc::new(doc))
 }
 
@@ -605,10 +618,15 @@ impl PyPDFDocument {
     /// Raises:
     ///     ValueError: If the PDF cannot be parsed
     #[new]
-    #[pyo3(signature = (data, password = "", caching = true))]
-    pub fn new(data: &Bound<'_, PyAny>, password: &str, caching: bool) -> PyResult<Self> {
+    #[pyo3(signature = (data, password = "", caching = true, fallback = true))]
+    pub fn new(
+        data: &Bound<'_, PyAny>,
+        password: &str,
+        caching: bool,
+        fallback: bool,
+    ) -> PyResult<Self> {
         Ok(Self {
-            inner: open_document_from_input(data.py(), data, password, caching)?,
+            inner: open_document_from_input(data.py(), data, password, caching, fallback)?,
             resolved_cache: Mutex::new(HashMap::new()),
         })
     }
@@ -625,15 +643,16 @@ impl PyPDFDocument {
     /// Raises:
     ///     ValueError: If the PDF cannot be parsed
     #[classmethod]
-    #[pyo3(signature = (path, password = "", caching = true))]
+    #[pyo3(signature = (path, password = "", caching = true, fallback = true))]
     pub fn from_path(
         _cls: &Bound<'_, PyType>,
         path: &str,
         password: &str,
         caching: bool,
+        fallback: bool,
     ) -> PyResult<Self> {
         Ok(Self {
-            inner: open_document_from_path(path, password, caching)?,
+            inner: open_document_from_path(path, password, caching, fallback)?,
             resolved_cache: Mutex::new(HashMap::new()),
         })
     }

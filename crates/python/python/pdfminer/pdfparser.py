@@ -3,8 +3,15 @@
 import pdfminer.pdftypes as pdftypes
 from bolivar._native_api import PDFParser as _RustPDFParser
 
+from .pdfexceptions import PDFException
+
 # Re-export PDFObjRef for compatibility (pdfplumber imports it from here)
 PDFObjRef = pdftypes.PDFObjRef
+
+
+class PDFSyntaxError(PDFException):
+    pass
+
 
 PDFParser = _RustPDFParser
 

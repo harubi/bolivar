@@ -452,7 +452,7 @@ pub fn extract_text(
     laparams: Option<&PyLAParams>,
 ) -> PyResult<String> {
     let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
-    let doc = open_document_from_input(py, data, password, caching)?;
+    let doc = open_document_from_input(py, data, password, caching, true)?;
     let result = py.detach(|| core_extract_text_with_document(doc.as_ref(), options));
     result.map_err(|e| core_error_to_py(py, "Failed to extract text", e))
 }
@@ -469,7 +469,7 @@ pub fn extract_text_from_path(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<String> {
-    let doc = open_document_from_path(path, password, caching)?;
+    let doc = open_document_from_path(path, password, caching, true)?;
     let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
 
     let result = py.detach(|| core_extract_text_with_document(doc.as_ref(), options));
@@ -489,7 +489,7 @@ pub fn extract_pages(
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<PyLTPage>> {
     let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
-    let doc = open_document_from_input(py, data, password, caching)?;
+    let doc = open_document_from_input(py, data, password, caching, true)?;
     let pages = py
         .detach(|| core_extract_pages_with_document(doc.as_ref(), options))
         .map_err(|e| core_error_to_py(py, "Failed to extract pages", e))?;
@@ -510,7 +510,7 @@ pub fn extract_pages_with_images(
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<PyLTPage>> {
     let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
-    let doc = open_document_from_input(py, data, password, caching)?;
+    let doc = open_document_from_input(py, data, password, caching, true)?;
     let pages = py
         .detach(|| core_extract_pages_with_images_with_document(doc.as_ref(), options, output_dir))
         .map_err(|e| core_error_to_py(py, "Failed to extract pages", e))?;
@@ -529,7 +529,7 @@ pub fn extract_pages_from_path(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<PyLTPage>> {
-    let doc = open_document_from_path(path, password, caching)?;
+    let doc = open_document_from_path(path, password, caching, true)?;
     let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
 
     let pages = py
@@ -551,7 +551,7 @@ pub fn extract_pages_with_images_from_path(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<PyLTPage>> {
-    let doc = open_document_from_path(path, password, caching)?;
+    let doc = open_document_from_path(path, password, caching, true)?;
     let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
 
     let pages = py
