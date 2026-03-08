@@ -1,7 +1,9 @@
 """Tests for PyO3 bindings (TDD)"""
 
-import pytest
+from io import BytesIO
 from pathlib import Path
+
+import pytest
 
 # Get fixtures path
 ROOT = Path(__file__).parent.parent
@@ -248,7 +250,6 @@ def test_high_level_memoryview():
 
 
 def test_high_level_extract_text_accepts_codec_keyword():
-    from io import BytesIO
     from pdfminer import high_level
 
     pdf_path = FIXTURES_DIR / "simple1.pdf"
@@ -259,6 +260,58 @@ def test_high_level_extract_text_accepts_codec_keyword():
     for codec in ("utf-8", "utf-16", "latin-1", None):
         text = high_level.extract_text(BytesIO(pdf_bytes), codec=codec)
         assert text == baseline
+
+
+def test_high_level_extract_text_to_fp_tag_output_uses_tag_extractor():
+    from pdfminer import high_level
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    out = BytesIO()
+
+    high_level.extract_text_to_fp(BytesIO(pdf_bytes), out, output_type="tag")
+
+    output = out.getvalue()
+    assert output.startswith(b'<page id="0"')
+    assert b'bbox="0.000,0.000,612.000,792.000"' in output
+    assert b"Hello WorldHello WorldHello WorldHello World" in output
+
+
+def test_high_level_extract_text_to_fp_tag_output_honors_rotation():
+    from pdfminer import high_level
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    out = BytesIO()
+
+    high_level.extract_text_to_fp(
+        BytesIO(pdf_bytes),
+        out,
+        output_type="tag",
+        rotation=90,
+    )
+
+    output = out.getvalue()
+    assert b'rotate="90"' in output
+    assert b"Hello WorldHello WorldHello WorldHello World" in output
+
+
+def test_high_level_extract_text_to_fp_xml_output_honors_rotation():
+    from pdfminer import high_level
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    out = BytesIO()
+
+    high_level.extract_text_to_fp(
+        BytesIO(pdf_bytes),
+        out,
+        output_type="xml",
+        rotation=90,
+    )
+
+    output = out.getvalue()
+    assert b'<page id="1" bbox="0.000,0.000,792.000,612.000" rotate="0">' in output
 
 
 def test_extract_tables_settings_affects_output():

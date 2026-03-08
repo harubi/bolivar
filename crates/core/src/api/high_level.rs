@@ -99,6 +99,9 @@ pub struct ExtractOptions {
 
     /// Layout analysis parameters. None uses default LAParams.
     pub laparams: Option<LAParams>,
+
+    /// Additional rotation to apply when interpreting pages.
+    pub rotation: i64,
 }
 
 pub type Cell = Option<String>;
@@ -115,6 +118,7 @@ impl Default for ExtractOptions {
             maxpages: 0,
             caching: true,
             laparams: None,
+            rotation: 0,
         }
     }
 }
@@ -160,6 +164,7 @@ pub fn extract_text_with_document(doc: &PDFDocument, options: ExtractOptions) ->
         options.maxpages,
         options.caching,
         Some(&laparams),
+        options.rotation,
     )?;
 
     String::from_utf8(output).map_err(|e| PdfError::DecodeError(e.to_string()))
@@ -198,6 +203,7 @@ pub fn extract_text_to_fp<W: Write>(
         options.maxpages,
         options.caching,
         laparams,
+        options.rotation,
     )
 }
 
@@ -210,6 +216,7 @@ fn extract_text_to_fp_inner<W: Write>(
     maxpages: usize,
     caching: bool,
     laparams: Option<&LAParams>,
+    rotation: i64,
 ) -> Result<()> {
     // Validate PDF header
     if pdf_data.len() < 8 || !pdf_data.starts_with(b"%PDF-") {
@@ -218,7 +225,15 @@ fn extract_text_to_fp_inner<W: Write>(
 
     // Parse PDF document
     let doc = PDFDocument::new_with_cache(pdf_data, password, cache_capacity(caching))?;
-    extract_text_to_fp_from_doc_inner(&doc, writer, page_numbers, maxpages, caching, laparams)
+    extract_text_to_fp_from_doc_inner(
+        &doc,
+        writer,
+        page_numbers,
+        maxpages,
+        caching,
+        laparams,
+        rotation,
+    )
 }
 
 fn extract_text_to_fp_from_doc_inner<W: Write>(
@@ -228,6 +243,7 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
     maxpages: usize,
     caching: bool,
     laparams: Option<&LAParams>,
+    rotation: i64,
 ) -> Result<()> {
     // Get LAParams (use default if not provided)
     let default_laparams = LAParams::default();
@@ -250,7 +266,13 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                 let mut aggregator =
                     PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1, arena);
-                let ltpage = process_page(page.as_ref(), &mut aggregator, &mut rsrcmgr, doc);
+                let ltpage = process_page_with_rotation(
+                    page.as_ref(),
+                    &mut aggregator,
+                    &mut rsrcmgr,
+                    rotation,
+                    doc,
+                );
                 (page_idx, ltpage)
             })
             .collect()
@@ -269,13 +291,22 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
 ///
 /// Uses PDFPageInterpreter to execute the page's content stream,
 /// which populates the device (aggregator) with layout items.
-pub(crate) fn process_page(
+pub(crate) fn process_page_with_rotation(
     page: &PDFPage,
     aggregator: &mut PDFPageAggregator<'_>,
     rsrcmgr: &mut PDFResourceManager,
+    rotation: i64,
     doc: &PDFDocument,
 ) -> Result<LTPage> {
     record_thread();
+
+    let rotated_page;
+    let page = if rotation.rem_euclid(360) == 0 {
+        page
+    } else {
+        rotated_page = page.with_extra_rotation(rotation);
+        &rotated_page
+    };
 
     // Create interpreter with resource manager and aggregator as device
     let mut interpreter = PDFPageInterpreter::new(rsrcmgr, aggregator);
@@ -309,12 +340,22 @@ pub fn extract_layout_for_page(
     laparams: Option<LAParams>,
     caching: bool,
 ) -> Result<LTPage> {
+    extract_layout_for_page_with_rotation(doc, page_index, laparams, caching, 0)
+}
+
+pub fn extract_layout_for_page_with_rotation(
+    doc: &PDFDocument,
+    page_index: usize,
+    laparams: Option<LAParams>,
+    caching: bool,
+    rotation: i64,
+) -> Result<LTPage> {
     let page = doc.get_page_cached(page_index)?;
     let mut arena = PageArena::new();
     arena.reset();
     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
     let mut aggregator = PDFPageAggregator::new(laparams, page_index as i32 + 1, &mut arena);
-    process_page(page.as_ref(), &mut aggregator, &mut rsrcmgr, doc)
+    process_page_with_rotation(page.as_ref(), &mut aggregator, &mut rsrcmgr, rotation, doc)
 }
 
 /// Iterator over analyzed pages.
@@ -427,6 +468,7 @@ pub fn extract_pages_with_document(
     );
     let laparams = options.laparams.clone();
     let caching = options.caching;
+    let rotation = options.rotation;
     let pool = plan.build_pool()?;
 
     let mut results: Vec<(usize, Result<LTPage>)> = pool.install(|| {
@@ -442,7 +484,13 @@ pub fn extract_pages_with_document(
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                 let mut aggregator =
                     PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
-                let ltpage = process_page(page.as_ref(), &mut aggregator, &mut rsrcmgr, doc);
+                let ltpage = process_page_with_rotation(
+                    page.as_ref(),
+                    &mut aggregator,
+                    &mut rsrcmgr,
+                    rotation,
+                    doc,
+                );
                 (page_idx, ltpage)
             })
             .collect()
@@ -470,6 +518,7 @@ fn extract_pages_with_images_with_writer(
 ) -> Result<Vec<LTPage>> {
     let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
     let laparams = options.laparams.unwrap_or_default();
+    let rotation = options.rotation;
     let mut arena = PageArena::new();
     let mut pages = Vec::new();
     let mut page_count = 0;
@@ -494,7 +543,8 @@ fn extract_pages_with_images_with_writer(
             &mut arena,
         );
 
-        let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, doc)?;
+        let ltpage =
+            process_page_with_rotation(&page, &mut aggregator, &mut rsrcmgr, rotation, doc)?;
         pages.push(ltpage);
         page_count += 1;
     }

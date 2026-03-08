@@ -407,6 +407,27 @@ impl<W: Write> TagExtractor<W> {
     }
 }
 
+fn rotation_from_ctm(ctm: Matrix) -> i32 {
+    let (a, b, c, d, _, _) = ctm;
+    let eps = 1e-9;
+    let is_zero = |value: f64| value.abs() < eps;
+
+    if is_zero(a) && is_zero(d) {
+        if b < 0.0 && c > 0.0 {
+            return 90;
+        }
+        if b > 0.0 && c < 0.0 {
+            return 270;
+        }
+    }
+
+    if is_zero(b) && is_zero(c) && a < 0.0 && d < 0.0 {
+        return 180;
+    }
+
+    0
+}
+
 impl<W: Write> PDFDevice for TagExtractor<W> {
     fn set_ctm(&mut self, ctm: Matrix) {
         self.ctm = Some(ctm);
@@ -416,11 +437,12 @@ impl<W: Write> PDFDevice for TagExtractor<W> {
         self.ctm
     }
 
-    fn begin_page(&mut self, pageid: u32, mediabox: Rect, _ctm: Matrix) {
+    fn begin_page(&mut self, _pageid: u32, mediabox: Rect, ctm: Matrix) {
         let (x0, y0, x1, y1) = mediabox;
+        let rotate = rotation_from_ctm(ctm);
         let output = format!(
-            "<page id=\"{}\" bbox=\"{:.3},{:.3},{:.3},{:.3}\" rotate=\"0\">",
-            pageid, x0, y0, x1, y1
+            "<page id=\"{}\" bbox=\"{:.3},{:.3},{:.3},{:.3}\" rotate=\"{}\">",
+            self.pageno, x0, y0, x1, y1, rotate
         );
         self.write_bytes(&output);
     }
@@ -457,6 +479,16 @@ impl<W: Write> PDFDevice for TagExtractor<W> {
     fn do_tag(&mut self, tag: &PSLiteral, props: Option<&PDFStackT>) {
         self.begin_tag(tag, props);
         self.stack.pop();
+    }
+
+    fn render_string(
+        &mut self,
+        textstate: &mut PDFTextState,
+        seq: &PDFTextSeq,
+        ncs: &PDFColorSpace,
+        graphicstate: &PDFGraphicState,
+    ) {
+        <Self as PDFTextDevice>::render_string(self, textstate, seq, ncs, graphicstate);
     }
 }
 

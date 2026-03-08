@@ -196,6 +196,27 @@ impl PDFPage {
         }
     }
 
+    /// Return a copied page with an additional rotation applied.
+    pub fn with_extra_rotation(&self, rotation: i64) -> Self {
+        let extra = rotation.rem_euclid(360);
+
+        Self {
+            pageid: self.pageid,
+            attrs: self.attrs.clone(),
+            label: self.label.clone(),
+            mediabox: self.mediabox,
+            cropbox: self.cropbox,
+            bleedbox: self.bleedbox,
+            trimbox: self.trimbox,
+            artbox: self.artbox,
+            rotate: (self.rotate + extra).rem_euclid(360),
+            annots: self.annots.clone(),
+            resources: self.resources.clone(),
+            contents: self.contents.clone(),
+            user_unit: self.user_unit,
+        }
+    }
+
     fn parse_box(attrs: &PDFDict, key: &str, doc: &PDFDocument) -> Option<[f64; 4]> {
         let obj = attrs.get(key)?;
         Self::parse_box_obj(obj, doc)

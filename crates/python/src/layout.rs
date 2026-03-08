@@ -11,8 +11,12 @@ use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::convert::{name_to_psliteral, psliteral_name};
+use crate::convert::{core_error_to_py, name_to_psliteral, psliteral_name};
+use crate::document::{PyPDFDocument, PyPDFPage};
 use crate::params::PyLAParams;
+use bolivar_core::interp::{
+    PDFPageInterpreter as CorePDFPageInterpreter, PDFResourceManager as CorePDFResourceManager,
+};
 
 const UNKNOWN_LEN: usize = usize::MAX;
 
@@ -1684,6 +1688,28 @@ impl Write for PyWriter {
     }
 }
 
+fn rotated_core_page(
+    page: &PyPDFPage,
+    rotate: Option<i64>,
+) -> Option<bolivar_core::pdfpage::PDFPage> {
+    let normalized_rotate = rotate.unwrap_or(page.rotate).rem_euclid(360);
+    (normalized_rotate != page.rotate).then(|| bolivar_core::pdfpage::PDFPage {
+        pageid: page.core.pageid,
+        attrs: page.core.attrs.clone(),
+        label: page.core.label.clone(),
+        mediabox: page.core.mediabox,
+        cropbox: page.core.cropbox,
+        bleedbox: page.core.bleedbox,
+        trimbox: page.core.trimbox,
+        artbox: page.core.artbox,
+        rotate: normalized_rotate,
+        annots: page.core.annots.clone(),
+        resources: page.core.resources.clone(),
+        contents: page.core.contents.clone(),
+        user_unit: page.core.user_unit,
+    })
+}
+
 /// TextConverter for converting layout to text.
 #[pyclass(name = "TextConverter")]
 pub struct PyTextConverter {
@@ -1952,6 +1978,24 @@ impl PyTagExtractor {
 
     pub fn increment_pageno(&mut self) {
         self.inner.increment_pageno();
+    }
+
+    #[pyo3(signature = (doc, page, rotate = None, caching = true))]
+    pub fn _process_page(
+        &mut self,
+        py: Python<'_>,
+        doc: &PyPDFDocument,
+        page: &PyPDFPage,
+        rotate: Option<i64>,
+        caching: bool,
+    ) -> PyResult<()> {
+        let rotated_page = rotated_core_page(page, rotate);
+        let page_ref = rotated_page.as_ref().unwrap_or(page.core.as_ref());
+        let mut rsrcmgr = CorePDFResourceManager::with_caching(caching);
+        let mut interpreter = CorePDFPageInterpreter::new(&mut rsrcmgr, &mut self.inner);
+        interpreter
+            .process_page(page_ref, Some(&doc.inner))
+            .map_err(|e| core_error_to_py(py, "Failed to process page", e))
     }
 
     fn close(&mut self) {

@@ -43,6 +43,14 @@ class _DeviceLike(Protocol):
 
     def _receive_layout(self, layout: object) -> None: ...
 
+    def _process_page(
+        self,
+        doc: _NativePDFDocument,
+        page: _NativePDFPage,
+        rotate: int | None = None,
+        caching: bool = True,
+    ) -> None: ...
+
 
 class PDFColorSpace:
     name: str
@@ -164,6 +172,7 @@ class PDFPageInterpreter:
         # Get the Rust document and page from the shim wrappers
         rust_doc = page.doc._rust_doc
         rust_page = page._rust_page
+        rotation = (page.rotate - rust_page.rotate) % 360
 
         # Get LAParams from the device if available
         laparams = getattr(self.device, "_laparams", None)
@@ -176,7 +185,27 @@ class PDFPageInterpreter:
                 # Already a Rust LAParams or compatible
                 rust_laparams = laparams
 
-        ltpage = _rust_process_page(rust_doc, rust_page, rust_laparams)
+        process_native_page = getattr(self.device, "_process_page", None)
+        if callable(process_native_page):
+            caching = True
+            resource_caching = getattr(self.rsrcmgr, "caching", True)
+            if callable(resource_caching):
+                caching = bool(resource_caching())
+            else:
+                caching = bool(resource_caching)
+            process_native_page(
+                rust_doc,
+                rust_page,
+                rotate=getattr(page, "rotate", None),
+                caching=caching,
+            )
+            return
 
-        # Send the result to the device
-        self.device._receive_layout(ltpage)
+        if hasattr(self.device, "_receive_layout"):
+            ltpage = _rust_process_page(rust_doc, rust_page, rust_laparams, rotation)
+            self.device._receive_layout(ltpage)
+            return
+
+        raise AttributeError(
+            f"{type(self.device).__name__} must implement _receive_layout or _process_page"
+        )
