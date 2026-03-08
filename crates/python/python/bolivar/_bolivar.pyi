@@ -696,6 +696,14 @@ class TagExtractor:
     def write(self, text: str, /) -> None: ...
     def pageno(self) -> int: ...
     def increment_pageno(self) -> None: ...
+    def _process_page(
+        self,
+        doc: PDFDocument,
+        page: PDFPage,
+        rotate: int | None = None,
+        caching: bool = True,
+        /,
+    ) -> None: ...
     def close(self) -> None: ...
 
 # ── table.rs ─────────────────────────────────────────────────────────────
@@ -723,6 +731,7 @@ def extract_pages(
     maxpages: int = 0,
     caching: bool = True,
     laparams: LAParams | None = None,
+    rotation: int = 0,
 ) -> list[LTPage]: ...
 def extract_pages_from_path(
     path: str,
@@ -731,6 +740,7 @@ def extract_pages_from_path(
     maxpages: int = 0,
     caching: bool = True,
     laparams: LAParams | None = None,
+    rotation: int = 0,
 ) -> list[LTPage]: ...
 def extract_pages_with_images(
     data: bytes | bytearray | BinaryIO,
@@ -740,6 +750,7 @@ def extract_pages_with_images(
     maxpages: int = 0,
     caching: bool = True,
     laparams: LAParams | None = None,
+    rotation: int = 0,
 ) -> list[LTPage]: ...
 def extract_pages_with_images_from_path(
     path: str,
@@ -749,11 +760,13 @@ def extract_pages_with_images_from_path(
     maxpages: int = 0,
     caching: bool = True,
     laparams: LAParams | None = None,
+    rotation: int = 0,
 ) -> list[LTPage]: ...
 def process_page(
     doc: PDFDocument,
     page: PDFPage,
     laparams: LAParams | None = None,
+    rotation: int = 0,
 ) -> LTPage: ...
 def process_pages(
     doc: PDFDocument,

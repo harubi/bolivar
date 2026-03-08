@@ -21,7 +21,9 @@ use crate::table::{
     extract_tables_from_objects, extract_text_from_objects, extract_words_from_objects,
 };
 
-use super::high_level::{ExtractOptions, PageTables, process_page, process_page_arena};
+use super::high_level::{
+    ExtractOptions, PageTables, process_page_arena, process_page_with_rotation,
+};
 
 pub const DEFAULT_STREAM_BUFFER_CAPACITY: usize = 50;
 
@@ -351,6 +353,7 @@ pub fn extract_pages_stream_from_doc(
     );
     let laparams = options.laparams.clone();
     let caching = options.caching;
+    let rotation = options.rotation;
     let order = plan.order.clone();
     let work_order = order.clone();
     let worker_count = plan.worker_count;
@@ -393,10 +396,11 @@ pub fn extract_pages_stream_from_doc(
                     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                     let mut aggregator =
                         PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                    let ltpage = process_page(
+                    let ltpage = process_page_with_rotation(
                         page.as_ref(),
                         &mut aggregator,
                         &mut rsrcmgr,
+                        rotation,
                         doc_worker.as_ref(),
                     );
                     if cancel_worker.load(Ordering::Relaxed) {

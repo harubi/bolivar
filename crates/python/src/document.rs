@@ -122,12 +122,24 @@ pub(crate) fn build_extract_options(
     caching: bool,
     laparams: Option<&PyLAParams>,
 ) -> ExtractOptions {
+    build_extract_options_with_rotation(password, page_numbers, maxpages, caching, laparams, 0)
+}
+
+pub(crate) fn build_extract_options_with_rotation(
+    password: &str,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+    laparams: Option<&PyLAParams>,
+    rotation: i64,
+) -> ExtractOptions {
     let mut options = ExtractOptions {
         password: password.to_string(),
         page_numbers,
         maxpages,
         caching,
         laparams: laparams.map(|p| p.clone().into()),
+        rotation,
     };
     if options.laparams.is_none() {
         options.laparams = Some(bolivar_core::layout::LAParams::default());
@@ -888,7 +900,7 @@ pub struct PyPDFPage {
     #[pyo3(get)]
     pub label: Option<String>,
     pub(crate) page_index: usize,
-    core: Arc<bolivar_core::pdfpage::PDFPage>,
+    pub(crate) core: Arc<bolivar_core::pdfpage::PDFPage>,
     doc: Arc<PDFDocument>,
     /// Page annotations (resolved to Python objects)
     annots_list: Mutex<Option<Py<PyAny>>>,

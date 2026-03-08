@@ -5,6 +5,7 @@ import pytest
 from pdfminer.high_level import extract_text
 from pdfminer.pdfexceptions import PDFNotImplementedError
 from pdfminer.layout import LTTextBoxHorizontal
+from pdfminer.pdfdevice import TagExtractor
 from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
 from pdfminer.pdfpage import PDFPage
 from pdfminer.pdfparser import PDFParser
@@ -91,6 +92,21 @@ def test_interpreter_without_laparams_keeps_raw_layout_items():
 
     assert layout is not None
     assert not any(isinstance(obj, LTTextBoxHorizontal) for obj in layout._objs)
+
+
+def test_interpreter_supports_tag_extractor_devices():
+    _, page = _load_first_page()
+    rsrc = PDFResourceManager()
+    out = BytesIO()
+    device = TagExtractor(rsrc, out)
+    interp = PDFPageInterpreter(rsrc, device)
+
+    interp.process_page(page)
+
+    assert out.getvalue() == (
+        b'<page id="0" bbox="0.000,0.000,612.000,792.000" rotate="0">'
+        b"Hello WorldHello WorldHello WorldHello World</page>\n"
+    )
 
 
 def test_interpreter_does_not_cache_pages():

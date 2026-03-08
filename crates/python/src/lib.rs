@@ -174,6 +174,7 @@ mod tests {
                 0,
                 true,
                 None,
+                0,
             )
             .unwrap();
             assert_eq!(pages.len(), 2);

@@ -29,8 +29,10 @@ from bolivar import (
 from .converter import HOCRConverter, HTMLConverter, TextConverter, XMLConverter
 from .image import ImageWriter
 from .layout import LTPage
+from .pdfdevice import TagExtractor
 from .pdfexceptions import PDFValueError
-from .pdfinterp import PDFResourceManager
+from .pdfinterp import PDFPageInterpreter, PDFResourceManager
+from .pdfpage import PDFPage
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -81,10 +83,29 @@ def extract_text_to_fp(
     if output_dir:
         imagewriter = ImageWriter(output_dir)
 
-    rsrcmgr = PDFResourceManager(caching=not disable_caching)
-
     if output_type != "text" and outfp == sys.stdout:
         outfp = sys.stdout.buffer
+
+    if page_numbers is not None:
+        page_numbers = list(page_numbers)
+
+    if output_type == "tag":
+        rsrcmgr = PDFResourceManager(caching=not disable_caching)
+        device = TagExtractor(rsrcmgr, outfp, codec=codec)
+        interpreter = PDFPageInterpreter(rsrcmgr, device)
+        for page in PDFPage.get_pages(
+            inf,
+            page_numbers,
+            maxpages=maxpages,
+            password=password,
+            caching=not disable_caching,
+        ):
+            page.rotate = (page.rotate + rotation) % 360
+            interpreter.process_page(page)
+        device.close()
+        return
+
+    rsrcmgr = PDFResourceManager(caching=not disable_caching)
 
     if output_type == "text":
         device = TextConverter(
@@ -122,20 +143,9 @@ def extract_text_to_fp(
             stripcontrol=strip_control,
             imagewriter=imagewriter,
         )
-    elif output_type == "tag":
-        device = TextConverter(
-            rsrcmgr,
-            outfp,
-            codec=codec,
-            laparams=laparams,
-            imagewriter=imagewriter,
-        )
     else:
         msg = f"Output type can be text, html, xml or tag but is {output_type}"
         raise PDFValueError(msg)
-
-    if page_numbers is not None:
-        page_numbers = list(page_numbers)
 
     resolved = _resolve_input(inf)
     if output_dir:
@@ -148,6 +158,7 @@ def extract_text_to_fp(
                 maxpages,
                 not disable_caching,
                 laparams,
+                rotation,
             )
         else:
             pages = _extract_pages_with_images(
@@ -158,6 +169,7 @@ def extract_text_to_fp(
                 maxpages,
                 not disable_caching,
                 laparams,
+                rotation,
             )
     else:
         if isinstance(resolved, str):
@@ -168,6 +180,7 @@ def extract_text_to_fp(
                 maxpages,
                 not disable_caching,
                 laparams,
+                rotation,
             )
         else:
             pages = _extract_pages(
@@ -177,6 +190,7 @@ def extract_text_to_fp(
                 maxpages,
                 not disable_caching,
                 laparams,
+                rotation,
             )
 
     for page in pages:
