@@ -5,6 +5,8 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING
 
+from bolivar._export_manifest import BRIDGE_EXPORTS
+
 if TYPE_CHECKING:
     from types import ModuleType
 
@@ -29,17 +31,11 @@ def load_bridge_api() -> ModuleType:
     return _NATIVE_MODULE
 
 
-__all__ = [
-    "_extract_tables_for_page_indexed",
-    "_extract_tables_for_compat_page",
-    "_extract_words_for_page_indexed",
-]
-
-_BRIDGE_EXPORTS = frozenset(__all__)
+__all__ = list(BRIDGE_EXPORTS)
 
 
 def __getattr__(name: str) -> object:
-    if name not in _BRIDGE_EXPORTS:
+    if name not in BRIDGE_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     native = load_bridge_api()
     try:
