@@ -220,6 +220,16 @@ class PDFPageInterpreter:
         if callable(end_page):
             end_page(page)
 
+    def render_contents(
+        self,
+        resources: object,
+        streams: object,
+        ctm: _Matrix = (1, 0, 0, 1, 0, 0),
+    ) -> None:
+        self.init_resources(resources)
+        self.init_state(ctm)
+        _ = streams
+
     @staticmethod
     def _page_ctm(page: _PageLike) -> _Matrix:
         mediabox = getattr(page, "mediabox", None)
