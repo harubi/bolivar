@@ -3,6 +3,7 @@
 //! Provides functions to convert between Rust PDFObject types and Python objects,
 //! handling references, streams, and interned PS literals/keywords.
 
+use bolivar_core::error::PdfError;
 use bolivar_core::parser::PSToken;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdftypes::{PDFDict, PDFObject, PDFStream};
@@ -152,6 +153,23 @@ pub fn ps_exception(py: Python<'_>, class_name: &str, msg: &str) -> PyErr {
         return PyErr::from_value(err);
     }
     PyValueError::new_err(msg.to_string())
+}
+
+pub fn pdf_exception(py: Python<'_>, class_name: &str, msg: &str) -> PyErr {
+    if let Ok(module) = py.import("pdfminer.pdfexceptions")
+        && let Ok(cls) = module.getattr(class_name)
+        && let Ok(err) = cls.call1((msg,))
+    {
+        return PyErr::from_value(err);
+    }
+    PyValueError::new_err(msg.to_string())
+}
+
+pub fn core_error_to_py(py: Python<'_>, context: &str, err: PdfError) -> PyErr {
+    match err {
+        PdfError::NotImplemented(message) => pdf_exception(py, "PDFNotImplementedError", &message),
+        other => PyValueError::new_err(format!("{context}: {other}")),
+    }
 }
 
 /// Convert PS name to bytes.

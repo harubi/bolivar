@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from bolivar import PDFDocument
-import bolivar._bolivar as _bolivar
+import bolivar._bridge_api as _bridge_api
 
 
 def test_table_stream_yields_results():
@@ -14,7 +14,7 @@ def test_table_stream_yields_results():
         geoms.append((tuple(box), tuple(box), running, False))
         running += box[3] - box[1]
 
-    stream = _bolivar._extract_tables_stream(doc, geoms)
+    stream = _bridge_api._extract_tables_stream(doc, geoms)
     page_idx, tables = next(iter(stream))
     assert page_idx == 0
     assert isinstance(tables, list)

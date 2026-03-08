@@ -154,21 +154,6 @@ if TYPE_CHECKING:
         __version__ as __version__,
     )
     from bolivar._bolivar import (
-        _extract_tables_for_page_indexed as _extract_tables_for_page_indexed,
-    )
-    from bolivar._bolivar import (
-        _extract_tables_from_page_objects as _extract_tables_from_page_objects,
-    )
-    from bolivar._bolivar import (
-        _extract_tables_stream as _extract_tables_stream,
-    )
-    from bolivar._bolivar import (
-        _extract_text_stream as _extract_text_stream,
-    )
-    from bolivar._bolivar import (
-        _extract_words_stream as _extract_words_stream,
-    )
-    from bolivar._bolivar import (
         apply_matrix_pt as apply_matrix_pt,
     )
     from bolivar._bolivar import (
@@ -384,17 +369,9 @@ __all__ = [
 
 _PUBLIC_EXPORTS = tuple(__all__)
 
-_INTERNAL_BRIDGE_EXPORTS = (
-    "_extract_tables_stream",
-    "_extract_tables_for_page_indexed",
-    "_extract_tables_from_page_objects",
-    "_extract_text_stream",
-    "_extract_words_stream",
-)
-
 
 def __getattr__(name: str) -> object:
-    if name not in _PUBLIC_EXPORTS and name not in _INTERNAL_BRIDGE_EXPORTS:
+    if name not in _PUBLIC_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     native = load_native_api()
     try:

@@ -175,6 +175,28 @@ class TestPDFDocument:
             obj = doc.getobj(11)
             assert isinstance(obj["DescendantFonts"][0], PDFObjRef)
 
+    def test_document_exposes_permission_flags_on_unencrypted_pdf(self):
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+
+        pdf_path = FIXTURES_DIR / "simple1.pdf"
+        with open(pdf_path, "rb") as f:
+            doc = PDFDocument(PDFParser(f))
+            assert doc.is_printable is True
+            assert doc.is_modifiable is True
+            assert doc.is_extractable is True
+
+    def test_document_exposes_permission_flags_on_encrypted_pdf(self):
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+
+        pdf_path = FIXTURES_DIR / "encryption/rc4-40.pdf"
+        with open(pdf_path, "rb") as f:
+            doc = PDFDocument(PDFParser(f), password="foo")
+            assert doc.is_printable is True
+            assert doc.is_modifiable is True
+            assert doc.is_extractable is True
+
 
 class TestPDFPage:
     """Test pdfminer.pdfpage.PDFPage shim"""
@@ -212,6 +234,25 @@ class TestPDFPage:
             doc = PDFDocument(parser)
             pages = list(PDFPage.create_pages(doc))
             assert len(pages) >= 1
+
+    def test_create_pages_signature_matches_upstream(self):
+        from inspect import signature
+        from pdfminer.pdfpage import PDFPage
+
+        params = signature(PDFPage.create_pages).parameters
+
+        assert list(params) == ["document"]
+
+    def test_create_pages_rejects_legacy_compat_keywords(self):
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+
+        pdf_path = FIXTURES_DIR / "simple1.pdf"
+        with open(pdf_path, "rb") as f:
+            doc = PDFDocument(PDFParser(f))
+            with pytest.raises(TypeError, match="caching"):
+                list(PDFPage.create_pages(doc, caching=True))
 
     def test_get_pages_signature_uses_upstream_keywords(self):
         from inspect import signature
@@ -251,6 +292,53 @@ class TestPDFPage:
 
         assert len(pages) == 1
         assert pages[0].pageid == 1
+
+    def test_get_pages_raises_when_document_is_not_extractable(self, monkeypatch):
+        from io import BytesIO
+        from pdfminer.pdfexceptions import PDFTextExtractionNotAllowed
+        from pdfminer.pdfpage import PDFPage
+
+        class StubParser:
+            def __init__(self, fp):
+                self.fp = fp
+
+        class StubDocument:
+            def __init__(self, parser, password=b"", caching=True):
+                self.parser = parser
+                self.password = password
+                self.caching = caching
+                self.is_extractable = False
+
+        monkeypatch.setattr("pdfminer.pdfparser.PDFParser", StubParser)
+        monkeypatch.setattr("pdfminer.pdfdocument.PDFDocument", StubDocument)
+
+        with pytest.raises(PDFTextExtractionNotAllowed, match="Text extraction is not allowed"):
+            list(PDFPage.get_pages(BytesIO(b"%PDF-1.4\n"), check_extractable=True))
+
+    def test_get_pages_warns_when_document_is_not_extractable(self, monkeypatch, caplog):
+        from io import BytesIO
+        from pdfminer.pdfpage import PDFPage
+
+        class StubParser:
+            def __init__(self, fp):
+                self.fp = fp
+
+        class StubDocument:
+            def __init__(self, parser, password=b"", caching=True):
+                self.parser = parser
+                self.password = password
+                self.caching = caching
+                self.is_extractable = False
+
+        monkeypatch.setattr("pdfminer.pdfparser.PDFParser", StubParser)
+        monkeypatch.setattr("pdfminer.pdfdocument.PDFDocument", StubDocument)
+        monkeypatch.setattr(PDFPage, "create_pages", classmethod(lambda cls, doc: iter(())))
+
+        with caplog.at_level("WARNING"):
+            pages = list(PDFPage.get_pages(BytesIO(b"%PDF-1.4\n"), check_extractable=False))
+
+        assert pages == []
+        assert "should not allow text extraction" in caplog.text
 
     def test_page_attrs_resolved(self):
         """PDFPage attrs should have resolved values for pdfplumber compatibility."""

@@ -56,6 +56,9 @@ class PDFDocument:
     catalog: dict[str, Any]
     encryption: object | None
     decipher: object | None
+    is_printable: bool
+    is_modifiable: bool
+    is_extractable: bool
 
     def __init__(
         self,
@@ -111,6 +114,9 @@ class PDFDocument:
         self.catalog = self._rust_doc.catalog
         self.encryption = None
         self.decipher = None
+        self.is_printable = self._rust_doc.is_printable
+        self.is_modifiable = self._rust_doc.is_modifiable
+        self.is_extractable = self._rust_doc.is_extractable
 
     def getobj(self, objid: int) -> object:
         """Resolve an indirect object by object id."""

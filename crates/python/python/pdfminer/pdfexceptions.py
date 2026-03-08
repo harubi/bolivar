@@ -33,3 +33,7 @@ class PDFEOFError(PDFException, EOFError):
 
 class PDFIOError(PDFException, IOError):
     pass
+
+
+class PDFTextExtractionNotAllowed(PDFException):
+    pass

@@ -16,6 +16,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PySequence};
 
+use crate::convert::core_error_to_py;
 use crate::document::{
     PyPDFDocument, PyPDFPage, build_extract_options, open_document_from_input,
     open_document_from_path,
@@ -43,7 +44,7 @@ pub fn process_page(
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
     let ltpage = py
         .detach(|| core_extract_layout_for_page(&doc.inner, page.page_index, la, true))
-        .map_err(|e| PyValueError::new_err(format!("Failed to process page: {e}")))?;
+        .map_err(|e| core_error_to_py(py, "Failed to process page", e))?;
 
     Ok(ltpage_to_py(ltpage))
 }
@@ -66,7 +67,7 @@ pub fn process_pages(
 
     let pages = py
         .detach(|| core_extract_pages_with_document(&doc.inner, options))
-        .map_err(|e| PyValueError::new_err(format!("Failed to process pages: {}", e)))?;
+        .map_err(|e| core_error_to_py(py, "Failed to process pages", e))?;
 
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
@@ -453,7 +454,7 @@ pub fn extract_text(
     let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
     let doc = open_document_from_input(py, data, password, caching)?;
     let result = py.detach(|| core_extract_text_with_document(doc.as_ref(), options));
-    result.map_err(|e| PyValueError::new_err(format!("Failed to extract text: {}", e)))
+    result.map_err(|e| core_error_to_py(py, "Failed to extract text", e))
 }
 
 /// Extract text from a PDF file path using memory-mapped I/O.
@@ -472,7 +473,7 @@ pub fn extract_text_from_path(
     let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
 
     let result = py.detach(|| core_extract_text_with_document(doc.as_ref(), options));
-    result.map_err(|e| PyValueError::new_err(format!("Failed to extract text: {}", e)))
+    result.map_err(|e| core_error_to_py(py, "Failed to extract text", e))
 }
 
 /// Extract pages (layout) from PDF bytes.
@@ -491,7 +492,7 @@ pub fn extract_pages(
     let doc = open_document_from_input(py, data, password, caching)?;
     let pages = py
         .detach(|| core_extract_pages_with_document(doc.as_ref(), options))
-        .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+        .map_err(|e| core_error_to_py(py, "Failed to extract pages", e))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
@@ -512,7 +513,7 @@ pub fn extract_pages_with_images(
     let doc = open_document_from_input(py, data, password, caching)?;
     let pages = py
         .detach(|| core_extract_pages_with_images_with_document(doc.as_ref(), options, output_dir))
-        .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+        .map_err(|e| core_error_to_py(py, "Failed to extract pages", e))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
@@ -533,7 +534,7 @@ pub fn extract_pages_from_path(
 
     let pages = py
         .detach(|| core_extract_pages_with_document(doc.as_ref(), options))
-        .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+        .map_err(|e| core_error_to_py(py, "Failed to extract pages", e))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
@@ -555,7 +556,7 @@ pub fn extract_pages_with_images_from_path(
 
     let pages = py
         .detach(|| core_extract_pages_with_images_with_document(doc.as_ref(), options, output_dir))
-        .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {}", e)))?;
+        .map_err(|e| core_error_to_py(py, "Failed to extract pages", e))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
