@@ -353,6 +353,59 @@ fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
     out
 }
 
+fn build_pdf_with_content_filter(filter_name: &str, raw_contents: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(b"%PDF-1.4\n");
+
+    let mut offsets: Vec<usize> = Vec::new();
+    let push_obj = |buf: &mut Vec<u8>, obj: &[u8], offsets: &mut Vec<usize>| {
+        offsets.push(buf.len());
+        buf.extend_from_slice(obj);
+    };
+
+    push_obj(
+        &mut out,
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+        &mut offsets,
+    );
+    push_obj(
+        &mut out,
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+        &mut offsets,
+    );
+    push_obj(
+        &mut out,
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>\nendobj\n",
+        &mut offsets,
+    );
+
+    offsets.push(out.len());
+    out.extend_from_slice(
+        format!(
+            "4 0 obj\n<< /Length {} /Filter /{} >>\nstream\n",
+            raw_contents.len(),
+            filter_name
+        )
+        .as_bytes(),
+    );
+    out.extend_from_slice(raw_contents);
+    out.extend_from_slice(b"\nendstream\nendobj\n");
+
+    let xref_pos = out.len();
+    let obj_count = offsets.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", obj_count + 1).as_bytes());
+    for offset in offsets {
+        out.extend_from_slice(format!("{:010} 00000 n \n", offset).as_bytes());
+    }
+    out.extend_from_slice(b"trailer\n<< /Size ");
+    out.extend_from_slice((obj_count + 1).to_string().as_bytes());
+    out.extend_from_slice(b" /Root 1 0 R >>\nstartxref\n");
+    out.extend_from_slice(xref_pos.to_string().as_bytes());
+    out.extend_from_slice(b"\n%%EOF");
+
+    out
+}
+
 #[test]
 fn test_extract_text_minimal_pdf() {
     let result = extract_text(MINIMAL_PDF, None);
@@ -550,6 +603,14 @@ fn test_extract_pages_invalid_pdf() {
     let result = extract_pages(invalid, None);
 
     assert!(result.is_err());
+}
+
+#[test]
+fn test_extract_text_unsupported_filter_returns_error() {
+    let pdf_data = build_pdf_with_content_filter("BogusDecode", b"BT /F1 12 Tf (Hello) Tj ET");
+    let result = extract_text(&pdf_data, None);
+
+    assert!(result.is_err(), "expected unsupported filter to error");
 }
 
 // ============================================================================

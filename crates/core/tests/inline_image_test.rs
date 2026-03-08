@@ -36,7 +36,7 @@ fn test_inline_image_is_emitted() {
     let mut device = InlineCaptureDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrc, &mut device);
 
-    interp.process_page(&page, Some(&doc));
+    interp.process_page(&page, Some(&doc)).unwrap();
 
     assert_eq!(device.images, 1);
 }
@@ -54,7 +54,7 @@ fn test_process_page_decodes_empty_contents() {
     let mut device = InlineCaptureDevice::default();
     let mut interp = PDFPageInterpreter::new(&mut rsrc, &mut device);
 
-    interp.process_page(&page, Some(&doc));
+    interp.process_page(&page, Some(&doc)).unwrap();
 
     assert_eq!(device.images, 1);
 }

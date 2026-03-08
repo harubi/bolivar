@@ -1,21 +1,20 @@
 use crate::converter::PDFEdgeProbe;
-use crate::pdfdocument::PDFDocument;
-use crate::pdfinterp::PDFPageInterpreter;
-use crate::pdfinterp::PDFResourceManager;
-use crate::pdfpage::PDFPage;
+use crate::document::{PDFDocument, PDFPage};
+use crate::error::Result;
+use crate::interp::{PDFPageInterpreter, PDFResourceManager};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::types::{TableProbePolicy, TableSettings};
 
-pub(crate) fn page_has_edges(page: &PDFPage, doc: &PDFDocument, caching: bool) -> bool {
+pub(crate) fn page_has_edges(page: &PDFPage, doc: &PDFDocument, caching: bool) -> Result<bool> {
     #[cfg(test)]
     PROBE_CALLS.fetch_add(1, Ordering::Relaxed);
     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
     let mut probe = PDFEdgeProbe::new();
     let mut interpreter = PDFPageInterpreter::new(&mut rsrcmgr, &mut probe);
-    interpreter.process_page(page, Some(doc));
-    probe.has_edges()
+    interpreter.process_page(page, Some(doc))?;
+    Ok(probe.has_edges())
 }
 
 pub(crate) fn should_skip_tables(settings: &TableSettings, has_edges: bool) -> bool {

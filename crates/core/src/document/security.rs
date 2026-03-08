@@ -23,6 +23,15 @@ pub trait PDFSecurityHandler: Send + Sync {
     /// is metadata (which may be unencrypted per EncryptMetadata setting).
     fn decrypt(&self, objid: u32, genno: u16, data: &[u8], attrs: Option<&PDFDict>) -> Vec<u8>;
 
+    /// Whether the document may be printed.
+    fn is_printable(&self) -> bool;
+
+    /// Whether the document may be modified.
+    fn is_modifiable(&self) -> bool;
+
+    /// Whether text extraction is allowed.
+    fn is_extractable(&self) -> bool;
+
     /// Decrypt a string (may differ from stream decryption in V4+).
     fn decrypt_string(&self, objid: u32, genno: u16, data: &[u8]) -> Vec<u8> {
         self.decrypt(objid, genno, data, None)
@@ -32,6 +41,14 @@ pub trait PDFSecurityHandler: Send + Sync {
     fn decrypt_stream(&self, objid: u32, genno: u16, data: &[u8], attrs: &PDFDict) -> Vec<u8> {
         self.decrypt(objid, genno, data, Some(attrs))
     }
+}
+
+const PRINT_PERMISSION: u32 = 4;
+const MODIFY_PERMISSION: u32 = 8;
+const EXTRACT_PERMISSION: u32 = 16;
+
+const fn has_permission(permissions: u32, bit: u32) -> bool {
+    permissions & bit != 0
 }
 
 /// PDF Standard Security Handler for R2 and R3 (RC4 encryption).
@@ -285,6 +302,18 @@ impl PDFStandardSecurityHandlerV2 {
 impl PDFSecurityHandler for PDFStandardSecurityHandlerV2 {
     fn decrypt(&self, objid: u32, genno: u16, data: &[u8], _attrs: Option<&PDFDict>) -> Vec<u8> {
         self.decrypt_rc4(objid, genno, data)
+    }
+
+    fn is_printable(&self) -> bool {
+        has_permission(self.p, PRINT_PERMISSION)
+    }
+
+    fn is_modifiable(&self) -> bool {
+        has_permission(self.p, MODIFY_PERMISSION)
+    }
+
+    fn is_extractable(&self) -> bool {
+        has_permission(self.p, EXTRACT_PERMISSION)
     }
 }
 
@@ -574,6 +603,18 @@ impl PDFSecurityHandler for PDFStandardSecurityHandlerV4 {
         };
         self.decrypt_with_method(method, objid, genno, data)
     }
+
+    fn is_printable(&self) -> bool {
+        has_permission(self.p, PRINT_PERMISSION)
+    }
+
+    fn is_modifiable(&self) -> bool {
+        has_permission(self.p, MODIFY_PERMISSION)
+    }
+
+    fn is_extractable(&self) -> bool {
+        has_permission(self.p, EXTRACT_PERMISSION)
+    }
 }
 
 /// PDF Standard Security Handler for R5/R6 (AES-256 encryption).
@@ -584,6 +625,8 @@ pub struct PDFStandardSecurityHandlerV5 {
     key: Vec<u8>,
     /// Revision number (5 or 6).
     r: i64,
+    /// Permission flags (P value).
+    p: u32,
     /// Encrypted owner key (32 bytes).
     oe: Vec<u8>,
     /// Encrypted user key (32 bytes).
@@ -628,6 +671,7 @@ impl PDFStandardSecurityHandlerV5 {
         let u = get_bytes(encrypt, "U")?;
         let oe = get_bytes(encrypt, "OE")?;
         let ue = get_bytes(encrypt, "UE")?;
+        let p = get_uint32(encrypt, "P")?;
 
         // Validate lengths
         if o.len() < 48 {
@@ -677,6 +721,7 @@ impl PDFStandardSecurityHandlerV5 {
         let mut handler = Self {
             key: vec![],
             r,
+            p,
             oe,
             ue,
             o_hash,
@@ -914,6 +959,18 @@ impl PDFSecurityHandler for PDFStandardSecurityHandlerV5 {
             self.strf
         };
         self.decrypt_with_method(method, data)
+    }
+
+    fn is_printable(&self) -> bool {
+        has_permission(self.p, PRINT_PERMISSION)
+    }
+
+    fn is_modifiable(&self) -> bool {
+        has_permission(self.p, MODIFY_PERMISSION)
+    }
+
+    fn is_extractable(&self) -> bool {
+        has_permission(self.p, EXTRACT_PERMISSION)
     }
 }
 

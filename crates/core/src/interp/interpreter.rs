@@ -9,6 +9,7 @@
 //! and color spaces so that large objects are not allocated multiple times.
 
 use crate::cmapdb::{CMap, CMapDB};
+use crate::document::{PDFDocument, PDFPage};
 use crate::error::{PdfError, Result};
 use crate::pdfcolor::{PDFColorSpace, PREDEFINED_COLORSPACE};
 use crate::pdftypes::{PDFDict, PDFName, PDFObject, PDFStream};
@@ -1043,7 +1044,7 @@ pub struct PDFPageInterpreter<'a, D: PDFDevice> {
     /// Stack of active form XObjects to prevent recursion
     pub(crate) xobj_stack: Vec<PDFName>,
     /// Document reference for resolving XObject resources
-    pub(crate) doc: Option<&'a crate::pdfdocument::PDFDocument>,
+    pub(crate) doc: Option<&'a PDFDocument>,
 }
 
 #[allow(non_snake_case)]
@@ -1111,11 +1112,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Builds the fontmap from Font resources, parsing ToUnicode streams.
     ///
     /// Port of PDFPageInterpreter.init_resources from pdfminer.six
-    pub fn init_resources(
-        &mut self,
-        resources: &PDFDict,
-        doc: Option<&'a crate::pdfdocument::PDFDocument>,
-    ) {
+    pub fn init_resources(&mut self, resources: &PDFDict, doc: Option<&'a PDFDocument>) {
         self.fontmap.clear();
         self.xobjmap.clear();
         self.resources = resources.clone();
@@ -1295,10 +1292,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     /// Get the first descendant font spec from a Type0 font.
-    fn get_descendant_font_spec(
-        spec: &PDFDict,
-        doc: Option<&crate::pdfdocument::PDFDocument>,
-    ) -> Option<PDFDict> {
+    fn get_descendant_font_spec(spec: &PDFDict, doc: Option<&PDFDocument>) -> Option<PDFDict> {
         let dfonts = spec.get("DescendantFonts")?;
 
         // Resolve if reference
@@ -1357,7 +1351,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         }
     }
 
-    fn resolve_decode_parms(obj: PDFObject, doc: &crate::pdfdocument::PDFDocument) -> PDFObject {
+    fn resolve_decode_parms(obj: PDFObject, doc: &PDFDocument) -> PDFObject {
         match obj {
             PDFObject::Ref(r) => match doc.resolve(&PDFObject::Ref(r.clone())) {
                 Ok(resolved) => Self::resolve_decode_parms(resolved, doc),
@@ -1384,7 +1378,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         }
     }
 
-    fn resolve_jbig2_globals(stream: &mut PDFStream, doc: &crate::pdfdocument::PDFDocument) {
+    fn resolve_jbig2_globals(stream: &mut PDFStream, doc: &PDFDocument) {
         if !Self::stream_has_jbig2_filter(stream) {
             return;
         }
@@ -1396,10 +1390,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     /// Extract ToUnicode stream data from font spec.
-    fn extract_tounicode(
-        spec: &PDFDict,
-        doc: Option<&crate::pdfdocument::PDFDocument>,
-    ) -> Option<Vec<u8>> {
+    fn extract_tounicode(spec: &PDFDict, doc: Option<&PDFDocument>) -> Option<Vec<u8>> {
         let tounicode = spec.get("ToUnicode")?;
 
         match tounicode {
@@ -1434,10 +1425,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Extract FontFile2 (TrueType font) data from font spec.
     ///
     /// Follows the chain: spec["FontDescriptor"]["FontFile2"]
-    fn extract_fontfile2(
-        spec: &PDFDict,
-        doc: Option<&crate::pdfdocument::PDFDocument>,
-    ) -> Option<Vec<u8>> {
+    fn extract_fontfile2(spec: &PDFDict, doc: Option<&PDFDocument>) -> Option<Vec<u8>> {
         // Get FontDescriptor
         let font_descriptor = spec.get("FontDescriptor")?;
 
@@ -1517,11 +1505,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Sets up the CTM based on page rotation, then renders the content streams.
     ///
     /// Port of PDFPageInterpreter.process_page from pdfminer.six
-    pub fn process_page(
-        &mut self,
-        page: &crate::pdfpage::PDFPage,
-        doc: Option<&'a crate::pdfdocument::PDFDocument>,
-    ) {
+    pub fn process_page(&mut self, page: &PDFPage, doc: Option<&'a PDFDocument>) -> Result<()> {
         self.doc = doc;
         let mediabox = page.mediabox.unwrap_or([0.0, 0.0, 612.0, 792.0]);
         let (x0, y0, x1, y1) = (mediabox[0], mediabox[1], mediabox[2], mediabox[3]);
@@ -1550,7 +1534,8 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         // Initialize state and execute content streams
         self.init_state(ctm);
         let streams = if page.contents.is_empty() {
-            doc.map(|doc| crate::pdfpage::PDFPage::parse_contents(&page.attrs, doc))
+            doc.map(|doc| PDFPage::parse_contents(&page.attrs, doc))
+                .transpose()?
                 .unwrap_or_default()
         } else {
             page.contents.clone()
@@ -1559,6 +1544,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
 
         // End page on device
         self.device.end_page(page.pageid);
+        Ok(())
     }
 
     /// Execute content streams.

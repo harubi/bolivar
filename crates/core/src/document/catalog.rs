@@ -10,9 +10,13 @@
 
 use super::page::PageIndex;
 use super::security::{PDFSecurityHandler, create_security_handler};
+use crate::codec::ccitt::CcittParams;
+use crate::codec::{
+    ascii85decode, asciihexdecode, ccittfaxdecode, lzwdecode_with_earlychange, rldecode,
+};
 use crate::error::{PdfError, Result};
 use crate::font::encoding::{DiffEntry, EncodingDB};
-use crate::model::objects::{PDFDict, PDFObject};
+use crate::model::objects::{PDFDict, PDFObject, PDFStream};
 use crate::parser::pdf_parser::PDFParser;
 use crate::simd::U8_LANES;
 use bytes::Bytes;
@@ -27,6 +31,39 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 const PNG_SIMD_LANES: usize = U8_LANES;
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024;
 pub const DEFAULT_PAGE_CACHE_CAPACITY: usize = 64;
+
+const fn is_dct_decode(name: &str) -> bool {
+    name.eq_ignore_ascii_case("DCTDecode") || name.eq_ignore_ascii_case("DCT")
+}
+
+const fn is_jpx_decode(name: &str) -> bool {
+    name.eq_ignore_ascii_case("JPXDecode") || name.eq_ignore_ascii_case("JPX")
+}
+
+const fn is_jbig2_decode(name: &str) -> bool {
+    name.eq_ignore_ascii_case("JBIG2Decode")
+}
+
+fn ccitt_params(params: Option<&PDFDict>) -> CcittParams {
+    CcittParams {
+        k: params
+            .and_then(|dict| dict.get("K"))
+            .and_then(|value| value.as_int().ok())
+            .unwrap_or(0) as i32,
+        columns: params
+            .and_then(|dict| dict.get("Columns"))
+            .and_then(|value| value.as_int().ok())
+            .unwrap_or(1728) as usize,
+        encoded_byte_align: params
+            .and_then(|dict| dict.get("EncodedByteAlign"))
+            .and_then(|value| value.as_bool().ok())
+            .unwrap_or(false),
+        black_is_1: params
+            .and_then(|dict| dict.get("BlackIs1"))
+            .and_then(|value| value.as_bool().ok())
+            .unwrap_or(false),
+    }
+}
 
 struct ObjectCache {
     capacity: usize,
@@ -894,39 +931,11 @@ impl PDFDocument {
     }
 
     /// Apply decompression filters to stream data.
-    fn apply_filters(
-        &self,
-        data: &[u8],
-        stream: &crate::model::objects::PDFStream,
-    ) -> Result<Vec<u8>> {
+    fn apply_filters(&self, data: &[u8], stream: &PDFStream) -> Result<Vec<u8>> {
         let mut output = data.to_vec();
 
-        // Check for Filter (resolve indirects)
-        if let Some(filter) = stream.get("Filter") {
-            let filter = match self.resolve_internal(filter) {
-                Ok(PDFObject::Array(arr)) => {
-                    let mut resolved = Vec::with_capacity(arr.len());
-                    for item in arr.iter() {
-                        resolved.push(self.resolve_internal(item).unwrap_or_else(|_| item.clone()));
-                    }
-                    PDFObject::Array(resolved)
-                }
-                Ok(obj) => obj,
-                Err(_) => filter.clone(),
-            };
-            let filter_name = match &filter {
-                PDFObject::Name(name) => Some(name.as_str()),
-                PDFObject::Array(arr) if arr.len() == 1 => {
-                    if let PDFObject::Name(name) = &arr[0] {
-                        Some(name.as_str())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
-
-            if filter_name == Some("FlateDecode") {
+        for (filter, params) in self.get_filters(stream) {
+            if filter.eq_ignore_ascii_case("FlateDecode") || filter.eq_ignore_ascii_case("Fl") {
                 use std::io::Read;
                 let mut decoder = flate2::read::ZlibDecoder::new(&output[..]);
                 let mut decompressed = Vec::new();
@@ -935,42 +944,64 @@ impl PDFDocument {
                     decompressed = Self::decompress_corrupted(&output);
                 }
                 output = decompressed;
+            } else if filter.eq_ignore_ascii_case("LZWDecode") || filter.eq_ignore_ascii_case("LZW")
+            {
+                let early_change = params
+                    .as_ref()
+                    .and_then(|p| p.get("EarlyChange"))
+                    .and_then(|v| v.as_int().ok())
+                    .unwrap_or(1) as i32;
+                output = lzwdecode_with_earlychange(&output, early_change)?;
+            } else if filter.eq_ignore_ascii_case("ASCII85Decode")
+                || filter.eq_ignore_ascii_case("A85")
+            {
+                output = ascii85decode(&output)?;
+            } else if filter.eq_ignore_ascii_case("ASCIIHexDecode")
+                || filter.eq_ignore_ascii_case("AHx")
+            {
+                output = asciihexdecode(&output)?;
+            } else if filter.eq_ignore_ascii_case("RunLengthDecode")
+                || filter.eq_ignore_ascii_case("RL")
+            {
+                output = rldecode(&output)?;
+            } else if filter.eq_ignore_ascii_case("CCITTFaxDecode")
+                || filter.eq_ignore_ascii_case("CCF")
+            {
+                let params = ccitt_params(params.as_ref());
+                output = ccittfaxdecode(&output, &params)?;
+            } else if is_dct_decode(&filter) || is_jpx_decode(&filter) || is_jbig2_decode(&filter) {
+                break;
+            } else if filter.eq_ignore_ascii_case("Crypt") {
+                return Err(PdfError::NotImplemented(
+                    "/Crypt filter is unsupported".into(),
+                ));
+            } else {
+                return Err(PdfError::NotImplemented(format!(
+                    "Unsupported filter: /'{filter}'"
+                )));
             }
-        }
 
-        // Apply predictor if specified in DecodeParms
-        if let Some(parms) = stream.get("DecodeParms") {
-            let parms = match self.resolve_internal(parms) {
-                Ok(PDFObject::Array(arr)) => {
-                    let mut resolved = Vec::with_capacity(arr.len());
-                    for item in arr.iter() {
-                        resolved.push(self.resolve_internal(item).unwrap_or_else(|_| item.clone()));
-                    }
-                    PDFObject::Array(resolved)
-                }
-                Ok(obj) => obj,
-                Err(_) => parms.clone(),
-            };
-            let parms_dict = match &parms {
-                PDFObject::Dict(d) => Some(d),
-                PDFObject::Array(arr) if !arr.is_empty() => {
-                    if let PDFObject::Dict(d) = &arr[0] {
-                        Some(d)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
-
-            if let Some(parms) = parms_dict {
+            if let Some(parms) = params {
                 let predictor = parms
                     .get("Predictor")
                     .and_then(|p| p.as_int().ok())
                     .unwrap_or(1) as usize;
 
-                if predictor >= 10 {
-                    // PNG predictor
+                if predictor == 2 {
+                    let colors = parms
+                        .get("Colors")
+                        .and_then(|c| c.as_int().ok())
+                        .unwrap_or(1) as usize;
+                    let columns = parms
+                        .get("Columns")
+                        .and_then(|c| c.as_int().ok())
+                        .unwrap_or(1) as usize;
+                    let bits = parms
+                        .get("BitsPerComponent")
+                        .and_then(|b| b.as_int().ok())
+                        .unwrap_or(8) as usize;
+                    output = Self::apply_tiff_predictor(colors, columns, bits, &output)?;
+                } else if predictor >= 10 {
                     let columns = parms
                         .get("Columns")
                         .and_then(|c| c.as_int().ok())
@@ -990,6 +1021,63 @@ impl PDFDocument {
         }
 
         Ok(output)
+    }
+
+    fn get_filters(&self, stream: &PDFStream) -> Vec<(String, Option<PDFDict>)> {
+        let filter_obj = stream.get("Filter");
+        let params_obj = stream.get("DecodeParms");
+
+        let filters: Vec<PDFObject> = match filter_obj.map(|obj| self.resolve_filter_object(obj)) {
+            Some(PDFObject::Name(name)) => vec![PDFObject::Name(name)],
+            Some(PDFObject::Array(arr)) => arr,
+            _ => Vec::new(),
+        };
+
+        let params_list: Vec<Option<PDFDict>> =
+            match params_obj.map(|obj| self.resolve_filter_object(obj)) {
+                Some(PDFObject::Dict(d)) => vec![Some(d)],
+                Some(PDFObject::Array(arr)) => arr
+                    .into_iter()
+                    .map(|obj| match obj {
+                        PDFObject::Dict(d) => Some(d),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+
+        if filters.is_empty() {
+            return Vec::new();
+        }
+
+        let params = if params_list.is_empty() {
+            vec![None; filters.len()]
+        } else if params_list.len() == 1 && filters.len() > 1 {
+            vec![params_list[0].clone(); filters.len()]
+        } else {
+            params_list
+        };
+
+        let mut result = Vec::new();
+        for (idx, filter) in filters.into_iter().enumerate() {
+            if let PDFObject::Name(name) = filter {
+                let params = params.get(idx).cloned().unwrap_or(None);
+                result.push((name.to_string(), params));
+            }
+        }
+        result
+    }
+
+    fn resolve_filter_object(&self, obj: &PDFObject) -> PDFObject {
+        match self.resolve_internal(obj) {
+            Ok(PDFObject::Array(arr)) => PDFObject::Array(
+                arr.iter()
+                    .map(|item| self.resolve_internal(item).unwrap_or_else(|_| item.clone()))
+                    .collect(),
+            ),
+            Ok(resolved) => resolved,
+            Err(_) => obj.clone(),
+        }
     }
 
     /// Best-effort zlib decompression for corrupted streams.
@@ -1022,6 +1110,36 @@ impl PDFDocument {
             }
         }
         out
+    }
+
+    fn apply_tiff_predictor(
+        colors: usize,
+        columns: usize,
+        bits_per_component: usize,
+        data: &[u8],
+    ) -> Result<Vec<u8>> {
+        if bits_per_component != 8 {
+            return Ok(data.to_vec());
+        }
+
+        let bpp = colors * (bits_per_component / 8);
+        let row_len = columns * bpp;
+        let mut out = Vec::with_capacity(data.len());
+
+        for row in data.chunks(row_len) {
+            let mut raw = Vec::with_capacity(row_len);
+            for (idx, value) in row.iter().copied().enumerate() {
+                let decoded = if idx >= bpp {
+                    value.wrapping_add(raw[idx - bpp])
+                } else {
+                    value
+                };
+                raw.push(decoded);
+            }
+            out.extend_from_slice(&raw);
+        }
+
+        Ok(out)
     }
 
     /// Apply PNG predictor to decompress predicted data.
@@ -1807,6 +1925,27 @@ impl PDFDocument {
         self.security_handler.is_some()
     }
 
+    /// Check if the document may be printed.
+    pub fn is_printable(&self) -> bool {
+        self.security_handler
+            .as_ref()
+            .is_none_or(|handler| handler.is_printable())
+    }
+
+    /// Check if the document may be modified.
+    pub fn is_modifiable(&self) -> bool {
+        self.security_handler
+            .as_ref()
+            .is_none_or(|handler| handler.is_modifiable())
+    }
+
+    /// Check if text extraction is allowed.
+    pub fn is_extractable(&self) -> bool {
+        self.security_handler
+            .as_ref()
+            .is_none_or(|handler| handler.is_extractable())
+    }
+
     /// Resolve a reference to its actual object.
     pub fn resolve(&self, obj: &PDFObject) -> Result<PDFObject> {
         Ok((*self.resolve_shared(obj)?).clone())
@@ -2213,7 +2352,7 @@ fn format_alpha(n: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pdfpage::{reset_page_create_count, take_page_create_count};
+    use crate::document::page::{reset_page_create_count, take_page_create_count};
 
     fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
         let mut out = Vec::new();
@@ -2439,11 +2578,11 @@ mod tests {
     fn test_page_mediaboxes_does_not_create_pages() {
         let pdf = build_minimal_pdf_with_pages(3);
         let doc = PDFDocument::new(pdf, "").unwrap();
-        crate::pdfpage::reset_page_create_count(&doc);
+        crate::document::page::reset_page_create_count(&doc);
 
         let boxes = doc.page_mediaboxes().unwrap();
         assert_eq!(boxes.len(), 3);
-        let created = crate::pdfpage::take_page_create_count(&doc);
+        let created = crate::document::page::take_page_create_count(&doc);
         assert_eq!(created, 0);
     }
 

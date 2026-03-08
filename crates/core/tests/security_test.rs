@@ -511,3 +511,16 @@ fn test_aes256_handler_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<PDFStandardSecurityHandlerV5>();
 }
+
+#[test]
+fn test_aes256_permissions_follow_p_value() {
+    let encrypt =
+        make_aes256_encrypt_dict(4, AES256_R, 4, &AES256_O, &AES256_U, &AES256_OE, &AES256_UE);
+    let doc_id: Vec<Vec<u8>> = vec![];
+
+    let handler = PDFStandardSecurityHandlerV5::new(&encrypt, &doc_id, "foo").unwrap();
+
+    assert!(handler.is_printable());
+    assert!(!handler.is_modifiable());
+    assert!(!handler.is_extractable());
+}
