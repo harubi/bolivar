@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import io
 import os
 import sys
 from typing import TYPE_CHECKING, BinaryIO
@@ -69,11 +70,73 @@ def _normalize_page_numbers(
     return selected_pages
 
 
+def _is_binary_output(outfp: object) -> bool:
+    mode = getattr(outfp, "mode", "")
+    if "b" in mode:
+        return True
+    if hasattr(outfp, "mode"):
+        return False
+    if isinstance(outfp, io.BytesIO):
+        return True
+    return not isinstance(outfp, (io.StringIO, io.TextIOBase))
+
+
+class _TextIOBridge:
+    def __init__(self, outfp: AnyIO, codec: str) -> None:
+        self._outfp = outfp
+        self._codec = codec
+
+    def write(self, data: bytes | str) -> object:
+        if isinstance(data, bytes):
+            return self._outfp.write(data.decode(self._codec))
+        return self._outfp.write(data)
+
+    def flush(self) -> object:
+        flush = getattr(self._outfp, "flush", None)
+        if callable(flush):
+            return flush()
+        return None
+
+
+def _prepare_converter_output(
+    outfp: AnyIO,
+    output_type: str,
+    codec: str | None,
+) -> tuple[AnyIO, str | None]:
+    binary_output = _is_binary_output(outfp)
+
+    if output_type == "text":
+        effective_codec = codec or "utf-8"
+        if binary_output:
+            return outfp, effective_codec
+        return _TextIOBridge(outfp, effective_codec), effective_codec
+
+    if output_type == "xml":
+        if codec is None:
+            if binary_output:
+                raise PDFValueError("Codec is required for a binary I/O output")
+            return _TextIOBridge(outfp, "utf-8"), ""
+        if not binary_output:
+            raise PDFValueError("Codec is required for a binary I/O output")
+        return outfp, codec
+
+    if output_type == "html":
+        if codec is None:
+            if binary_output:
+                raise PDFValueError("Codec is required for a binary I/O output")
+            return _TextIOBridge(outfp, "utf-8"), ""
+        if not binary_output:
+            raise PDFValueError("Codec must not be specified for a text I/O output")
+        return outfp, codec
+
+    return outfp, codec
+
+
 def extract_text_to_fp(
     inf: BinaryIO,
     outfp: AnyIO,
     output_type: str = "text",
-    codec: str = "utf-8",
+    codec: str | None = "utf-8",
     laparams: LAParams | None = None,
     maxpages: int = 0,
     page_numbers: Iterable[int] | None = None,
@@ -98,19 +161,22 @@ def extract_text_to_fp(
         outfp = sys.stdout.buffer
 
     page_numbers = _normalize_page_numbers(page_numbers)
+    converter_outfp, effective_codec = _prepare_converter_output(
+        outfp, output_type, codec
+    )
 
-    if output_type == "tag" or (output_type == "text" and not output_dir):
+    if output_type in {"tag", "text"}:
         rsrcmgr = PDFResourceManager(caching=not disable_caching)
         if output_type == "text":
             device = TextConverter(
                 rsrcmgr,
-                outfp,
-                codec=codec,
+                converter_outfp,
+                codec=effective_codec or "utf-8",
                 laparams=laparams,
                 imagewriter=imagewriter,
             )
         else:
-            device = TagExtractor(rsrcmgr, outfp, codec=codec)
+            device = TagExtractor(rsrcmgr, converter_outfp, codec=effective_codec or "utf-8")
         interpreter = PDFPageInterpreter(rsrcmgr, device)
         for page in PDFPage.get_pages(
             inf,
@@ -126,19 +192,11 @@ def extract_text_to_fp(
 
     rsrcmgr = PDFResourceManager(caching=not disable_caching)
 
-    if output_type == "text":
-        device = TextConverter(
-            rsrcmgr,
-            outfp,
-            codec=codec,
-            laparams=laparams,
-            imagewriter=imagewriter,
-        )
-    elif output_type == "xml":
+    if output_type == "xml":
         device = XMLConverter(
             rsrcmgr,
-            outfp,
-            codec=codec,
+            converter_outfp,
+            codec=effective_codec or "utf-8",
             laparams=laparams,
             stripcontrol=strip_control,
             imagewriter=imagewriter,
@@ -146,8 +204,8 @@ def extract_text_to_fp(
     elif output_type == "html":
         device = HTMLConverter(
             rsrcmgr,
-            outfp,
-            codec=codec,
+            converter_outfp,
+            codec=effective_codec or "utf-8",
             scale=scale,
             layoutmode=layoutmode,
             laparams=laparams,
@@ -156,8 +214,8 @@ def extract_text_to_fp(
     elif output_type == "hocr":
         device = HOCRConverter(
             rsrcmgr,
-            outfp,
-            codec=codec,
+            converter_outfp,
+            codec=effective_codec or "utf-8",
             laparams=laparams,
             stripcontrol=strip_control,
             imagewriter=imagewriter,
