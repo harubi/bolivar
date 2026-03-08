@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 
@@ -126,6 +127,29 @@ def test_sitecustomize_warns_when_all_autoload_paths_fail():
         assert "bolivar autoload failed" in result.stderr.lower()
 
 
+def test_sitecustomize_warns_when_autoload_install_raises():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        shadow_dir = Path(temp_dir) / "shadow"
+        shadow_dir.mkdir(parents=True, exist_ok=True)
+        _make_shadow_package(shadow_dir, "bolivar", "")
+        _write_file(
+            shadow_dir / "bolivar" / "_autoload.py",
+            "def install():\n"
+            "    raise RuntimeError('shadowed bolivar autoload install failed')\n",
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = _join_pythonpath(shadow_dir, PYTHON_SHIM)
+        result = subprocess.run(
+            [sys.executable, "-c", "print('ok')"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        assert result.stdout.strip() == "ok"
+        assert "bolivar autoload failed" in result.stderr.lower()
+
+
 def test_bolivar_autoload_module_falls_back_to_shim_registry():
     with tempfile.TemporaryDirectory() as temp_dir:
         shadow_dir = Path(temp_dir) / "shadow"
@@ -153,6 +177,40 @@ def test_bolivar_autoload_module_falls_back_to_shim_registry():
         assert lines, "expected subprocess output"
         assert lines[0] == "True"
         assert lines[1] == "True"
+
+
+def test_bolivar_autoload_uses_canonical_loader(monkeypatch):
+    _clear_modules()
+    if PYTHON_SHIM not in sys.path:
+        sys.path.insert(0, PYTHON_SHIM)
+
+    import bolivar._autoload as package_autoload
+    import bolivar_autoload
+
+    calls = {"count": 0}
+
+    def _fake_install() -> bool:
+        calls["count"] += 1
+        return True
+
+    monkeypatch.setattr(package_autoload, "install", _fake_install)
+
+    assert bolivar_autoload.install() is True
+    assert calls["count"] == 1
+
+
+def test_autoload_prefers_top_level_autoload_module(monkeypatch):
+    from bolivar import _autoload
+
+    calls: list[str] = []
+    fake_module = types.SimpleNamespace(
+        install=lambda: calls.append("top_level") or True
+    )
+
+    monkeypatch.setitem(sys.modules, "bolivar_autoload", fake_module)
+
+    assert _autoload.install() is True
+    assert calls == ["top_level"]
 
 
 def test_autoload_pth_works_without_pythonpath():
