@@ -11,7 +11,7 @@ fn nonfree_175_content_streams_are_small() {
     let page2 = pages.next().expect("page 2").expect("page 2 ok");
 
     for (idx, page) in [page1, page2].into_iter().enumerate() {
-        let contents = page.get_contents(&doc);
+        let contents = page.get_contents(&doc).expect("page contents");
         assert!(!contents.is_empty(), "page {} has no contents", idx + 1);
         for (stream_idx, stream) in contents.iter().enumerate() {
             assert!(

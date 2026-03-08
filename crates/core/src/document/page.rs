@@ -162,47 +162,37 @@ impl PDFPage {
     ///
     /// Contents can be a single stream or an array of streams.
     /// Returns decoded data from all content streams.
-    pub(crate) fn parse_contents(attrs: &PDFDict, doc: &PDFDocument) -> Vec<Vec<u8>> {
+    pub(crate) fn parse_contents(attrs: &PDFDict, doc: &PDFDocument) -> Result<Vec<Vec<u8>>> {
         let contents_obj = match attrs.get("Contents") {
             Some(obj) => obj,
-            None => return Vec::new(),
+            None => return Ok(Vec::new()),
         };
 
-        let resolved = match doc.resolve_shared(contents_obj) {
-            Ok(obj) => obj,
-            Err(_) => return Vec::new(),
-        };
+        let resolved = doc.resolve_shared(contents_obj)?;
 
         // Contents can be a single stream or array of streams
         match resolved.as_ref() {
-            PDFObject::Stream(stream) => {
-                // Decode the stream (handles FlateDecode, etc.)
-                match doc.decode_stream(stream) {
-                    Ok(data) => vec![data],
-                    Err(_) => Vec::new(),
-                }
-            }
+            PDFObject::Stream(stream) => Ok(vec![doc.decode_stream(stream)?]),
             PDFObject::Array(arr) => arr
                 .iter()
-                .filter_map(|item| {
-                    doc.resolve_shared(item).ok().and_then(|obj| {
-                        obj.as_ref()
-                            .as_stream()
-                            .ok()
-                            .and_then(|s| doc.decode_stream(s).ok())
-                    })
+                .map(|item| {
+                    let obj = doc.resolve_shared(item)?;
+                    let stream = obj.as_ref().as_stream().map_err(|_| {
+                        PdfError::SyntaxError("Contents array item is not a stream".into())
+                    })?;
+                    doc.decode_stream(stream)
                 })
                 .collect(),
-            _ => Vec::new(),
+            _ => Ok(Vec::new()),
         }
     }
 
     /// Get decoded content streams, parsing lazily if not already present.
-    pub fn get_contents(&self, doc: &PDFDocument) -> Vec<Vec<u8>> {
+    pub fn get_contents(&self, doc: &PDFDocument) -> Result<Vec<Vec<u8>>> {
         if self.contents.is_empty() {
             Self::parse_contents(&self.attrs, doc)
         } else {
-            self.contents.clone()
+            Ok(self.contents.clone())
         }
     }
 

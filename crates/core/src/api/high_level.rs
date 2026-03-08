@@ -16,12 +16,12 @@ use crate::api::stream::{
 };
 use crate::arena::PageArena;
 use crate::converter::{PDFPageAggregator, PDFTableCollector, TextConverter};
+use crate::document::catalog::DEFAULT_CACHE_CAPACITY;
+use crate::document::{PDFDocument, PDFPage};
 use crate::error::{PdfError, Result};
 use crate::image::ImageWriter;
+use crate::interp::{PDFPageInterpreter, PDFResourceManager};
 use crate::layout::{LAParams, LTPage};
-use crate::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
-use crate::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
-use crate::pdfpage::PDFPage;
 use crate::table::{
     PageGeometry, TableSettings, collect_table_objects_from_arena, extract_tables_from_objects,
 };
@@ -281,7 +281,7 @@ pub(crate) fn process_page(
     let mut interpreter = PDFPageInterpreter::new(rsrcmgr, aggregator);
 
     // Process page - this executes the content stream and populates the device
-    interpreter.process_page(page, Some(doc));
+    interpreter.process_page(page, Some(doc))?;
 
     // Get the analyzed result from aggregator
     Ok(aggregator.get_result().clone())
@@ -296,7 +296,7 @@ pub(crate) fn process_page_arena<'a>(
     record_thread();
 
     let mut interpreter = PDFPageInterpreter::new(rsrcmgr, collector);
-    interpreter.process_page(page, Some(doc));
+    interpreter.process_page(page, Some(doc))?;
 
     collector
         .take_result()
@@ -577,7 +577,7 @@ mod tests {
         ExtractOptions, extract_pages, extract_tables_with_document,
         extract_tables_with_document_geometries,
     };
-    use crate::pdfdocument::PDFDocument;
+    use crate::document::PDFDocument;
     use crate::table::{PageGeometry, TableProbePolicy, TableSettings};
     use std::collections::HashSet;
     use std::sync::{Arc, Mutex, OnceLock};

@@ -11,10 +11,10 @@ use rayon::prelude::*;
 use crate::api::pipeline::{ExecutionPlan, validate_geometry_count};
 use crate::arena::PageArena;
 use crate::converter::{PDFPageAggregator, PDFTableCollector};
+use crate::document::PDFDocument;
 use crate::error::{PdfError, Result};
+use crate::interp::PDFResourceManager;
 use crate::layout::{LAParams, LTPage};
-use crate::pdfdocument::PDFDocument;
-use crate::pdfinterp::PDFResourceManager;
 use crate::table::edge_probe::{page_has_edges, should_skip_tables};
 use crate::table::{
     PageGeometry, TableSettings, TextSettings, WordObj, collect_table_objects_from_arena,
@@ -610,7 +610,15 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                         }
                     };
 
-                    let has_edges = page_has_edges(&page, doc_worker.as_ref(), caching);
+                    let has_edges = match page_has_edges(&page, doc_worker.as_ref(), caching) {
+                        Ok(has_edges) => has_edges,
+                        Err(e) => {
+                            if tx.send((page_idx, Err(e))).is_err() {
+                                cancel_worker.store(true, Ordering::Relaxed);
+                            }
+                            continue;
+                        }
+                    };
                     if should_skip_tables(&settings, has_edges) {
                         if cancel_worker.load(Ordering::Relaxed) {
                             return;
@@ -841,7 +849,7 @@ mod tests {
     fn test_page_stream_only_creates_requested_pages() {
         let pdf = build_minimal_pdf_with_pages(5);
         let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
-        crate::pdfpage::reset_page_create_count(doc.as_ref());
+        crate::document::page::reset_page_create_count(doc.as_ref());
 
         let options = ExtractOptions {
             page_numbers: Some(vec![2]),
@@ -851,7 +859,7 @@ mod tests {
         let stream = extract_pages_stream_from_doc(Arc::clone(&doc), options).unwrap();
         let _ = stream.collect::<Result<Vec<_>>>().unwrap();
 
-        let created = crate::pdfpage::take_page_create_count(doc.as_ref());
+        let created = crate::document::page::take_page_create_count(doc.as_ref());
         assert_eq!(created, 1);
     }
 
