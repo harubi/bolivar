@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from importlib import import_module
 from typing import TYPE_CHECKING
 
@@ -38,7 +39,10 @@ def _load_bridge_api() -> ModuleType:
 __all__ = list(BRIDGE_EXPORTS)
 
 
-def __getattr__(name: str) -> object:
+def __getattr__(
+    name: str,
+    _load_bridge_api: Callable[[], ModuleType] = _load_bridge_api,
+) -> object:
     if name not in _BRIDGE_EXPORT_NAMES:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     native = _load_bridge_api()
@@ -52,3 +56,6 @@ def __getattr__(name: str) -> object:
 
 def __dir__() -> list[str]:
     return sorted(_MODULE_DUNDER_NAMES | _BRIDGE_EXPORT_NAMES)
+
+
+del _load_bridge_api

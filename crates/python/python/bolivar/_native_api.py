@@ -6,6 +6,7 @@ does not require eagerly resolving every symbol from the extension.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from importlib import import_module
 from typing import TYPE_CHECKING
 
@@ -288,7 +289,10 @@ def _load_native_api() -> ModuleType:
 __all__ = list(PUBLIC_EXPORTS)
 
 
-def __getattr__(name: str) -> object:
+def __getattr__(
+    name: str,
+    _load_native_api: Callable[[], ModuleType] = _load_native_api,
+) -> object:
     if name not in _PUBLIC_EXPORT_NAMES:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     native = _load_native_api()
@@ -302,3 +306,6 @@ def __getattr__(name: str) -> object:
 
 def __dir__() -> list[str]:
     return sorted(_MODULE_DUNDER_NAMES | _PUBLIC_EXPORT_NAMES)
+
+
+del _load_native_api
