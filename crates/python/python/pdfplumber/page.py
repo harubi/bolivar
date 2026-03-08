@@ -477,6 +477,8 @@ class Page(Container):
             attr["non_stroking_color"] = _normalize_color_value(gs.ncolor)
             if attr["stroking_color"] == (0.0,):
                 attr["stroking_color"] = (0,)
+            if attr["non_stroking_color"] == (0.0,):
+                attr["non_stroking_color"] = (0,)
             # For LTChar parity, do not emit an scs field.
             attr.pop("scs", None)
 
