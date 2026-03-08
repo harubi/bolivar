@@ -341,23 +341,7 @@ def _wrap_rust_item(item: object) -> object:
     return item
 
 
-_PAGE_SKIP_TYPES = (
-    LTTextLineHorizontal,
-    LTTextLineVertical,
-    _RustLTTextLineHorizontal,
-    _RustLTTextLineVertical,
-)
-
 _Rect: TypeAlias = tuple[float, float, float, float]
-
-
-def _iter_page_items(item: object) -> Generator[object, None, None]:
-    wrapped = _wrap_rust_item(item)
-    if not isinstance(wrapped, _PAGE_SKIP_TYPES):
-        yield wrapped
-    if isinstance(wrapped, LTContainer):
-        for child in wrapped:
-            yield from _iter_page_items(child)
 
 
 def _uniq(objs: Iterable[object]) -> Generator[object, None, None]:
@@ -417,8 +401,7 @@ class LTPage(LTLayoutContainer):
         return [_wrap_rust_item(obj) for obj in self._page]
 
     def __iter__(self) -> Generator[object, None, None]:
-        for item in self._page:
-            yield from _iter_page_items(item)
+        yield from self._objs
 
     def __len__(self) -> int:
         return len(self._page)

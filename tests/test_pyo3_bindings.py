@@ -1,7 +1,8 @@
 """Tests for PyO3 bindings (TDD)"""
 
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -163,6 +164,18 @@ def test_extract_pages_bytes_and_path_match(tmp_path: Path) -> None:
     assert [page.pageid for page in from_bytes] == [page.pageid for page in from_path]
 
 
+def test_pdfminer_extract_pages_iterates_direct_ltpage_children() -> None:
+    from pdfminer.high_level import extract_pages
+    from pdfminer.layout import LTTextBoxHorizontal
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    page = next(extract_pages(pdf_path.open("rb")))
+    items = list(page)
+
+    assert len(page) == len(items) == 8
+    assert all(isinstance(item, LTTextBoxHorizontal) for item in items)
+
+
 class TestLTPage:
     """Test LTPage layout type"""
 
@@ -299,6 +312,26 @@ def test_high_level_extract_text_to_fp_text_output_matches_upstream_converter():
     assert out.getvalue() == b"Hello WorldHello WorldHello WorldHello World\x0c"
 
 
+def test_high_level_extract_text_to_fp_text_output_with_output_dir_matches_default():
+    from pdfminer import high_level
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    baseline = BytesIO()
+    with_output_dir = BytesIO()
+
+    high_level.extract_text_to_fp(BytesIO(pdf_bytes), baseline, output_type="text")
+    with TemporaryDirectory() as output_dir:
+        high_level.extract_text_to_fp(
+            BytesIO(pdf_bytes),
+            with_output_dir,
+            output_type="text",
+            output_dir=output_dir,
+        )
+
+    assert with_output_dir.getvalue() == baseline.getvalue()
+
+
 def test_high_level_extract_text_to_fp_tag_output_uses_tag_extractor():
     from pdfminer import high_level
 
@@ -349,6 +382,59 @@ def test_high_level_extract_text_to_fp_xml_output_honors_rotation():
 
     output = out.getvalue()
     assert b'<page id="1" bbox="0.000,0.000,792.000,612.000" rotate="0">' in output
+
+
+@pytest.mark.parametrize(
+    ("output_type", "prefix"),
+    [
+        ("text", "Hello WorldHello WorldHello WorldHello World\x0c"),
+        ("xml", '<?xml version="1.0" ?>\n<pages>\n<page id="1"'),
+        ("html", "<html><head>\n<meta http-equiv=\"Content-Type\" content=\"text/html\">"),
+    ],
+)
+def test_high_level_extract_text_to_fp_supports_text_stream_outputs(
+    output_type: str, prefix: str
+) -> None:
+    from pdfminer import high_level
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    out = StringIO()
+
+    high_level.extract_text_to_fp(
+        BytesIO(pdf_bytes),
+        out,
+        output_type=output_type,
+        codec=None,
+    )
+
+    assert out.getvalue().startswith(prefix)
+
+
+@pytest.mark.parametrize(
+    ("output_type", "message"),
+    [
+        ("xml", "Codec is required for a binary I/O output"),
+        ("html", "Codec must not be specified for a text I/O output"),
+    ],
+)
+def test_high_level_extract_text_to_fp_rejects_invalid_text_stream_codecs(
+    output_type: str, message: str
+) -> None:
+    from pdfminer import high_level
+    from pdfminer.pdfexceptions import PDFValueError
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    out = StringIO()
+
+    with pytest.raises(PDFValueError, match=message):
+        high_level.extract_text_to_fp(
+            BytesIO(pdf_bytes),
+            out,
+            output_type=output_type,
+            codec="utf-8",
+        )
 
 
 def test_extract_tables_settings_affects_output():
