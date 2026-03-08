@@ -247,6 +247,20 @@ def test_high_level_memoryview():
     assert len(text) > 0
 
 
+def test_high_level_extract_text_accepts_codec_keyword():
+    from io import BytesIO
+    from pdfminer import high_level
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+
+    baseline = high_level.extract_text(BytesIO(pdf_bytes))
+
+    for codec in ("utf-8", "utf-16", "latin-1", None):
+        text = high_level.extract_text(BytesIO(pdf_bytes), codec=codec)
+        assert text == baseline
+
+
 def test_extract_tables_settings_affects_output():
     import pdfplumber
 
