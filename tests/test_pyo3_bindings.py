@@ -262,6 +262,18 @@ def test_high_level_extract_text_accepts_codec_keyword():
         assert text == baseline
 
 
+def test_high_level_extract_text_to_fp_text_output_matches_upstream_converter():
+    from pdfminer import high_level
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+    out = BytesIO()
+
+    high_level.extract_text_to_fp(BytesIO(pdf_bytes), out, output_type="text")
+
+    assert out.getvalue() == b"Hello WorldHello WorldHello WorldHello World\x0c"
+
+
 def test_high_level_extract_text_to_fp_tag_output_uses_tag_extractor():
     from pdfminer import high_level
 
