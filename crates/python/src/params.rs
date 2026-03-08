@@ -294,10 +294,71 @@ pub fn parse_table_settings(
     py: Python<'_>,
     table_settings: Option<Py<PyAny>>,
 ) -> PyResult<TableSettings> {
+    const KNOWN_TABLE_SETTING_KEYS: &[&str] = &[
+        "vertical_strategy",
+        "horizontal_strategy",
+        "explicit_vertical_lines",
+        "explicit_horizontal_lines",
+        "snap_tolerance",
+        "snap_x_tolerance",
+        "snap_y_tolerance",
+        "join_tolerance",
+        "join_x_tolerance",
+        "join_y_tolerance",
+        "edge_min_length",
+        "edge_min_length_prefilter",
+        "min_words_vertical",
+        "min_words_horizontal",
+        "intersection_tolerance",
+        "intersection_x_tolerance",
+        "intersection_y_tolerance",
+        "text_settings",
+        "text_layout",
+    ];
+
+    fn levenshtein_distance(left: &str, right: &str) -> usize {
+        let right_len = right.chars().count();
+        let mut costs: Vec<usize> = (0..=right_len).collect();
+
+        for (left_idx, left_char) in left.chars().enumerate() {
+            let mut prev = costs[0];
+            costs[0] = left_idx + 1;
+            for (right_idx, right_char) in right.chars().enumerate() {
+                let insert = costs[right_idx + 1] + 1;
+                let delete = costs[right_idx] + 1;
+                let replace = prev + usize::from(left_char != right_char);
+                prev = costs[right_idx + 1];
+                costs[right_idx + 1] = insert.min(delete).min(replace);
+            }
+        }
+
+        costs[right_len]
+    }
+
+    fn suggest_table_setting(name: &str) -> Option<&'static str> {
+        KNOWN_TABLE_SETTING_KEYS
+            .iter()
+            .copied()
+            .filter_map(|candidate| {
+                let distance = levenshtein_distance(name, candidate);
+                let max_distance = match candidate.len() {
+                    0..=8 => 2,
+                    9..=16 => 3,
+                    _ => 4,
+                };
+                (distance <= max_distance).then_some((distance, candidate))
+            })
+            .min_by_key(|(distance, candidate)| (*distance, candidate.len()))
+            .map(|(_, candidate)| candidate)
+    }
+
     fn unexpected_table_setting(name: &str) -> PyErr {
-        PyTypeError::new_err(format!(
-            "TableSettings.__init__() got an unexpected keyword argument '{name}'"
-        ))
+        let mut message =
+            format!("TableSettings.__init__() got an unexpected keyword argument '{name}'");
+        if let Some(suggestion) = suggest_table_setting(name) {
+            message.push_str(&format!(". Did you mean '{suggestion}'?"));
+        }
+        PyTypeError::new_err(message)
     }
 
     fn parse_table_strategy(
