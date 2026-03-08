@@ -271,6 +271,10 @@ if TYPE_CHECKING:
     )
 
 _NATIVE_MODULE: ModuleType | None = None
+_PUBLIC_EXPORT_NAMES = frozenset(PUBLIC_EXPORTS)
+_MODULE_DUNDER_NAMES = frozenset(
+    name for name in globals() if name.startswith("__")
+)
 
 
 def load_native_api() -> ModuleType:
@@ -285,7 +289,7 @@ __all__ = list(PUBLIC_EXPORTS)
 
 
 def __getattr__(name: str) -> object:
-    if name not in PUBLIC_EXPORTS:
+    if name not in _PUBLIC_EXPORT_NAMES:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     native = load_native_api()
     try:
@@ -297,4 +301,4 @@ def __getattr__(name: str) -> object:
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(PUBLIC_EXPORTS))
+    return sorted(_MODULE_DUNDER_NAMES | _PUBLIC_EXPORT_NAMES)

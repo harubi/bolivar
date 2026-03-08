@@ -66,6 +66,9 @@ if TYPE_CHECKING:
 
 __all__ = list(TOP_LEVEL_EXPORTS)
 _LAZY_EXPORTS = frozenset(TOP_LEVEL_EXPORTS)
+_MODULE_DUNDER_NAMES = frozenset(
+    name for name in globals() if name.startswith("__")
+)
 
 
 def __getattr__(name: str) -> object:
@@ -75,4 +78,4 @@ def __getattr__(name: str) -> object:
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | _LAZY_EXPORTS)
+    return sorted(_MODULE_DUNDER_NAMES | _LAZY_EXPORTS)

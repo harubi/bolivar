@@ -50,3 +50,44 @@ def test_compat_table_helper_stays_bridge_only() -> None:
     assert name not in native.__all__
     assert hasattr(bridge, name)
     assert not hasattr(native, name)
+
+
+def test_top_level_dir_hides_internal_symbols() -> None:
+    import bolivar
+    from bolivar._export_manifest import BRIDGE_EXPORTS, TOP_LEVEL_EXPORTS
+
+    names = set(dir(bolivar))
+
+    assert set(TOP_LEVEL_EXPORTS).issubset(names)
+    assert set(BRIDGE_EXPORTS).isdisjoint(names)
+    assert "_native_api" not in names
+    assert "_LAZY_EXPORTS" not in names
+    assert "TYPE_CHECKING" not in names
+    assert "extend_path" not in names
+
+
+def test_native_api_dir_hides_internal_symbols() -> None:
+    import bolivar._native_api as native
+    from bolivar._export_manifest import BRIDGE_EXPORTS, PUBLIC_EXPORTS
+
+    names = set(dir(native))
+
+    assert set(PUBLIC_EXPORTS).issubset(names)
+    assert set(BRIDGE_EXPORTS).isdisjoint(names)
+    assert "load_native_api" not in names
+    assert "_NATIVE_MODULE" not in names
+    assert "PUBLIC_EXPORTS" not in names
+    assert "TYPE_CHECKING" not in names
+
+
+def test_bridge_api_dir_hides_internal_symbols() -> None:
+    import bolivar._bridge_api as bridge
+    from bolivar._export_manifest import BRIDGE_EXPORTS
+
+    names = set(dir(bridge))
+
+    assert set(BRIDGE_EXPORTS).issubset(names)
+    assert "load_bridge_api" not in names
+    assert "_NATIVE_MODULE" not in names
+    assert "BRIDGE_EXPORTS" not in names
+    assert "TYPE_CHECKING" not in names
