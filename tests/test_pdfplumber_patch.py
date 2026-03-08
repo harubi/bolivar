@@ -151,6 +151,22 @@ def test_pdfplumber_extract_tables_rejects_unknown_setting(monkeypatch):
             pdf.pages[0].extract_tables({"strategy": "x"})
 
 
+def test_pdfplumber_extract_tables_suggests_close_setting_name(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+
+    with pdfplumber.open(pdf_path) as pdf:
+        with pytest.raises(
+            TypeError,
+            match="horizontal_strategyy'. Did you mean 'horizontal_strategy'\\?",
+        ):
+            pdf.pages[0].extract_tables({"horizontal_strategyy": "text"})
+
+
 @pytest.mark.parametrize(
     ("settings", "message"),
     [
