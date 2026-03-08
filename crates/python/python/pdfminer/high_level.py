@@ -191,6 +191,7 @@ def extract_text(
     page_numbers: Iterable[int] | None = None,
     maxpages: int = 0,
     caching: bool = True,
+    codec: str | None = "utf-8",
     laparams: LAParams | None = None,
 ) -> str:
     pages_list = list(page_numbers) if page_numbers is not None else None
