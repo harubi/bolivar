@@ -1,6 +1,7 @@
 # pdfminer.pdfdocument compatibility shim
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any, Protocol
 
 from bolivar import PDFDocument as _RustPDFDocument
@@ -17,10 +18,43 @@ def _raise_pdf_syntax_error(exc: Exception) -> None:
     from .pdfparser import PDFSyntaxError
 
     message = str(exc)
-    prefix = "Failed to parse PDF: "
-    if message.startswith(prefix):
-        message = message[len(prefix) :]
+    for prefix in ("Failed to parse PDF: ", "PDF syntax error: "):
+        if message.startswith(prefix):
+            message = message[len(prefix) :]
     raise PDFSyntaxError(message) from exc
+
+
+def _open_rust_document(
+    parser: _ParserLike,
+    password: str,
+    caching: bool,
+    fallback: bool,
+) -> _NativePDFDocument:
+    path = None
+    if hasattr(parser, "get_path"):
+        try:
+            path = parser.get_path()
+        except Exception:
+            path = None
+
+    if path and os.path.isfile(path):
+        try:
+            return _RustPDFDocument.from_path(
+                path, password=password, caching=caching, fallback=fallback
+            )
+        except Exception:
+            # Fall through to the parser-owned bytes so we stay faithful to the
+            # original parser input even if the path disappears or changes.
+            pass
+
+    try:
+        data = parser.get_data()
+        return _RustPDFDocument(
+            data, password=password, caching=caching, fallback=fallback
+        )
+    except Exception as exc:
+        _raise_pdf_syntax_error(exc)
+        raise AssertionError("unreachable")
 
 
 class _ParserLike(Protocol):
@@ -92,30 +126,9 @@ class PDFDocument:
         if isinstance(password, bytes):
             password = password.decode("utf-8", errors="replace")
 
-        # Prefer mmap-backed parsing when a real path is available
-        path = None
-        if hasattr(parser, "get_path"):
-            try:
-                path = parser.get_path()
-            except Exception:
-                path = None
-
-        if path:
-            try:
-                self._rust_doc = _RustPDFDocument.from_path(
-                    path, password=password, caching=caching, fallback=fallback
-                )
-            except Exception as exc:
-                _raise_pdf_syntax_error(exc)
-        else:
-            # Fallback to in-memory bytes
-            data = parser.get_data()
-            try:
-                self._rust_doc = _RustPDFDocument(
-                    data, password=password, caching=caching, fallback=fallback
-                )
-            except Exception as exc:
-                _raise_pdf_syntax_error(exc)
+        self._rust_doc = _open_rust_document(
+            parser, password=password, caching=caching, fallback=fallback
+        )
 
         # Lazily load pages from Rust
         self._rust_pages = None

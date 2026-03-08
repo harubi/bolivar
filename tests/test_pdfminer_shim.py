@@ -7,6 +7,8 @@ for pdfplumber and other pdfminer.six consumers.
 import pytest
 from pathlib import Path
 from io import BytesIO
+import os
+import tempfile
 
 # Get fixtures path
 FIXTURES_DIR = Path(__file__).parent.parent / "crates/core/tests/fixtures"
@@ -219,6 +221,49 @@ class TestPDFDocument:
 
         with pytest.raises(PDFSyntaxError, match="No /Root object"):
             PDFDocument(PDFParser(BytesIO(broken_pdf)), fallback=False)
+
+    def test_pdfdocument_missing_root_raises_by_default(self):
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfparser import PDFParser, PDFSyntaxError
+
+        broken_root_pdf = (FIXTURES_DIR / "simple1.pdf").read_bytes().replace(
+            b"/Root", b"/R00t", 1
+        )
+
+        with pytest.raises(PDFSyntaxError, match="No /Root object"):
+            PDFDocument(PDFParser(BytesIO(broken_root_pdf)))
+
+    def test_pdfdocument_uses_live_parser_handle_after_path_unlink(self):
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+        from pdfminer.pdfparser import PDFParser
+
+        pdf_bytes = (FIXTURES_DIR / "simple1.pdf").read_bytes()
+        fd, path = tempfile.mkstemp(suffix=".pdf")
+        try:
+            with os.fdopen(fd, "wb") as tmp:
+                tmp.write(pdf_bytes)
+
+            with open(path, "rb") as fp:
+                parser = PDFParser(fp)
+                os.unlink(path)
+                doc = PDFDocument(parser)
+
+            assert len(list(PDFPage.create_pages(doc))) >= 1
+        finally:
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_pdfdocument_fallback_false_preserves_upstream_syntax_error_text(self):
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfparser import PDFParser, PDFSyntaxError
+
+        broken_pdf = break_startxref(build_minimal_pdf_with_pages(1))
+
+        with pytest.raises(PDFSyntaxError) as excinfo:
+            PDFDocument(PDFParser(BytesIO(broken_pdf)), fallback=False)
+
+        assert str(excinfo.value) == "No /Root object! - Is this really a PDF?"
 
 
 class TestPDFPage:
