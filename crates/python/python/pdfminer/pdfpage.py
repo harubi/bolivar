@@ -1,12 +1,18 @@
 # pdfminer.pdfpage compatibility shim
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
+
+from .pdfexceptions import PDFTextExtractionNotAllowed
 
 if TYPE_CHECKING:
     from collections.abc import Container, Generator
 
     from bolivar._bolivar import PDFDocument as _NativePDFDocument
+
+
+log = logging.getLogger(__name__)
 
 
 class _RustPageLike(Protocol):
@@ -132,15 +138,11 @@ class PDFPage:
     def create_pages(
         cls,
         document: _DocumentLike,
-        caching: bool = True,
-        check_extractable: bool = True,
     ) -> Generator[PDFPage, None, None]:
         """Iterate over pages in a PDF document.
 
         Args:
             document: PDFDocument instance
-            caching: Whether to cache resources (ignored)
-            check_extractable: Whether to check extractability (ignored)
 
         Yields:
             PDFPage instances for each page in the document
@@ -191,6 +193,18 @@ class PDFPage:
 
         parser = PDFParser(fp)
         doc = PDFDocument(parser, password=password, caching=caching)
+
+        if not doc.is_extractable:
+            if check_extractable:
+                raise PDFTextExtractionNotAllowed(
+                    f"Text extraction is not allowed: {fp!r}"
+                )
+            log.warning(
+                "The PDF %r contains a metadata field indicating that it should not "
+                "allow text extraction. Ignoring this field and proceeding. Use "
+                "the check_extractable if you want to raise an error in this case",
+                fp,
+            )
 
         yielded = 0
         for i, page in enumerate(cls.create_pages(doc)):

@@ -112,7 +112,7 @@ def _apply_patch(module: ModuleType) -> bool:
 
     already_patched = getattr(page_mod.Page.extract_tables, "_bolivar_patched", False)
 
-    from bolivar._native_api import (
+    from bolivar._bridge_api import (
         _extract_tables_for_page_indexed,
         _extract_tables_from_page_objects,
         _extract_text_stream,

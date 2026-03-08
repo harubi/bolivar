@@ -202,11 +202,11 @@ def test_extract_tables_from_document_pages_preserves_order():
     assert not hasattr(bolivar, "extract_tables_from_document_pages")
 
 
-def test_native_api_exposes_extract_tables_for_page_indexed():
-    import bolivar._native_api as native_api
+def test_bridge_api_exposes_extract_tables_for_page_indexed():
+    import bolivar._bridge_api as bridge_api
 
-    assert hasattr(native_api, "_extract_tables_for_page_indexed")
-    assert callable(native_api._extract_tables_for_page_indexed)
+    assert hasattr(bridge_api, "_extract_tables_for_page_indexed")
+    assert callable(bridge_api._extract_tables_for_page_indexed)
 
 
 def test_threads_kw_rejected_in_python_bindings():

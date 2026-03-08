@@ -35,9 +35,11 @@ def test_shim_registry_raises_when_patch_missing():
 
 
 def test_internal_bridge_exports_match_manifest():
+    import bolivar._bridge_api as bridge
     import bolivar._native_api as native
 
-    assert set(native._INTERNAL_BRIDGE_EXPORTS) == EXPECTED_INTERNAL_BRIDGE_EXPORTS
+    assert set(bridge.__all__) == EXPECTED_INTERNAL_BRIDGE_EXPORTS
     assert EXPECTED_INTERNAL_BRIDGE_EXPORTS.isdisjoint(native.__all__)
     for name in EXPECTED_INTERNAL_BRIDGE_EXPORTS:
-        assert hasattr(native, name)
+        assert not hasattr(native, name)
+        assert hasattr(bridge, name)

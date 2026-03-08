@@ -770,6 +770,24 @@ impl PyPDFDocument {
             .collect())
     }
 
+    /// Whether the document may be printed.
+    #[getter]
+    fn is_printable(&self) -> bool {
+        self.inner.is_printable()
+    }
+
+    /// Whether the document may be modified.
+    #[getter]
+    fn is_modifiable(&self) -> bool {
+        self.inner.is_modifiable()
+    }
+
+    /// Whether text extraction is allowed.
+    #[getter]
+    fn is_extractable(&self) -> bool {
+        self.inner.is_extractable()
+    }
+
     /// Get document catalog dictionary.
     #[getter]
     fn catalog(slf: PyRef<'_, Self>, py: Python<'_>) -> PyResult<Py<PyAny>> {

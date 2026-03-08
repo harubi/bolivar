@@ -38,7 +38,7 @@ def test_pdfplumber_patch_default_on(monkeypatch):
 
 
 def test_pdfplumber_extract_tables_uses_single_page_native_path(monkeypatch):
-    import bolivar._native_api as native_api
+    import bolivar._bridge_api as bridge_api
 
     calls = {"stream": 0, "indexed": 0}
 
@@ -52,9 +52,9 @@ def test_pdfplumber_extract_tables_uses_single_page_native_path(monkeypatch):
         calls["indexed"] += 1
         return [[["indexed"]]]
 
-    monkeypatch.setattr(native_api, "_extract_tables_stream", _fail_extract_tables_stream)
+    monkeypatch.setattr(bridge_api, "_extract_tables_stream", _fail_extract_tables_stream)
     monkeypatch.setattr(
-        native_api,
+        bridge_api,
         "_extract_tables_for_page_indexed",
         _fake_extract_tables_for_page_indexed,
     )
@@ -307,7 +307,7 @@ def test_random_page_extract_tables_does_not_replay_document_stream(monkeypatch)
 
 
 def test_extract_tables_calls_indexed_backend_for_original_page(monkeypatch):
-    import bolivar._native_api as native_api
+    import bolivar._bridge_api as bridge_api
 
     calls = {"stream": [], "indexed_count": 0}
 
@@ -339,10 +339,10 @@ def test_extract_tables_calls_indexed_backend_for_original_page(monkeypatch):
         return [[["indexed"]]]
 
     monkeypatch.setattr(
-        native_api, "_extract_tables_stream", _fake_extract_tables_stream
+        bridge_api, "_extract_tables_stream", _fake_extract_tables_stream
     )
     monkeypatch.setattr(
-        native_api,
+        bridge_api,
         "_extract_tables_for_page_indexed",
         _fake_extract_tables_for_page_indexed,
     )
@@ -363,7 +363,7 @@ def test_extract_tables_calls_indexed_backend_for_original_page(monkeypatch):
 
 
 def test_extract_tables_calls_indexed_backend_for_each_original_page(monkeypatch):
-    import bolivar._native_api as native_api
+    import bolivar._bridge_api as bridge_api
 
     calls = {"stream_count": 0, "indexed_count": 0}
 
@@ -386,10 +386,10 @@ def test_extract_tables_calls_indexed_backend_for_each_original_page(monkeypatch
         return [[["indexed"]]]
 
     monkeypatch.setattr(
-        native_api, "_extract_tables_stream", _fake_extract_tables_stream
+        bridge_api, "_extract_tables_stream", _fake_extract_tables_stream
     )
     monkeypatch.setattr(
-        native_api,
+        bridge_api,
         "_extract_tables_for_page_indexed",
         _fake_extract_tables_for_page_indexed,
     )
@@ -411,7 +411,7 @@ def test_extract_tables_calls_indexed_backend_for_each_original_page(monkeypatch
 
 
 def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
-    import bolivar._native_api as native_api
+    import bolivar._bridge_api as bridge_api
 
     calls = {"indexed_count": 0, "page_objects": []}
 
@@ -440,12 +440,12 @@ def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
         return [[["cropped"]]]
 
     monkeypatch.setattr(
-        native_api,
+        bridge_api,
         "_extract_tables_for_page_indexed",
         _fake_extract_tables_for_page_indexed,
     )
     monkeypatch.setattr(
-        native_api,
+        bridge_api,
         "_extract_tables_from_page_objects",
         _fake_extract_tables_from_page_objects,
     )
@@ -475,7 +475,7 @@ def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
 def test_extract_tables_original_page_falls_back_to_page_objects_when_indexed_symbol_missing(
     monkeypatch,
 ):
-    import bolivar._native_api as native_api
+    import bolivar._bridge_api as bridge_api
 
     calls = {"stream_count": 0, "indexed_count": 0, "page_objects": 0}
 
@@ -502,13 +502,13 @@ def test_extract_tables_original_page_falls_back_to_page_objects_when_indexed_sy
         return [[["fallback"]]]
 
     monkeypatch.setattr(
-        native_api, "_extract_tables_stream", _fake_extract_tables_stream
+        bridge_api, "_extract_tables_stream", _fake_extract_tables_stream
     )
     monkeypatch.setattr(
-        native_api, "_extract_tables_for_page_indexed", _missing_indexed
+        bridge_api, "_extract_tables_for_page_indexed", _missing_indexed
     )
     monkeypatch.setattr(
-        native_api,
+        bridge_api,
         "_extract_tables_from_page_objects",
         _fake_extract_tables_from_page_objects,
     )
@@ -542,9 +542,9 @@ def test_repeated_page_extract_text_is_stable(monkeypatch):
 
 
 def test_extract_text_raises_when_native_page_output_is_missing(monkeypatch):
-    import bolivar._native_api as native_api
+    import bolivar._bridge_api as bridge_api
 
-    monkeypatch.setattr(native_api, "_extract_text_stream", lambda *args, **kwargs: [])
+    monkeypatch.setattr(bridge_api, "_extract_text_stream", lambda *args, **kwargs: [])
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
         os.path.dirname(__file__),
@@ -570,9 +570,9 @@ def test_repeated_page_extract_words_is_stable(monkeypatch):
 
 
 def test_extract_words_raises_when_native_page_output_is_missing(monkeypatch):
-    import bolivar._native_api as native_api
+    import bolivar._bridge_api as bridge_api
 
-    monkeypatch.setattr(native_api, "_extract_words_stream", lambda *args, **kwargs: [])
+    monkeypatch.setattr(bridge_api, "_extract_words_stream", lambda *args, **kwargs: [])
     pdfplumber = _reload_pdfplumber(monkeypatch)
     pdf_path = os.path.join(
         os.path.dirname(__file__),
@@ -623,7 +623,7 @@ def test_pdfplumber_repair_honors_falsey_outfile(monkeypatch):
 
 def test_extract_tables_matches_bolivar_stream_default(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
-    import bolivar._native_api as native_api
+    import bolivar._bridge_api as bridge_api
 
     pdf_path = os.path.join(
         os.path.dirname(__file__),
@@ -645,7 +645,7 @@ def test_extract_tables_matches_bolivar_stream_default(monkeypatch):
         ]
         try:
             expected = None
-            stream = native_api._extract_tables_stream(
+            stream = bridge_api._extract_tables_stream(
                 pdf.doc._rust_doc,
                 geometries,
                 laparams=pdf.laparams,
@@ -664,7 +664,7 @@ def test_extract_tables_matches_bolivar_stream_default(monkeypatch):
                     float(page.initial_doctop),
                     False,
                 )
-                expected = native_api._extract_tables_for_page_indexed(
+                expected = bridge_api._extract_tables_for_page_indexed(
                     pdf.doc._rust_doc,
                     page_index,
                     geometry,
@@ -672,7 +672,7 @@ def test_extract_tables_matches_bolivar_stream_default(monkeypatch):
                     caching=pdf.doc.caching,
                 )
         except AttributeError:
-            expected = native_api._extract_tables_from_page_objects(
+            expected = bridge_api._extract_tables_from_page_objects(
                 page.objects,
                 page.bbox,
                 page.mediabox,

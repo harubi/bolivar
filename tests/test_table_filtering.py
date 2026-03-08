@@ -8,7 +8,7 @@ PDF_PATH = os.path.join(HERE, "pdfs/issue-140-example.pdf")
 
 def test_filtered_page_tables_use_rust(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
-    from bolivar._bolivar import _extract_tables_from_page_objects
+    from bolivar._bridge_api import _extract_tables_from_page_objects
 
     with pdfplumber.open(PDF_PATH) as pdf:
         page = pdf.pages[0]
