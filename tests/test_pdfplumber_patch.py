@@ -201,6 +201,23 @@ def test_pdfplumber_pages_supports_index_objects(monkeypatch):
         assert last.page_number == len(pages)
 
 
+def test_pdfplumber_pages_supports_list_operations(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/simple1.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        pages = pdf.pages
+        first = pages[0]
+
+        assert repr(pages) == repr([first])
+        assert pages.copy() == [first]
+        assert pages.index(first) == 0
+        assert pages.count(first) == 1
+
+
 def test_page_init_prefers_direct_boxes_without_attrs(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
 
