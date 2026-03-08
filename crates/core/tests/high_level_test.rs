@@ -37,11 +37,8 @@ fn test_extract_text_empty_input() {
 fn test_extract_text_with_options() {
     // Test that options are accepted
     let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
         laparams: Some(LAParams::default()),
+        ..Default::default()
     };
 
     let result = extract_text(b"", Some(options));
@@ -55,9 +52,7 @@ fn test_extract_text_page_numbers_filter() {
     let options = ExtractOptions {
         password: String::new(),
         page_numbers: Some(vec![0]), // Only first page
-        maxpages: 0,
-        caching: true,
-        laparams: None,
+        ..Default::default()
     };
 
     // With empty input this errors, but proves the API accepts the option
@@ -69,11 +64,8 @@ fn test_extract_text_page_numbers_filter() {
 fn test_extract_text_maxpages_limit() {
     // Test maxpages option limits extraction
     let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
         maxpages: 1, // Only one page
-        caching: true,
-        laparams: None,
+        ..Default::default()
     };
 
     let result = extract_text(b"", Some(options));
@@ -93,11 +85,8 @@ fn test_extract_text_laparams_applied() {
     );
 
     let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
         laparams: Some(laparams),
+        ..Default::default()
     };
 
     let result = extract_text(b"", Some(options));
@@ -124,11 +113,8 @@ fn test_extract_text_to_fp_with_options() {
     let mut output = Cursor::new(Vec::new());
 
     let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
         laparams: Some(LAParams::default()),
+        ..Default::default()
     };
 
     let result = extract_text_to_fp(b"", &mut output, Some(options));
@@ -168,11 +154,8 @@ fn test_extract_pages_returns_iterator() {
 #[test]
 fn test_extract_pages_with_options() {
     let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
         laparams: Some(LAParams::default()),
+        ..Default::default()
     };
 
     let result = extract_pages(b"", Some(options));
@@ -197,11 +180,8 @@ fn test_extract_pages_yields_ltpage() {
 #[test]
 fn test_extract_pages_page_numbers_filter() {
     let options = ExtractOptions {
-        password: String::new(),
         page_numbers: Some(vec![0, 2]), // Pages 0 and 2 only
-        maxpages: 0,
-        caching: true,
-        laparams: None,
+        ..Default::default()
     };
 
     let result = extract_pages(b"", Some(options));
@@ -211,11 +191,8 @@ fn test_extract_pages_page_numbers_filter() {
 #[test]
 fn test_extract_pages_maxpages_limit() {
     let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
         maxpages: 2, // At most 2 pages
-        caching: true,
-        laparams: None,
+        ..Default::default()
     };
 
     let result = extract_pages(b"", Some(options));
@@ -420,13 +397,7 @@ fn test_extract_text_minimal_pdf() {
 fn test_extract_text_default_matches_options() {
     let base = extract_text(MINIMAL_PDF, None).unwrap();
 
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
-        laparams: None,
-    };
+    let options = ExtractOptions::default();
 
     let configured = extract_text(MINIMAL_PDF, Some(options)).unwrap();
     assert_eq!(base, configured);
@@ -441,13 +412,7 @@ fn test_extract_pages_order_is_stable() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    let options = ExtractOptions {
-        password: String::new(),
-        page_numbers: None,
-        maxpages: 0,
-        caching: true,
-        laparams: None,
-    };
+    let options = ExtractOptions::default();
 
     let second_pages: Vec<_> = extract_pages(&pdf_data, Some(options))
         .unwrap()
