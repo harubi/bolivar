@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from bolivar._export_manifest import BRIDGE_EXPORTS, PUBLIC_EXPORTS
+from bolivar._export_manifest import STUB_SYMBOLS
 
 _TOP_LEVEL_SYMBOL = re.compile(r"^(?:def|class|async def)\s+(\w+)|^(\w+)\s*[:=]")
 _STUB_PATH = (
@@ -36,16 +36,8 @@ def test_removed_legacy_surface_is_absent_from_stubs() -> None:
 
 
 def test_native_stub_symbols_match_manifest() -> None:
-    from bolivar._export_manifest import NATIVE_EXTENSION_EXPORTS, STUB_SUPPORT_SYMBOLS
-
     symbols = _load_stub_symbols()
-    expected = (
-        set(PUBLIC_EXPORTS)
-        | set(BRIDGE_EXPORTS)
-        | set(NATIVE_EXTENSION_EXPORTS)
-        | set(STUB_SUPPORT_SYMBOLS)
-    )
-    assert symbols == expected
+    assert symbols == set(STUB_SYMBOLS)
 
 
 def test_compat_table_helper_stub_uses_explicit_object_lists() -> None:
