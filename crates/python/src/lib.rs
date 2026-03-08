@@ -13,6 +13,7 @@ mod layout;
 mod params;
 mod stream;
 mod table;
+mod table_compat;
 mod utils;
 
 use pyo3::prelude::*;

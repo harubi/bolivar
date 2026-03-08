@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -35,6 +36,23 @@ def test_pdfplumber_patch_default_on(monkeypatch):
     assert (
         getattr(pdfplumber.page.Page.extract_tables, "_bolivar_patched", False) is True
     )
+
+
+def test_table_module_keeps_compat_object_conversion_outside_primary_entrypoints():
+    table_source = (
+        Path(__file__).resolve().parents[1] / "crates" / "python" / "src" / "table.rs"
+    ).read_text()
+    compat_source = (
+        Path(__file__).resolve().parents[1]
+        / "crates"
+        / "python"
+        / "src"
+        / "table_compat.rs"
+    ).read_text()
+
+    assert "fn compat_lists_to_chars_edges(" not in table_source
+    assert "fn append_chars_from_list(" not in table_source
+    assert "fn compat_lists_to_chars_edges(" in compat_source
 
 
 def test_pdfplumber_base14_font_geometry_matches_upstream(monkeypatch):
