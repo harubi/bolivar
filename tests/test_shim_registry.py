@@ -7,7 +7,6 @@ EXPECTED_INTERNAL_BRIDGE_EXPORTS = {
     "_extract_tables_stream",
     "_extract_tables_for_page_indexed",
     "_extract_tables_from_page_objects",
-    "_extract_text_stream",
     "_extract_words_stream",
 }
 
