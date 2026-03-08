@@ -413,16 +413,6 @@ impl PDFCIDFont {
             cid2unicode_override.or_else(|| Self::build_cid2unicode(spec))
         };
 
-        // Parse widths from spec
-        let widths = Self::parse_widths(spec);
-        let default_width = Self::get_default_width(spec, vertical);
-
-        // Parse vertical displacement info (DW2 and disps from W2)
-        let (default_disp, disps) = Self::parse_vertical_disps(spec, vertical);
-
-        // Parse descent from FontDescriptor
-        let descent = Self::get_descent_from_descriptor(spec);
-
         let obj_to_name = |obj: &PDFObject| -> Option<String> {
             if let Ok(name) = obj.as_name() {
                 Some(name.to_string())
@@ -435,6 +425,16 @@ impl PDFCIDFont {
 
         // Parse BaseFont name for Standard 14 font metric lookup
         let basefont = spec.get("BaseFont").and_then(obj_to_name);
+
+        // Parse widths from spec
+        let widths = Self::parse_widths(spec);
+        let default_width = Self::get_default_width(spec, vertical);
+
+        // Parse vertical displacement info (DW2 and disps from W2)
+        let (default_disp, disps) = Self::parse_vertical_disps(spec, vertical);
+
+        // Parse descent from FontDescriptor, then fall back to Standard 14 metrics.
+        let descent = Self::get_descent_from_descriptor(spec, basefont.as_deref());
 
         let fontname = spec
             .get("FontDescriptor")
@@ -486,13 +486,18 @@ impl PDFCIDFont {
     }
 
     /// Get descent from FontDescriptor.
-    fn get_descent_from_descriptor(spec: &PDFDict) -> f64 {
+    fn get_descent_from_descriptor(spec: &PDFDict, basefont: Option<&str>) -> f64 {
         // Try to get FontDescriptor
         if let Some(PDFObject::Dict(desc)) = spec.get("FontDescriptor")
             && let Some(descent) = desc.get("Descent").and_then(|d| d.as_num().ok())
         {
             // Descent is in 1/1000 em units, convert to normalized units
             return descent / 1000.0;
+        }
+        if let Some(basefont) = basefont
+            && let Some(metrics) = super::metrics::get_font_metrics(basefont)
+        {
+            return metrics.descent / 1000.0;
         }
         // Default descent: 25% below baseline
         -0.25
