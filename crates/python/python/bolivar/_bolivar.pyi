@@ -782,11 +782,8 @@ def _extract_tables_for_page_indexed(
 ) -> list[list[list[str | None]]]: ...
 def _extract_tables_for_compat_page(
     objects: dict[str, Any],
-    page_bbox: Any,
-    mediabox: Any,
-    initial_doctop: float = 0.0,
+    geometry: Any,
     table_settings: dict[str, Any] | None = None,
-    force_crop: bool = False,
 ) -> list[list[list[str | None]]]: ...
 def _extract_words_for_page_indexed(
     doc: PDFDocument,

@@ -177,11 +177,8 @@ def _apply_patch(module: ModuleType) -> bool:
             if not getattr(page, "is_original", True):
                 return _extract_tables_for_compat_page(
                     page.objects,
-                    page.bbox,
-                    page.mediabox,
-                    page.initial_doctop,
+                    _page_geom(page),
                     table_settings=table_settings,
-                    force_crop=True,
                 )
             page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
             pdf = page.pdf

@@ -15,11 +15,13 @@ def test_filtered_page_tables_use_rust(monkeypatch):
         filtered = page.filter(lambda obj: obj.get("object_type") == "char")
         expected = _extract_tables_for_compat_page(
             filtered.objects,
-            filtered.bbox,
-            filtered.mediabox,
-            filtered.initial_doctop,
+            (
+                tuple(filtered.bbox),
+                tuple(filtered.mediabox),
+                float(filtered.initial_doctop),
+                not getattr(filtered, "is_original", True),
+            ),
             table_settings=None,
-            force_crop=not getattr(filtered, "is_original", True),
         )
         got = filtered.extract_tables()
     assert got == expected

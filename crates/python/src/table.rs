@@ -23,7 +23,7 @@ use crate::document::{
     open_document_from_input, open_document_from_path,
 };
 use crate::layout::{PyLTPage, ltpage_to_py};
-use crate::params::{PyLAParams, parse_bbox, parse_page_geometry, parse_table_settings};
+use crate::params::{PyLAParams, parse_page_geometry, parse_table_settings};
 
 /// Process a PDF page and return its layout.
 ///
@@ -414,25 +414,20 @@ pub fn extract_tables_for_page_indexed(
 
 /// Extract tables for compatibility-only filtered or cropped page objects.
 #[pyfunction(name = "_extract_tables_for_compat_page")]
-#[pyo3(signature = (objects, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, force_crop = false))]
+#[pyo3(signature = (objects, geometry, table_settings = None))]
 pub fn extract_tables_for_compat_page(
     py: Python<'_>,
     objects: &Bound<'_, PyAny>,
-    page_bbox: &Bound<'_, PyAny>,
-    mediabox: &Bound<'_, PyAny>,
-    initial_doctop: f64,
+    geometry: &Bound<'_, PyAny>,
     table_settings: Option<Py<PyAny>>,
-    force_crop: bool,
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
-    let page_bbox = parse_bbox(page_bbox, "page_bbox")?;
-    let mediabox = parse_bbox(mediabox, "mediabox")?;
-    let geom = PageGeometry {
-        page_bbox,
-        mediabox,
-        initial_doctop,
-        force_crop,
-    };
+    let geom = parse_page_geometry(geometry)?;
+    if !geom.force_crop {
+        return Err(PyValueError::new_err(
+            "compat table helper requires cropped or filtered geometry",
+        ));
+    }
     let dict = objects
         .cast::<PyDict>()
         .map_err(|_| PyValueError::new_err("page objects must be a dict"))?;
