@@ -134,76 +134,6 @@ def _apply_patch(module: ModuleType) -> bool:
         except Exception as e:
             raise PdfminerException(str(e)) from e
 
-    def _base_geometries(doc: _DocLike) -> list[_PageGeometry]:
-        boxes = _safe_page_mediaboxes(doc)
-        doctops: list[float] = []
-        running = 0.0
-        for box in boxes:
-            doctops.append(running)
-            running += box[3] - box[1]
-        return [
-            (tuple(box), tuple(box), doctop, False)
-            for box, doctop in zip(boxes, doctops, strict=False)
-        ]
-
-    def _get_base_geometries(
-        pdf: object | None,
-        doc: _DocLike,
-    ) -> list[_PageGeometry]:
-        if pdf is not None:
-            base: list[_PageGeometry] | None = getattr(
-                pdf, "_bolivar_table_geom_base", None
-            )
-            if base is not None:
-                return base
-        base = _base_geometries(doc)
-        if pdf is not None:
-            _set_attr(pdf, "_bolivar_table_geom_base", base)
-            _set_attr(pdf, "_bolivar_table_geom_base_key", tuple(base))
-        return base
-
-    def _build_geometries(
-        doc: _DocLike,
-        page_index: int,
-        page: _PageLike,
-        base: list[_PageGeometry] | None = None,
-    ) -> list[_PageGeometry]:
-        if base is None:
-            base = _base_geometries(doc)
-        current = _page_geom(page)
-        if not (0 <= page_index < len(base)):
-            return base
-        if base[page_index] == current:
-            return base
-        geoms = list(base)
-        if geoms[page_index] != current:
-            geoms[page_index] = current
-        return geoms
-
-    def _normalize_key(value: object) -> object:
-        if isinstance(value, dict):
-            return tuple(
-                sorted((key, _normalize_key(val)) for key, val in value.items())
-            )
-        if isinstance(value, (list, tuple)):
-            return tuple(_normalize_key(val) for val in value)
-        return value
-
-    def _settings_key(table_settings: object) -> object:
-        return _normalize_key(table_settings)
-
-    def _laparams_key(pdf: object | None) -> object:
-        laparams = getattr(pdf, "laparams", None) if pdf is not None else None
-        if laparams is None:
-            return None
-        try:
-            items = getattr(laparams, "__dict__", None)
-            if items:
-                return tuple(sorted((k, _normalize_key(v)) for k, v in items.items()))
-        except Exception:
-            pass
-        return repr(laparams)
-
     def _can_use_rust_words(kwargs: dict[str, Any]) -> bool:
         if kwargs.get("return_chars"):
             return False
@@ -265,8 +195,6 @@ def _apply_patch(module: ModuleType) -> bool:
                 doc = getattr(page.page_obj, "doc", None)
             if doc is None:
                 raise PdfminerException("pdf document missing")
-            base_geoms = _get_base_geometries(pdf, doc)
-            _build_geometries(doc, page_index, page, base=base_geoms)
             rust_doc = getattr(doc, "_rust_doc", None) or doc
             native_doc = cast("_NativePDFDocument", rust_doc)
             try:

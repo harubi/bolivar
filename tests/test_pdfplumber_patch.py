@@ -394,6 +394,19 @@ def test_random_page_extract_tables_does_not_replay_document_stream(monkeypatch)
     assert isinstance(first, list)
 
 
+def test_extract_tables_does_not_cache_legacy_table_geometries(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        pdf.pages[0].extract_tables()
+        assert not hasattr(pdf, "_bolivar_table_geom_base")
+        assert not hasattr(pdf, "_bolivar_table_geom_base_key")
+
+
 def test_extract_tables_calls_indexed_backend_for_original_page(monkeypatch):
     import bolivar._bridge_api as bridge_api
 
