@@ -265,6 +265,18 @@ def test_loaded_native_extension_surface_matches_manifest() -> None:
     assert actual_names == expected_names - public_dunder_names
 
 
+def test_loaded_bridge_api_surface_matches_manifest() -> None:
+    import bolivar._bolivar as native_extension
+    import bolivar._bridge_api as bridge_api
+    from bolivar._export_manifest import BRIDGE_EXPORTS, PUBLIC_EXPORTS
+
+    assert tuple(bridge_api.__all__) == BRIDGE_EXPORTS
+    for name in BRIDGE_EXPORTS:
+        assert getattr(bridge_api, name) is getattr(native_extension, name)
+    for name in PUBLIC_EXPORTS:
+        assert not hasattr(bridge_api, name)
+
+
 def test_extract_tables_from_document_pages_preserves_order():
     import bolivar
 
