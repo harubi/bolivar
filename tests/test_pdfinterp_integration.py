@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from pdfminer.high_level import extract_text
+from pdfminer.pdftypes import PDFStream
 from pdfminer.pdfexceptions import PDFNotImplementedError
 from pdfminer.layout import LTTextBoxHorizontal
 from pdfminer.pdfdevice import PDFDevice, TagExtractor
@@ -134,6 +135,25 @@ def test_interpreter_supports_plain_pdfdevice_subclasses():
         ("begin", (1, 0, 0, 1, -0.0, -0.0)),
         ("end", 0),
     ]
+
+
+def test_page_contents_matches_upstream_shape():
+    _, page = _load_first_page()
+
+    assert isinstance(page.contents, list)
+    assert len(page.contents) == 1
+    assert isinstance(page.contents[0], PDFStream)
+
+
+def test_interpreter_render_contents_initializes_state():
+    _, page = _load_first_page()
+    rsrc = PDFResourceManager()
+    device = PDFDevice(rsrc)
+    interp = PDFPageInterpreter(rsrc, device)
+
+    interp.render_contents(page.resources, page.contents)
+
+    assert device.ctm == (1, 0, 0, 1, 0, 0)
 
 
 def test_interpreter_does_not_cache_pages():

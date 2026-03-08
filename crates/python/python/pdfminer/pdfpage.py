@@ -54,6 +54,7 @@ class PDFPage:
     trimbox: list[float] | None
     artbox: list[float] | None
     _attrs_cache: dict[str, Any] | None
+    _contents_cache: list[Any] | None
 
     def __init__(
         self,
@@ -97,6 +98,7 @@ class PDFPage:
         self._resources_cache = None
         self._annots_cache = None
         self._attrs_cache = None
+        self._contents_cache = None
         self.beads = None  # Reading order chain
 
         # Optional box types - get from Rust if available
@@ -133,6 +135,19 @@ class PDFPage:
     @attrs.setter
     def attrs(self, value: dict[str, Any]) -> None:
         self._attrs_cache = value
+        self._contents_cache = None
+
+    @property
+    def contents(self) -> list[Any]:
+        if self._contents_cache is None:
+            contents = self.attrs.get("Contents")
+            if contents is None:
+                self._contents_cache = []
+            elif isinstance(contents, list):
+                self._contents_cache = contents
+            else:
+                self._contents_cache = [contents]
+        return self._contents_cache
 
     @classmethod
     def create_pages(
