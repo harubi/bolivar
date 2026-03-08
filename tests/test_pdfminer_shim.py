@@ -4,16 +4,30 @@ These tests verify that the pdfminer shim provides API compatibility
 for pdfplumber and other pdfminer.six consumers.
 """
 
-import pytest
-from pathlib import Path
+from collections.abc import Generator
 from io import BytesIO
 import os
+from pathlib import Path
 import tempfile
+
+import pytest
 
 # Get fixtures path
 FIXTURES_DIR = Path(__file__).parent.parent / "crates/core/tests/fixtures"
 PDFPLUMBER_PDFS = FIXTURES_DIR / "pdfplumber"
 NONFREE_PDFS = FIXTURES_DIR / "nonfree"
+
+
+def _iter_layout_descendants(item: object) -> Generator[object, None, None]:
+    yield item
+    if isinstance(item, (str, bytes)):
+        return
+    try:
+        children = iter(item)
+    except TypeError:
+        return
+    for child in children:
+        yield from _iter_layout_descendants(child)
 
 
 def build_minimal_pdf_with_pages(page_count: int) -> bytes:
@@ -739,7 +753,7 @@ class TestColorExtraction:
 
                 # Find LTChar items and check their colors
                 chars_with_color = []
-                for item in layout:
+                for item in _iter_layout_descendants(layout):
                     if isinstance(item, LTChar):
                         if hasattr(item, "graphicstate") and item.graphicstate:
                             ncolor = item.graphicstate.ncolor
@@ -778,7 +792,7 @@ class TestColorExtraction:
 
                 # Find red chars (R > 0.9, G < 0.1, B < 0.1)
                 red_chars = []
-                for item in layout:
+                for item in _iter_layout_descendants(layout):
                     if isinstance(item, LTChar):
                         if hasattr(item, "graphicstate") and item.graphicstate:
                             nc = item.graphicstate.ncolor
@@ -900,8 +914,8 @@ class TestLTAnno:
         anno = LTAnno(" ")
         assert anno.get_text() == " "
 
-    def test_layout_includes_ltanno(self):
-        """LTPage iteration should include LTAnno objects for spaces"""
+    def test_layout_tree_includes_ltanno(self):
+        """Text layout should retain LTAnno objects for spaces"""
         from pdfminer.pdfparser import PDFParser
         from pdfminer.pdfdocument import PDFDocument
         from pdfminer.pdfpage import PDFPage
@@ -923,7 +937,11 @@ class TestLTAnno:
                 layout = device.get_result()
 
                 # Find LTAnno objects
-                annos = [item for item in layout if isinstance(item, LTAnno)]
+                annos = [
+                    item
+                    for item in _iter_layout_descendants(layout)
+                    if isinstance(item, LTAnno)
+                ]
                 assert len(annos) > 0, "Should include LTAnno objects for spaces"
                 break
 
