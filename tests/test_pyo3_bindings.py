@@ -215,6 +215,16 @@ def test_bolivar_public_exports_match_manifest() -> None:
         assert getattr(bolivar, name) is getattr(native, name)
 
 
+def test_bolivar_dir_exposes_public_manifest() -> None:
+    import bolivar
+    from bolivar._export_manifest import BRIDGE_EXPORTS, TOP_LEVEL_EXPORTS
+
+    names = set(dir(bolivar))
+
+    assert set(TOP_LEVEL_EXPORTS).issubset(names)
+    assert set(BRIDGE_EXPORTS).isdisjoint(names)
+
+
 def test_native_api_excludes_bridge_only_helpers() -> None:
     import bolivar._native_api as native
     from bolivar._export_manifest import BRIDGE_EXPORTS, PUBLIC_EXPORTS
@@ -223,6 +233,16 @@ def test_native_api_excludes_bridge_only_helpers() -> None:
     for name in BRIDGE_EXPORTS:
         assert name not in native.__all__
         assert not hasattr(native, name)
+
+
+def test_native_api_dir_exposes_public_manifest() -> None:
+    import bolivar._native_api as native
+    from bolivar._export_manifest import BRIDGE_EXPORTS, PUBLIC_EXPORTS
+
+    names = set(dir(native))
+
+    assert set(PUBLIC_EXPORTS).issubset(names)
+    assert set(BRIDGE_EXPORTS).isdisjoint(names)
 
 
 def test_extract_tables_from_document_pages_preserves_order():
@@ -247,6 +267,15 @@ def test_bridge_api_exposes_bridge_only_extract_helpers():
         assert name in bridge_api.__all__
         assert hasattr(bridge_api, name)
         assert callable(getattr(bridge_api, name))
+
+
+def test_bridge_api_dir_exposes_bridge_manifest() -> None:
+    import bolivar._bridge_api as bridge_api
+    from bolivar._export_manifest import BRIDGE_EXPORTS
+
+    names = set(dir(bridge_api))
+
+    assert set(BRIDGE_EXPORTS).issubset(names)
 
 
 def test_compat_table_helper_is_importable_only_from_bridge_api() -> None:
