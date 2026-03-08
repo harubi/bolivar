@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     )
 
 _NATIVE_MODULE: ModuleType | None = None
+_BRIDGE_EXPORT_NAMES = frozenset(BRIDGE_EXPORTS)
+_MODULE_DUNDER_NAMES = frozenset(
+    name for name in globals() if name.startswith("__")
+)
 
 
 def load_bridge_api() -> ModuleType:
@@ -35,7 +39,7 @@ __all__ = list(BRIDGE_EXPORTS)
 
 
 def __getattr__(name: str) -> object:
-    if name not in BRIDGE_EXPORTS:
+    if name not in _BRIDGE_EXPORT_NAMES:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     native = load_bridge_api()
     try:
@@ -47,4 +51,4 @@ def __getattr__(name: str) -> object:
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(BRIDGE_EXPORTS))
+    return sorted(_MODULE_DUNDER_NAMES | _BRIDGE_EXPORT_NAMES)
