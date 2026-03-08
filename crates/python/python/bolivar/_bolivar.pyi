@@ -781,7 +781,10 @@ def _extract_tables_for_page_indexed(
     caching: bool = True,
 ) -> list[list[list[str | None]]]: ...
 def _extract_tables_for_compat_page(
-    objects: dict[str, Any],
+    chars: list[dict[str, Any]],
+    lines: list[dict[str, Any]],
+    rects: list[dict[str, Any]],
+    curves: list[dict[str, Any]],
     geometry: Any,
     table_settings: dict[str, Any] | None = None,
 ) -> list[list[list[str | None]]]: ...

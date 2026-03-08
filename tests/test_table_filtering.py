@@ -14,7 +14,10 @@ def test_filtered_page_tables_use_rust(monkeypatch):
         page = pdf.pages[0]
         filtered = page.filter(lambda obj: obj.get("object_type") == "char")
         expected = _extract_tables_for_compat_page(
-            filtered.objects,
+            filtered.chars,
+            filtered.lines,
+            filtered.rects,
+            filtered.curves,
             (
                 tuple(filtered.bbox),
                 tuple(filtered.mediabox),
