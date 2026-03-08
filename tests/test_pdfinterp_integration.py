@@ -5,7 +5,7 @@ import pytest
 from pdfminer.high_level import extract_text
 from pdfminer.pdfexceptions import PDFNotImplementedError
 from pdfminer.layout import LTTextBoxHorizontal
-from pdfminer.pdfdevice import TagExtractor
+from pdfminer.pdfdevice import PDFDevice, TagExtractor
 from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
 from pdfminer.pdfpage import PDFPage
 from pdfminer.pdfparser import PDFParser
@@ -107,6 +107,33 @@ def test_interpreter_supports_tag_extractor_devices():
         b'<page id="0" bbox="0.000,0.000,612.000,792.000" rotate="0">'
         b"Hello WorldHello WorldHello WorldHello World</page>\n"
     )
+
+
+def test_interpreter_supports_plain_pdfdevice_subclasses():
+    _, page = _load_first_page()
+    rsrc = PDFResourceManager()
+
+    class Recorder(PDFDevice):
+        def __init__(self, rsrcmgr: PDFResourceManager) -> None:
+            super().__init__(rsrcmgr)
+            self.events: list[tuple[str, object]] = []
+
+        def begin_page(self, page: object, ctm: tuple[float, ...]) -> None:
+            self.events.append(("begin", ctm))
+
+        def end_page(self, page: object) -> None:
+            self.events.append(("end", getattr(page, "rotate", None)))
+
+    device = Recorder(rsrc)
+    interp = PDFPageInterpreter(rsrc, device)
+
+    interp.process_page(page)
+
+    assert device.ctm == (1, 0, 0, 1, -0.0, -0.0)
+    assert device.events == [
+        ("begin", (1, 0, 0, 1, -0.0, -0.0)),
+        ("end", 0),
+    ]
 
 
 def test_interpreter_does_not_cache_pages():
