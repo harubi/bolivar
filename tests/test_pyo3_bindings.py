@@ -388,12 +388,8 @@ def test_high_level_extract_text_to_fp_xml_output_honors_rotation():
     ("output_type", "prefix"),
     [
         ("text", "Hello WorldHello WorldHello WorldHello World\x0c"),
-        ("xml", '<?xml version="1.0" encoding="utf-8" ?>\n<pages>\n<page id="1"'),
-        (
-            "html",
-            '<html><head>\n<meta http-equiv="Content-Type" '
-            'content="text/html; charset=utf-8">',
-        ),
+        ("xml", '<?xml version="1.0" ?>\n<pages>\n<page id="1"'),
+        ("html", '<html><head>\n<meta http-equiv="Content-Type" content="text/html">'),
     ],
 )
 def test_high_level_extract_text_to_fp_supports_text_stream_outputs(

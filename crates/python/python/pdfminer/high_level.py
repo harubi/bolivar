@@ -171,12 +171,16 @@ def extract_text_to_fp(
             device = TextConverter(
                 rsrcmgr,
                 converter_outfp,
-                codec=effective_codec or "utf-8",
+                codec=effective_codec if effective_codec is not None else "utf-8",
                 laparams=laparams,
                 imagewriter=imagewriter,
             )
         else:
-            device = TagExtractor(rsrcmgr, converter_outfp, codec=effective_codec or "utf-8")
+            device = TagExtractor(
+                rsrcmgr,
+                converter_outfp,
+                codec=effective_codec if effective_codec is not None else "utf-8",
+            )
         interpreter = PDFPageInterpreter(rsrcmgr, device)
         for page in PDFPage.get_pages(
             inf,
@@ -196,7 +200,7 @@ def extract_text_to_fp(
         device = XMLConverter(
             rsrcmgr,
             converter_outfp,
-            codec=effective_codec or "utf-8",
+            codec=effective_codec if effective_codec is not None else "utf-8",
             laparams=laparams,
             stripcontrol=strip_control,
             imagewriter=imagewriter,
@@ -205,7 +209,7 @@ def extract_text_to_fp(
         device = HTMLConverter(
             rsrcmgr,
             converter_outfp,
-            codec=effective_codec or "utf-8",
+            codec=effective_codec if effective_codec is not None else "utf-8",
             scale=scale,
             layoutmode=layoutmode,
             laparams=laparams,
@@ -215,7 +219,7 @@ def extract_text_to_fp(
         device = HOCRConverter(
             rsrcmgr,
             converter_outfp,
-            codec=effective_codec or "utf-8",
+            codec=effective_codec if effective_codec is not None else "utf-8",
             laparams=laparams,
             stripcontrol=strip_control,
             imagewriter=imagewriter,
