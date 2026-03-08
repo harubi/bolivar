@@ -76,6 +76,8 @@ def test_native_api_dir_hides_internal_symbols() -> None:
     assert set(BRIDGE_EXPORTS).isdisjoint(names)
     assert "load_native_api" not in names
     assert not hasattr(native, "load_native_api")
+    assert "_load_native_api" not in names
+    assert not hasattr(native, "_load_native_api")
     assert "_NATIVE_MODULE" not in names
     assert "PUBLIC_EXPORTS" not in names
     assert "TYPE_CHECKING" not in names
@@ -90,6 +92,8 @@ def test_bridge_api_dir_hides_internal_symbols() -> None:
     assert set(BRIDGE_EXPORTS).issubset(names)
     assert "load_bridge_api" not in names
     assert not hasattr(bridge, "load_bridge_api")
+    assert "_load_bridge_api" not in names
+    assert not hasattr(bridge, "_load_bridge_api")
     assert "_NATIVE_MODULE" not in names
     assert "BRIDGE_EXPORTS" not in names
     assert "TYPE_CHECKING" not in names
