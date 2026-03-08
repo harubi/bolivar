@@ -46,4 +46,6 @@ def test_compat_table_helper_stub_uses_explicit_object_lists() -> None:
     assert "lines:" in body
     assert "rects:" in body
     assert "curves:" in body
+    assert "geometry:" in body
+    assert "table_settings:" in body
     assert "objects:" not in body

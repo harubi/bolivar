@@ -195,23 +195,19 @@ class TestLTPage:
         assert len(bbox) == 4
 
 
-def test_extract_tables_bindings_removed_from_top_level():
+BRIDGE_ONLY_HELPERS = {
+    "_extract_tables_for_page_indexed",
+    "_extract_tables_for_compat_page",
+    "_extract_words_for_page_indexed",
+}
+
+
+def test_bridge_only_helpers_are_absent_from_top_level():
     import bolivar
 
-    assert not hasattr(bolivar, "_extract_tables_core")
-    assert not hasattr(bolivar, "_extract_tables_for_page_indexed")
-    assert not hasattr(bolivar, "_extract_tables_for_compat_page")
-    assert not hasattr(bolivar, "extract_tables_stream_from_document")
-    assert not hasattr(bolivar, "extract_tables_from_document")
-    assert not hasattr(bolivar, "extract_tables_from_page")
-    assert not hasattr(bolivar, "extract_table_from_page")
-    assert not hasattr(bolivar, "extract_tables_from_document_pages")
-    assert not hasattr(bolivar, "extract_tables_from_ltpage")
-    assert not hasattr(bolivar, "extract_tables_from_page_filtered")
-    assert not hasattr(bolivar, "extract_table_from_page_filtered")
-    assert not hasattr(bolivar, "_extract_words_for_page_indexed")
-    assert not hasattr(bolivar, "extract_words_from_page")
-    assert not hasattr(bolivar, "extract_text_from_page")
+    for name in BRIDGE_ONLY_HELPERS:
+        assert name not in bolivar.__all__
+        assert not hasattr(bolivar, name)
 
 
 def test_bolivar_public_exports_match_manifest() -> None:
@@ -240,9 +236,9 @@ def test_bolivar_public_exports_match_manifest() -> None:
 def test_native_api_excludes_bridge_only_helpers() -> None:
     import bolivar._native_api as native
 
-    assert not hasattr(native, "_extract_tables_for_page_indexed")
-    assert not hasattr(native, "_extract_tables_for_compat_page")
-    assert not hasattr(native, "_extract_words_for_page_indexed")
+    for name in BRIDGE_ONLY_HELPERS:
+        assert name not in native.__all__
+        assert not hasattr(native, name)
 
 
 def test_extract_tables_from_document_pages_preserves_order():
@@ -261,10 +257,26 @@ def test_bridge_api_exposes_extract_tables_for_page_indexed():
 def test_bridge_api_exposes_bridge_only_extract_helpers():
     import bolivar._bridge_api as bridge_api
 
-    assert hasattr(bridge_api, "_extract_tables_for_compat_page")
-    assert callable(bridge_api._extract_tables_for_compat_page)
-    assert hasattr(bridge_api, "_extract_words_for_page_indexed")
-    assert callable(bridge_api._extract_words_for_page_indexed)
+    for name in BRIDGE_ONLY_HELPERS:
+        assert name in bridge_api.__all__
+        assert hasattr(bridge_api, name)
+        assert callable(getattr(bridge_api, name))
+
+
+def test_compat_table_helper_is_importable_only_from_bridge_api() -> None:
+    bridge_namespace: dict[str, object] = {}
+
+    with pytest.raises(ImportError):
+        exec("from bolivar import _extract_tables_for_compat_page", {})
+
+    with pytest.raises(ImportError):
+        exec("from bolivar._native_api import _extract_tables_for_compat_page", {})
+
+    exec(
+        "from bolivar._bridge_api import _extract_tables_for_compat_page",
+        bridge_namespace,
+    )
+    assert callable(bridge_namespace["_extract_tables_for_compat_page"])
 
 
 def test_bridge_api_compat_table_helper_rejects_legacy_objects_dict_signature():

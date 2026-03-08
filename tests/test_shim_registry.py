@@ -44,3 +44,15 @@ def test_internal_bridge_exports_match_manifest():
     for name in EXPECTED_INTERNAL_BRIDGE_EXPORTS:
         assert not hasattr(native, name)
         assert hasattr(bridge, name)
+
+
+def test_compat_table_helper_stays_bridge_only() -> None:
+    import bolivar._bridge_api as bridge
+    import bolivar._native_api as native
+
+    name = "_extract_tables_for_compat_page"
+
+    assert name in bridge.__all__
+    assert name not in native.__all__
+    assert hasattr(bridge, name)
+    assert not hasattr(native, name)
