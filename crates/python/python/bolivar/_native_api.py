@@ -294,3 +294,7 @@ def __getattr__(name: str) -> object:
         raise AttributeError(
             f"native module bolivar._bolivar has no attribute {name!r}"
         ) from exc
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(PUBLIC_EXPORTS))

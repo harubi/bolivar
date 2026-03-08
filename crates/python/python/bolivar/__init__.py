@@ -72,3 +72,7 @@ def __getattr__(name: str) -> object:
     if name in _LAZY_EXPORTS:
         return getattr(_native_api, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | _LAZY_EXPORTS)
