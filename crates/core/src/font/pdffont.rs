@@ -491,6 +491,7 @@ impl PDFCIDFont {
         if let Some(PDFObject::Dict(desc)) = spec.get("FontDescriptor")
             && let Some(descent) = desc.get("Descent").and_then(|d| d.as_num().ok())
         {
+            let descent = if descent > 0.0 { -descent } else { descent };
             // Descent is in 1/1000 em units, convert to normalized units
             return descent / 1000.0;
         }
@@ -815,5 +816,18 @@ mod tests {
             PDFCIDFont::new_with_ttf_and_cid2unicode(&spec, None, None, false, None, override_map);
 
         assert_eq!(font.to_unichr(65), Some("A".to_string()));
+    }
+
+    #[test]
+    fn positive_font_descriptor_descent_is_normalized_negative() {
+        let mut descriptor = PDFDict::default();
+        descriptor.insert("Descent".into(), PDFObject::Int(211));
+
+        let mut spec = PDFDict::default();
+        spec.insert("FontDescriptor".into(), PDFObject::Dict(descriptor));
+
+        let descent = PDFCIDFont::get_descent_from_descriptor(&spec, None);
+
+        assert_eq!(descent, -0.211);
     }
 }

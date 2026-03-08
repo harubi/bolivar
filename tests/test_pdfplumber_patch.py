@@ -59,6 +59,31 @@ def test_pdfplumber_base14_font_geometry_matches_upstream(monkeypatch):
     assert first_word["doctop"] == pytest.approx(72.968, abs=1e-3)
 
 
+def test_pdfplumber_embedded_font_geometry_matches_upstream(monkeypatch):
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/annotations.pdf",
+    )
+
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        first_char = page.chars[0]
+        first_word = page.extract_words()[0]
+        first_match = page.search("Dummy")[0]
+
+    assert first_char["fontname"] == "BAAAAA+Arial-BoldMT"
+    assert first_char["top"] == pytest.approx(71.1971, abs=1e-3)
+    assert first_char["bottom"] == pytest.approx(87.2971, abs=1e-3)
+    assert first_char["doctop"] == pytest.approx(71.1971, abs=1e-3)
+    assert first_word["top"] == pytest.approx(71.1971, abs=1e-3)
+    assert first_word["bottom"] == pytest.approx(87.2971, abs=1e-3)
+    assert first_word["doctop"] == pytest.approx(71.1971, abs=1e-3)
+    assert first_match["top"] == pytest.approx(71.1971, abs=1e-3)
+    assert first_match["bottom"] == pytest.approx(87.2971, abs=1e-3)
+
+
 def test_pdfplumber_extract_tables_uses_single_page_native_path(monkeypatch):
     import bolivar._bridge_api as bridge_api
 
