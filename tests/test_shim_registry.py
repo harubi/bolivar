@@ -4,7 +4,6 @@ import types
 import pytest
 
 EXPECTED_INTERNAL_BRIDGE_EXPORTS = {
-    "_extract_tables_stream",
     "_extract_tables_for_page_indexed",
     "_extract_tables_from_page_objects",
     "_extract_words_stream",
@@ -38,6 +37,7 @@ def test_internal_bridge_exports_match_manifest():
     import bolivar._native_api as native
 
     assert set(bridge.__all__) == EXPECTED_INTERNAL_BRIDGE_EXPORTS
+    assert not hasattr(bridge, "_extract_tables_stream")
     assert EXPECTED_INTERNAL_BRIDGE_EXPORTS.isdisjoint(native.__all__)
     for name in EXPECTED_INTERNAL_BRIDGE_EXPORTS:
         assert not hasattr(native, name)

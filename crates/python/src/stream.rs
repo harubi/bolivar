@@ -4,8 +4,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
 use bolivar_core::api::stream::{
-    PageStream, TableStream, extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
-    extract_tables_stream_from_doc_with_geometries as core_extract_tables_stream_from_doc_with_geometries,
+    PageStream, extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
     extract_words_pages_from_doc_with_geometries as core_extract_words_pages_from_doc_with_geometries,
 };
 use bolivar_core::error::Result as CoreResult;
@@ -17,7 +16,7 @@ use pyo3::types::PyDict;
 
 use crate::document::{PyPDFDocument, build_extract_options, open_document_from_input};
 use crate::layout::ltpage_to_py;
-use crate::params::{PyLAParams, parse_page_geometries, parse_table_settings, parse_text_settings};
+use crate::params::{PyLAParams, parse_page_geometries, parse_text_settings};
 
 fn text_dir_to_str(direction: TextDir) -> &'static str {
     match direction {
@@ -165,49 +164,6 @@ impl Drop for AsyncPageStream {
     }
 }
 
-#[pyclass]
-pub struct PyTableStream {
-    stream: StdMutex<Option<TableStream>>,
-}
-
-#[pymethods]
-impl PyTableStream {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __next__(
-        &mut self,
-        py: Python<'_>,
-    ) -> PyResult<Option<(usize, Vec<Vec<Vec<Option<String>>>>)>> {
-        let mut stream = {
-            let mut guard = self
-                .stream
-                .lock()
-                .map_err(|_| PyValueError::new_err("table stream lock poisoned"))?;
-            guard
-                .take()
-                .ok_or_else(|| PyValueError::new_err("table stream closed"))?
-        };
-        let (next, stream) = py.detach(|| {
-            let next = stream.next();
-            (next, stream)
-        });
-        let mut guard = self
-            .stream
-            .lock()
-            .map_err(|_| PyValueError::new_err("table stream lock poisoned"))?;
-        *guard = Some(stream);
-        match next {
-            None => Ok(None),
-            Some(Ok((page_idx, tables))) => Ok(Some((page_idx, tables))),
-            Some(Err(err)) => Err(PyValueError::new_err(format!(
-                "Failed to extract tables: {err}"
-            ))),
-        }
-    }
-}
-
 /// Extract pages asynchronously from PDF bytes.
 #[pyfunction]
 #[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
@@ -226,36 +182,6 @@ pub fn extract_pages_async(
 
     Ok(AsyncPageStream {
         state: Arc::new(StdMutex::new(AsyncStreamState::new(stream))),
-    })
-}
-
-/// Extract tables as a blocking stream from an existing PDFDocument.
-#[pyfunction(name = "_extract_tables_stream")]
-#[pyo3(signature = (doc, geometries, table_settings = None, laparams = None, page_numbers = None, maxpages = 0, caching = true))]
-pub fn extract_tables_stream(
-    py: Python<'_>,
-    doc: &PyPDFDocument,
-    geometries: &Bound<'_, PyAny>,
-    table_settings: Option<Py<PyAny>>,
-    laparams: Option<&PyLAParams>,
-    page_numbers: Option<Vec<usize>>,
-    maxpages: usize,
-    caching: bool,
-) -> PyResult<PyTableStream> {
-    let settings = parse_table_settings(py, table_settings)?;
-    let geoms = parse_page_geometries(geometries)?;
-    let options = build_extract_options("", page_numbers, maxpages, caching, laparams);
-
-    let stream = core_extract_tables_stream_from_doc_with_geometries(
-        Arc::clone(&doc.inner),
-        options,
-        settings,
-        geoms,
-    )
-    .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {e}")))?;
-
-    Ok(PyTableStream {
-        stream: StdMutex::new(Some(stream)),
     })
 }
 
@@ -299,8 +225,6 @@ pub fn extract_words_stream(
 /// Register stream-related functions with the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_pages_async, m)?)?;
-    m.add_class::<PyTableStream>()?;
-    m.add_function(wrap_pyfunction!(extract_tables_stream, m)?)?;
     m.add_function(wrap_pyfunction!(extract_words_stream, m)?)?;
     Ok(())
 }
