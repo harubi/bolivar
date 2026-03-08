@@ -199,6 +199,8 @@ def test_extract_tables_bindings_removed_from_top_level():
     import bolivar
 
     assert not hasattr(bolivar, "_extract_tables_core")
+    assert not hasattr(bolivar, "_extract_tables_for_page_indexed")
+    assert not hasattr(bolivar, "_extract_tables_for_compat_page")
     assert not hasattr(bolivar, "extract_tables_stream_from_document")
     assert not hasattr(bolivar, "extract_tables_from_document")
     assert not hasattr(bolivar, "extract_tables_from_page")
@@ -207,6 +209,7 @@ def test_extract_tables_bindings_removed_from_top_level():
     assert not hasattr(bolivar, "extract_tables_from_ltpage")
     assert not hasattr(bolivar, "extract_tables_from_page_filtered")
     assert not hasattr(bolivar, "extract_table_from_page_filtered")
+    assert not hasattr(bolivar, "_extract_words_for_page_indexed")
     assert not hasattr(bolivar, "extract_words_from_page")
     assert not hasattr(bolivar, "extract_text_from_page")
 
@@ -253,6 +256,15 @@ def test_bridge_api_exposes_extract_tables_for_page_indexed():
 
     assert hasattr(bridge_api, "_extract_tables_for_page_indexed")
     assert callable(bridge_api._extract_tables_for_page_indexed)
+
+
+def test_bridge_api_exposes_bridge_only_extract_helpers():
+    import bolivar._bridge_api as bridge_api
+
+    assert hasattr(bridge_api, "_extract_tables_for_compat_page")
+    assert callable(bridge_api._extract_tables_for_compat_page)
+    assert hasattr(bridge_api, "_extract_words_for_page_indexed")
+    assert callable(bridge_api._extract_words_for_page_indexed)
 
 
 def test_threads_kw_rejected_in_python_bindings():
