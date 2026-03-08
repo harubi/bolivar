@@ -9,7 +9,7 @@ def _warn(exc: Exception) -> None:
 
 try:
     from bolivar import _autoload as bolivar_autoload
+
+    bolivar_autoload.install()
 except Exception as exc:
     _warn(exc)
-else:
-    bolivar_autoload.install()
