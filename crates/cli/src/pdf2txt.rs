@@ -598,6 +598,18 @@ fn parse_page_numbers(args: &Args) -> Option<Vec<usize>> {
     None
 }
 
+fn build_extract_options(args: &Args) -> Result<ExtractOptions> {
+    Ok(ExtractOptions {
+        password: args.password.clone(),
+        page_numbers: parse_page_numbers(args),
+        maxpages: args.maxpages,
+        caching: !args.disable_caching,
+        laparams: build_laparams(args)?,
+        rotation: i64::from(args.rotation),
+        ..ExtractOptions::default()
+    })
+}
+
 /// Escape a string for RFC 4180 compliant CSV output.
 fn csv_escape(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
@@ -620,13 +632,7 @@ fn process_file<W: Write>(
         .map_err(|e| PdfError::Io(io::Error::other(format!("Failed to mmap PDF: {e}"))))?;
 
     // Build options
-    let options = ExtractOptions {
-        password: args.password.clone(),
-        page_numbers: parse_page_numbers(args),
-        maxpages: args.maxpages,
-        caching: !args.disable_caching,
-        laparams: build_laparams(args)?,
-    };
+    let options = build_extract_options(args)?;
 
     // Create PDFDocument from mmap
     let doc = Arc::new(PDFDocument::new_from_mmap(mmap, &options.password)?);
@@ -955,5 +961,24 @@ mod tests {
         args.table_settings_json = None;
         let settings = build_table_settings(&args, None).unwrap();
         assert_eq!(settings.probe_policy, TableProbePolicy::Never);
+    }
+
+    #[test]
+    fn build_extract_options_preserves_rotation_and_defaults() {
+        let mut args = test_args_with_table_settings("", "");
+        args.rotation = 90;
+        args.disable_caching = true;
+        args.password = "secret".to_string();
+        args.maxpages = 3;
+        args.page_numbers = Some("2 4".to_string());
+
+        let options = build_extract_options(&args).unwrap();
+
+        assert_eq!(options.password, "secret");
+        assert_eq!(options.page_numbers, Some(vec![1, 3]));
+        assert_eq!(options.maxpages, 3);
+        assert!(!options.caching);
+        assert_eq!(options.rotation, 90);
+        assert!(options.laparams.is_some());
     }
 }
