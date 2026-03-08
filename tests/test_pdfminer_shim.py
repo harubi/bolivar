@@ -60,6 +60,16 @@ def build_minimal_pdf_with_pages(page_count: int) -> bytes:
     return "".join(out).encode()
 
 
+def break_startxref(pdf_bytes: bytes) -> bytes:
+    marker = b"startxref\n"
+    start = pdf_bytes.rfind(marker)
+    assert start != -1
+    line_start = start + len(marker)
+    line_end = pdf_bytes.find(b"\n", line_start)
+    assert line_end != -1
+    return pdf_bytes[:line_start] + b"999999" + pdf_bytes[line_end:]
+
+
 class TestPDFParser:
     """Test pdfminer.pdfparser.PDFParser shim"""
 
@@ -196,6 +206,19 @@ class TestPDFDocument:
             assert doc.is_printable is True
             assert doc.is_modifiable is True
             assert doc.is_extractable is True
+
+    def test_pdfdocument_fallback_controls_xref_recovery(self):
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfpage import PDFPage
+        from pdfminer.pdfparser import PDFParser, PDFSyntaxError
+
+        broken_pdf = break_startxref(build_minimal_pdf_with_pages(1))
+
+        recovered = PDFDocument(PDFParser(BytesIO(broken_pdf)), fallback=True)
+        assert len(list(PDFPage.create_pages(recovered))) == 1
+
+        with pytest.raises(PDFSyntaxError, match="No /Root object"):
+            PDFDocument(PDFParser(BytesIO(broken_pdf)), fallback=False)
 
 
 class TestPDFPage:

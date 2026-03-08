@@ -13,6 +13,16 @@ if TYPE_CHECKING:
 from .pdfexceptions import PDFException, PDFObjectNotFound
 
 
+def _raise_pdf_syntax_error(exc: Exception) -> None:
+    from .pdfparser import PDFSyntaxError
+
+    message = str(exc)
+    prefix = "Failed to parse PDF: "
+    if message.startswith(prefix):
+        message = message[len(prefix) :]
+    raise PDFSyntaxError(message) from exc
+
+
 class _ParserLike(Protocol):
     def get_path(self) -> str | None:
         """Return source path if available."""
@@ -73,7 +83,7 @@ class PDFDocument:
             parser: PDFParser instance wrapping a file stream
             password: Password for encrypted PDFs (bytes or str)
             caching: Whether to cache resolved objects (default: True)
-            fallback: Whether to use fallback parsing (ignored)
+            fallback: Whether to use fallback parsing
         """
         self.parser = parser
         self.caching = caching
@@ -91,13 +101,21 @@ class PDFDocument:
                 path = None
 
         if path:
-            self._rust_doc = _RustPDFDocument.from_path(
-                path, password=password, caching=caching
-            )
+            try:
+                self._rust_doc = _RustPDFDocument.from_path(
+                    path, password=password, caching=caching, fallback=fallback
+                )
+            except Exception as exc:
+                _raise_pdf_syntax_error(exc)
         else:
             # Fallback to in-memory bytes
             data = parser.get_data()
-            self._rust_doc = _RustPDFDocument(data, password=password, caching=caching)
+            try:
+                self._rust_doc = _RustPDFDocument(
+                    data, password=password, caching=caching, fallback=fallback
+                )
+            except Exception as exc:
+                _raise_pdf_syntax_error(exc)
 
         # Lazily load pages from Rust
         self._rust_pages = None

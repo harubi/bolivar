@@ -164,6 +164,7 @@ class PDFDocument:
         data: bytes | bytearray,
         password: str = "",
         caching: bool = True,
+        fallback: bool = True,
     ) -> None: ...
     @classmethod
     def from_path(
@@ -171,6 +172,7 @@ class PDFDocument:
         path: str,
         password: str = "",
         caching: bool = True,
+        fallback: bool = True,
     ) -> PDFDocument: ...
     def get_pages(self) -> list[PDFPage]: ...
     def page_count(self) -> int: ...
