@@ -195,48 +195,32 @@ class TestLTPage:
         assert len(bbox) == 4
 
 
-BRIDGE_ONLY_HELPERS = {
-    "_extract_tables_for_page_indexed",
-    "_extract_tables_for_compat_page",
-    "_extract_words_for_page_indexed",
-}
-
-
 def test_bridge_only_helpers_are_absent_from_top_level():
     import bolivar
+    from bolivar._export_manifest import BRIDGE_EXPORTS
 
-    for name in BRIDGE_ONLY_HELPERS:
+    for name in BRIDGE_EXPORTS:
         assert name not in bolivar.__all__
         assert not hasattr(bolivar, name)
 
 
 def test_bolivar_public_exports_match_manifest() -> None:
     import bolivar
+    import bolivar._native_api as native
+    from bolivar._export_manifest import PUBLIC_EXPORTS, TOP_LEVEL_EXPORTS
 
-    assert set(bolivar.__all__) == {
-        "LAParams",
-        "LTChar",
-        "LTPage",
-        "PDFDocument",
-        "PDFPage",
-        "__version__",
-        "extract_pages",
-        "extract_pages_async",
-        "extract_pages_from_path",
-        "extract_pages_with_images",
-        "extract_pages_with_images_from_path",
-        "extract_text",
-        "extract_text_from_path",
-        "process_page",
-        "process_pages",
-        "repair_pdf",
-    }
+    assert tuple(bolivar.__all__) == TOP_LEVEL_EXPORTS
+    assert set(TOP_LEVEL_EXPORTS).issubset(PUBLIC_EXPORTS)
+    for name in TOP_LEVEL_EXPORTS:
+        assert getattr(bolivar, name) is getattr(native, name)
 
 
 def test_native_api_excludes_bridge_only_helpers() -> None:
     import bolivar._native_api as native
+    from bolivar._export_manifest import BRIDGE_EXPORTS, PUBLIC_EXPORTS
 
-    for name in BRIDGE_ONLY_HELPERS:
+    assert tuple(native.__all__) == PUBLIC_EXPORTS
+    for name in BRIDGE_EXPORTS:
         assert name not in native.__all__
         assert not hasattr(native, name)
 
@@ -256,8 +240,10 @@ def test_bridge_api_exposes_extract_tables_for_page_indexed():
 
 def test_bridge_api_exposes_bridge_only_extract_helpers():
     import bolivar._bridge_api as bridge_api
+    from bolivar._export_manifest import BRIDGE_EXPORTS
 
-    for name in BRIDGE_ONLY_HELPERS:
+    assert tuple(bridge_api.__all__) == BRIDGE_EXPORTS
+    for name in BRIDGE_EXPORTS:
         assert name in bridge_api.__all__
         assert hasattr(bridge_api, name)
         assert callable(getattr(bridge_api, name))

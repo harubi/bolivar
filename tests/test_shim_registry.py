@@ -3,13 +3,6 @@ import types
 
 import pytest
 
-EXPECTED_INTERNAL_BRIDGE_EXPORTS = {
-    "_extract_tables_for_page_indexed",
-    "_extract_tables_for_compat_page",
-    "_extract_words_for_page_indexed",
-}
-
-
 def _clear_pdfplumber_modules() -> None:
     for name in list(sys.modules.keys()):
         if name == "pdfplumber" or name.startswith("pdfplumber."):
@@ -35,13 +28,14 @@ def test_shim_registry_raises_when_patch_missing():
 def test_internal_bridge_exports_match_manifest():
     import bolivar._bridge_api as bridge
     import bolivar._native_api as native
+    from bolivar._export_manifest import BRIDGE_EXPORTS
 
-    assert set(bridge.__all__) == EXPECTED_INTERNAL_BRIDGE_EXPORTS
+    assert tuple(bridge.__all__) == BRIDGE_EXPORTS
     assert not hasattr(bridge, "_extract_tables_stream")
     assert not hasattr(bridge, "_extract_tables_from_page_objects")
     assert not hasattr(bridge, "_extract_words_stream")
-    assert EXPECTED_INTERNAL_BRIDGE_EXPORTS.isdisjoint(native.__all__)
-    for name in EXPECTED_INTERNAL_BRIDGE_EXPORTS:
+    assert set(BRIDGE_EXPORTS).isdisjoint(native.__all__)
+    for name in BRIDGE_EXPORTS:
         assert not hasattr(native, name)
         assert hasattr(bridge, name)
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING
 
+from bolivar._export_manifest import PUBLIC_EXPORTS
+
 if TYPE_CHECKING:
     from types import ModuleType
 
@@ -279,99 +281,11 @@ def load_native_api() -> ModuleType:
     return _NATIVE_MODULE
 
 
-__all__ = [
-    "INF",
-    "KWD",
-    "LIT",
-    "MATRIX_IDENTITY",
-    "Arcfour",
-    "CCITTFaxDecoder",
-    "CCITTG4Parser",
-    "CMap",
-    "CMapDB",
-    "EncodingDB",
-    "HOCRConverter",
-    "HTMLConverter",
-    "IdentityCMap",
-    "IdentityCMapByte",
-    "ImageWriter",
-    "LAParams",
-    "LTAnno",
-    "LTChar",
-    "LTCurve",
-    "LTFigure",
-    "LTImage",
-    "LTLine",
-    "LTPage",
-    "LTRect",
-    "LTTextBoxHorizontal",
-    "LTTextBoxVertical",
-    "LTTextLineHorizontal",
-    "LTTextLineVertical",
-    "NumberTree",
-    "PDFCIDFont",
-    "PDFDocEncoding",
-    "PDFDocument",
-    "PDFFont",
-    "PDFPage",
-    "PDFParser",
-    "PDFResourceManager",
-    "PDFStream",
-    "PSBaseParser",
-    "PSKeyword",
-    "PSLiteral",
-    "PSStackParser",
-    "Plane",
-    "TagExtractor",
-    "TextConverter",
-    "UnicodeMap",
-    "XMLConverter",
-    "__version__",
-    "apply_matrix_pt",
-    "apply_matrix_rect",
-    "ascii85decode",
-    "asciihexdecode",
-    "decode_text",
-    "extract_pages",
-    "extract_pages_async",
-    "extract_pages_from_path",
-    "extract_pages_with_images",
-    "extract_pages_with_images_from_path",
-    "extract_text",
-    "extract_text_from_path",
-    "font_metrics",
-    "format_int_alpha",
-    "format_int_roman",
-    "get_widths",
-    "glyphname2unicode",
-    "isnumber",
-    "latin_encoding",
-    "lzwdecode",
-    "lzwdecode_with_earlychange",
-    "mult_matrix",
-    "name2unicode",
-    "process_page",
-    "process_pages",
-    "reorder_text_for_output",
-    "repair_pdf",
-    "rldecode",
-    "safe_cmyk",
-    "safe_float",
-    "safe_int",
-    "safe_matrix",
-    "safe_rect",
-    "safe_rect_list",
-    "safe_rgb",
-    "shorten_str",
-    "translate_matrix",
-    "unpad_aes",
-]
-
-_PUBLIC_EXPORTS = tuple(__all__)
+__all__ = list(PUBLIC_EXPORTS)
 
 
 def __getattr__(name: str) -> object:
-    if name not in _PUBLIC_EXPORTS:
+    if name not in PUBLIC_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     native = load_native_api()
     try:

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 __path__ = extend_path(__path__, __name__)
 
 from bolivar import _native_api as _native_api
+from bolivar._export_manifest import TOP_LEVEL_EXPORTS
 
 if TYPE_CHECKING:
     from bolivar._bolivar import (
@@ -63,26 +64,8 @@ if TYPE_CHECKING:
         repair_pdf as repair_pdf,
     )
 
-__all__ = [
-    "LAParams",
-    "LTChar",
-    "LTPage",
-    "PDFDocument",
-    "PDFPage",
-    "__version__",
-    "extract_pages",
-    "extract_pages_async",
-    "extract_pages_from_path",
-    "extract_pages_with_images",
-    "extract_pages_with_images_from_path",
-    "extract_text",
-    "extract_text_from_path",
-    "process_page",
-    "process_pages",
-    "repair_pdf",
-]
-
-_LAZY_EXPORTS = set(__all__)
+__all__ = list(TOP_LEVEL_EXPORTS)
+_LAZY_EXPORTS = frozenset(TOP_LEVEL_EXPORTS)
 
 
 def __getattr__(name: str) -> object:
