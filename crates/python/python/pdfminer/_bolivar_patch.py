@@ -113,7 +113,7 @@ def _apply_patch(module: ModuleType) -> bool:
 
     from bolivar._bridge_api import (
         _extract_tables_for_page_indexed,
-        _extract_tables_from_page_objects,
+        _extract_tables_for_compat_page,
         _extract_words_stream,
     )
     from pdfplumber.utils.exceptions import PdfminerException
@@ -180,13 +180,13 @@ def _apply_patch(module: ModuleType) -> bool:
             table_settings: dict[str, Any] | None = None,
         ) -> _Tables:
             if not getattr(page, "is_original", True):
-                return _extract_tables_from_page_objects(
+                return _extract_tables_for_compat_page(
                     page.objects,
                     page.bbox,
                     page.mediabox,
                     page.initial_doctop,
                     table_settings=table_settings,
-                    force_crop=not getattr(page, "is_original", True),
+                    force_crop=True,
                 )
             page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
             pdf = page.pdf

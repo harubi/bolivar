@@ -470,7 +470,7 @@ def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
         calls["indexed_count"] += 1
         return [[["indexed"]]]
 
-    def _fake_extract_tables_from_page_objects(
+    def _fake_extract_tables_for_compat_page(
         objects,
         page_bbox,
         mediabox,
@@ -497,8 +497,8 @@ def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
     )
     monkeypatch.setattr(
         bridge_api,
-        "_extract_tables_from_page_objects",
-        _fake_extract_tables_from_page_objects,
+        "_extract_tables_for_compat_page",
+        _fake_extract_tables_for_compat_page,
     )
     pdfplumber = _reload_pdfplumber(monkeypatch)
 
@@ -535,7 +535,7 @@ def test_extract_tables_original_page_requires_indexed_backend(
         calls["indexed_count"] += 1
         raise AttributeError("missing native symbol")
 
-    def _fake_extract_tables_from_page_objects(
+    def _fake_extract_tables_for_compat_page(
         objects,
         page_bbox,
         mediabox,
@@ -552,8 +552,8 @@ def test_extract_tables_original_page_requires_indexed_backend(
     )
     monkeypatch.setattr(
         bridge_api,
-        "_extract_tables_from_page_objects",
-        _fake_extract_tables_from_page_objects,
+        "_extract_tables_for_compat_page",
+        _fake_extract_tables_for_compat_page,
     )
     pdfplumber = _reload_pdfplumber(monkeypatch)
 

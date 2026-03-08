@@ -8,12 +8,12 @@ PDF_PATH = os.path.join(HERE, "pdfs/issue-140-example.pdf")
 
 def test_filtered_page_tables_use_rust(monkeypatch):
     pdfplumber = _reload_pdfplumber(monkeypatch)
-    from bolivar._bridge_api import _extract_tables_from_page_objects
+    from bolivar._bridge_api import _extract_tables_for_compat_page
 
     with pdfplumber.open(PDF_PATH) as pdf:
         page = pdf.pages[0]
         filtered = page.filter(lambda obj: obj.get("object_type") == "char")
-        expected = _extract_tables_from_page_objects(
+        expected = _extract_tables_for_compat_page(
             filtered.objects,
             filtered.bbox,
             filtered.mediabox,

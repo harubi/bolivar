@@ -780,7 +780,7 @@ def _extract_tables_for_page_indexed(
     laparams: LAParams | None = None,
     caching: bool = True,
 ) -> list[list[list[str | None]]]: ...
-def _extract_tables_from_page_objects(
+def _extract_tables_for_compat_page(
     objects: dict[str, Any],
     page_bbox: Any,
     mediabox: Any,

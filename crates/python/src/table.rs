@@ -412,10 +412,10 @@ pub fn extract_tables_for_page_indexed(
         .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {e}")))
 }
 
-/// Extract tables from page objects.
-#[pyfunction(name = "_extract_tables_from_page_objects")]
+/// Extract tables for compatibility-only filtered or cropped page objects.
+#[pyfunction(name = "_extract_tables_for_compat_page")]
 #[pyo3(signature = (objects, page_bbox, mediabox, initial_doctop = 0.0, table_settings = None, force_crop = false))]
-pub fn extract_tables_from_page_objects(
+pub fn extract_tables_for_compat_page(
     py: Python<'_>,
     objects: &Bound<'_, PyAny>,
     page_bbox: &Bound<'_, PyAny>,
@@ -617,7 +617,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_for_page_indexed, m)?)?;
-    m.add_function(wrap_pyfunction!(extract_tables_from_page_objects, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_tables_for_compat_page, m)?)?;
     m.add_function(wrap_pyfunction!(repair_pdf, m)?)?;
     Ok(())
 }
