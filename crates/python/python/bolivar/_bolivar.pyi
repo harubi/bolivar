@@ -772,15 +772,6 @@ def process_pages(
     doc: PDFDocument,
     laparams: LAParams | None = None,
 ) -> list[LTPage]: ...
-def _extract_tables_stream(
-    doc: PDFDocument,
-    geometries: Sequence[Any],
-    table_settings: dict[str, Any] | None = None,
-    laparams: LAParams | None = None,
-    page_numbers: Sequence[int] | None = None,
-    maxpages: int = 0,
-    caching: bool = True,
-) -> PyTableStream: ...
 def _extract_tables_for_page_indexed(
     doc: PDFDocument,
     page_index: int,
@@ -823,7 +814,3 @@ class _AsyncPageStream:
     def __aiter__(self) -> _AsyncPageStream: ...
     async def __anext__(self) -> LTPage: ...
     async def aclose(self) -> None: ...
-
-class PyTableStream:
-    def __iter__(self) -> PyTableStream: ...
-    def __next__(self) -> tuple[int, list[list[list[str | None]]]]: ...

@@ -30,4 +30,4 @@ def test_removed_legacy_surface_is_absent_from_stubs() -> None:
     symbols = _load_stub_symbols()
     assert "async_runtime_poc" not in symbols
     assert "extract_pages_async_from_document" not in symbols
-    assert "PyTableStream" in symbols
+    assert "PyTableStream" not in symbols

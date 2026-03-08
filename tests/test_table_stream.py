@@ -1,20 +1,5 @@
-from pathlib import Path
-
-from bolivar import PDFDocument
 import bolivar._bridge_api as _bridge_api
 
 
-def test_table_stream_yields_results():
-    pdf_path = Path("crates/core/tests/fixtures/simple1.pdf")
-    doc = PDFDocument.from_path(str(pdf_path))
-    boxes = doc.page_mediaboxes()
-    geoms = []
-    running = 0.0
-    for box in boxes:
-        geoms.append((tuple(box), tuple(box), running, False))
-        running += box[3] - box[1]
-
-    stream = _bridge_api._extract_tables_stream(doc, geoms)
-    page_idx, tables = next(iter(stream))
-    assert page_idx == 0
-    assert isinstance(tables, list)
+def test_bridge_api_does_not_expose_dead_table_stream():
+    assert not hasattr(_bridge_api, "_extract_tables_stream")
