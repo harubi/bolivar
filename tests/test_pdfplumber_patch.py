@@ -523,7 +523,7 @@ def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
     assert call["force_crop"] is True
 
 
-def test_extract_tables_original_page_falls_back_to_page_objects_when_indexed_symbol_missing(
+def test_extract_tables_original_page_requires_indexed_backend(
     monkeypatch,
 ):
     import bolivar._bridge_api as bridge_api
@@ -564,10 +564,10 @@ def test_extract_tables_original_page_falls_back_to_page_objects_when_indexed_sy
     )
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
-        got = page.extract_tables({"vertical_strategy": "lines"})
+        with pytest.raises(AttributeError, match="missing native symbol"):
+            page.extract_tables({"vertical_strategy": "lines"})
 
-    assert got == [[["fallback"]]]
-    assert calls["page_objects"] == 1
+    assert calls["page_objects"] == 0
     assert calls["indexed_count"] == 1
 
 
@@ -687,27 +687,18 @@ def test_extract_tables_matches_bolivar_indexed_default(monkeypatch):
     with pdfplumber.open(pdf_path) as pdf:
         page = pdf.pages[0]
         page_index = getattr(page.page_obj, "_page_index", page.page_number - 1)
-        try:
-            expected = bridge_api._extract_tables_for_page_indexed(
-                pdf.doc._rust_doc,
-                page_index,
-                (
-                    tuple(page.bbox),
-                    tuple(page.mediabox),
-                    float(page.initial_doctop),
-                    False,
-                ),
-                laparams=pdf.laparams,
-                caching=pdf.doc.caching,
-            )
-        except AttributeError:
-            expected = bridge_api._extract_tables_from_page_objects(
-                page.objects,
-                page.bbox,
-                page.mediabox,
-                page.initial_doctop,
-                force_crop=False,
-            )
+        expected = bridge_api._extract_tables_for_page_indexed(
+            pdf.doc._rust_doc,
+            page_index,
+            (
+                tuple(page.bbox),
+                tuple(page.mediabox),
+                float(page.initial_doctop),
+                False,
+            ),
+            laparams=pdf.laparams,
+            caching=pdf.doc.caching,
+        )
         got = page.extract_tables()
 
     assert got == expected

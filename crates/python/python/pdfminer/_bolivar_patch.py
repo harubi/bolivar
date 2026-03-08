@@ -197,27 +197,13 @@ def _apply_patch(module: ModuleType) -> bool:
                 raise PdfminerException("pdf document missing")
             rust_doc = getattr(doc, "_rust_doc", None) or doc
             native_doc = cast("_NativePDFDocument", rust_doc)
-            try:
-                tables = _extract_tables_for_page_indexed(
-                    native_doc,
-                    page_index,
-                    _page_geom(page),
-                    table_settings=table_settings,
-                    laparams=(
-                        getattr(pdf, "laparams", None) if pdf is not None else None
-                    ),
-                    caching=getattr(doc, "caching", True),
-                )
-                return tables
-            except AttributeError:
-                pass
-            return _extract_tables_from_page_objects(
-                page.objects,
-                page.bbox,
-                page.mediabox,
-                page.initial_doctop,
+            return _extract_tables_for_page_indexed(
+                native_doc,
+                page_index,
+                _page_geom(page),
                 table_settings=table_settings,
-                force_crop=not getattr(page, "is_original", True),
+                laparams=(getattr(pdf, "laparams", None) if pdf is not None else None),
+                caching=getattr(doc, "caching", True),
             )
 
         def _extract_tables(
