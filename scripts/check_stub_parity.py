@@ -14,23 +14,78 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE_API = ROOT / "crates" / "python" / "python" / "bolivar" / "_native_api.py"
+EXPORT_MANIFEST = (
+    ROOT / "crates" / "python" / "python" / "bolivar" / "_export_manifest.py"
+)
 STUB = ROOT / "crates" / "python" / "python" / "bolivar" / "_bolivar.pyi"
 
 
-def extract_all_names(path: Path) -> list[str]:
-    """Parse ``__all__`` from a Python module."""
+def _extract_string_sequence(node: ast.AST) -> list[str] | None:
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return None
+
+    names: list[str] = []
+    for elt in node.elts:
+        if not isinstance(elt, ast.Constant) or not isinstance(elt.value, str):
+            return None
+        names.append(elt.value)
+    return names
+
+
+def _extract_manifest_exports(path: Path) -> dict[str, list[str]]:
+    exports: dict[str, list[str]] = {}
     tree = ast.parse(path.read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "__all__":
-                    if isinstance(node.value, ast.List):
-                        return [
-                            elt.value
-                            for elt in node.value.elts
-                            if isinstance(elt, ast.Constant)
-                            and isinstance(elt.value, str)
-                        ]
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        names = _extract_string_sequence(node.value)
+        if names is None:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                exports[target.id] = names
+    return exports
+
+
+def extract_all_names(path: Path, export_manifest: Path = EXPORT_MANIFEST) -> list[str]:
+    """Parse ``__all__`` from a Python module."""
+    manifest_exports = _extract_manifest_exports(export_manifest)
+    tree = ast.parse(path.read_text())
+    manifest_aliases: dict[str, str] = {}
+
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "bolivar._export_manifest":
+            for alias in node.names:
+                manifest_aliases[alias.asname or alias.name] = alias.name
+            continue
+
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not isinstance(target, ast.Name) or target.id != "__all__":
+                continue
+
+            literal_names = _extract_string_sequence(node.value)
+            if literal_names is not None:
+                return literal_names
+
+            if (
+                isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "list"
+                and len(node.value.args) == 1
+                and not node.value.keywords
+                and isinstance(node.value.args[0], ast.Name)
+            ):
+                manifest_name = manifest_aliases.get(node.value.args[0].id)
+                if manifest_name is not None:
+                    return manifest_exports.get(manifest_name, [])
+
+            if isinstance(node.value, ast.Name):
+                manifest_name = manifest_aliases.get(node.value.id)
+                if manifest_name is not None:
+                    return manifest_exports.get(manifest_name, [])
+
     return []
 
 

@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 
 from bolivar._export_manifest import STUB_SYMBOLS
+from bolivar._export_manifest import PUBLIC_EXPORTS
+from scripts import check_stub_parity
 
 _TOP_LEVEL_SYMBOL = re.compile(r"^(?:def|class|async def)\s+(\w+)|^(\w+)\s*[:=]")
 _STUB_PATH = (
@@ -38,6 +40,12 @@ def test_removed_legacy_surface_is_absent_from_stubs() -> None:
 def test_native_stub_symbols_match_manifest() -> None:
     symbols = _load_stub_symbols()
     assert symbols == set(STUB_SYMBOLS)
+
+
+def test_stub_parity_parser_reads_manifest_driven_native_all() -> None:
+    assert check_stub_parity.extract_all_names(check_stub_parity.NATIVE_API) == list(
+        PUBLIC_EXPORTS
+    )
 
 
 def test_stub_manifest_declares_stub_symbols_once() -> None:
