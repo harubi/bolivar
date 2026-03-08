@@ -89,9 +89,18 @@ def extract_text_to_fp(
     if page_numbers is not None:
         page_numbers = list(page_numbers)
 
-    if output_type == "tag":
+    if output_type == "tag" or (output_type == "text" and not output_dir):
         rsrcmgr = PDFResourceManager(caching=not disable_caching)
-        device = TagExtractor(rsrcmgr, outfp, codec=codec)
+        if output_type == "text":
+            device = TextConverter(
+                rsrcmgr,
+                outfp,
+                codec=codec,
+                laparams=laparams,
+                imagewriter=imagewriter,
+            )
+        else:
+            device = TagExtractor(rsrcmgr, outfp, codec=codec)
         interpreter = PDFPageInterpreter(rsrcmgr, device)
         for page in PDFPage.get_pages(
             inf,
