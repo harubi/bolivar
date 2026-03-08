@@ -40,6 +40,13 @@ def test_native_stub_symbols_match_manifest() -> None:
     assert symbols == set(STUB_SYMBOLS)
 
 
+def test_stub_manifest_declares_stub_symbols_once() -> None:
+    manifest_path = _STUB_PATH.with_name("_export_manifest.py")
+    manifest_text = manifest_path.read_text()
+
+    assert manifest_text.count("STUB_SYMBOLS =") == 1
+
+
 def test_compat_table_helper_stub_uses_explicit_object_lists() -> None:
     stub_text = _STUB_PATH.read_text()
     match = re.search(
