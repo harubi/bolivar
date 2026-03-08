@@ -504,10 +504,28 @@ def _apply_patch(module: ModuleType) -> bool:
                 yield self[i]
 
         def __contains__(self, item: object) -> bool:
-            page_number = getattr(item, "page_number", None)
-            if page_number is not None:
-                return (page_number - 1) in self._page_number_set
-            return False
+            return any(page == item for page in self)
+
+        def __repr__(self) -> str:
+            return repr(list(self))
+
+        def copy(self) -> list[object]:
+            return list(self)
+
+        def index(
+            self,
+            item: object,
+            start: SupportsIndex = 0,
+            stop: SupportsIndex = sys.maxsize,
+        ) -> int:
+            start_index, stop_index, _ = slice(start, stop).indices(len(self))
+            for position in range(start_index, stop_index):
+                if self[position] == item:
+                    return position
+            raise ValueError(f"{item!r} is not in list")
+
+        def count(self, item: object) -> int:
+            return sum(1 for page in self if page == item)
 
         def __aiter__(self) -> AsyncIterator[object]:
             async def gen() -> AsyncIterator[object]:
