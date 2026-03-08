@@ -114,3 +114,25 @@ BRIDGE_EXPORTS = (
     "_extract_tables_for_compat_page",
     "_extract_words_for_page_indexed",
 )
+
+NATIVE_EXTENSION_EXPORTS = (
+    "KEYWORD_ARRAY_BEGIN",
+    "KEYWORD_ARRAY_END",
+    "KEYWORD_DICT_BEGIN",
+    "KEYWORD_DICT_END",
+    "KEYWORD_PROC_BEGIN",
+    "KEYWORD_PROC_END",
+)
+
+STUB_SUPPORT_SYMBOLS = (
+    "_AsyncPageStream",
+    "_Color",
+    "_DashingStyle",
+    "_Matrix",
+    "_PathSegment",
+    "_Point",
+    "_Rect",
+)
+
+STUB_EXPORTS = PUBLIC_EXPORTS + NATIVE_EXTENSION_EXPORTS + BRIDGE_EXPORTS
+STUB_SYMBOLS = STUB_EXPORTS + STUB_SUPPORT_SYMBOLS
