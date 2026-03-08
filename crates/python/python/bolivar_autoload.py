@@ -3,9 +3,6 @@ import os
 import sys
 
 
-_BOLIVAR_CANONICAL_AUTOLOAD = True
-
-
 def _warn(exc: Exception) -> None:
     with contextlib.suppress(Exception):
         sys.stderr.write(f"bolivar autoload failed: {exc}\n")
