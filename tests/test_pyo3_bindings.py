@@ -262,6 +262,31 @@ def test_high_level_extract_text_accepts_codec_keyword():
         assert text == baseline
 
 
+def test_high_level_extract_text_empty_page_numbers_matches_default_behavior():
+    from pdfminer import high_level
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+
+    baseline = high_level.extract_text(BytesIO(pdf_bytes))
+    selected = high_level.extract_text(BytesIO(pdf_bytes), page_numbers=set())
+
+    assert selected == baseline
+
+
+def test_high_level_extract_pages_empty_page_numbers_matches_default_behavior():
+    from pdfminer import high_level
+
+    pdf_path = FIXTURES_DIR / "simple1.pdf"
+    pdf_bytes = pdf_path.read_bytes()
+
+    baseline = list(high_level.extract_pages(BytesIO(pdf_bytes)))
+    selected = list(high_level.extract_pages(BytesIO(pdf_bytes), page_numbers=set()))
+
+    assert len(selected) == len(baseline)
+    assert [page.pageid for page in selected] == [page.pageid for page in baseline]
+
+
 def test_high_level_extract_text_to_fp_text_output_matches_upstream_converter():
     from pdfminer import high_level
 

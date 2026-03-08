@@ -58,6 +58,17 @@ def _resolve_input(pdf_file: PDFInput) -> str | bytes | bytearray:
     raise TypeError("pdf_file must be a path, bytes, or file-like object")
 
 
+def _normalize_page_numbers(
+    page_numbers: Iterable[int] | None,
+) -> list[int] | None:
+    if page_numbers is None:
+        return None
+    selected_pages = list(page_numbers)
+    if not selected_pages:
+        return None
+    return selected_pages
+
+
 def extract_text_to_fp(
     inf: BinaryIO,
     outfp: AnyIO,
@@ -86,8 +97,7 @@ def extract_text_to_fp(
     if output_type != "text" and outfp == sys.stdout:
         outfp = sys.stdout.buffer
 
-    if page_numbers is not None:
-        page_numbers = list(page_numbers)
+    page_numbers = _normalize_page_numbers(page_numbers)
 
     if output_type == "tag" or (output_type == "text" and not output_dir):
         rsrcmgr = PDFResourceManager(caching=not disable_caching)
@@ -217,7 +227,7 @@ def extract_text(
     codec: str = "utf-8",
     laparams: LAParams | None = None,
 ) -> str:
-    pages_list = list(page_numbers) if page_numbers is not None else None
+    pages_list = _normalize_page_numbers(page_numbers)
     resolved = _resolve_input(pdf_file)
     if isinstance(resolved, str):
         return _extract_text_from_path(
@@ -241,7 +251,7 @@ def extract_pages(
     caching: bool = True,
     laparams: LAParams | None = None,
 ) -> Generator[LTPage, None, None]:
-    pages_list = list(page_numbers) if page_numbers is not None else None
+    pages_list = _normalize_page_numbers(page_numbers)
     resolved = _resolve_input(pdf_file)
     if isinstance(resolved, str):
         pages = _extract_pages_from_path(
