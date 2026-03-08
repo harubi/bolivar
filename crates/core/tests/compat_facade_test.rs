@@ -1,60 +1,57 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-fn rust_source_files(dir: &Path, files: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(dir).expect("read source directory") {
-        let entry = entry.expect("directory entry");
+fn collect_rust_files(root: &Path, out: &mut Vec<PathBuf>) {
+    let entries = fs::read_dir(root).expect("read source directory");
+    for entry in entries {
+        let entry = entry.expect("read source entry");
         let path = entry.path();
         if path.is_dir() {
-            rust_source_files(&path, files);
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
-            files.push(path);
+            collect_rust_files(&path, out);
+            continue;
+        }
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
         }
     }
 }
 
 #[test]
 fn internal_core_modules_do_not_import_compat_aliases() {
-    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let lib_rs = src_dir.join("lib.rs");
-    let forbidden_paths = [
-        "crate::pdfdocument::",
-        "crate::pdfpage::",
-        "crate::pdfinterp::",
-    ];
+    let src_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut rust_files = Vec::new();
+    collect_rust_files(&src_root, &mut rust_files);
+    rust_files.sort();
 
-    let mut files = Vec::new();
-    rust_source_files(&src_dir, &mut files);
-    files.sort();
+    let mut violations = Vec::new();
 
-    let mut offenders = Vec::new();
-    for path in files {
-        if path == lib_rs {
+    for path in rust_files {
+        if path.file_name().is_some_and(|name| name == "lib.rs") {
             continue;
         }
 
-        let source = fs::read_to_string(&path).expect("read source file");
-        for needle in forbidden_paths {
-            for (line_idx, line) in source.lines().enumerate() {
-                if line.contains(needle) {
-                    let relative = path
-                        .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-                        .expect("strip manifest dir");
-                    offenders.push(format!(
-                        "{}:{}: {}",
-                        relative.display(),
-                        line_idx + 1,
-                        line.trim()
-                    ));
-                }
+        let relative = path
+            .strip_prefix(&src_root)
+            .expect("source file under src")
+            .display()
+            .to_string();
+        let content = fs::read_to_string(&path).expect("read source file");
+        for (line_index, line) in content.lines().enumerate() {
+            if !line.contains("use ") {
+                continue;
+            }
+            if line.contains("pdfdocument::")
+                || line.contains("pdfpage::")
+                || line.contains("pdfinterp::")
+            {
+                violations.push(format!("{}:{}", relative, line_index + 1));
             }
         }
     }
-    offenders.sort();
 
     assert!(
-        offenders.is_empty(),
-        "internal core modules should depend on concrete modules, not compat aliases:\n{}",
-        offenders.join("\n")
+        violations.is_empty(),
+        "internal core modules must not import compat aliases:\n{}",
+        violations.join("\n")
     );
 }
