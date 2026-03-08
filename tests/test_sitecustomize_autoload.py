@@ -199,8 +199,8 @@ def test_bolivar_autoload_uses_canonical_loader(monkeypatch):
     assert calls["count"] == 1
 
 
-def test_autoload_prefers_top_level_autoload_module(monkeypatch):
-    from bolivar import _autoload
+def test_autoload_ignores_preloaded_top_level_autoload_module(monkeypatch):
+    from bolivar import _autoload, _shim_registry
 
     calls: list[str] = []
     fake_module = types.SimpleNamespace(
@@ -208,9 +208,12 @@ def test_autoload_prefers_top_level_autoload_module(monkeypatch):
     )
 
     monkeypatch.setitem(sys.modules, "bolivar_autoload", fake_module)
+    monkeypatch.setattr(
+        _shim_registry, "install", lambda: calls.append("shim_registry") or {}
+    )
 
     assert _autoload.install() is True
-    assert calls == ["top_level"]
+    assert calls == ["shim_registry"]
 
 
 def test_autoload_pth_works_without_pythonpath():
