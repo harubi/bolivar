@@ -277,7 +277,7 @@ _MODULE_DUNDER_NAMES = frozenset(
 )
 
 
-def load_native_api() -> ModuleType:
+def _load_native_api() -> ModuleType:
     """Load and memoize the native extension module."""
     global _NATIVE_MODULE
     if _NATIVE_MODULE is None:
@@ -291,7 +291,7 @@ __all__ = list(PUBLIC_EXPORTS)
 def __getattr__(name: str) -> object:
     if name not in _PUBLIC_EXPORT_NAMES:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    native = load_native_api()
+    native = _load_native_api()
     try:
         return getattr(native, name)
     except AttributeError as exc:
