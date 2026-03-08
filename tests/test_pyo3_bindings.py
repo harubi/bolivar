@@ -267,6 +267,25 @@ def test_bridge_api_exposes_bridge_only_extract_helpers():
     assert callable(bridge_api._extract_words_for_page_indexed)
 
 
+def test_bridge_api_compat_table_helper_rejects_legacy_objects_dict_signature():
+    import bolivar._bridge_api as bridge_api
+    import pdfplumber
+
+    pdf_path = FIXTURES_DIR / "pdfplumber" / "pdffill-demo.pdf"
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        with pytest.raises(TypeError):
+            bridge_api._extract_tables_for_compat_page(
+                page.objects,
+                (
+                    tuple(page.bbox),
+                    tuple(page.mediabox),
+                    float(page.initial_doctop),
+                    False,
+                ),
+            )
+
+
 def test_threads_kw_rejected_in_python_bindings():
     import bolivar
 
