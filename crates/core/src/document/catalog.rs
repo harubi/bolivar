@@ -493,7 +493,8 @@ impl PDFDocument {
             }
         }
 
-        if !allow_xref_fallback && self.catalog.is_empty() {
+        let has_trailer = self.xrefs.iter().any(|xref| !xref.trailer.is_empty());
+        if self.catalog.is_empty() && (has_trailer || !allow_xref_fallback) {
             return Err(PdfError::SyntaxError(
                 "No /Root object! - Is this really a PDF?".into(),
             ));
@@ -2522,6 +2523,22 @@ mod tests {
         )
         .err()
         .expect("fallback-disabled parse should fail");
+        assert!(err.to_string().contains("No /Root object"));
+    }
+
+    #[test]
+    fn test_missing_root_errors_even_with_fallback_enabled() {
+        let mut pdf = std::fs::read("tests/fixtures/simple1.pdf").unwrap();
+        let marker = b"/Root";
+        let pos = pdf
+            .windows(marker.len())
+            .position(|window| window == marker)
+            .expect("/Root marker present");
+        pdf[pos + 1..pos + marker.len()].copy_from_slice(b"R00t");
+
+        let err = PDFDocument::new(pdf, "")
+            .err()
+            .expect("missing /Root should fail");
         assert!(err.to_string().contains("No /Root object"));
     }
 
