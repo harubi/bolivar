@@ -114,7 +114,7 @@ def _apply_patch(module: ModuleType) -> bool:
     from bolivar._bridge_api import (
         _extract_tables_for_page_indexed,
         _extract_tables_for_compat_page,
-        _extract_words_stream,
+        _extract_words_for_page_indexed,
     )
     from pdfplumber.utils.exceptions import PdfminerException
 
@@ -152,24 +152,19 @@ def _apply_patch(module: ModuleType) -> bool:
     ) -> _Words:
         rust_doc = getattr(doc, "_rust_doc", None) or doc
         native_doc = cast("_NativePDFDocument", rust_doc)
-        geometry = _page_geom(page)
-        stream = cast(
-            "Iterable[tuple[int, _Words]]",
-            _extract_words_stream(
+        words = cast(
+            "_Words | None",
+            _extract_words_for_page_indexed(
                 native_doc,
-                [geometry],
+                page_index,
+                _page_geom(page),
                 text_settings=text_settings,
                 laparams=getattr(pdf, "laparams", None) if pdf is not None else None,
-                page_numbers=[page_index],
-                maxpages=0,
                 caching=getattr(doc, "caching", True),
             ),
         )
-        for idx, words in stream:
-            if idx == page_index:
-                return words
-            if idx > page_index:
-                break
+        if words is not None:
+            return words
         raise RuntimeError(f"missing words for page {page.page_number}")
 
     if not already_patched:
