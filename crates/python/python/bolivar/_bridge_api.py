@@ -27,7 +27,7 @@ _MODULE_DUNDER_NAMES = frozenset(
 )
 
 
-def load_bridge_api() -> ModuleType:
+def _load_bridge_api() -> ModuleType:
     """Load and memoize the native extension module for bridge-only helpers."""
     global _NATIVE_MODULE
     if _NATIVE_MODULE is None:
@@ -41,7 +41,7 @@ __all__ = list(BRIDGE_EXPORTS)
 def __getattr__(name: str) -> object:
     if name not in _BRIDGE_EXPORT_NAMES:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    native = load_bridge_api()
+    native = _load_bridge_api()
     try:
         return getattr(native, name)
     except AttributeError as exc:
