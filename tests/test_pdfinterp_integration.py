@@ -156,6 +156,32 @@ def test_interpreter_render_contents_initializes_state():
     assert device.ctm == (1, 0, 0, 1, 0, 0)
 
 
+def test_interpreter_pop_matches_upstream_stack_behavior():
+    rsrc = PDFResourceManager()
+    device = PDFDevice(rsrc)
+    interp = PDFPageInterpreter(rsrc, device)
+
+    interp.push(1)
+    interp.push(2)
+
+    assert interp.pop(0) == []
+    assert interp.pop(1) == [2]
+    assert interp.pop(1) == [1]
+
+
+def test_interpreter_dup_reuses_device_and_resources():
+    rsrc = PDFResourceManager()
+    device = PDFDevice(rsrc)
+    interp = PDFPageInterpreter(rsrc, device)
+
+    dup = interp.dup()
+
+    assert isinstance(dup, PDFPageInterpreter)
+    assert dup is not interp
+    assert dup.rsrcmgr is interp.rsrcmgr
+    assert dup.device is interp.device
+
+
 def test_interpreter_does_not_cache_pages():
     doc, page = _load_first_page()
     rsrc = PDFResourceManager()

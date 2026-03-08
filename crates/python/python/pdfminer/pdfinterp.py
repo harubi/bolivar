@@ -104,6 +104,12 @@ class PDFPageInterpreter:
     def push(self, obj: PDFStackT) -> None:
         self._stack.append(obj)
 
+    def pop(self, n: int) -> list[PDFStackT]:
+        return self._popn(n)
+
+    def dup(self) -> PDFPageInterpreter:
+        return self.__class__(self.rsrcmgr, self.device)
+
     def _popn(self, n: int) -> list[PDFStackT]:
         if n <= 0:
             return []
