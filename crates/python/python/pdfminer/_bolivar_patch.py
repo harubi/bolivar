@@ -270,7 +270,6 @@ def _apply_patch(module: ModuleType) -> bool:
                 self._page_numbers = [
                     idx for idx in range(page_count) if (idx + 1) in allowed
                 ]
-            self._page_number_set = set(self._page_numbers)
             self._page_cache: dict[int, object] = {}
             self._doctops: list[float] | None = None
 
