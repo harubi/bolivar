@@ -370,26 +370,21 @@ fn append_curve_edges(list: &Bound<'_, PyAny>, out: &mut Vec<EdgeObj>) -> PyResu
     Ok(())
 }
 
-fn objects_to_chars_edges(
-    objects: &Bound<'_, PyDict>,
+fn compat_lists_to_chars_edges(
+    chars: &Bound<'_, PyAny>,
+    lines: &Bound<'_, PyAny>,
+    rects: &Bound<'_, PyAny>,
+    curves: &Bound<'_, PyAny>,
     geom: &PageGeometry,
     arena: &mut PageArena,
 ) -> PyResult<(Vec<CharObj>, Vec<EdgeObj>)> {
-    let mut chars = Vec::new();
+    let mut char_objs = Vec::new();
     let mut edges = Vec::new();
-    if let Some(list) = objects.get_item("char")? {
-        append_chars_from_list(&list, geom.initial_doctop, arena, &mut chars)?;
-    }
-    if let Some(list) = objects.get_item("line")? {
-        append_line_edges(&list, &mut edges)?;
-    }
-    if let Some(list) = objects.get_item("rect")? {
-        append_rect_edges(&list, &mut edges)?;
-    }
-    if let Some(list) = objects.get_item("curve")? {
-        append_curve_edges(&list, &mut edges)?;
-    }
-    Ok((chars, edges))
+    append_chars_from_list(chars, geom.initial_doctop, arena, &mut char_objs)?;
+    append_line_edges(lines, &mut edges)?;
+    append_rect_edges(rects, &mut edges)?;
+    append_curve_edges(curves, &mut edges)?;
+    Ok((char_objs, edges))
 }
 
 /// Extract tables for a single indexed page.
@@ -414,10 +409,13 @@ pub fn extract_tables_for_page_indexed(
 
 /// Extract tables for compatibility-only filtered or cropped page objects.
 #[pyfunction(name = "_extract_tables_for_compat_page")]
-#[pyo3(signature = (objects, geometry, table_settings = None))]
+#[pyo3(signature = (chars, lines, rects, curves, geometry, table_settings = None))]
 pub fn extract_tables_for_compat_page(
     py: Python<'_>,
-    objects: &Bound<'_, PyAny>,
+    chars: &Bound<'_, PyAny>,
+    lines: &Bound<'_, PyAny>,
+    rects: &Bound<'_, PyAny>,
+    curves: &Bound<'_, PyAny>,
     geometry: &Bound<'_, PyAny>,
     table_settings: Option<Py<PyAny>>,
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
@@ -428,11 +426,9 @@ pub fn extract_tables_for_compat_page(
             "compat table helper requires cropped or filtered geometry",
         ));
     }
-    let dict = objects
-        .cast::<PyDict>()
-        .map_err(|_| PyValueError::new_err("page objects must be a dict"))?;
     let mut arena = PageArena::new();
-    let (chars, edges) = objects_to_chars_edges(dict, &geom, &mut arena)?;
+    let (chars, edges) =
+        compat_lists_to_chars_edges(chars, lines, rects, curves, &geom, &mut arena)?;
     Ok(bolivar_core::table::extract_tables_from_objects(
         chars, edges, &geom, &settings, &arena,
     ))

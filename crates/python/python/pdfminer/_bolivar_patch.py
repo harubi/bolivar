@@ -176,7 +176,10 @@ def _apply_patch(module: ModuleType) -> bool:
         ) -> _Tables:
             if not getattr(page, "is_original", True):
                 return _extract_tables_for_compat_page(
-                    page.objects,
+                    page.chars,
+                    page.lines,
+                    page.rects,
+                    page.curves,
                     _page_geom(page),
                     table_settings=table_settings,
                 )

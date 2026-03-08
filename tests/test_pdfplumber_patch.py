@@ -487,14 +487,20 @@ def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
         return [[["indexed"]]]
 
     def _fake_extract_tables_for_compat_page(
-        objects,
+        chars,
+        lines,
+        rects,
+        curves,
         geometry,
         table_settings=None,
     ):
         page_bbox, mediabox, initial_doctop, force_crop = geometry
         calls["page_objects"].append(
             {
-                "objects": objects,
+                "chars": chars,
+                "lines": lines,
+                "rects": rects,
+                "curves": curves,
                 "page_bbox": page_bbox,
                 "mediabox": mediabox,
                 "initial_doctop": initial_doctop,
@@ -535,6 +541,10 @@ def test_extract_tables_cropped_page_uses_page_objects_backend(monkeypatch):
     call = calls["page_objects"][0]
     assert call["table_settings"] == {"horizontal_strategy": "text"}
     assert call["force_crop"] is True
+    assert isinstance(call["chars"], list)
+    assert isinstance(call["lines"], list)
+    assert isinstance(call["rects"], list)
+    assert isinstance(call["curves"], list)
 
 
 def test_extract_tables_original_page_requires_indexed_backend(
@@ -550,11 +560,14 @@ def test_extract_tables_original_page_requires_indexed_backend(
         raise AttributeError("missing native symbol")
 
     def _fake_extract_tables_for_compat_page(
-        objects,
+        chars,
+        lines,
+        rects,
+        curves,
         geometry,
         table_settings=None,
     ):
-        del objects
+        del chars, lines, rects, curves
         _, _, _, force_crop = geometry
         assert force_crop is True
         calls["page_objects"] += 1
@@ -600,7 +613,10 @@ def test_extract_tables_compat_helper_rejects_original_geometry(monkeypatch):
             match="compat table helper requires cropped or filtered geometry",
         ):
             bridge_api._extract_tables_for_compat_page(
-                page.objects,
+                page.chars,
+                page.lines,
+                page.rects,
+                page.curves,
                 (
                     tuple(page.bbox),
                     tuple(page.mediabox),
