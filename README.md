@@ -12,6 +12,10 @@ pip install bolivar
 implementation("sa.ingenious:bolivar:1.2.0")
 ```
 
+```clojure
+sa.ingenious/bolivar {:mvn/version "1.2.0"}
+```
+
 ```toml
 [dependencies]
 bolivar-core = "1.2"
@@ -19,7 +23,7 @@ bolivar-core = "1.2"
 
 ## Extract text
 
-Pull all text from a PDF in one call. The pdfplumber interface opens the file and iterates pages; the pdfminer interface returns the full text directly. Kotlin and Rust follow the same pattern with their respective APIs.
+Pull all text from a PDF in one call. The pdfplumber interface opens the file and iterates pages; the pdfminer interface returns the full text directly. JVM and Rust APIs follow the same pattern with their respective conventions.
 
 ```python
 import pdfplumber
@@ -35,18 +39,34 @@ from pdfminer.high_level import extract_text
 text = extract_text("doc.pdf")
 ```
 
-```kotlin
-import sa.ingenious.DocumentOptions
-import sa.ingenious.bolivar
+```java
+import sa.ingenious.pdf.Document;
+import sa.ingenious.pdf.DocumentOptions;
 
-val doc = bolivar.open("doc.pdf", DocumentOptions {
+var options = DocumentOptions.builder()
+    .maxPages(1)
+    .layout(layout -> layout.lineMargin(0.5).wordMargin(0.1))
+    .build();
+
+String text = Document.extractText("doc.pdf", options);
+```
+
+```kotlin
+import sa.ingenious.pdf.extractText
+
+val text = extractText("doc.pdf") {
     maxPages = 1
     layout {
         lineMargin = 0.5
         wordMargin = 0.1
     }
-})
-val text = doc.extractText()
+}
+```
+
+```clojure
+(require '[sa.ingenious.pdf :as pdf])
+
+(def text (pdf/extract-text "doc.pdf"))
 ```
 
 ```rust
@@ -73,17 +93,37 @@ with pdfplumber.open("doc.pdf") as pdf:
             print(table)
 ```
 
-```kotlin
-import sa.ingenious.DocumentOptions
-import sa.ingenious.bolivar
+```java
+import sa.ingenious.pdf.Document;
+import sa.ingenious.pdf.DocumentOptions;
 
-val doc = bolivar.open("doc.pdf", DocumentOptions {
-    pages(1, 2)
-})
-val tables = doc.extractTables()
-for (table in tables) {
-    println("${table.rowCount}x${table.columnCount}")
+var options = DocumentOptions.builder().pages(1, 2).build();
+try (Document doc = Document.open("doc.pdf", options)) {
+    for (var table : doc.extractTables()) {
+        System.out.println(table.rowCount() + "x" + table.columnCount());
+    }
 }
+```
+
+```kotlin
+import sa.ingenious.pdf.openDocument
+
+val doc = openDocument("doc.pdf") {
+    pages(1, 2)
+}
+doc.use {
+    for (table in it.extractTables()) {
+        println("${table.rowCount}x${table.columnCount}")
+    }
+}
+```
+
+```clojure
+(require '[sa.ingenious.pdf :as pdf])
+
+(with-open [doc (pdf/open "doc.pdf" {:pages [1 2]})]
+  (doseq [table (pdf/tables doc)]
+    (println (:row-count table) "x" (:column-count table))))
 ```
 
 ```rust
@@ -122,17 +162,37 @@ for page in extract_pages("doc.pdf"):
     print(page.pageid, page.width, page.height)
 ```
 
-```kotlin
-import sa.ingenious.DocumentOptions
-import sa.ingenious.bolivar
+```java
+import sa.ingenious.pdf.Document;
+import sa.ingenious.pdf.DocumentOptions;
 
-val doc = bolivar.open("doc.pdf", DocumentOptions {
-    maxPages = 3
-})
-val pages = doc.extractPageSummaries()
-for (page in pages) {
-    println("${page.pageNumber}: ${page.text.take(80)}")
+var options = DocumentOptions.builder().maxPages(3).build();
+try (Document doc = Document.open("doc.pdf", options)) {
+    for (var page : doc.extractPageSummaries()) {
+        System.out.println(page.pageNumber() + ": " + page.text().substring(0, Math.min(80, page.text().length())));
+    }
 }
+```
+
+```kotlin
+import sa.ingenious.pdf.openDocument
+
+val doc = openDocument("doc.pdf") {
+    maxPages = 3
+}
+doc.use {
+    for (page in it.extractPageSummaries()) {
+        println("${page.pageNumber}: ${page.text.take(80)}")
+    }
+}
+```
+
+```clojure
+(require '[sa.ingenious.pdf :as pdf])
+
+(with-open [doc (pdf/open "doc.pdf" {:max-pages 3})]
+  (doseq [page (pdf/page-summaries doc)]
+    (println (:page-number page) (subs (:text page) 0 (min 80 (count (:text page)))))))
 ```
 
 ```rust
