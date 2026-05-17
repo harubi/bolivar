@@ -1,0 +1,231 @@
+(ns sa.ingenious.pdf
+  (:import [clojure.lang ExceptionInfo]
+           [java.io File InputStream]
+           [java.nio.file Path]
+           [sa.ingenious.pdf BoundingBox Document DocumentOptions LayoutOptions PdfException]))
+
+(def ^:private byte-array-class (Class/forName "[B"))
+(def ^:private option-keys #{:password :pages :max-pages :caching :layout})
+(def ^:private layout-keys
+  #{:line-overlap :char-margin :line-margin :word-margin :boxes-flow :detect-vertical :all-texts})
+
+(defn- fail!
+  ([message data]
+   (throw (ex-info message data)))
+  ([message data cause]
+   (throw (ex-info message data cause))))
+
+(defn- assert-map! [value label]
+  (when-not (or (nil? value) (map? value))
+    (fail! (str label " must be a map") {:type :pdf/invalid-options
+                                          :value value})))
+
+(defn- assert-known-keys! [value allowed label]
+  (let [unknown (seq (remove allowed (keys value)))]
+    (when unknown
+      (fail! (str "Unknown " label (if (= 1 (count unknown)) " key: " " keys: ")
+                  (pr-str (vec unknown)))
+             {:type :pdf/invalid-options
+              :unknown-keys (vec unknown)}))))
+
+(defn- assert-boolean! [value key]
+  (when-not (boolean? value)
+    (fail! (str key " must be true or false") {:type :pdf/invalid-options
+                                                :key key
+                                                :value value})))
+
+(defn- assert-positive-int! [value message key]
+  (when-not (and (integer? value) (pos? value))
+    (fail! message {:type :pdf/invalid-options
+                    :key key
+                    :value value})))
+
+(defn- assert-number! [value key]
+  (when-not (number? value)
+    (fail! (str key " must be a number") {:type :pdf/invalid-options
+                                           :key key
+                                           :value value})))
+
+(defn- ->layout-options [opts]
+  (assert-map! opts ":layout")
+  (when opts
+    (assert-known-keys! opts layout-keys "layout option")
+    (let [builder (LayoutOptions/builder)]
+      (when (contains? opts :line-overlap)
+        (assert-number! (:line-overlap opts) ":line-overlap")
+        (.lineOverlap builder (double (:line-overlap opts))))
+      (when (contains? opts :char-margin)
+        (assert-number! (:char-margin opts) ":char-margin")
+        (.charMargin builder (double (:char-margin opts))))
+      (when (contains? opts :line-margin)
+        (assert-number! (:line-margin opts) ":line-margin")
+        (.lineMargin builder (double (:line-margin opts))))
+      (when (contains? opts :word-margin)
+        (assert-number! (:word-margin opts) ":word-margin")
+        (.wordMargin builder (double (:word-margin opts))))
+      (when (contains? opts :boxes-flow)
+        (let [boxes-flow (:boxes-flow opts)]
+          (when (some? boxes-flow)
+            (assert-number! boxes-flow ":boxes-flow")
+            (when-not (<= -1.0 (double boxes-flow) 1.0)
+              (fail! ":boxes-flow must be nil or within [-1.0, 1.0]"
+                     {:type :pdf/invalid-options
+                      :key :boxes-flow
+                      :value boxes-flow})))
+          (.boxesFlow builder (when (some? boxes-flow) (Double/valueOf (double boxes-flow))))))
+      (when (contains? opts :detect-vertical)
+        (assert-boolean! (:detect-vertical opts) ":detect-vertical")
+        (.detectVertical builder (:detect-vertical opts)))
+      (when (contains? opts :all-texts)
+        (assert-boolean! (:all-texts opts) ":all-texts")
+        (.allTexts builder (:all-texts opts)))
+      (.build builder))))
+
+(defn- ->document-options [opts]
+  (assert-map! opts "options")
+  (if-not opts
+    (DocumentOptions.)
+    (do
+      (assert-known-keys! opts option-keys "option")
+      (let [builder (DocumentOptions/builder)]
+        (when (contains? opts :password)
+          (let [password (:password opts)]
+            (when-not (or (nil? password) (string? password))
+              (fail! ":password must be a string or nil" {:type :pdf/invalid-options
+                                                          :key :password
+                                                          :value password}))
+            (.password builder password)))
+        (when (contains? opts :pages)
+          (let [pages (:pages opts)]
+            (when-not (sequential? pages)
+              (fail! ":pages must be a sequence of 1-based page numbers"
+                     {:type :pdf/invalid-options
+                      :key :pages
+                      :value pages}))
+            (doseq [page pages]
+              (assert-positive-int! page "Page numbers are 1-based and must be positive" :pages))
+            (.pageNumbers builder (mapv #(Integer/valueOf (int %)) pages))))
+        (when (contains? opts :max-pages)
+          (let [max-pages (:max-pages opts)]
+            (assert-positive-int! max-pages ":max-pages must be a positive integer" :max-pages)
+            (.maxPages builder (Integer/valueOf (int max-pages)))))
+        (when (contains? opts :caching)
+          (assert-boolean! (:caching opts) ":caching")
+          (.caching builder (:caching opts)))
+        (when (contains? opts :layout)
+          (.layout builder (->layout-options (:layout opts))))
+        (.build builder)))))
+
+(defn- byte-array? [value]
+  (instance? byte-array-class value))
+
+(defn- wrap-jvm-errors [f]
+  (try
+    (f)
+    (catch ExceptionInfo ex
+      (throw ex))
+    (catch PdfException ex
+      (fail! (.getMessage ex) {:type :pdf/native-error} ex))
+    (catch Exception ex
+      (fail! (.getMessage ex) {:type :pdf/jvm-error} ex))))
+
+(defn- bbox->map [^BoundingBox bbox]
+  {:x0 (.x0 bbox)
+   :y0 (.y0 bbox)
+   :x1 (.x1 bbox)
+   :y1 (.y1 bbox)})
+
+(declare layout-line->map)
+
+(defn- layout-char->map [ch]
+  {:text (.text ch)
+   :bbox (bbox->map (.bbox ch))
+   :font-name (.fontName ch)
+   :size (.size ch)
+   :upright (.upright ch)})
+
+(defn- layout-line->map [line]
+  {:bbox (bbox->map (.bbox line))
+   :orientation (.orientation line)
+   :text (.text line)
+   :chars (mapv layout-char->map (.chars line))})
+
+(defn- layout-text-box->map [text-box]
+  {:bbox (bbox->map (.bbox text-box))
+   :writing-mode (.writingMode text-box)
+   :text (.text text-box)
+   :lines (mapv layout-line->map (.lines text-box))})
+
+(defn- page-summary->map [summary]
+  {:page-number (.pageNumber summary)
+   :text (.text summary)
+   :bbox (bbox->map (.bbox summary))
+   :rotate (.rotate summary)})
+
+(defn- layout-page->map [page]
+  {:page-number (.pageNumber page)
+   :bbox (bbox->map (.bbox page))
+   :rotate (.rotate page)
+   :text (.text page)
+   :text-boxes (mapv layout-text-box->map (.textBoxes page))})
+
+(defn- table-cell->map [cell]
+  {:row-index (.rowIndex cell)
+   :column-index (.columnIndex cell)
+   :row-span (.rowSpan cell)
+   :column-span (.columnSpan cell)
+   :bbox (bbox->map (.bbox cell))
+   :text (.text cell)})
+
+(defn- table->map [table]
+  {:page-number (.pageNumber table)
+   :bbox (bbox->map (.bbox table))
+   :row-count (.rowCount table)
+   :column-count (.columnCount table)
+   :cells (mapv table-cell->map (.cells table))})
+
+(defn open
+  "Open a PDF source and return an AutoCloseable document handle.
+
+  Source may be a path string, java.nio.file.Path, java.io.File, java.io.InputStream,
+  or byte array. Use with-open when managing the document directly."
+  ([source]
+   (open source nil))
+  ([source opts]
+   (wrap-jvm-errors
+    #(let [options (->document-options opts)]
+       (cond
+         (string? source) (Document/open ^String source options)
+         (instance? Path source) (Document/open ^Path source options)
+         (instance? File source) (Document/open ^File source options)
+         (instance? InputStream source) (Document/open ^InputStream source options)
+         (byte-array? source) (Document/open ^bytes source options)
+         :else (fail! "Unsupported source; expected string, Path, File, InputStream, or byte array"
+                      {:type :pdf/unsupported-source
+                       :source-class (some-> source class .getName)}))))))
+
+(defn text [^Document doc]
+  (wrap-jvm-errors #(.extractText doc)))
+
+(defn page-summaries [^Document doc]
+  (wrap-jvm-errors #(mapv page-summary->map (.extractPageSummaries doc))))
+
+(defn layout-pages [^Document doc]
+  (wrap-jvm-errors #(mapv layout-page->map (.extractLayoutPages doc))))
+
+(defn tables [^Document doc]
+  (wrap-jvm-errors #(mapv table->map (.extractTables doc))))
+
+(defn extract-text
+  ([source]
+   (extract-text source nil))
+  ([source opts]
+   (if (instance? Document source)
+     (do
+       (when (some? opts)
+         (fail! "Options cannot be provided when source is already a Document"
+                {:type :pdf/invalid-options
+                 :key :options}))
+       (text source))
+     (with-open [doc (open source opts)]
+       (text doc)))))

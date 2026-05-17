@@ -1,5 +1,7 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
-    kotlin("jvm") version "2.2.20"
+    kotlin("jvm") version "2.3.20"
     `java-library`
     id("com.vanniktech.maven.publish") version "0.36.0"
 }
@@ -17,8 +19,20 @@ java {
     }
 }
 
+sourceSets {
+    named("main") {
+        resources.srcDir("src/main/clojure")
+    }
+    named("test") {
+        resources.srcDir("src/test/clojure")
+    }
+}
+
 kotlin {
     jvmToolchain(21)
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_21)
+    }
     sourceSets {
         val main by getting {
             kotlin.srcDir("../kotlin")
@@ -43,9 +57,10 @@ tasks.named<Jar>("jar") {
 
 dependencies {
     implementation("net.java.dev.jna:jna:5.18.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.11.0")
 
+    testImplementation("org.clojure:clojure:1.12.5")
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.13.4")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.13.4")
@@ -53,6 +68,19 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.register<JavaExec>("clojureTest") {
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    description = "Run Clojure wrapper tests"
+    dependsOn("testClasses")
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("clojure.main")
+    args("-m", "sa.ingenious.pdf-test")
+}
+
+tasks.named("check") {
+    dependsOn("clojureTest")
 }
 
 mavenPublishing {

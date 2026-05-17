@@ -243,6 +243,7 @@ fn core_extract_options(
         maxpages: normalize_max_pages(options.max_pages)?,
         caching: options.caching.unwrap_or(true),
         laparams: normalize_layout_params(options.layout_params)?,
+        rotation: 0,
     })
 }
 
@@ -739,6 +740,7 @@ mod tests {
             maxpages: 2,
             caching: true,
             laparams: None,
+            rotation: 0,
         };
 
         let selected = selected_page_indices(&doc, &options);

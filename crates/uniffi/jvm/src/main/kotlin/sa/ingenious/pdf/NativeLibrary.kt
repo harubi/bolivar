@@ -1,9 +1,9 @@
-package sa.ingenious
+package sa.ingenious.pdf
 
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
-object BolivarNativeLoader {
+object NativeLibrary {
     const val COMPONENT_NAME: String = "bolivar"
     const val LIB_NAME: String = "bolivar_uniffi"
     const val LIB_OVERRIDE_PROPERTY: String = "uniffi.component.$COMPONENT_NAME.libraryOverride"
@@ -18,10 +18,15 @@ object BolivarNativeLoader {
 
     @JvmStatic
     fun currentClassifier(): String {
-        val os = normalizedOs()
-        val arch = normalizedArch()
+        val os = normalizedOs(System.getProperty("os.name"))
+        val arch = normalizedArch(System.getProperty("os.arch"))
         return "$os-$arch"
     }
+
+    internal fun classifierFor(
+        osName: String,
+        archName: String,
+    ): String = "${normalizedOs(osName)}-${normalizedArch(archName)}"
 
     @JvmStatic
     fun defaultResourcePath(): String {
@@ -30,7 +35,8 @@ object BolivarNativeLoader {
     }
 
     @JvmStatic
-    fun loadFromClasspath(resourcePath: String = defaultResourcePath()): String {
+    @JvmOverloads
+    fun load(resourcePath: String = defaultResourcePath()): String {
         loadedPath?.let { return it }
         synchronized(this) {
             loadedPath?.let { return it }
@@ -42,7 +48,7 @@ object BolivarNativeLoader {
             }
 
             val stream =
-                BolivarNativeLoader::class.java.getResourceAsStream(resourcePath)
+                NativeLibrary::class.java.getResourceAsStream(resourcePath)
                     ?: throw IllegalStateException("Missing native resource at $resourcePath")
 
             stream.use {
@@ -61,6 +67,8 @@ object BolivarNativeLoader {
         }
     }
 
+    internal fun loadFromClasspath(): String = load()
+
     private fun fileNameParts(fileName: String): Pair<String, String> {
         val dot = fileName.lastIndexOf('.')
         val rawPrefix = if (dot > 0) fileName.substring(0, dot) else fileName
@@ -69,22 +77,21 @@ object BolivarNativeLoader {
         return prefix to suffix
     }
 
-    private fun normalizedOs(): String {
-        val osName = System.getProperty("os.name").lowercase()
+    private fun normalizedOs(osName: String): String {
+        val value = osName.lowercase()
         return when {
-            osName.contains("mac") || osName.contains("darwin") -> "macos"
-            osName.contains("win") -> "windows"
-            osName.contains("linux") -> "linux"
-            else -> throw IllegalStateException("Unsupported os.name: ${System.getProperty("os.name")}")
+            value.contains("mac") || value.contains("darwin") -> "macos"
+            value.contains("win") -> "windows"
+            value.contains("linux") -> "linux"
+            else -> throw IllegalStateException("Unsupported os.name: $osName")
         }
     }
 
-    private fun normalizedArch(): String {
-        val arch = System.getProperty("os.arch").lowercase()
-        return when (arch) {
-            "x86_64", "amd64" -> "x86_64"
+    private fun normalizedArch(archName: String): String {
+        return when (archName.lowercase()) {
+            "x86_64", "amd64" -> "x86-64"
             "aarch64", "arm64" -> "aarch64"
-            else -> throw IllegalStateException("Unsupported os.arch: ${System.getProperty("os.arch")}")
+            else -> throw IllegalStateException("Unsupported os.arch: $archName")
         }
     }
 }

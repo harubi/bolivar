@@ -1,4 +1,4 @@
-package sa.ingenious
+package sa.ingenious.pdf
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -13,11 +13,11 @@ class DocumentOptionsBuilderTest {
         assertEquals(null, options.pageNumbers)
         assertEquals(null, options.maxPages)
         assertEquals(true, options.caching)
-        assertEquals(null, options.layoutParams)
+        assertEquals(null, options.layout)
     }
 
     @Test
-    fun dslBuilderBuildsNestedLayoutParams() {
+    fun kotlinDslBuildsNestedLayoutOptions() {
         val options =
             documentOptions {
                 password = "secret"
@@ -40,18 +40,18 @@ class DocumentOptionsBuilderTest {
         assertEquals(2, options.maxPages)
         assertEquals(false, options.caching)
 
-        val layoutParams = options.layoutParams ?: error("layout params missing")
-        assertEquals(0.5, layoutParams.lineOverlap)
-        assertEquals(2.0, layoutParams.charMargin)
-        assertEquals(0.7, layoutParams.lineMargin)
-        assertEquals(0.1, layoutParams.wordMargin)
-        assertEquals(0.3, layoutParams.boxesFlow)
-        assertEquals(true, layoutParams.detectVertical)
-        assertEquals(false, layoutParams.allTexts)
+        val layout = options.layout ?: error("layout options missing")
+        assertEquals(0.5, layout.lineOverlap)
+        assertEquals(2.0, layout.charMargin)
+        assertEquals(0.7, layout.lineMargin)
+        assertEquals(0.1, layout.wordMargin)
+        assertEquals(0.3, layout.boxesFlow)
+        assertEquals(true, layout.detectVertical)
+        assertEquals(false, layout.allTexts)
     }
 
     @Test
-    fun pageNumbersDefensivelyCopied() {
+    fun pageNumbersAreDefensivelyCopiedForJvmConsumers() {
         val mutablePages = mutableListOf(1, 2)
         val options =
             DocumentOptions
@@ -71,7 +71,7 @@ class DocumentOptionsBuilderTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            DocumentOptions.builder().apply { maxPages = 0 }.build()
+            DocumentOptions.builder().maxPages(0).build()
         }
     }
 }

@@ -2515,14 +2515,9 @@ mod tests {
                 .unwrap();
         assert_eq!(recovered.page_index().len(), 1);
 
-        let err = PDFDocument::new_with_cache_and_fallback(
-            pdf,
-            "",
-            DEFAULT_CACHE_CAPACITY,
-            false,
-        )
-        .err()
-        .expect("fallback-disabled parse should fail");
+        let err = PDFDocument::new_with_cache_and_fallback(pdf, "", DEFAULT_CACHE_CAPACITY, false)
+            .err()
+            .expect("fallback-disabled parse should fail");
         assert!(err.to_string().contains("No /Root object"));
     }
 
