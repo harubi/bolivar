@@ -80,6 +80,22 @@ fn cache_capacity(caching: bool) -> usize {
     if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
 }
 
+const TABLE_COLLECTOR_NO_RESULT: &str = "table collector produced no result";
+
+/// Standard finisher for `PDFPageAggregator`-backed `process_page` calls: clones the result `LTPage`.
+pub(crate) fn aggregator_result(agg: &mut PDFPageAggregator<'_>) -> Result<LTPage> {
+    Ok(agg.get_result().clone())
+}
+
+/// Standard finisher for `PDFTableCollector`-backed `process_page` calls: takes the arena page or errors.
+pub(crate) fn collector_result<'a>(
+    collector: &mut PDFTableCollector<'a>,
+) -> Result<crate::arena::types::ArenaPage<'a>> {
+    collector
+        .take_result()
+        .ok_or_else(|| PdfError::DecodeError(TABLE_COLLECTOR_NO_RESULT.to_string()))
+}
+
 /// Options for text extraction.
 ///
 /// Port of the various optional parameters from pdfminer.six high_level functions.
@@ -272,7 +288,7 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
                     &mut rsrcmgr,
                     rotation,
                     doc,
-                    |agg| Ok(agg.get_result().clone()),
+                    aggregator_result,
                 );
                 (page_idx, ltpage)
             })
@@ -288,11 +304,13 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
     Ok(())
 }
 
-/// Process a single page through `device`, then call `finish` to extract its result.
+/// Run a page through the interpreter against `device`, applying `rotation` if non-zero,
+/// then extract a result via `finish`.
 ///
-/// Replaces the previous `process_page_with_rotation` (used with `PDFPageAggregator`)
-/// and `process_page_arena` (used with `PDFTableCollector`). The two only differed
-/// in which device they took and how they retrieved the result.
+/// Generic over any `D: PDFDevice` so the same per-page processing path serves both
+/// layout aggregation (`PDFPageAggregator` -> `LTPage`) and arena collection
+/// (`PDFTableCollector` -> `ArenaPage`); helpers `aggregator_result` and
+/// `collector_result` cover the two standard finisher shapes.
 pub(crate) fn process_page<D, R>(
     page: &PDFPage,
     device: &mut D,
@@ -346,7 +364,7 @@ pub fn extract_layout_for_page_with_rotation(
         &mut rsrcmgr,
         rotation,
         doc,
-        |agg| Ok(agg.get_result().clone()),
+        aggregator_result,
     )
 }
 
@@ -482,7 +500,7 @@ pub fn extract_pages_with_document(
                     &mut rsrcmgr,
                     rotation,
                     doc,
-                    |agg| Ok(agg.get_result().clone()),
+                    aggregator_result,
                 );
                 (page_idx, ltpage)
             })
@@ -536,9 +554,14 @@ fn extract_pages_with_images_with_writer(
             &mut arena,
         );
 
-        let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, rotation, doc, |agg| {
-            Ok(agg.get_result().clone())
-        })?;
+        let ltpage = process_page(
+            &page,
+            &mut aggregator,
+            &mut rsrcmgr,
+            rotation,
+            doc,
+            aggregator_result,
+        )?;
         pages.push(ltpage);
         page_count += 1;
     }
@@ -593,8 +616,7 @@ pub fn extract_tables_for_page(
     let page = PDFPage::get_page_by_index(doc, page_index)?;
     let mut collector = PDFTableCollector::new(laparams, page_index as i32 + 1, &mut arena);
     let page_arena = process_page(&page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
-        c.take_result()
-            .ok_or_else(|| PdfError::DecodeError("table collector produced no result".to_string()))
+        collector_result(c)
     })?;
     let arena_lookup = collector.arena_lookup();
     let (chars, edges) = collect_table_objects_from_arena(&page_arena, geometry);
