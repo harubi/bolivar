@@ -21,9 +21,7 @@ use crate::table::{
     extract_tables_from_objects, extract_text_from_objects, extract_words_from_objects,
 };
 
-use super::high_level::{
-    ExtractOptions, PageTables, process_page_arena, process_page_with_rotation,
-};
+use super::high_level::{ExtractOptions, PageTables, process_page};
 
 pub const DEFAULT_STREAM_BUFFER_CAPACITY: usize = 50;
 
@@ -396,12 +394,13 @@ pub fn extract_pages_stream_from_doc(
                     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                     let mut aggregator =
                         PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                    let ltpage = process_page_with_rotation(
+                    let ltpage = process_page(
                         page.as_ref(),
                         &mut aggregator,
                         &mut rsrcmgr,
                         rotation,
                         doc_worker.as_ref(),
+                        |agg| Ok(agg.get_result().clone()),
                     );
                     if cancel_worker.load(Ordering::Relaxed) {
                         return;
@@ -491,8 +490,18 @@ pub fn extract_text_pages_from_doc_with_geometries(
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                 let mut collector =
                     PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                let page_arena =
-                    process_page_arena(page.as_ref(), &mut collector, &mut rsrcmgr, doc.as_ref())?;
+                let page_arena = process_page(
+                    page.as_ref(),
+                    &mut collector,
+                    &mut rsrcmgr,
+                    0,
+                    doc.as_ref(),
+                    |c| {
+                        c.take_result().ok_or_else(|| {
+                            PdfError::DecodeError("table collector produced no result".to_string())
+                        })
+                    },
+                )?;
                 let arena_lookup = collector.arena_lookup();
                 let geom = &geometries[selected_idx];
                 let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
@@ -541,8 +550,18 @@ pub fn extract_words_pages_from_doc_with_geometries(
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                 let mut collector =
                     PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                let page_arena =
-                    process_page_arena(page.as_ref(), &mut collector, &mut rsrcmgr, doc.as_ref())?;
+                let page_arena = process_page(
+                    page.as_ref(),
+                    &mut collector,
+                    &mut rsrcmgr,
+                    0,
+                    doc.as_ref(),
+                    |c| {
+                        c.take_result().ok_or_else(|| {
+                            PdfError::DecodeError("table collector produced no result".to_string())
+                        })
+                    },
+                )?;
                 let arena_lookup = collector.arena_lookup();
                 let geom = &geometries[selected_idx];
                 let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
@@ -638,11 +657,19 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                     let mut collector =
                         PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                    let page_arena = process_page_arena(
+                    let page_arena = process_page(
                         page.as_ref(),
                         &mut collector,
                         &mut rsrcmgr,
+                        0,
                         doc_worker.as_ref(),
+                        |c| {
+                            c.take_result().ok_or_else(|| {
+                                PdfError::DecodeError(
+                                    "table collector produced no result".to_string(),
+                                )
+                            })
+                        },
                     );
                     let tables = match page_arena {
                         Ok(page_arena) => {

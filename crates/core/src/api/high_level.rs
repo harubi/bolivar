@@ -266,12 +266,13 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                 let mut aggregator =
                     PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1, arena);
-                let ltpage = process_page_with_rotation(
+                let ltpage = process_page(
                     page.as_ref(),
                     &mut aggregator,
                     &mut rsrcmgr,
                     rotation,
                     doc,
+                    |agg| Ok(agg.get_result().clone()),
                 );
                 (page_idx, ltpage)
             })
@@ -287,17 +288,22 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
     Ok(())
 }
 
-/// Process a PDF page and return its layout.
+/// Process a single page through `device`, then call `finish` to extract its result.
 ///
-/// Uses PDFPageInterpreter to execute the page's content stream,
-/// which populates the device (aggregator) with layout items.
-pub(crate) fn process_page_with_rotation(
+/// Replaces the previous `process_page_with_rotation` (used with `PDFPageAggregator`)
+/// and `process_page_arena` (used with `PDFTableCollector`). The two only differed
+/// in which device they took and how they retrieved the result.
+pub(crate) fn process_page<D, R>(
     page: &PDFPage,
-    aggregator: &mut PDFPageAggregator<'_>,
+    device: &mut D,
     rsrcmgr: &mut PDFResourceManager,
     rotation: i64,
     doc: &PDFDocument,
-) -> Result<LTPage> {
+    finish: impl FnOnce(&mut D) -> Result<R>,
+) -> Result<R>
+where
+    D: crate::interp::device::PDFDevice,
+{
     record_thread();
 
     let rotated_page;
@@ -308,30 +314,9 @@ pub(crate) fn process_page_with_rotation(
         &rotated_page
     };
 
-    // Create interpreter with resource manager and aggregator as device
-    let mut interpreter = PDFPageInterpreter::new(rsrcmgr, aggregator);
-
-    // Process page - this executes the content stream and populates the device
+    let mut interpreter = PDFPageInterpreter::new(rsrcmgr, device);
     interpreter.process_page(page, Some(doc))?;
-
-    // Get the analyzed result from aggregator
-    Ok(aggregator.get_result().clone())
-}
-
-pub(crate) fn process_page_arena<'a>(
-    page: &PDFPage,
-    collector: &mut PDFTableCollector<'a>,
-    rsrcmgr: &mut PDFResourceManager,
-    doc: &PDFDocument,
-) -> Result<crate::arena::types::ArenaPage<'a>> {
-    record_thread();
-
-    let mut interpreter = PDFPageInterpreter::new(rsrcmgr, collector);
-    interpreter.process_page(page, Some(doc))?;
-
-    collector
-        .take_result()
-        .ok_or_else(|| PdfError::DecodeError("table collector produced no result".to_string()))
+    finish(device)
 }
 
 pub fn extract_layout_for_page(
@@ -355,7 +340,14 @@ pub fn extract_layout_for_page_with_rotation(
     arena.reset();
     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
     let mut aggregator = PDFPageAggregator::new(laparams, page_index as i32 + 1, &mut arena);
-    process_page_with_rotation(page.as_ref(), &mut aggregator, &mut rsrcmgr, rotation, doc)
+    process_page(
+        page.as_ref(),
+        &mut aggregator,
+        &mut rsrcmgr,
+        rotation,
+        doc,
+        |agg| Ok(agg.get_result().clone()),
+    )
 }
 
 /// Iterator over analyzed pages.
@@ -484,12 +476,13 @@ pub fn extract_pages_with_document(
                 let mut rsrcmgr = PDFResourceManager::with_caching(caching);
                 let mut aggregator =
                     PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
-                let ltpage = process_page_with_rotation(
+                let ltpage = process_page(
                     page.as_ref(),
                     &mut aggregator,
                     &mut rsrcmgr,
                     rotation,
                     doc,
+                    |agg| Ok(agg.get_result().clone()),
                 );
                 (page_idx, ltpage)
             })
@@ -543,8 +536,9 @@ fn extract_pages_with_images_with_writer(
             &mut arena,
         );
 
-        let ltpage =
-            process_page_with_rotation(&page, &mut aggregator, &mut rsrcmgr, rotation, doc)?;
+        let ltpage = process_page(&page, &mut aggregator, &mut rsrcmgr, rotation, doc, |agg| {
+            Ok(agg.get_result().clone())
+        })?;
         pages.push(ltpage);
         page_count += 1;
     }
@@ -598,7 +592,10 @@ pub fn extract_tables_for_page(
     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
     let page = PDFPage::get_page_by_index(doc, page_index)?;
     let mut collector = PDFTableCollector::new(laparams, page_index as i32 + 1, &mut arena);
-    let page_arena = process_page_arena(&page, &mut collector, &mut rsrcmgr, doc)?;
+    let page_arena = process_page(&page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
+        c.take_result()
+            .ok_or_else(|| PdfError::DecodeError("table collector produced no result".to_string()))
+    })?;
     let arena_lookup = collector.arena_lookup();
     let (chars, edges) = collect_table_objects_from_arena(&page_arena, geometry);
     Ok(extract_tables_from_objects(
