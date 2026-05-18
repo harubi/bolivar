@@ -486,61 +486,50 @@ pub fn extract_pages_with_document(
 }
 
 /// Extract LTPage objects from an already-parsed PDFDocument while exporting images.
+///
+/// Pages are processed in parallel. Each worker constructs its own `ImageWriter`
+/// (so the non-`Send` `Rc<RefCell<_>>` never crosses thread boundaries) and the
+/// writer is scoped to the page index, producing deterministic `page-XXXX-…`
+/// filenames regardless of cross-thread scheduling.
 pub fn extract_pages_with_images_with_document(
-    doc: &PDFDocument,
+    doc: Arc<PDFDocument>,
     options: ExtractOptions,
     output_dir: &str,
 ) -> Result<Vec<LTPage>> {
-    let image_writer = ImageWriter::new(output_dir)?;
-    let image_writer = Rc::new(RefCell::new(image_writer));
-    extract_pages_with_images_with_writer(doc, options, image_writer)
-}
-
-fn extract_pages_with_images_with_writer(
-    doc: &PDFDocument,
-    options: ExtractOptions,
-    image_writer: Rc<RefCell<ImageWriter>>,
-) -> Result<Vec<LTPage>> {
-    let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
-    let laparams = options.laparams.unwrap_or_default();
+    let laparams = options.laparams.clone().unwrap_or_default();
+    let caching = options.caching;
     let rotation = options.rotation;
-    let mut arena = PageArena::new();
-    let mut pages = Vec::new();
-    let mut page_count = 0;
+    let output_dir = output_dir.to_string();
 
-    for (page_idx, page_result) in PDFPage::create_pages(doc).enumerate() {
-        if let Some(ref nums) = options.page_numbers
-            && !nums.contains(&page_idx)
-        {
-            continue;
-        }
+    let stream = crate::api::pipeline::run_stream(
+        doc,
+        options.page_numbers,
+        options.maxpages,
+        crate::api::pipeline::no_precheck::<LTPage>,
+        move |arena, page_idx, page, doc| {
+            let writer = ImageWriter::for_page(&output_dir, page_idx)?;
+            let writer = Rc::new(RefCell::new(writer));
+            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+            let mut aggregator = PDFPageAggregator::new_with_imagewriter(
+                Some(laparams.clone()),
+                page_idx as i32 + 1,
+                Some(writer),
+                arena,
+            );
+            process_page(
+                page,
+                &mut aggregator,
+                &mut rsrcmgr,
+                rotation,
+                doc,
+                aggregator_result,
+            )
+        },
+    )?;
 
-        if options.maxpages > 0 && page_count >= options.maxpages {
-            break;
-        }
-
-        let page = page_result?;
-        arena.reset();
-        let mut aggregator = PDFPageAggregator::new_with_imagewriter(
-            Some(laparams.clone()),
-            page_idx as i32 + 1,
-            Some(image_writer.clone()),
-            &mut arena,
-        );
-
-        let ltpage = process_page(
-            &page,
-            &mut aggregator,
-            &mut rsrcmgr,
-            rotation,
-            doc,
-            aggregator_result,
-        )?;
-        pages.push(ltpage);
-        page_count += 1;
-    }
-
-    Ok(pages)
+    stream
+        .map(|r| r.map(|(_, page)| page))
+        .collect::<Result<Vec<_>>>()
 }
 
 /// Extract tables from an already-parsed PDFDocument.

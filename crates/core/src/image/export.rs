@@ -38,16 +38,34 @@ pub struct BmpWriter {
 pub struct ImageWriter {
     outdir: PathBuf,
     seq: usize,
+    page_prefix: Option<usize>,
 }
 
 impl ImageWriter {
     pub fn new(outdir: impl AsRef<Path>) -> Result<Self> {
         let outdir = outdir.as_ref().to_path_buf();
         fs::create_dir_all(&outdir)?;
-        Ok(Self { outdir, seq: 0 })
+        Ok(Self {
+            outdir,
+            seq: 0,
+            page_prefix: None,
+        })
     }
 
-    fn next_path(&mut self, name: &str, ext: &str) -> PathBuf {
+    /// Create a writer scoped to a single page. Filenames are prefixed with
+    /// `page-{page_idx:04}-` so output is deterministic regardless of cross-thread
+    /// page processing order.
+    pub fn for_page(outdir: impl AsRef<Path>, page_idx: usize) -> Result<Self> {
+        let outdir = outdir.as_ref().to_path_buf();
+        fs::create_dir_all(&outdir)?;
+        Ok(Self {
+            outdir,
+            seq: 0,
+            page_prefix: Some(page_idx),
+        })
+    }
+
+    fn compose_filename(&self, name: &str, seq: usize, ext: &str) -> String {
         let base = name
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
@@ -57,8 +75,15 @@ impl ImageWriter {
         } else {
             base
         };
+        match self.page_prefix {
+            Some(page_idx) => format!("page-{:04}-{}_{}{}", page_idx, base, seq, ext),
+            None => format!("{}_{}{}", base, seq, ext),
+        }
+    }
+
+    fn next_path(&mut self, name: &str, ext: &str) -> PathBuf {
         self.seq += 1;
-        let filename = format!("{}_{}{}", base, self.seq, ext);
+        let filename = self.compose_filename(name, self.seq, ext);
         self.outdir.join(filename)
     }
 
@@ -162,48 +187,36 @@ impl ImageWriter {
         }
 
         if bits == 8 && colorspace.iter().any(|c| is_device_gray_name(c)) {
-            return save_bmp(
-                &mut self.seq,
-                BmpSaveArgs {
-                    outdir: &self.outdir,
-                    name,
-                    bits: 8,
-                    width,
-                    height,
-                    bytes_per_pixel: 1,
-                    data: &data,
-                },
-            );
+            return self.save_bmp(BmpSaveArgs {
+                name,
+                bits: 8,
+                width,
+                height,
+                bytes_per_pixel: 1,
+                data: &data,
+            });
         }
 
         if bits == 8 && colorspace.iter().any(|c| is_device_rgb_name(c)) {
-            return save_bmp(
-                &mut self.seq,
-                BmpSaveArgs {
-                    outdir: &self.outdir,
-                    name,
-                    bits: 24,
-                    width,
-                    height,
-                    bytes_per_pixel: 3,
-                    data: &data,
-                },
-            );
+            return self.save_bmp(BmpSaveArgs {
+                name,
+                bits: 24,
+                width,
+                height,
+                bytes_per_pixel: 3,
+                data: &data,
+            });
         }
 
         if bits == 1 {
-            return save_bmp(
-                &mut self.seq,
-                BmpSaveArgs {
-                    outdir: &self.outdir,
-                    name,
-                    bits: 1,
-                    width,
-                    height,
-                    bytes_per_pixel: 1,
-                    data: &data,
-                },
-            );
+            return self.save_bmp(BmpSaveArgs {
+                name,
+                bits: 1,
+                width,
+                height,
+                bytes_per_pixel: 1,
+                data: &data,
+            });
         }
 
         // Fallback: write raw bytes
@@ -616,7 +629,6 @@ const fn paeth_predictor(a: u8, b: u8, c: u8) -> u8 {
 }
 
 struct BmpSaveArgs<'a> {
-    outdir: &'a Path,
     name: &'a str,
     bits: i32,
     width: i32,
@@ -625,43 +637,35 @@ struct BmpSaveArgs<'a> {
     data: &'a [u8],
 }
 
-fn save_bmp(seq: &mut usize, args: BmpSaveArgs<'_>) -> Result<String> {
-    let base = args
-        .name
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect::<String>();
-    let base = if base.is_empty() {
-        "image".to_string()
-    } else {
-        base
-    };
-    *seq += 1;
-    let filename = format!("{}_{}.bmp", base, *seq);
-    let path = args.outdir.join(&filename);
+impl ImageWriter {
+    fn save_bmp(&mut self, args: BmpSaveArgs<'_>) -> Result<String> {
+        self.seq += 1;
+        let filename = self.compose_filename(args.name, self.seq, ".bmp");
+        let path = self.outdir.join(&filename);
 
-    let mut fp = File::create(&path)?;
-    let mut writer = BmpWriter::new(&mut fp, args.bits, args.width, args.height)?;
+        let mut fp = File::create(&path)?;
+        let mut writer = BmpWriter::new(&mut fp, args.bits, args.width, args.height)?;
 
-    let row_bytes = if args.bits == 1 {
-        ((args.width + 7) / 8) as usize
-    } else {
-        (args.width * args.bytes_per_pixel) as usize
-    };
-    let line_size = align32(row_bytes as i32) as usize;
+        let row_bytes = if args.bits == 1 {
+            ((args.width + 7) / 8) as usize
+        } else {
+            (args.width * args.bytes_per_pixel) as usize
+        };
+        let line_size = align32(row_bytes as i32) as usize;
 
-    for y in 0..args.height {
-        let start = (y as usize) * row_bytes;
-        let end = start + row_bytes;
-        let mut line = vec![0u8; line_size];
-        if start < args.data.len() {
-            let copy_end = end.min(args.data.len());
-            line[..(copy_end - start)].copy_from_slice(&args.data[start..copy_end]);
+        for y in 0..args.height {
+            let start = (y as usize) * row_bytes;
+            let end = start + row_bytes;
+            let mut line = vec![0u8; line_size];
+            if start < args.data.len() {
+                let copy_end = end.min(args.data.len());
+                line[..(copy_end - start)].copy_from_slice(&args.data[start..copy_end]);
+            }
+            writer.write_line(&mut fp, y, &line)?;
         }
-        writer.write_line(&mut fp, y, &line)?;
-    }
 
-    Ok(filename)
+        Ok(filename)
+    }
 }
 
 impl BmpWriter {
