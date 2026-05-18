@@ -12,8 +12,10 @@ use crate::interp::PDFResourceManager;
 use crate::layout::{LAParams, LTPage};
 use crate::table::edge_probe::{page_has_edges, should_skip_tables};
 use crate::table::{
-    PageGeometry, TableSettings, TextSettings, WordObj, collect_table_objects_from_arena,
-    extract_tables_from_objects, extract_text_from_objects, extract_words_from_objects,
+    PageGeometry, TableMetadata, TableSettings, TextSettings, WordObj,
+    collect_table_objects_from_arena, extract_tables_from_objects,
+    extract_tables_with_metadata_from_objects, extract_text_from_objects,
+    extract_words_from_objects,
 };
 
 use super::high_level::{
@@ -129,6 +131,66 @@ pub fn extract_tables_stream_from_doc_with_geometries(
         options,
         settings,
         Some(Arc::new(geometries)),
+    )
+}
+
+/// Stream per-page table metadata for selected pages using arena-backed collection.
+///
+/// Runs a single arena walk per page and produces `Vec<TableMetadata>` directly,
+/// avoiding the double-layout-walk path that consumed `LTPage` objects.
+pub fn extract_tables_metadata_stream_from_doc_with_geometries(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    settings: TableSettings,
+    geometries: Vec<PageGeometry>,
+) -> Result<Stream<Vec<TableMetadata>>> {
+    if options.laparams.is_none() {
+        options.laparams = Some(LAParams::default());
+    }
+
+    let plan = ExecutionPlan::new(
+        doc.page_index().len(),
+        options.page_numbers.as_deref(),
+        options.maxpages,
+    );
+    validate_geometry_count(&plan.order, geometries.len())?;
+
+    let order_index: std::collections::HashMap<usize, usize> = plan
+        .order
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (p, i))
+        .collect();
+    let laparams = options.laparams.clone();
+    let caching = options.caching;
+    let geoms = Arc::new(geometries);
+
+    run_stream(
+        doc,
+        options.page_numbers,
+        options.maxpages,
+        no_precheck::<Vec<TableMetadata>>,
+        move |arena, page_idx, page, doc| {
+            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+            let mut collector =
+                PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, arena);
+            let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
+                collector_result(c)
+            })?;
+            let arena_lookup = collector.arena_lookup();
+            let selected_idx = *order_index
+                .get(&page_idx)
+                .ok_or_else(|| PdfError::DecodeError("page not in plan".to_string()))?;
+            let geom = &geoms[selected_idx];
+            let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
+            Ok(extract_tables_with_metadata_from_objects(
+                chars,
+                edges,
+                geom,
+                &settings,
+                arena_lookup,
+            ))
+        },
     )
 }
 

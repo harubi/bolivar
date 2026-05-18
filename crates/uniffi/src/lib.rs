@@ -1,5 +1,7 @@
 use bolivar_core::PdfError;
-use bolivar_core::api::stream::extract_pages_stream_from_doc;
+use bolivar_core::api::stream::{
+    extract_pages_stream_from_doc, extract_tables_metadata_stream_from_doc_with_geometries,
+};
 use bolivar_core::high_level::{
     ExtractOptions as CoreExtractOptions,
     extract_text_with_document as core_extract_text_with_document,
@@ -14,7 +16,6 @@ use bolivar_core::pdfpage::PDFPage;
 use bolivar_core::table::{
     BBox as CoreTableBBox, PageGeometry, TableCellMetadata as CoreTableCellMetadata,
     TableMetadata as CoreTableMetadata, TableSettings,
-    extract_tables_with_metadata_from_ltpage as core_extract_tables_with_metadata_from_ltpage,
 };
 use bolivar_core::utils::HasBBox;
 use std::io::ErrorKind;
@@ -490,55 +491,42 @@ fn cache_capacity(caching: bool) -> usize {
     if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
 }
 
-fn selected_page_indices(doc: &PDFDocument, options: &CoreExtractOptions) -> Vec<usize> {
-    let mut selected_indices = Vec::new();
-    let mut selected = 0usize;
-    for page_idx in 0..doc.page_tree_len() {
-        if let Some(ref nums) = options.page_numbers
-            && !nums.contains(&page_idx)
-        {
-            continue;
-        }
-        if options.maxpages > 0 && selected >= options.maxpages {
-            break;
-        }
-        selected_indices.push(page_idx);
-        selected += 1;
-    }
-    selected_indices
-}
-
 fn extract_tables_core(
     doc: Arc<PDFDocument>,
     options: CoreExtractOptions,
 ) -> Result<Vec<Table>, BolivarError> {
-    let selected_indices = selected_page_indices(doc.as_ref(), &options);
-    let mut pages = extract_pages_stream_from_doc(Arc::clone(&doc), options.clone())
-        .map_err(BolivarError::from)?;
+    let selected_indices =
+        bolivar_core::api::pipeline::select_pages(
+            doc.page_tree_len(),
+            options.page_numbers.clone(),
+            options.maxpages,
+        );
+    let geometries: Vec<PageGeometry> = selected_indices
+        .iter()
+        .map(|&idx| {
+            doc.get_page_cached(idx)
+                .map(|pdf_page| page_geometry_from_pdf_page(pdf_page.as_ref()))
+                .map_err(BolivarError::from)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let settings = TableSettings::default();
+    let stream = extract_tables_metadata_stream_from_doc_with_geometries(
+        Arc::clone(&doc),
+        options,
+        TableSettings::default(),
+        geometries.clone(),
+    )
+    .map_err(BolivarError::from)?;
 
     let mut tables = Vec::new();
-    for page_idx in selected_indices {
-        let (_, page) = pages
-            .next()
-            .ok_or(BolivarError::RuntimeError)?
-            .map_err(BolivarError::from)?;
-        let pdf_page = doc.get_page_cached(page_idx).map_err(BolivarError::from)?;
-        let page_num = page_number(page.pageid);
-        let geometry = page_geometry_from_pdf_page(pdf_page.as_ref());
-        let page_tables =
-            core_extract_tables_with_metadata_from_ltpage(&page, &geometry, &settings);
-        tables.extend(
-            page_tables
-                .into_iter()
-                .map(|table| table_from_core(page_num, table, &geometry)),
-        );
+    for (i, item) in stream.enumerate() {
+        let (_page_idx, page_tables) = item.map_err(BolivarError::from)?;
+        let geometry = &geometries[i];
+        let page_num = page_number((selected_indices[i] + 1) as i32);
+        for meta in page_tables {
+            tables.push(table_from_core(page_num, meta, geometry));
+        }
     }
-    if pages.next().is_some() {
-        return Err(BolivarError::RuntimeError);
-    }
-
     Ok(tables)
 }
 
@@ -727,23 +715,6 @@ mod tests {
 
         let layout_line = layout_line_from_textline(&TextLineType::Horizontal(line));
         assert_eq!(layout_line.text, "كشف الحساب\n");
-    }
-
-    #[test]
-    fn selected_page_indices_respect_page_numbers_and_max_pages() {
-        let pdf = common::build_minimal_pdf_with_pages(5);
-        let doc = PDFDocument::new_with_cache(&pdf, "", DEFAULT_CACHE_CAPACITY).expect("doc");
-        let options = CoreExtractOptions {
-            password: String::new(),
-            page_numbers: Some(vec![0, 2, 4]),
-            maxpages: 2,
-            caching: true,
-            laparams: None,
-            rotation: 0,
-        };
-
-        let selected = selected_page_indices(&doc, &options);
-        assert_eq!(selected, vec![0, 2]);
     }
 
     #[test]
