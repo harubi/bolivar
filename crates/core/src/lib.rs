@@ -4,7 +4,6 @@
 pub mod api;
 pub mod arena;
 pub mod codec;
-pub mod converter;
 pub mod device;
 pub mod document;
 pub mod error;

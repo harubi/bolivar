@@ -3,7 +3,7 @@
 //! Port of tests from pdfminer.six tests/test_converter.py
 
 use bolivar_core::arena::PageArena;
-use bolivar_core::converter::{
+use bolivar_core::device::{
     HOCRConverter, HTMLConverter, PDFConverter, PDFLayoutAnalyzer, PDFPageAggregator,
     TextConverter, XMLConverter,
 };
@@ -1079,9 +1079,9 @@ mod integration_tests {
 
 mod marked_content_tests {
     use super::*;
-    use bolivar_core::layout::LTItem;
     use bolivar_core::device::PDFDevice;
     use bolivar_core::interp::types::{PDFStackT, PDFStackValue, PDFTextSeq, PDFTextSeqItem};
+    use bolivar_core::layout::LTItem;
     use bolivar_core::pdfstate::PDFTextState;
     use bolivar_core::psparser::PSLiteral;
 
@@ -1391,7 +1391,7 @@ mod pdf_path_tests {
     /// ```
     #[test]
     fn test_paint_path_beziers_check_raw() {
-        use bolivar_core::converter::PDFLayoutAnalyzer;
+        use bolivar_core::device::PDFLayoutAnalyzer;
         use bolivar_core::pdfstate::PDFGraphicState;
         use bolivar_core::utils::MATRIX_IDENTITY;
 
@@ -1541,7 +1541,7 @@ mod color_space_tests {
     /// on LTCurve, LTLine, and LTRect objects when paths are painted.
     #[test]
     fn test_curve_colors() {
-        use bolivar_core::converter::PDFLayoutAnalyzer;
+        use bolivar_core::device::PDFLayoutAnalyzer;
         use bolivar_core::pdfstate::PDFGraphicState;
         use bolivar_core::utils::MATRIX_IDENTITY;
 

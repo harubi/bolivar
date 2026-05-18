@@ -8,7 +8,7 @@
 use bolivar_core::api::stream::{
     extract_pages_stream_from_doc, extract_tables_stream_from_doc_with_settings,
 };
-use bolivar_core::converter::{HOCRConverter, HTMLConverter, TextConverter, XMLConverter};
+use bolivar_core::device::{HOCRConverter, HTMLConverter, TextConverter, XMLConverter};
 use bolivar_core::error::{PdfError, Result};
 use bolivar_core::high_level::{ExtractOptions, extract_pages_with_images_with_document};
 use bolivar_core::layout::LAParams;

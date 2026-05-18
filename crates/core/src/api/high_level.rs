@@ -9,7 +9,7 @@ use std::io::Write;
 
 use crate::api::pipeline::Stream;
 use crate::api::stream::extract_pages_stream_from_doc;
-use crate::converter::{PDFPageAggregator, PDFTableCollector, TextConverter};
+use crate::device::{PDFPageAggregator, PDFTableCollector, TextConverter};
 use crate::document::catalog::DEFAULT_CACHE_CAPACITY;
 use crate::document::{PDFDocument, PDFPage};
 use crate::error::{PdfError, Result};
@@ -641,7 +641,7 @@ mod tests {
             ..Default::default()
         };
 
-        crate::layout::table::edge_probe::take_probe_calls();
+        crate::layout::table::probe::take_probe_calls();
         let out: Vec<PageTables> =
             extract_tables_stream_from_doc_with_settings(Arc::clone(&doc), options, settings)
                 .unwrap()
@@ -649,7 +649,7 @@ mod tests {
                 .collect::<Result<Vec<_>>>()
                 .unwrap();
         assert_eq!(out.len(), 1);
-        let calls = crate::layout::table::edge_probe::take_probe_calls();
+        let calls = crate::layout::table::probe::take_probe_calls();
         assert!(calls > 0);
     }
 

@@ -1713,7 +1713,7 @@ fn rotated_core_page(
 /// TextConverter for converting layout to text.
 #[pyclass(name = "TextConverter")]
 pub struct PyTextConverter {
-    converter: bolivar_core::converter::TextConverter<PyWriter>,
+    converter: bolivar_core::device::TextConverter<PyWriter>,
 }
 
 #[pymethods]
@@ -1732,7 +1732,7 @@ impl PyTextConverter {
         let _ = rsrcmgr;
         let _ = imagewriter;
         let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-        let mut converter = bolivar_core::converter::TextConverter::new(
+        let mut converter = bolivar_core::device::TextConverter::new(
             PyWriter::new(outfp),
             codec,
             pageno,
@@ -1756,7 +1756,7 @@ impl PyTextConverter {
 /// HTMLConverter for converting layout to HTML.
 #[pyclass(name = "HTMLConverter")]
 pub struct PyHTMLConverter {
-    converter: bolivar_core::converter::HTMLConverter<PyWriter>,
+    converter: bolivar_core::device::HTMLConverter<PyWriter>,
 }
 
 #[pymethods]
@@ -1787,13 +1787,13 @@ impl PyHTMLConverter {
         let writer = PyWriter::new(outfp);
         let mut converter =
             if (scale - 1.0).abs() > f64::EPSILON || (fontscale - 1.0).abs() > f64::EPSILON {
-                bolivar_core::converter::HTMLConverter::with_options(
+                bolivar_core::device::HTMLConverter::with_options(
                     writer, codec, pageno, la, scale, fontscale,
                 )
             } else if debug > 0 {
-                bolivar_core::converter::HTMLConverter::with_debug(writer, codec, pageno, la, debug)
+                bolivar_core::device::HTMLConverter::with_debug(writer, codec, pageno, la, debug)
             } else {
-                bolivar_core::converter::HTMLConverter::new(writer, codec, pageno, la)
+                bolivar_core::device::HTMLConverter::new(writer, codec, pageno, la)
             };
 
         converter.set_layoutmode(layoutmode);
@@ -1806,7 +1806,7 @@ impl PyHTMLConverter {
             converter.set_rect_colors(py_any_to_string_map(obj)?);
         } else if debug > 0 {
             converter.set_rect_colors(
-                bolivar_core::converter::HTMLConverter::<PyWriter>::debug_rect_colors(),
+                bolivar_core::device::HTMLConverter::<PyWriter>::debug_rect_colors(),
             );
         }
 
@@ -1814,7 +1814,7 @@ impl PyHTMLConverter {
             converter.set_text_colors(py_any_to_string_map(obj)?);
         } else if debug > 0 {
             converter.set_text_colors(
-                bolivar_core::converter::HTMLConverter::<PyWriter>::debug_text_colors(),
+                bolivar_core::device::HTMLConverter::<PyWriter>::debug_text_colors(),
             );
         }
 
@@ -1835,7 +1835,7 @@ impl PyHTMLConverter {
 /// XMLConverter for converting layout to XML.
 #[pyclass(name = "XMLConverter")]
 pub struct PyXMLConverter {
-    converter: bolivar_core::converter::XMLConverter<PyWriter>,
+    converter: bolivar_core::device::XMLConverter<PyWriter>,
 }
 
 #[pymethods]
@@ -1854,7 +1854,7 @@ impl PyXMLConverter {
         let _ = rsrcmgr;
         let _ = imagewriter;
         let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-        let mut converter = bolivar_core::converter::XMLConverter::with_options(
+        let mut converter = bolivar_core::device::XMLConverter::with_options(
             PyWriter::new(outfp),
             codec,
             pageno,
@@ -1879,7 +1879,7 @@ impl PyXMLConverter {
 /// HOCRConverter for converting layout to hOCR.
 #[pyclass(name = "HOCRConverter")]
 pub struct PyHOCRConverter {
-    converter: bolivar_core::converter::HOCRConverter<PyWriter>,
+    converter: bolivar_core::device::HOCRConverter<PyWriter>,
 }
 
 #[pymethods]
@@ -1898,7 +1898,7 @@ impl PyHOCRConverter {
         let _ = rsrcmgr;
         let _ = imagewriter;
         let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-        let converter = bolivar_core::converter::HOCRConverter::with_options(
+        let converter = bolivar_core::device::HOCRConverter::with_options(
             PyWriter::new(outfp),
             codec,
             pageno,

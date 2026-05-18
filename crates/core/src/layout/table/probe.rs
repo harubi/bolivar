@@ -1,4 +1,4 @@
-use crate::converter::PDFEdgeProbe;
+use crate::device::PDFEdgeProbe;
 use crate::document::{PDFDocument, PDFPage};
 use crate::error::Result;
 use crate::interp::{PDFPageInterpreter, PDFResourceManager};
