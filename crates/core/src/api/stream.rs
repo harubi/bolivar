@@ -1,15 +1,10 @@
 //! Streaming extraction primitives.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, sync_channel};
-use std::thread::JoinHandle;
 
-use rayon::prelude::*;
-
-use crate::api::pipeline::{ExecutionPlan, validate_geometry_count};
-use crate::arena::PageArena;
+use crate::api::pipeline::{
+    ExecutionPlan, Stream, no_precheck, run_stream, validate_geometry_count,
+};
 use crate::converter::{PDFPageAggregator, PDFTableCollector};
 use crate::document::PDFDocument;
 use crate::error::{PdfError, Result};
@@ -25,7 +20,8 @@ use super::high_level::{
     ExtractOptions, PageTables, aggregator_result, collector_result, process_page,
 };
 
-pub const DEFAULT_STREAM_BUFFER_CAPACITY: usize = 50;
+#[cfg(test)]
+use std::sync::atomic::Ordering;
 
 #[cfg(test)]
 static STREAM_USAGE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -34,21 +30,6 @@ static STREAM_USAGE_ENABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 #[cfg(test)]
 static STREAM_USAGE_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
-    std::sync::OnceLock::new();
-#[cfg(test)]
-static STREAM_WORKER_LIFECYCLE_ENABLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-#[cfg(test)]
-static STREAM_WORKERS_STARTED: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-#[cfg(test)]
-static STREAM_WORKERS_EXITED: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-#[cfg(test)]
-static STREAM_WORKERS_ACTIVE: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-#[cfg(test)]
-static STREAM_WORKER_LIFECYCLE_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
     std::sync::OnceLock::new();
 
 #[cfg(test)]
@@ -76,353 +57,45 @@ pub(crate) fn stream_usage_test_guard() -> std::sync::MutexGuard<'static, ()> {
         .expect("stream usage test lock")
 }
 
-#[cfg(test)]
-pub(crate) fn set_stream_worker_lifecycle_enabled(enabled: bool) {
-    STREAM_WORKER_LIFECYCLE_ENABLED.store(enabled, Ordering::Relaxed);
-}
-
-#[cfg(test)]
-pub(crate) fn reset_stream_worker_lifecycle_counters() {
-    STREAM_WORKERS_STARTED.store(0, Ordering::Relaxed);
-    STREAM_WORKERS_EXITED.store(0, Ordering::Relaxed);
-    STREAM_WORKERS_ACTIVE.store(0, Ordering::Relaxed);
-}
-
-#[cfg(test)]
-pub(crate) fn stream_worker_lifecycle_counts() -> (usize, usize, usize) {
-    (
-        STREAM_WORKERS_STARTED.load(Ordering::Relaxed),
-        STREAM_WORKERS_EXITED.load(Ordering::Relaxed),
-        STREAM_WORKERS_ACTIVE.load(Ordering::Relaxed),
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn stream_worker_lifecycle_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    STREAM_WORKER_LIFECYCLE_TEST_LOCK
-        .get_or_init(|| std::sync::Mutex::new(()))
-        .lock()
-        .expect("stream worker lifecycle test lock")
-}
-
-#[cfg(test)]
-struct StreamWorkerLifecycleCounter {
-    tracked: bool,
-}
-
-#[cfg(test)]
-impl StreamWorkerLifecycleCounter {
-    fn start() -> Self {
-        if STREAM_WORKER_LIFECYCLE_ENABLED.load(Ordering::Relaxed) {
-            STREAM_WORKERS_STARTED.fetch_add(1, Ordering::Relaxed);
-            STREAM_WORKERS_ACTIVE.fetch_add(1, Ordering::Relaxed);
-            Self { tracked: true }
-        } else {
-            Self { tracked: false }
-        }
-    }
-}
-
-#[cfg(test)]
-impl Drop for StreamWorkerLifecycleCounter {
-    fn drop(&mut self) {
-        if self.tracked {
-            STREAM_WORKERS_EXITED.fetch_add(1, Ordering::Relaxed);
-            STREAM_WORKERS_ACTIVE.fetch_sub(1, Ordering::Relaxed);
-        }
-    }
-}
-
-type StreamItem = (usize, Result<LTPage>);
-
-fn premature_stream_close_error(stream_name: &str, page_idx: usize) -> PdfError {
-    PdfError::DecodeError(format!(
-        "{stream_name} closed before expected page {page_idx} arrived"
-    ))
-}
-
-pub struct PageStream {
-    rx: Option<Receiver<StreamItem>>,
-    order: Vec<usize>,
-    next_pos: usize,
-    buffer: BTreeMap<usize, Result<LTPage>>,
-    done: bool,
-    failed: bool,
-    max_buffered: usize,
-    cancel: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
-}
-
-pub struct TableStream {
-    rx: Option<Receiver<(usize, Result<PageTables>)>>,
-    order: Vec<usize>,
-    next_pos: usize,
-    buffer: BTreeMap<usize, Result<PageTables>>,
-    done: bool,
-    failed: bool,
-    max_buffered: usize,
-    cancel: Arc<AtomicBool>,
-    worker: Option<JoinHandle<()>>,
-}
-
-impl TableStream {
-    fn new(
-        rx: Receiver<(usize, Result<PageTables>)>,
-        order: Vec<usize>,
-        cancel: Arc<AtomicBool>,
-        worker: JoinHandle<()>,
-    ) -> Self {
-        Self {
-            rx: Some(rx),
-            order,
-            next_pos: 0,
-            buffer: BTreeMap::new(),
-            done: false,
-            failed: false,
-            max_buffered: 0,
-            cancel,
-            worker: Some(worker),
-        }
-    }
-}
-
-impl Iterator for TableStream {
-    type Item = Result<(usize, PageTables)>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.failed {
-            return None;
-        }
-
-        loop {
-            if self.next_pos >= self.order.len() {
-                return None;
-            }
-
-            let expected = self.order[self.next_pos];
-            if let Some(result) = self.buffer.remove(&expected) {
-                self.next_pos += 1;
-                if result.is_err() {
-                    self.failed = true;
-                    self.cancel.store(true, Ordering::Relaxed);
-                }
-                return Some(result.map(|tables| (expected, tables)));
-            }
-
-            if self.done {
-                self.failed = true;
-                self.cancel.store(true, Ordering::Relaxed);
-                return Some(Err(premature_stream_close_error("table stream", expected)));
-            }
-
-            let recv_result = match self.rx.as_ref() {
-                Some(rx) => rx.recv(),
-                None => {
-                    self.done = true;
-                    continue;
-                }
-            };
-
-            match recv_result {
-                Ok((page_idx, result)) => {
-                    self.buffer.insert(page_idx, result);
-                    if self.buffer.len() > self.max_buffered {
-                        self.max_buffered = self.buffer.len();
-                    }
-                }
-                Err(_) => {
-                    self.done = true;
-                }
-            }
-        }
-    }
-}
-
-impl Drop for TableStream {
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-        self.rx.take();
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
-}
-
-impl PageStream {
-    fn new(
-        rx: Receiver<StreamItem>,
-        order: Vec<usize>,
-        cancel: Arc<AtomicBool>,
-        worker: JoinHandle<()>,
-    ) -> Self {
-        Self {
-            rx: Some(rx),
-            order,
-            next_pos: 0,
-            buffer: BTreeMap::new(),
-            done: false,
-            failed: false,
-            max_buffered: 0,
-            cancel,
-            worker: Some(worker),
-        }
-    }
-
-    pub const fn max_buffered(&self) -> usize {
-        self.max_buffered
-    }
-}
-
-impl Iterator for PageStream {
-    type Item = Result<LTPage>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.failed {
-            return None;
-        }
-
-        loop {
-            if self.next_pos >= self.order.len() {
-                return None;
-            }
-
-            let expected = self.order[self.next_pos];
-            if let Some(result) = self.buffer.remove(&expected) {
-                self.next_pos += 1;
-                if result.is_err() {
-                    self.failed = true;
-                    self.cancel.store(true, Ordering::Relaxed);
-                }
-                return Some(result);
-            }
-
-            if self.done {
-                self.failed = true;
-                self.cancel.store(true, Ordering::Relaxed);
-                return Some(Err(premature_stream_close_error("page stream", expected)));
-            }
-
-            let recv_result = match self.rx.as_ref() {
-                Some(rx) => rx.recv(),
-                None => {
-                    self.done = true;
-                    continue;
-                }
-            };
-
-            match recv_result {
-                Ok((page_idx, result)) => {
-                    self.buffer.insert(page_idx, result);
-                    if self.buffer.len() > self.max_buffered {
-                        self.max_buffered = self.buffer.len();
-                    }
-                }
-                Err(_) => {
-                    self.done = true;
-                }
-            }
-        }
-    }
-}
-
-impl Drop for PageStream {
-    fn drop(&mut self) {
-        self.cancel.store(true, Ordering::Relaxed);
-        self.rx.take();
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
-}
-
 pub fn extract_pages_stream_from_doc(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
-) -> Result<PageStream> {
+) -> Result<Stream<LTPage>> {
     #[cfg(test)]
     record_stream_usage();
 
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
-
-    let plan = ExecutionPlan::new(
-        doc.page_index().len(),
-        options.page_numbers.as_deref(),
-        options.maxpages,
-    );
     let laparams = options.laparams.clone();
     let caching = options.caching;
     let rotation = options.rotation;
-    let order = plan.order.clone();
-    let work_order = order.clone();
-    let worker_count = plan.worker_count;
-    let pool = plan.build_pool()?;
 
-    let (tx, rx) = sync_channel(DEFAULT_STREAM_BUFFER_CAPACITY);
-    let cancel = Arc::new(AtomicBool::new(false));
-    let cancel_worker = Arc::clone(&cancel);
-    let doc_worker = Arc::clone(&doc);
-    let next_index = Arc::new(AtomicUsize::new(0));
-    let next_index_worker = Arc::clone(&next_index);
-
-    let worker = std::thread::spawn(move || {
-        #[cfg(test)]
-        let _worker_lifecycle = StreamWorkerLifecycleCounter::start();
-
-        pool.install(|| {
-            (0..worker_count).into_par_iter().for_each(|_| {
-                let mut arena = PageArena::new();
-                loop {
-                    if cancel_worker.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    let pos = next_index_worker.fetch_add(1, Ordering::Relaxed);
-                    if pos >= work_order.len() {
-                        break;
-                    }
-                    let page_idx = work_order[pos];
-                    let page = match doc_worker.get_page_cached(page_idx) {
-                        Ok(page) => page,
-                        Err(e) => {
-                            if tx.send((page_idx, Err(e))).is_err() {
-                                cancel_worker.store(true, Ordering::Relaxed);
-                            }
-                            continue;
-                        }
-                    };
-
-                    arena.reset();
-                    let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-                    let mut aggregator =
-                        PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                    let ltpage = process_page(
-                        page.as_ref(),
-                        &mut aggregator,
-                        &mut rsrcmgr,
-                        rotation,
-                        doc_worker.as_ref(),
-                        aggregator_result,
-                    );
-                    if cancel_worker.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    if tx.send((page_idx, ltpage)).is_err() {
-                        cancel_worker.store(true, Ordering::Relaxed);
-                        return;
-                    }
-                }
-            });
-        });
-    });
-
-    Ok(PageStream::new(rx, order, cancel, worker))
+    run_stream(
+        doc,
+        options.page_numbers,
+        options.maxpages,
+        no_precheck::<LTPage>,
+        move |arena, page_idx, page, doc| {
+            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+            let mut aggregator =
+                PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
+            process_page(
+                page,
+                &mut aggregator,
+                &mut rsrcmgr,
+                rotation,
+                doc,
+                aggregator_result,
+            )
+        },
+    )
 }
 
 pub fn extract_tables_stream_from_doc(
     doc: Arc<PDFDocument>,
     options: ExtractOptions,
-) -> Result<TableStream> {
+) -> Result<Stream<PageTables>> {
     extract_tables_stream_from_doc_with_geometries_internal(
         doc,
         options,
@@ -435,7 +108,7 @@ pub fn extract_tables_stream_from_doc_with_settings(
     doc: Arc<PDFDocument>,
     options: ExtractOptions,
     settings: TableSettings,
-) -> Result<TableStream> {
+) -> Result<Stream<PageTables>> {
     extract_tables_stream_from_doc_with_geometries_internal(doc, options, settings, None)
 }
 
@@ -444,7 +117,7 @@ pub fn extract_tables_stream_from_doc_with_geometries(
     options: ExtractOptions,
     settings: TableSettings,
     geometries: Vec<PageGeometry>,
-) -> Result<TableStream> {
+) -> Result<Stream<PageTables>> {
     let plan = ExecutionPlan::new(
         doc.page_index().len(),
         options.page_numbers.as_deref(),
@@ -572,7 +245,7 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
     mut options: ExtractOptions,
     settings: TableSettings,
     geometries: Option<Arc<Vec<PageGeometry>>>,
-) -> Result<TableStream> {
+) -> Result<Stream<PageTables>> {
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
@@ -582,125 +255,71 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
         options.page_numbers.as_deref(),
         options.maxpages,
     );
+    let order_index: std::collections::HashMap<usize, usize> = plan
+        .order
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (p, i))
+        .collect();
     let laparams = options.laparams.clone();
     let caching = options.caching;
-    let order = plan.order.clone();
-    let work_order = order.clone();
-    let worker_count = plan.worker_count;
-    let pool = plan.build_pool()?;
+    let settings_for_pre = settings.clone();
+    let settings_for_run = settings;
+    let geoms = geometries;
 
-    let (tx, rx) = sync_channel(DEFAULT_STREAM_BUFFER_CAPACITY);
-    let cancel = Arc::new(AtomicBool::new(false));
-    let cancel_worker = Arc::clone(&cancel);
-    let doc_worker = Arc::clone(&doc);
-    let next_index = Arc::new(AtomicUsize::new(0));
-    let next_index_worker = Arc::clone(&next_index);
-    let geom_worker = geometries.clone();
-
-    let worker = std::thread::spawn(move || {
-        #[cfg(test)]
-        let _worker_lifecycle = StreamWorkerLifecycleCounter::start();
-
-        pool.install(|| {
-            (0..worker_count).into_par_iter().for_each(|_| {
-                let mut arena = PageArena::new();
-                loop {
-                    if cancel_worker.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    let pos = next_index_worker.fetch_add(1, Ordering::Relaxed);
-                    if pos >= work_order.len() {
-                        break;
-                    }
-                    let page_idx = work_order[pos];
-                    let page = match doc_worker.get_page_cached(page_idx) {
-                        Ok(page) => page,
-                        Err(e) => {
-                            if tx.send((page_idx, Err(e))).is_err() {
-                                cancel_worker.store(true, Ordering::Relaxed);
-                            }
-                            continue;
-                        }
-                    };
-
-                    let has_edges = match page_has_edges(&page, doc_worker.as_ref(), caching) {
-                        Ok(has_edges) => has_edges,
-                        Err(e) => {
-                            if tx.send((page_idx, Err(e))).is_err() {
-                                cancel_worker.store(true, Ordering::Relaxed);
-                            }
-                            continue;
-                        }
-                    };
-                    if should_skip_tables(&settings, has_edges) {
-                        if cancel_worker.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        if tx.send((page_idx, Ok(Vec::new()))).is_err() {
-                            cancel_worker.store(true, Ordering::Relaxed);
-                            return;
-                        }
-                        continue;
-                    }
-
-                    arena.reset();
-                    let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-                    let mut collector =
-                        PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                    let page_arena = process_page(
-                        page.as_ref(),
-                        &mut collector,
-                        &mut rsrcmgr,
-                        0,
-                        doc_worker.as_ref(),
-                        |c| collector_result(c),
-                    );
-                    let tables = match page_arena {
-                        Ok(page_arena) => {
-                            let arena_lookup = collector.arena_lookup();
-                            let geom = match geom_worker.as_ref() {
-                                Some(geoms) => geoms[pos].clone(),
-                                None => PageGeometry {
-                                    page_bbox: page_arena.bbox,
-                                    mediabox: page_arena.bbox,
-                                    initial_doctop: 0.0,
-                                    force_crop: false,
-                                },
-                            };
-                            let (chars, edges) =
-                                collect_table_objects_from_arena(&page_arena, &geom);
-                            Ok(extract_tables_from_objects(
-                                chars,
-                                edges,
-                                &geom,
-                                &settings,
-                                arena_lookup,
-                            ))
-                        }
-                        Err(err) => Err(err),
-                    };
-                    if cancel_worker.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    if tx.send((page_idx, tables)).is_err() {
-                        cancel_worker.store(true, Ordering::Relaxed);
-                        return;
-                    }
-                }
-            });
-        });
-    });
-
-    Ok(TableStream::new(rx, order, cancel, worker))
+    run_stream(
+        doc,
+        options.page_numbers.clone(),
+        options.maxpages,
+        move |_page_idx, page, doc| {
+            // Cheap edge probe before running the full interpreter — preserves the
+            // original skip path so text-only PDFs don't pay table-collector cost.
+            let has_edges = page_has_edges(page, doc, caching)?;
+            if should_skip_tables(&settings_for_pre, has_edges) {
+                Ok(Some(Vec::new()))
+            } else {
+                Ok(None)
+            }
+        },
+        move |arena, page_idx, page, doc| {
+            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+            let mut collector =
+                PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, arena);
+            let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
+                collector_result(c)
+            })?;
+            let arena_lookup = collector.arena_lookup();
+            let selected_idx = *order_index
+                .get(&page_idx)
+                .ok_or_else(|| PdfError::DecodeError("page not in plan".to_string()))?;
+            let geom = match geoms.as_ref() {
+                Some(g) => g[selected_idx].clone(),
+                None => PageGeometry {
+                    page_bbox: page_arena.bbox,
+                    mediabox: page_arena.bbox,
+                    initial_doctop: 0.0,
+                    force_crop: false,
+                },
+            };
+            let (chars, edges) = collect_table_objects_from_arena(&page_arena, &geom);
+            Ok(extract_tables_from_objects(
+                chars,
+                edges,
+                &geom,
+                &settings_for_run,
+                arena_lookup,
+            ))
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn sample_page(page_idx: usize) -> LTPage {
-        LTPage::new(page_idx as i32 + 1, (0.0, 0.0, 200.0, 200.0), 0.0)
-    }
+    use crate::api::pipeline::{
+        reset_stream_worker_lifecycle_counters, set_stream_worker_lifecycle_enabled,
+        stream_worker_lifecycle_counts, stream_worker_lifecycle_test_guard,
+    };
 
     fn full_page_geometries(page_count: usize) -> Vec<PageGeometry> {
         let geom = PageGeometry {
@@ -783,85 +402,12 @@ mod tests {
         out
     }
 
-    fn spawn_drop_probe_worker(
-        cancel: Arc<AtomicBool>,
-        finished: Arc<AtomicBool>,
-    ) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
-            while !cancel.load(Ordering::Relaxed) {
-                std::thread::yield_now();
-            }
-            std::thread::sleep(std::time::Duration::from_millis(25));
-            finished.store(true, Ordering::Relaxed);
-        })
-    }
-
-    fn spawn_finished_worker() -> std::thread::JoinHandle<()> {
-        std::thread::spawn(|| {})
-    }
-
-    #[test]
-    fn page_stream_drop_joins_worker_on_early_drop() {
-        let cancel = Arc::new(AtomicBool::new(false));
-        let finished = Arc::new(AtomicBool::new(false));
-        let worker = spawn_drop_probe_worker(Arc::clone(&cancel), Arc::clone(&finished));
-        let (_tx, rx) = sync_channel::<StreamItem>(1);
-        let stream = PageStream::new(rx, Vec::new(), cancel, worker);
-        drop(stream);
-        assert!(finished.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn page_stream_errors_when_channel_closes_before_expected_pages_arrive() {
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = sync_channel::<StreamItem>(2);
-        tx.send((0, Ok(sample_page(0)))).unwrap();
-        drop(tx);
-
-        let err = PageStream::new(rx, vec![0, 1], cancel, spawn_finished_worker())
-            .collect::<Result<Vec<_>>>()
-            .unwrap_err();
-
-        match err {
-            crate::error::PdfError::DecodeError(message) => {
-                assert!(message.contains("page 1"), "unexpected message: {message}");
-            }
-            other => panic!("expected DecodeError, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn table_stream_drop_joins_worker_on_early_drop() {
-        let cancel = Arc::new(AtomicBool::new(false));
-        let finished = Arc::new(AtomicBool::new(false));
-        let worker = spawn_drop_probe_worker(Arc::clone(&cancel), Arc::clone(&finished));
-        let (_tx, rx) = sync_channel::<(usize, Result<PageTables>)>(1);
-        let stream = TableStream::new(rx, Vec::new(), cancel, worker);
-        drop(stream);
-        assert!(finished.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn table_stream_errors_when_channel_closes_before_expected_pages_arrive() {
-        let cancel = Arc::new(AtomicBool::new(false));
-        let (tx, rx) = sync_channel::<(usize, Result<PageTables>)>(2);
-        tx.send((0, Ok(Vec::new()))).unwrap();
-        drop(tx);
-
-        let err = TableStream::new(rx, vec![0, 1], cancel, spawn_finished_worker())
-            .collect::<Result<Vec<_>>>()
-            .unwrap_err();
-
-        match err {
-            crate::error::PdfError::DecodeError(message) => {
-                assert!(message.contains("page 1"), "unexpected message: {message}");
-            }
-            other => panic!("expected DecodeError, got {other:?}"),
-        }
-    }
-
     #[test]
     fn test_page_stream_only_creates_requested_pages() {
+        // Hold the stream-usage guard: this test calls `extract_pages_stream_from_doc`
+        // which bumps the global STREAM_USAGE counter when the flag is enabled by a
+        // peer test, and we don't want to race with those checks.
+        let _guard = stream_usage_test_guard();
         let pdf = build_minimal_pdf_with_pages(5);
         let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
         crate::document::page::reset_page_create_count(doc.as_ref());

@@ -21,4 +21,4 @@ pub use high_level::{
     extract_pages_with_images_with_document, extract_text, extract_text_to_fp,
     extract_text_with_document,
 };
-pub use stream::PageStream;
+pub use pipeline::Stream;

@@ -474,7 +474,7 @@ fn batch_and_stream_pages_match_for_same_document() {
         .unwrap();
 
     assert_eq!(batch.len(), stream.len());
-    for (batch_page, stream_page) in batch.iter().zip(stream.iter()) {
+    for (batch_page, (_, stream_page)) in batch.iter().zip(stream.iter()) {
         assert_eq!(batch_page.bbox(), stream_page.bbox());
     }
 }
