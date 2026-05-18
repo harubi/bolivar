@@ -7,9 +7,6 @@
 
 use std::io::Write;
 
-use rayon::prelude::*;
-
-use crate::api::pipeline::ExecutionPlan;
 use crate::api::stream::{
     PageStream, extract_pages_stream_from_doc, extract_tables_stream_from_doc_with_geometries,
     extract_tables_stream_from_doc_with_settings,
@@ -263,41 +260,31 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
 ) -> Result<()> {
     // Get LAParams (use default if not provided)
     let default_laparams = LAParams::default();
-    let laparams = laparams.unwrap_or(&default_laparams);
+    let laparams = laparams.unwrap_or(&default_laparams).clone();
 
     // Create text converter
     let mut converter = TextConverter::new(writer, "utf-8", 1, Some(laparams.clone()), false);
 
-    let plan = ExecutionPlan::new(doc.page_index().len(), page_numbers, maxpages);
-    let pool = plan.build_pool()?;
-    let mut results: Vec<(usize, Result<LTPage>)> = pool.install(|| {
-        plan.order
-            .par_iter()
-            .map_init(PageArena::new, |arena, &page_idx| {
-                let page = match doc.get_page_cached(page_idx) {
-                    Ok(page) => page,
-                    Err(e) => return (page_idx, Err(e)),
-                };
-                arena.reset();
-                let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-                let mut aggregator =
-                    PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1, arena);
-                let ltpage = process_page(
-                    page.as_ref(),
-                    &mut aggregator,
-                    &mut rsrcmgr,
-                    rotation,
-                    doc,
-                    aggregator_result,
-                );
-                (page_idx, ltpage)
-            })
-            .collect()
-    });
+    let results = crate::api::pipeline::run_batch(
+        doc,
+        page_numbers,
+        maxpages,
+        |arena, page_idx, page, doc| {
+            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+            let mut aggregator =
+                PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1, arena);
+            process_page(
+                page,
+                &mut aggregator,
+                &mut rsrcmgr,
+                rotation,
+                doc,
+                aggregator_result,
+            )
+        },
+    )?;
 
-    results.sort_by_key(|(page_idx, _)| *page_idx);
-    for (_, result) in results {
-        let ltpage = result?;
+    for (_, ltpage) in results {
         converter.receive_layout(ltpage);
     }
 
@@ -471,44 +458,30 @@ pub fn extract_pages_with_document(
         options.laparams = Some(LAParams::default());
     }
 
-    let plan = ExecutionPlan::new(
-        doc.page_index().len(),
-        options.page_numbers.as_deref(),
-        options.maxpages,
-    );
     let laparams = options.laparams.clone();
     let caching = options.caching;
     let rotation = options.rotation;
-    let pool = plan.build_pool()?;
 
-    let mut results: Vec<(usize, Result<LTPage>)> = pool.install(|| {
-        plan.order
-            .par_iter()
-            .map_init(PageArena::new, |arena, &page_idx| {
-                let page = match doc.get_page_cached(page_idx) {
-                    Ok(page) => page,
-                    Err(e) => return (page_idx, Err(e)),
-                };
+    let results = crate::api::pipeline::run_batch(
+        doc,
+        options.page_numbers.as_deref(),
+        options.maxpages,
+        |arena, page_idx, page, doc| {
+            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+            let mut aggregator =
+                PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
+            process_page(
+                page,
+                &mut aggregator,
+                &mut rsrcmgr,
+                rotation,
+                doc,
+                aggregator_result,
+            )
+        },
+    )?;
 
-                arena.reset();
-                let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-                let mut aggregator =
-                    PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
-                let ltpage = process_page(
-                    page.as_ref(),
-                    &mut aggregator,
-                    &mut rsrcmgr,
-                    rotation,
-                    doc,
-                    aggregator_result,
-                );
-                (page_idx, ltpage)
-            })
-            .collect()
-    });
-
-    results.sort_by_key(|(page_idx, _)| *page_idx);
-    results.into_iter().map(|(_, result)| result).collect()
+    Ok(results.into_iter().map(|(_, p)| p).collect())
 }
 
 /// Extract LTPage objects from an already-parsed PDFDocument while exporting images.

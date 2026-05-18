@@ -476,43 +476,41 @@ pub fn extract_text_pages_from_doc_with_geometries(
         options.maxpages,
     );
     validate_geometry_count(&plan.order, geometries.len())?;
+
+    let order_index: std::collections::HashMap<usize, usize> = plan
+        .order
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (p, i))
+        .collect();
     let laparams = options.laparams.clone();
     let caching = options.caching;
-    let pool = plan.build_pool()?;
-    let order = plan.order;
+    let geoms = Arc::new(geometries);
 
-    let mut results: Vec<(usize, String)> = pool.install(|| {
-        order
-            .par_iter()
-            .enumerate()
-            .map(|(selected_idx, &page_idx)| {
-                let page = doc.get_page_cached(page_idx)?;
-                let mut arena = PageArena::new();
-                arena.reset();
-                let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-                let mut collector =
-                    PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                let page_arena = process_page(
-                    page.as_ref(),
-                    &mut collector,
-                    &mut rsrcmgr,
-                    0,
-                    doc.as_ref(),
-                    |c| collector_result(c),
-                )?;
-                let arena_lookup = collector.arena_lookup();
-                let geom = &geometries[selected_idx];
-                let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
-                Ok((
-                    page_idx,
-                    extract_text_from_objects(chars, settings.clone(), arena_lookup),
-                ))
-            })
-            .collect::<Result<Vec<_>>>()
-    })?;
-
-    results.sort_by_key(|(idx, _)| *idx);
-    Ok(results)
+    crate::api::pipeline::run_batch(
+        doc.as_ref(),
+        options.page_numbers.as_deref(),
+        options.maxpages,
+        |arena, page_idx, page, doc| {
+            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+            let mut collector =
+                PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, arena);
+            let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
+                collector_result(c)
+            })?;
+            let arena_lookup = collector.arena_lookup();
+            let selected_idx = *order_index
+                .get(&page_idx)
+                .ok_or_else(|| PdfError::DecodeError("page not in plan".to_string()))?;
+            let geom = &geoms[selected_idx];
+            let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
+            Ok(extract_text_from_objects(
+                chars,
+                settings.clone(),
+                arena_lookup,
+            ))
+        },
+    )
 }
 
 /// Extract per-page words for selected pages using arena-backed collection.
@@ -532,43 +530,41 @@ pub fn extract_words_pages_from_doc_with_geometries(
         options.maxpages,
     );
     validate_geometry_count(&plan.order, geometries.len())?;
+
+    let order_index: std::collections::HashMap<usize, usize> = plan
+        .order
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (p, i))
+        .collect();
     let laparams = options.laparams.clone();
     let caching = options.caching;
-    let pool = plan.build_pool()?;
-    let order = plan.order;
+    let geoms = Arc::new(geometries);
 
-    let mut results: Vec<(usize, Vec<WordObj>)> = pool.install(|| {
-        order
-            .par_iter()
-            .enumerate()
-            .map(|(selected_idx, &page_idx)| {
-                let page = doc.get_page_cached(page_idx)?;
-                let mut arena = PageArena::new();
-                arena.reset();
-                let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-                let mut collector =
-                    PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, &mut arena);
-                let page_arena = process_page(
-                    page.as_ref(),
-                    &mut collector,
-                    &mut rsrcmgr,
-                    0,
-                    doc.as_ref(),
-                    |c| collector_result(c),
-                )?;
-                let arena_lookup = collector.arena_lookup();
-                let geom = &geometries[selected_idx];
-                let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
-                Ok((
-                    page_idx,
-                    extract_words_from_objects(chars, settings.clone(), arena_lookup),
-                ))
-            })
-            .collect::<Result<Vec<_>>>()
-    })?;
-
-    results.sort_by_key(|(idx, _)| *idx);
-    Ok(results)
+    crate::api::pipeline::run_batch(
+        doc.as_ref(),
+        options.page_numbers.as_deref(),
+        options.maxpages,
+        |arena, page_idx, page, doc| {
+            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+            let mut collector =
+                PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, arena);
+            let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
+                collector_result(c)
+            })?;
+            let arena_lookup = collector.arena_lookup();
+            let selected_idx = *order_index
+                .get(&page_idx)
+                .ok_or_else(|| PdfError::DecodeError("page not in plan".to_string()))?;
+            let geom = &geoms[selected_idx];
+            let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
+            Ok(extract_words_from_objects(
+                chars,
+                settings.clone(),
+                arena_lookup,
+            ))
+        },
+    )
 }
 
 fn extract_tables_stream_from_doc_with_geometries_internal(
