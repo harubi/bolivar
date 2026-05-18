@@ -79,6 +79,6 @@ fn test_stream_orders_pages() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
-    let page_ids: Vec<i32> = pages.iter().map(|page| page.pageid).collect();
+    let page_ids: Vec<i32> = pages.iter().map(|(_, page)| page.pageid).collect();
     assert_eq!(page_ids, vec![1, 2, 3]);
 }

@@ -7,8 +7,9 @@
 
 use std::io::Write;
 
+use crate::api::pipeline::Stream;
 use crate::api::stream::{
-    PageStream, extract_pages_stream_from_doc, extract_tables_stream_from_doc_with_geometries,
+    extract_pages_stream_from_doc, extract_tables_stream_from_doc_with_geometries,
     extract_tables_stream_from_doc_with_settings,
 };
 use crate::arena::PageArena;
@@ -389,11 +390,11 @@ impl PageIterator {
 
 /// Extract and stream LTPage objects from PDF data in order.
 ///
-/// Returns a PageStream that yields ordered LTPage results.
+/// Returns a `Stream<LTPage>` that yields ordered `(page_idx, LTPage)` results.
 pub fn extract_pages_stream(
     pdf_data: &[u8],
     options: Option<ExtractOptions>,
-) -> Result<PageStream> {
+) -> Result<Stream<LTPage>> {
     let mut options = options.unwrap_or_default();
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
@@ -442,7 +443,7 @@ pub fn extract_pages(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result
     }
 
     let stream = extract_pages_stream(pdf_data, Some(options))?;
-    let pages: Vec<Result<LTPage>> = stream.collect();
+    let pages: Vec<Result<LTPage>> = stream.map(|r| r.map(|(_, p)| p)).collect();
 
     Ok(PageIterator {
         pages: pages.into_iter(),

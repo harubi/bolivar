@@ -433,9 +433,8 @@ fn extract_layout_pages_core(
     let pages_iter = extract_pages_stream_from_doc(doc, options).map_err(BolivarError::from)?;
     let mut pages = Vec::new();
     for page_result in pages_iter {
-        pages.push(layout_page_from_ltpage(
-            &page_result.map_err(BolivarError::from)?,
-        ));
+        let (_, page) = page_result.map_err(BolivarError::from)?;
+        pages.push(layout_page_from_ltpage(&page));
     }
     Ok(pages)
 }
@@ -521,7 +520,7 @@ fn extract_tables_core(
 
     let mut tables = Vec::new();
     for page_idx in selected_indices {
-        let page = pages
+        let (_, page) = pages
             .next()
             .ok_or(BolivarError::RuntimeError)?
             .map_err(BolivarError::from)?;

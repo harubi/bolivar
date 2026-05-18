@@ -3,8 +3,9 @@
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
+use bolivar_core::api::pipeline::Stream;
 use bolivar_core::api::stream::{
-    PageStream, extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
+    extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
     extract_words_pages_from_doc_with_geometries as core_extract_words_pages_from_doc_with_geometries,
 };
 use bolivar_core::error::Result as CoreResult;
@@ -74,7 +75,7 @@ impl<S> AsyncStreamState<S> {
 
 impl<S> AsyncStreamState<S>
 where
-    S: Iterator<Item = CoreResult<LTPage>>,
+    S: Iterator<Item = CoreResult<(usize, LTPage)>>,
 {
     fn next_step(&mut self) -> AsyncStreamStep<LTPage> {
         if self.done {
@@ -87,7 +88,7 @@ where
         };
 
         match stream.next() {
-            Some(Ok(page)) => AsyncStreamStep::Item(page),
+            Some(Ok((_, page))) => AsyncStreamStep::Item(page),
             Some(Err(err)) => {
                 self.close();
                 AsyncStreamStep::Error(format!("Failed to extract pages: {err}"))
@@ -102,7 +103,7 @@ where
 
 #[pyclass]
 pub struct AsyncPageStream {
-    state: Arc<StdMutex<AsyncStreamState<PageStream>>>,
+    state: Arc<StdMutex<AsyncStreamState<Stream<LTPage>>>>,
 }
 
 #[pymethods]
@@ -245,7 +246,7 @@ mod tests {
     }
 
     impl Iterator for ProbeStream {
-        type Item = CoreResult<LTPage>;
+        type Item = CoreResult<(usize, LTPage)>;
 
         fn next(&mut self) -> Option<Self::Item> {
             None
@@ -274,7 +275,7 @@ mod tests {
     struct ErrorStream;
 
     impl Iterator for ErrorStream {
-        type Item = CoreResult<LTPage>;
+        type Item = CoreResult<(usize, LTPage)>;
 
         fn next(&mut self) -> Option<Self::Item> {
             Some(Err(PdfError::DecodeError(
