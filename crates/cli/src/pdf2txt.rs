@@ -5,7 +5,7 @@
 //!
 //! Port of pdfminer.six tools/pdf2txt.py
 
-use bolivar_core::api::stream::{
+use bolivar_core::extract::{
     extract_pages_stream_from_doc, extract_tables_stream_from_doc_with_settings,
 };
 use bolivar_core::device::{HOCRConverter, HTMLConverter, TextConverter, XMLConverter};

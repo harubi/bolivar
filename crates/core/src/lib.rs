@@ -1,16 +1,18 @@
 #![feature(portable_simd)]
 //! bolivar - A Rust port of pdfminer.six for PDF text extraction.
 
-pub mod api;
 pub mod arena;
 pub mod codec;
 pub mod device;
 pub mod document;
+pub mod engine;
 pub mod error;
+pub mod extract;
 pub mod font;
 
-// Re-export high_level for backwards compatibility
-pub use api::high_level;
+// Re-export extract as `high_level` for backwards compatibility with callers
+// that imported the legacy pdfminer.six-shaped path.
+pub use extract as high_level;
 pub mod image;
 pub mod interp;
 pub mod layout;

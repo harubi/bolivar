@@ -1,6 +1,5 @@
-use bolivar_core::api::ExtractOptions;
-use bolivar_core::api::pipeline;
-use bolivar_core::api::stream::{
+use bolivar_core::engine::{self, ExtractOptions};
+use bolivar_core::extract::{
     extract_tables_stream_from_doc, extract_tables_stream_from_doc_with_geometries,
 };
 use bolivar_core::document::PDFDocument;
@@ -88,7 +87,7 @@ fn test_table_stream_orders_pages() {
 
 #[test]
 fn planner_rejects_geometry_count_mismatch_against_selected_pages() {
-    let err = pipeline::validate_geometry_count(&[0, 2], 3).unwrap_err();
+    let err = engine::validate_geometry_count(&[0, 2], 3).unwrap_err();
     assert!(err.to_string().contains("geometry count mismatch"));
 }
 
