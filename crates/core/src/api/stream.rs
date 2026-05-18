@@ -21,7 +21,9 @@ use crate::table::{
     extract_tables_from_objects, extract_text_from_objects, extract_words_from_objects,
 };
 
-use super::high_level::{ExtractOptions, PageTables, process_page};
+use super::high_level::{
+    ExtractOptions, PageTables, aggregator_result, collector_result, process_page,
+};
 
 pub const DEFAULT_STREAM_BUFFER_CAPACITY: usize = 50;
 
@@ -400,7 +402,7 @@ pub fn extract_pages_stream_from_doc(
                         &mut rsrcmgr,
                         rotation,
                         doc_worker.as_ref(),
-                        |agg| Ok(agg.get_result().clone()),
+                        aggregator_result,
                     );
                     if cancel_worker.load(Ordering::Relaxed) {
                         return;
@@ -496,11 +498,7 @@ pub fn extract_text_pages_from_doc_with_geometries(
                     &mut rsrcmgr,
                     0,
                     doc.as_ref(),
-                    |c| {
-                        c.take_result().ok_or_else(|| {
-                            PdfError::DecodeError("table collector produced no result".to_string())
-                        })
-                    },
+                    |c| collector_result(c),
                 )?;
                 let arena_lookup = collector.arena_lookup();
                 let geom = &geometries[selected_idx];
@@ -556,11 +554,7 @@ pub fn extract_words_pages_from_doc_with_geometries(
                     &mut rsrcmgr,
                     0,
                     doc.as_ref(),
-                    |c| {
-                        c.take_result().ok_or_else(|| {
-                            PdfError::DecodeError("table collector produced no result".to_string())
-                        })
-                    },
+                    |c| collector_result(c),
                 )?;
                 let arena_lookup = collector.arena_lookup();
                 let geom = &geometries[selected_idx];
@@ -663,13 +657,7 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                         &mut rsrcmgr,
                         0,
                         doc_worker.as_ref(),
-                        |c| {
-                            c.take_result().ok_or_else(|| {
-                                PdfError::DecodeError(
-                                    "table collector produced no result".to_string(),
-                                )
-                            })
-                        },
+                        |c| collector_result(c),
                     );
                     let tables = match page_arena {
                         Ok(page_arena) => {
