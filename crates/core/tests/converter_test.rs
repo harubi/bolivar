@@ -1268,7 +1268,7 @@ mod marked_content_tests {
 
 mod pdf_path_tests {
     use bolivar_core::arena::PageArena;
-    use bolivar_core::high_level::extract_pages;
+    use bolivar_core::high_level::extract_pages_stream;
     use bolivar_core::layout::LTItem;
 
     /// Test that pr-00530-ml-lines.pdf produces 6 LTLine objects.
@@ -1284,8 +1284,9 @@ mod pdf_path_tests {
     #[test]
     fn test_paint_path_ml_lines_from_pdf() {
         let pdf_data = include_bytes!("fixtures/contrib/pr-00530-ml-lines.pdf");
-        let pages: Vec<_> = extract_pages(pdf_data, None)
+        let pages: Vec<_> = extract_pages_stream(pdf_data, None)
             .expect("Failed to extract pages")
+            .map(|r| r.map(|(_, p)| p))
             .collect();
 
         assert!(!pages.is_empty(), "PDF should have at least one page");
@@ -1332,8 +1333,9 @@ mod pdf_path_tests {
     #[test]
     fn test_linewidth() {
         let pdf_data = include_bytes!("fixtures/contrib/issue_1165_linewidth.pdf");
-        let pages: Vec<_> = extract_pages(pdf_data, None)
+        let pages: Vec<_> = extract_pages_stream(pdf_data, None)
             .expect("Failed to extract pages")
+            .map(|r| r.map(|(_, p)| p))
             .collect();
 
         assert!(!pages.is_empty(), "PDF should have at least one page");
@@ -1442,7 +1444,7 @@ mod pdf_path_tests {
 
 mod color_space_tests {
     use bolivar_core::arena::PageArena;
-    use bolivar_core::high_level::extract_pages;
+    use bolivar_core::high_level::extract_pages_stream;
     use bolivar_core::layout::{LTChar, LTItem};
 
     /// Helper to recursively collect all LTChar items from a page
@@ -1486,8 +1488,9 @@ mod color_space_tests {
     #[test]
     fn test_do_rg() {
         let pdf_data = include_bytes!("fixtures/contrib/issue-00352-hash-twos-complement.pdf");
-        let pages: Vec<_> = extract_pages(pdf_data, None)
+        let pages: Vec<_> = extract_pages_stream(pdf_data, None)
             .expect("Failed to extract pages")
+            .map(|r| r.map(|(_, p)| p))
             .collect();
 
         assert!(!pages.is_empty(), "PDF should have at least one page");
@@ -1662,8 +1665,9 @@ mod color_space_tests {
     #[test]
     fn test_pattern_colors_pdf_parses() {
         let pdf_data = include_bytes!("fixtures/test_pattern_colors.pdf");
-        let pages: Vec<_> = extract_pages(pdf_data, None)
+        let pages: Vec<_> = extract_pages_stream(pdf_data, None)
             .expect("Failed to extract pages from test_pattern_colors.pdf")
+            .map(|r| r.map(|(_, p)| p))
             .collect();
 
         // The PDF should have at least one page

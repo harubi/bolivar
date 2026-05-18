@@ -4,7 +4,6 @@ use bolivar_core::api::stream::{
     extract_tables_stream_from_doc, extract_tables_stream_from_doc_with_geometries,
 };
 use bolivar_core::document::PDFDocument;
-use bolivar_core::high_level::extract_tables_with_document_geometries;
 use bolivar_core::table::{PageGeometry, TableSettings};
 use std::sync::Arc;
 
@@ -109,12 +108,14 @@ fn batch_and_stream_tables_match_for_selected_pages() {
         force_crop: false,
     };
 
-    let batch = extract_tables_with_document_geometries(
+    let batch = extract_tables_stream_from_doc_with_geometries(
         Arc::clone(&doc),
         options.clone(),
-        &settings,
-        std::slice::from_ref(&geometry),
+        settings.clone(),
+        vec![geometry.clone()],
     )
+    .unwrap()
+    .collect::<Result<Vec<_>, _>>()
     .unwrap();
     let stream = extract_tables_stream_from_doc_with_geometries(
         Arc::clone(&doc),

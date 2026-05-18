@@ -132,13 +132,13 @@ pub fn extract_tables_stream_from_doc_with_geometries(
     )
 }
 
-/// Extract per-page text for selected pages using arena-backed collection.
-pub fn extract_text_pages_from_doc_with_geometries(
+/// Stream per-page text for selected pages using arena-backed collection.
+pub fn extract_text_stream_from_doc_with_geometries(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
     settings: TextSettings,
     geometries: Vec<PageGeometry>,
-) -> Result<Vec<(usize, String)>> {
+) -> Result<Stream<String>> {
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
@@ -160,11 +160,12 @@ pub fn extract_text_pages_from_doc_with_geometries(
     let caching = options.caching;
     let geoms = Arc::new(geometries);
 
-    crate::api::pipeline::run_batch(
-        doc.as_ref(),
-        options.page_numbers.as_deref(),
+    run_stream(
+        doc,
+        options.page_numbers,
         options.maxpages,
-        |arena, page_idx, page, doc| {
+        no_precheck::<String>,
+        move |arena, page_idx, page, doc| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut collector =
                 PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, arena);
@@ -186,13 +187,13 @@ pub fn extract_text_pages_from_doc_with_geometries(
     )
 }
 
-/// Extract per-page words for selected pages using arena-backed collection.
-pub fn extract_words_pages_from_doc_with_geometries(
+/// Stream per-page words for selected pages using arena-backed collection.
+pub fn extract_words_stream_from_doc_with_geometries(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
     settings: TextSettings,
     geometries: Vec<PageGeometry>,
-) -> Result<Vec<(usize, Vec<WordObj>)>> {
+) -> Result<Stream<Vec<WordObj>>> {
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
@@ -214,11 +215,12 @@ pub fn extract_words_pages_from_doc_with_geometries(
     let caching = options.caching;
     let geoms = Arc::new(geometries);
 
-    crate::api::pipeline::run_batch(
-        doc.as_ref(),
-        options.page_numbers.as_deref(),
+    run_stream(
+        doc,
+        options.page_numbers,
         options.maxpages,
-        |arena, page_idx, page, doc| {
+        no_precheck::<Vec<WordObj>>,
+        move |arena, page_idx, page, doc| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut collector =
                 PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, arena);
@@ -463,12 +465,14 @@ mod tests {
 
         set_stream_usage_enabled(true);
         take_stream_usage();
-        let out = extract_text_pages_from_doc_with_geometries(
+        let out = extract_text_stream_from_doc_with_geometries(
             Arc::clone(&doc),
             options,
             crate::table::TextSettings::default(),
             geoms,
         )
+        .unwrap()
+        .collect::<Result<Vec<_>>>()
         .unwrap();
         let usage = take_stream_usage();
         set_stream_usage_enabled(false);
@@ -487,12 +491,14 @@ mod tests {
 
         set_stream_usage_enabled(true);
         take_stream_usage();
-        let out = extract_words_pages_from_doc_with_geometries(
+        let out = extract_words_stream_from_doc_with_geometries(
             Arc::clone(&doc),
             options,
             crate::table::TextSettings::default(),
             geoms,
         )
+        .unwrap()
+        .collect::<Result<Vec<_>>>()
         .unwrap();
         let usage = take_stream_usage();
         set_stream_usage_enabled(false);

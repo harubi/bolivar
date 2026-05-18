@@ -15,8 +15,10 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, criterion_group, criterion_main};
 
+use bolivar_core::api::stream::extract_pages_stream_from_doc;
 use bolivar_core::document::PDFDocument;
-use bolivar_core::high_level::{ExtractOptions, extract_pages_with_document};
+use bolivar_core::error::Result as CoreResult;
+use bolivar_core::high_level::ExtractOptions;
 use bolivar_core::layout::LAParams;
 use bolivar_core::table::{
     PageGeometry, TableSettings, TextSettings, extract_tables_from_ltpage,
@@ -39,14 +41,17 @@ fn bench_table_extract(c: &mut BenchCriterion) {
     configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
-        let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
-        let pages = extract_pages_with_document(
-            &doc,
+        let doc = std::sync::Arc::new(PDFDocument::new(&fx.bytes, "").expect("parse PDF"));
+        let pages: Vec<_> = extract_pages_stream_from_doc(
+            std::sync::Arc::clone(&doc),
             ExtractOptions {
                 laparams: Some(LAParams::default()),
                 ..Default::default()
             },
         )
+        .expect("extract pages")
+        .map(|r| r.map(|(_, p)| p))
+        .collect::<CoreResult<Vec<_>>>()
         .expect("extract pages");
         let geoms: Vec<PageGeometry> = pages
             .iter()
@@ -90,14 +95,17 @@ fn bench_text_extract(c: &mut BenchCriterion) {
     configure_group_light(&mut group, tier);
 
     for fx in fixtures {
-        let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
-        let pages = extract_pages_with_document(
-            &doc,
+        let doc = std::sync::Arc::new(PDFDocument::new(&fx.bytes, "").expect("parse PDF"));
+        let pages: Vec<_> = extract_pages_stream_from_doc(
+            std::sync::Arc::clone(&doc),
             ExtractOptions {
                 laparams: Some(LAParams::default()),
                 ..Default::default()
             },
         )
+        .expect("extract pages")
+        .map(|r| r.map(|(_, p)| p))
+        .collect::<CoreResult<Vec<_>>>()
         .expect("extract pages");
         let geoms: Vec<PageGeometry> = pages
             .iter()

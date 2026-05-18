@@ -17,8 +17,12 @@ pub mod stream;
 
 // Re-export for convenience
 pub use high_level::{
-    ExtractOptions, PageIterator, extract_pages, extract_pages_stream, extract_pages_with_document,
-    extract_pages_with_images_with_document, extract_text, extract_text_to_fp,
-    extract_text_with_document,
+    ExtractOptions, extract_pages_stream, extract_pages_with_images_with_document, extract_text,
+    extract_text_to_fp, extract_text_with_document,
 };
-pub use pipeline::Stream;
+pub use pipeline::{Stream, no_precheck, run_batch, run_stream};
+pub use stream::{
+    extract_pages_stream_from_doc, extract_tables_stream_from_doc,
+    extract_tables_stream_from_doc_with_geometries, extract_tables_stream_from_doc_with_settings,
+    extract_text_stream_from_doc_with_geometries, extract_words_stream_from_doc_with_geometries,
+};

@@ -135,14 +135,17 @@ fn bench_alloc_extract_tables(c: &mut BenchCriterion) {
     configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
-        let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
-        let pages = bolivar_core::high_level::extract_pages_with_document(
-            &doc,
+        let doc = std::sync::Arc::new(PDFDocument::new(&fx.bytes, "").expect("parse PDF"));
+        let pages: Vec<_> = bolivar_core::api::stream::extract_pages_stream_from_doc(
+            std::sync::Arc::clone(&doc),
             ExtractOptions {
                 laparams: Some(LAParams::default()),
                 ..Default::default()
             },
         )
+        .expect("extract pages")
+        .map(|r| r.map(|(_, p)| p))
+        .collect::<bolivar_core::error::Result<Vec<_>>>()
         .expect("extract pages");
 
         let geoms: Vec<PageGeometry> = pages

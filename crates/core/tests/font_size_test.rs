@@ -4,7 +4,7 @@
 //! The test PDF contains text where the displayed number equals the font size
 //! used to render that number (e.g., "12" rendered in 12pt font).
 
-use bolivar_core::high_level::{ExtractOptions, extract_pages};
+use bolivar_core::high_level::{ExtractOptions, extract_pages_stream};
 use bolivar_core::layout::{LAParams, LTItem, LTTextBox, LTTextLine, TextBoxType, TextLineElement};
 
 // ============================================================================
@@ -55,12 +55,12 @@ fn test_font_size() {
         ..Default::default()
     };
 
-    let pages = extract_pages(&pdf_data, Some(options)).expect("Failed to extract pages");
+    let pages = extract_pages_stream(&pdf_data, Some(options)).expect("Failed to extract pages");
 
     let mut found_any = false;
 
     for page_result in pages {
-        let page = page_result.expect("Failed to get page");
+        let (_, page) = page_result.expect("Failed to get page");
 
         for item in page.iter() {
             if let LTItem::TextBox(text_box) = item {
