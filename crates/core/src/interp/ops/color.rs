@@ -9,7 +9,7 @@
 //!
 //! Note: CS/cs (set color space) not yet implemented.
 
-use crate::interp::device::PDFDevice;
+use crate::device::PDFDevice;
 use crate::interp::interpreter::PDFPageInterpreter;
 use crate::pdfcolor::PREDEFINED_COLORSPACE;
 use crate::pdfstate::Color;

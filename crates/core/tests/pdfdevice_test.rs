@@ -2,10 +2,10 @@
 //!
 //! Tests PDF graphics state, text state, and device trait implementations.
 
+use bolivar_core::device::{PDFDevice, PDFTextDevice};
+use bolivar_core::interp::extractor::TagExtractor;
+use bolivar_core::interp::types::{PDFFontLike, PDFTextSeq, PDFTextSeqItem};
 use bolivar_core::pdfcolor::PREDEFINED_COLORSPACE;
-use bolivar_core::pdfdevice::{
-    PDFDevice, PDFFontLike, PDFTextDevice, PDFTextSeq, PDFTextSeqItem, TagExtractor,
-};
 use bolivar_core::pdfstate::{Color, PDFGraphicState, PDFTextState};
 use bolivar_core::psparser::PSLiteral;
 use bolivar_core::utils::{MATRIX_IDENTITY, Matrix};

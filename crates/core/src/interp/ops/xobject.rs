@@ -19,8 +19,9 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::interp::device::{PDFDevice, PDFStackT, PathSegment};
+use crate::device::PDFDevice;
 use crate::interp::interpreter::PDFPageInterpreter;
+use crate::interp::types::{PDFStackT, PathSegment};
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
 use crate::pdftypes::{PDFDict, PDFName, PDFObject};
 use crate::psparser::PSLiteral;

@@ -1,58 +1,15 @@
-//! PDF Device - output interface for PDF page interpretation.
+//! PDF device trait + concrete implementations.
 //!
-//! Port of pdfminer.six pdfdevice.py
-//!
-//! Devices translate the output of PDFPageInterpreter to various formats.
-//! The base PDFDevice trait provides the interface, while concrete implementations
-//! like PDFTextDevice and TagExtractor produce specific outputs.
+//! A "device" is a sink for callbacks emitted by `PDFPageInterpreter` while it
+//! walks a page's content stream. Concrete devices live one-per-file in this
+//! directory (added by Task C2).
 
+use crate::interp::types::{PDFFontLike, PDFStackT, PDFTextSeq, PDFTextSeqItem, PathSegment};
 use crate::pdfcolor::PDFColorSpace;
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
-use crate::pdftypes::{PDFName, PDFStream};
+use crate::pdftypes::PDFStream;
 use crate::psparser::PSLiteral;
-use crate::utils::{Matrix, Point, Rect, enc, mult_matrix, translate_matrix};
-use rustc_hash::FxHashMap;
-use std::io::Write;
-
-/// Sequence of text elements that can contain numbers (positioning) or bytes (character data).
-pub type PDFTextSeq = Vec<PDFTextSeqItem>;
-
-/// Individual item in a PDF text sequence.
-#[derive(Debug, Clone)]
-pub enum PDFTextSeqItem {
-    /// Numeric adjustment (horizontal offset in text space)
-    Number(f64),
-    /// Character data bytes
-    Bytes(Vec<u8>),
-}
-
-/// Stack type for PDF operations (matches Python's PDFStackT).
-pub type PDFStackT = FxHashMap<PDFName, PDFStackValue>;
-
-/// Values that can appear on the PDF stack.
-#[derive(Debug, Clone)]
-pub enum PDFStackValue {
-    Int(i64),
-    Real(f64),
-    Bool(bool),
-    Name(PDFName),
-    String(Vec<u8>),
-    Array(Vec<Self>),
-    Dict(FxHashMap<PDFName, Self>),
-}
-
-/// Path segment for graphics operations.
-#[derive(Debug, Clone)]
-pub enum PathSegment {
-    /// Move to point (x, y)
-    MoveTo(f64, f64),
-    /// Line to point (x, y)
-    LineTo(f64, f64),
-    /// Cubic bezier curve (x1, y1, x2, y2, x3, y3)
-    CurveTo(f64, f64, f64, f64, f64, f64),
-    /// Close path
-    ClosePath,
-}
+use crate::utils::{Matrix, Point, Rect, mult_matrix, translate_matrix};
 
 /// PDF Device trait - interface for rendering PDF page content.
 ///
@@ -118,25 +75,6 @@ pub trait PDFDevice {
         _graphicstate: &PDFGraphicState,
     ) {
     }
-}
-
-/// Placeholder font trait for text device operations.
-///
-/// TODO: Replace with actual PDFFont when pdfinterp is implemented.
-/// This provides the interface needed by render_string_horizontal/vertical.
-pub trait PDFFontLike {
-    /// Check if font is vertical writing mode.
-    fn is_vertical(&self) -> bool;
-
-    /// Check if font is multibyte (CID fonts).
-    fn is_multibyte(&self) -> bool;
-
-    /// Decode bytes to character IDs.
-    fn decode(&self, data: &[u8]) -> Vec<u32>;
-
-    /// Convert CID to Unicode character.
-    /// Returns None if the CID has no Unicode mapping.
-    fn to_unichr(&self, cid: u32) -> Option<char>;
 }
 
 /// PDF Text Device - base for text extraction devices.
@@ -344,193 +282,5 @@ pub trait PDFTextDevice: PDFDevice {
         _graphicstate: &PDFGraphicState,
     ) -> f64 {
         0.0
-    }
-}
-
-/// Tag Extractor - extracts structured content tags to XML.
-///
-/// Port of TagExtractor from pdfminer.six pdfdevice.py
-pub struct TagExtractor<W: Write> {
-    /// Output writer
-    outfp: W,
-    /// Output encoding (stored for future use with proper encoding support)
-    #[allow(dead_code)]
-    codec: String,
-    /// Current page number
-    pageno: u32,
-    /// Stack of open tags
-    stack: Vec<PSLiteral>,
-    /// Current transformation matrix
-    ctm: Option<Matrix>,
-}
-
-impl<W: Write> TagExtractor<W> {
-    /// Create a new TagExtractor.
-    pub fn new(outfp: W, codec: &str) -> Self {
-        Self {
-            outfp,
-            codec: codec.to_string(),
-            pageno: 0,
-            stack: Vec::new(),
-            ctm: None,
-        }
-    }
-
-    /// Consume the extractor and return the inner writer.
-    pub fn into_inner(self) -> W {
-        self.outfp
-    }
-
-    /// Get current page number.
-    pub const fn pageno(&self) -> u32 {
-        self.pageno
-    }
-
-    /// Increment page number.
-    pub const fn increment_pageno(&mut self) {
-        self.pageno += 1;
-    }
-
-    /// Write text to output.
-    pub fn write(&mut self, s: &str) {
-        let _ = self.outfp.write_all(s.as_bytes());
-    }
-
-    fn write_bytes(&mut self, s: &str) {
-        // In Python this encodes to self.codec; for simplicity we use UTF-8
-        let _ = self.outfp.write_all(s.as_bytes());
-    }
-
-    /// Flush output.
-    pub fn flush(&mut self) {
-        let _ = self.outfp.flush();
-    }
-}
-
-fn rotation_from_ctm(ctm: Matrix) -> i32 {
-    let (a, b, c, d, _, _) = ctm;
-    let eps = 1e-9;
-    let is_zero = |value: f64| value.abs() < eps;
-
-    if is_zero(a) && is_zero(d) {
-        if b < 0.0 && c > 0.0 {
-            return 90;
-        }
-        if b > 0.0 && c < 0.0 {
-            return 270;
-        }
-    }
-
-    if is_zero(b) && is_zero(c) && a < 0.0 && d < 0.0 {
-        return 180;
-    }
-
-    0
-}
-
-impl<W: Write> PDFDevice for TagExtractor<W> {
-    fn set_ctm(&mut self, ctm: Matrix) {
-        self.ctm = Some(ctm);
-    }
-
-    fn ctm(&self) -> Option<Matrix> {
-        self.ctm
-    }
-
-    fn begin_page(&mut self, _pageid: u32, mediabox: Rect, ctm: Matrix) {
-        let (x0, y0, x1, y1) = mediabox;
-        let rotate = rotation_from_ctm(ctm);
-        let output = format!(
-            "<page id=\"{}\" bbox=\"{:.3},{:.3},{:.3},{:.3}\" rotate=\"{}\">",
-            self.pageno, x0, y0, x1, y1, rotate
-        );
-        self.write_bytes(&output);
-    }
-
-    fn end_page(&mut self, _pageid: u32) {
-        self.write_bytes("</page>\n");
-        self.pageno += 1;
-    }
-
-    fn begin_tag(&mut self, tag: &PSLiteral, props: Option<&PDFStackT>) {
-        let mut s = String::new();
-        if let Some(props) = props {
-            let mut sorted_keys: Vec<_> = props.keys().collect();
-            sorted_keys.sort();
-            for k in sorted_keys {
-                if let Some(v) = props.get(k) {
-                    let v_str = format!("{:?}", v);
-                    s.push_str(&format!(" {}=\"{}\"", enc(k), enc(&v_str)));
-                }
-            }
-        }
-        let out_s = format!("<{}{}>", enc(tag.name()), s);
-        self.write_bytes(&out_s);
-        self.stack.push(tag.clone());
-    }
-
-    fn end_tag(&mut self) {
-        if let Some(tag) = self.stack.pop() {
-            let out_s = format!("</{}>", enc(tag.name()));
-            self.write_bytes(&out_s);
-        }
-    }
-
-    fn do_tag(&mut self, tag: &PSLiteral, props: Option<&PDFStackT>) {
-        self.begin_tag(tag, props);
-        self.stack.pop();
-    }
-
-    fn render_string(
-        &mut self,
-        textstate: &mut PDFTextState,
-        seq: &PDFTextSeq,
-        ncs: &PDFColorSpace,
-        graphicstate: &PDFGraphicState,
-    ) {
-        <Self as PDFTextDevice>::render_string(self, textstate, seq, ncs, graphicstate);
-    }
-}
-
-impl<W: Write> PDFTextDevice for TagExtractor<W> {
-    /// Render a text string by extracting Unicode text and writing to output.
-    ///
-    /// Unlike the base PDFTextDevice which tracks positions, TagExtractor
-    /// only extracts the text content for structured output.
-    ///
-    /// TODO: Full implementation requires PDFFont from pdfinterp (Task 8).
-    /// When font is available:
-    /// 1. Get font from textstate
-    /// 2. Iterate through seq, skip non-bytes items
-    /// 3. For each bytes item, decode to CIDs via font.decode()
-    /// 4. For each CID, convert to Unicode via font.to_unichr()
-    /// 5. Write the collected text to output
-    fn render_string(
-        &mut self,
-        textstate: &mut PDFTextState,
-        seq: &PDFTextSeq,
-        _ncs: &PDFColorSpace,
-        _graphicstate: &PDFGraphicState,
-    ) {
-        // Extract raw bytes as ASCII where possible
-        let _ = textstate; // silence unused warning
-        for item in seq {
-            if let PDFTextSeqItem::Bytes(data) = item {
-                // Basic ASCII extraction without proper font decoding
-                let text: String = data
-                    .iter()
-                    .filter_map(|&b| {
-                        if (0x20..0x7f).contains(&b) {
-                            Some(b as char)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if !text.is_empty() {
-                    self.write_bytes(&enc(&text));
-                }
-            }
-        }
     }
 }

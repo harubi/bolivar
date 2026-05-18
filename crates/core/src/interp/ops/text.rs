@@ -25,8 +25,9 @@
 //! - ': Move to next line and show
 //! - ": Set spacing, move to next line, and show
 
-use crate::interp::device::{PDFDevice, PDFTextSeq, PDFTextSeqItem};
+use crate::device::PDFDevice;
 use crate::interp::interpreter::PDFPageInterpreter;
+use crate::interp::types::{PDFTextSeq, PDFTextSeqItem};
 
 #[allow(non_snake_case)]
 impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
