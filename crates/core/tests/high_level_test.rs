@@ -5,7 +5,7 @@
 //! - extract_text_to_fp() - text extraction to writer
 //! - extract_pages() - iterator over pages
 
-use bolivar_core::api::pipeline;
+use bolivar_core::engine;
 use bolivar_core::error::Result as CoreResult;
 use bolivar_core::high_level::{
     ExtractOptions, extract_pages_stream, extract_text, extract_text_to_fp,
@@ -430,7 +430,7 @@ fn test_extract_pages_order_is_stable() {
 
 #[test]
 fn extract_pages_stream_uses_supplied_document() {
-    use bolivar_core::api::stream::extract_pages_stream_from_doc;
+    use bolivar_core::extract::extract_pages_stream_from_doc;
     let pdf_path = fixture_path("encryption/rc4-40.pdf");
     let pdf_data = std::fs::read(&pdf_path)
         .unwrap_or_else(|_| panic!("Failed to read {}", pdf_path.display()));
@@ -448,7 +448,7 @@ fn extract_pages_stream_uses_supplied_document() {
 
 #[test]
 fn extract_pages_stream_reuses_document_cache() {
-    use bolivar_core::api::stream::extract_pages_stream_from_doc;
+    use bolivar_core::extract::extract_pages_stream_from_doc;
     let pdf_data = build_minimal_pdf_with_pages(1);
     let doc = std::sync::Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
 
@@ -471,7 +471,7 @@ fn extract_pages_stream_reuses_document_cache() {
 
 #[test]
 fn planner_applies_page_numbers_then_maxpages_in_order() {
-    let order = pipeline::select_pages(5, Some(vec![4, 1, 3]), 2);
+    let order = engine::select_pages(5, Some(vec![4, 1, 3]), 2);
     assert_eq!(order, vec![1, 3]);
 }
 

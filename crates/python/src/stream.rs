@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
-use bolivar_core::api::pipeline::Stream;
-use bolivar_core::api::stream::{
+use bolivar_core::engine::Stream;
+use bolivar_core::extract::{
     extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
     extract_words_stream_from_doc_with_geometries as core_extract_words_stream_from_doc_with_geometries,
 };

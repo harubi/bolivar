@@ -1,4 +1,4 @@
-use bolivar_core::api::stream::extract_tables_stream_from_doc_with_geometries;
+use bolivar_core::extract::extract_tables_stream_from_doc_with_geometries;
 use bolivar_core::document::PDFDocument;
 use bolivar_core::high_level::ExtractOptions;
 use bolivar_core::table::{PageGeometry, TableSettings};

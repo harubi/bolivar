@@ -136,7 +136,7 @@ fn bench_alloc_extract_tables(c: &mut BenchCriterion) {
 
     for fx in fixtures {
         let doc = std::sync::Arc::new(PDFDocument::new(&fx.bytes, "").expect("parse PDF"));
-        let pages: Vec<_> = bolivar_core::api::stream::extract_pages_stream_from_doc(
+        let pages: Vec<_> = bolivar_core::extract::extract_pages_stream_from_doc(
             std::sync::Arc::clone(&doc),
             ExtractOptions {
                 laparams: Some(LAParams::default()),

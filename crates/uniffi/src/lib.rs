@@ -1,5 +1,5 @@
 use bolivar_core::PdfError;
-use bolivar_core::api::stream::{
+use bolivar_core::extract::{
     extract_pages_stream_from_doc, extract_tables_metadata_stream_from_doc_with_geometries,
 };
 use bolivar_core::high_level::{
@@ -495,7 +495,7 @@ fn extract_tables_core(
     doc: Arc<PDFDocument>,
     options: CoreExtractOptions,
 ) -> Result<Vec<Table>, BolivarError> {
-    let selected_indices = bolivar_core::api::pipeline::select_pages(
+    let selected_indices = bolivar_core::engine::select_pages(
         doc.page_tree_len(),
         options.page_numbers.clone(),
         options.maxpages,
