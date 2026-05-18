@@ -47,7 +47,7 @@ pub fn process_page(
     rotation: i64,
 ) -> PyResult<PyLTPage> {
     use bolivar_core::api::pipeline::{no_precheck, run_stream};
-    use bolivar_core::converter::PDFPageAggregator;
+    use bolivar_core::device::PDFPageAggregator;
     use bolivar_core::high_level::{aggregator_result, process_page as core_process_page};
     use bolivar_core::interp::PDFResourceManager;
 
@@ -61,8 +61,7 @@ pub fn process_page(
             no_precheck::<LTPage>,
             move |arena, page_idx, page, doc| {
                 let mut rsrcmgr = PDFResourceManager::with_caching(true);
-                let mut aggregator =
-                    PDFPageAggregator::new(la.clone(), page_idx as i32 + 1, arena);
+                let mut aggregator = PDFPageAggregator::new(la.clone(), page_idx as i32 + 1, arena);
                 core_process_page(
                     page,
                     &mut aggregator,

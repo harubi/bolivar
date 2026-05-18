@@ -5,12 +5,12 @@ use std::sync::Arc;
 use crate::api::pipeline::{
     ExecutionPlan, Stream, no_precheck, run_stream, validate_geometry_count,
 };
-use crate::converter::{PDFPageAggregator, PDFTableCollector};
+use crate::device::{PDFPageAggregator, PDFTableCollector};
 use crate::document::PDFDocument;
 use crate::error::{PdfError, Result};
 use crate::interp::PDFResourceManager;
 use crate::layout::{LAParams, LTPage};
-use crate::table::edge_probe::{page_has_edges, should_skip_tables};
+use crate::table::probe::{page_has_edges, should_skip_tables};
 use crate::table::{
     PageGeometry, TableMetadata, TableSettings, TextSettings, WordObj,
     collect_table_objects_from_arena, extract_tables_from_objects,

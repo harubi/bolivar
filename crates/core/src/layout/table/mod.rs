@@ -5,12 +5,12 @@
 
 mod clustering;
 mod collector;
-pub(crate) mod edge_probe;
 mod edges;
 mod finder;
 mod geometry;
 mod grid;
 mod intersections;
+pub(crate) mod probe;
 mod text;
 mod types;
 
@@ -26,8 +26,8 @@ pub(crate) use collector::collect_table_objects_from_arena;
 pub use finder::{
     TableCellMetadata, TableMetadata, extract_table_from_ltpage, extract_table_from_objects,
     extract_tables_from_ltpage, extract_tables_from_objects,
-    extract_tables_with_metadata_from_objects, extract_text_from_ltpage,
-    extract_text_from_objects, extract_words_from_ltpage, extract_words_from_objects,
+    extract_tables_with_metadata_from_objects, extract_text_from_ltpage, extract_text_from_objects,
+    extract_words_from_ltpage, extract_words_from_objects,
 };
 
 #[cfg(test)]

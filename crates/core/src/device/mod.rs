@@ -4,6 +4,26 @@
 //! walks a page's content stream. Concrete devices live one-per-file in this
 //! directory (added by Task C2).
 
+mod helpers;
+
+pub mod aggregator;
+pub mod collector;
+pub mod converter_base;
+pub mod edge_probe;
+pub mod html;
+pub mod layout_analyzer;
+pub mod text;
+pub mod xml;
+
+pub use aggregator::PDFPageAggregator;
+pub use collector::PDFTableCollector;
+pub use converter_base::PDFConverter;
+pub use edge_probe::PDFEdgeProbe;
+pub use html::{HOCRConverter, HTMLConverter};
+pub use layout_analyzer::{LTContainer, PDFLayoutAnalyzer, PathOp};
+pub use text::TextConverter;
+pub use xml::XMLConverter;
+
 use crate::interp::types::{PDFFontLike, PDFStackT, PDFTextSeq, PDFTextSeqItem, PathSegment};
 use crate::pdfcolor::PDFColorSpace;
 use crate::pdfstate::{PDFGraphicState, PDFTextState};

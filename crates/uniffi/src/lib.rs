@@ -495,12 +495,11 @@ fn extract_tables_core(
     doc: Arc<PDFDocument>,
     options: CoreExtractOptions,
 ) -> Result<Vec<Table>, BolivarError> {
-    let selected_indices =
-        bolivar_core::api::pipeline::select_pages(
-            doc.page_tree_len(),
-            options.page_numbers.clone(),
-            options.maxpages,
-        );
+    let selected_indices = bolivar_core::api::pipeline::select_pages(
+        doc.page_tree_len(),
+        options.page_numbers.clone(),
+        options.maxpages,
+    );
     let geometries: Vec<PageGeometry> = selected_indices
         .iter()
         .map(|&idx| {

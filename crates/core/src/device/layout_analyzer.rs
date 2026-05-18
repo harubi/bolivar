@@ -1,20 +1,15 @@
-//! Base types for PDF converters - port of pdfminer.six converter.py
+//! `PDFLayoutAnalyzer` and shared layout-container types.
 //!
-//! Provides common types for transforming PDF layout content into various output formats:
-//! - PDFLayoutAnalyzer: Base device that creates layout objects from PDF content
-//! - PDFPageAggregator: Collects analyzed pages for later retrieval
-//! - PDFConverter: Base converter trait
-//! - PathOp: Path operation type
-//! - LTContainer: Container for layout items
+//! Port of `PDFLayoutAnalyzer` from pdfminer.six `converter.py`. Aggregator,
+//! collector, and edge-probe devices all share this base analyzer; their
+//! `PDFDevice` impls live in sibling modules under `device::`.
 
 use regex::Regex;
 use std::cell::RefCell;
-use std::io::Write;
 use std::rc::Rc;
 
 use lasso::Spur;
 
-use crate::arena::PageArena;
 use crate::arena::page_arena::ArenaContext;
 use crate::arena::types::{
     ArenaChar, ArenaCurve, ArenaFigure, ArenaImage, ArenaItem, ArenaLine, ArenaPage, ArenaRect,
@@ -22,13 +17,13 @@ use crate::arena::types::{
 use crate::image::ImageWriter;
 use crate::layout::{LAParams, LTItem, LTPage};
 use crate::pdfcolor::PDFColorSpace;
-use crate::device::PDFDevice;
-use crate::interp::types::{PDFTextSeq, PDFTextSeqItem, PathSegment};
 use crate::pdffont::{CharDisp, PDFFont};
-use crate::pdfstate::{PDFGraphicState, PDFTextState};
+use crate::pdfstate::PDFGraphicState;
 use crate::pdftypes::PDFStream;
 use crate::utils::{Matrix, Point, Rect, apply_matrix_pt, apply_matrix_rect, mult_matrix};
 use bumpalo::collections::Vec as BumpVec;
+
+use super::helpers::approx_eq;
 
 /// Path operation with operator and operands.
 pub type PathOp = (char, Vec<f64>);
@@ -76,28 +71,28 @@ impl LTContainer {
 }
 
 #[derive(Debug, Clone)]
-struct ArenaContainer<'a> {
-    bbox: Rect,
-    items: BumpVec<'a, ArenaItem<'a>>,
+pub(super) struct ArenaContainer<'a> {
+    pub(super) bbox: Rect,
+    pub(super) items: BumpVec<'a, ArenaItem<'a>>,
 }
 
 impl<'a> ArenaContainer<'a> {
-    pub fn new_in(arena: &ArenaContext<'a>, bbox: Rect) -> Self {
+    pub(super) fn new_in(arena: &ArenaContext<'a>, bbox: Rect) -> Self {
         Self {
             bbox,
             items: BumpVec::new_in(arena.bump()),
         }
     }
 
-    pub fn add(&mut self, item: ArenaItem<'a>) {
+    pub(super) fn add(&mut self, item: ArenaItem<'a>) {
         self.items.push(item);
     }
 
-    pub fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.items.len()
     }
 
-    pub const fn bbox(&self) -> Rect {
+    pub(super) const fn bbox(&self) -> Rect {
         self.bbox
     }
 }
@@ -135,13 +130,13 @@ pub struct PDFLayoutAnalyzer<'a> {
     /// Stack of figure metadata (for nested figures)
     figure_stack: Vec<FigureState>,
     /// Current layout container
-    cur_item: Option<ArenaContainer<'a>>,
+    pub(super) cur_item: Option<ArenaContainer<'a>>,
     /// Current transformation matrix
     pub(crate) ctm: Matrix,
     /// Optional image writer for exporting images
     image_writer: Option<Rc<RefCell<ImageWriter>>>,
     /// Page-scoped arena for typed layout items
-    arena: ArenaContext<'a>,
+    pub(super) arena: ArenaContext<'a>,
     /// Stack of marked content states (for BMC/BDC/EMC operators)
     marked_content_stack: Vec<MarkedContentState>,
 }
@@ -814,7 +809,7 @@ impl<'a> PDFLayoutAnalyzer<'a> {
             .map(|mc| self.arena.resolve(mc.tag))
     }
 
-    fn current_tag_key(&self) -> Option<Spur> {
+    pub(super) fn current_tag_key(&self) -> Option<Spur> {
         self.marked_content_stack.last().map(|mc| mc.tag)
     }
 
@@ -840,566 +835,5 @@ impl<'a> PDFLayoutAnalyzer<'a> {
     /// End a marked content section.
     pub fn end_tag(&mut self) {
         self.marked_content_stack.pop();
-    }
-}
-
-/// Approximate equality for floating point.
-fn approx_eq(a: f64, b: f64) -> bool {
-    (a - b).abs() < 1e-6
-}
-
-fn path_segments_to_path_ops(path: &[PathSegment]) -> Vec<PathOp> {
-    path.iter()
-        .map(|seg| match seg {
-            PathSegment::MoveTo(x, y) => ('m', vec![*x, *y]),
-            PathSegment::LineTo(x, y) => ('l', vec![*x, *y]),
-            PathSegment::CurveTo(x1, y1, x2, y2, x3, y3) => {
-                ('c', vec![*x1, *y1, *x2, *y2, *x3, *y3])
-            }
-            PathSegment::ClosePath => ('h', vec![]),
-        })
-        .collect()
-}
-
-struct FallbackCharRender<'a> {
-    char_matrix: Matrix,
-    fontsize: f64,
-    scaling: f64,
-    rise: f64,
-    cid: u32,
-    fallback_fontname: Option<&'a str>,
-}
-
-fn render_char_without_font(
-    analyzer: &mut PDFLayoutAnalyzer<'_>,
-    graphicstate: &PDFGraphicState,
-    render: FallbackCharRender<'_>,
-) -> f64 {
-    let FallbackCharRender {
-        char_matrix,
-        fontsize,
-        scaling,
-        rise,
-        cid,
-        fallback_fontname,
-    } = render;
-    let text = if (0x20..0x7f).contains(&cid) {
-        char::from_u32(cid)
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| format!("(cid:{})", cid))
-    } else {
-        format!("(cid:{})", cid)
-    };
-
-    let char_width = fontsize * scaling * 0.6;
-    let descent = -fontsize * 0.25;
-    let local_bbox = (0.0, descent + rise, char_width, descent + rise + fontsize);
-    let bbox = apply_matrix_rect(char_matrix, local_bbox);
-
-    let (a, b, c, d, _, _) = char_matrix;
-    let upright = (a * d * scaling > 0.0) && (b * c <= 0.0);
-
-    let mcid = analyzer.current_mcid();
-    let tag = analyzer.current_tag_key();
-    let ncolor = analyzer.arena.intern_color(&graphicstate.ncolor.to_vec());
-    let scolor = analyzer.arena.intern_color(&graphicstate.scolor.to_vec());
-    let fontname = fallback_fontname.unwrap_or("unknown");
-    let text_key = analyzer.arena.intern(&text);
-    let fontname_key = analyzer.arena.intern(fontname);
-    let ncs_name = Some(analyzer.arena.intern(&graphicstate.ncs.name));
-    let scs_name = Some(analyzer.arena.intern(&graphicstate.scs.name));
-    let item = ArenaChar {
-        bbox,
-        text: text_key,
-        fontname: fontname_key,
-        size: bbox.3 - bbox.1,
-        upright,
-        adv: char_width,
-        matrix: char_matrix,
-        mcid,
-        tag,
-        ncs_name,
-        scs_name,
-        ncolor,
-        scolor,
-    };
-
-    if let Some(ref mut container) = analyzer.cur_item {
-        container.add(ArenaItem::Char(item));
-    }
-
-    char_width
-}
-
-fn render_text_sequence(
-    analyzer: &mut PDFLayoutAnalyzer<'_>,
-    textstate: &mut PDFTextState,
-    seq: &PDFTextSeq,
-    graphicstate: &PDFGraphicState,
-) {
-    if textstate.render == 3 || textstate.render == 7 {
-        return;
-    }
-
-    let ctm = analyzer.ctm;
-    let matrix = mult_matrix(textstate.matrix, ctm);
-    let fontsize = textstate.fontsize;
-    let scaling = textstate.scaling * 0.01;
-    let charspace = textstate.charspace * scaling;
-    let wordspace = textstate.wordspace * scaling;
-    let rise = textstate.rise;
-    let dxscale = 0.001 * fontsize * scaling;
-
-    let (mut x, mut y) = textstate.linematrix;
-    let mut needcharspace = false;
-
-    let font = textstate.font.clone();
-    let fallback_fontname = textstate.fontname.clone();
-    let is_vertical = font.as_ref().map(|f| f.is_vertical()).unwrap_or(false);
-
-    for item in seq {
-        match item {
-            PDFTextSeqItem::Number(n) => {
-                if is_vertical {
-                    y -= n * dxscale;
-                } else {
-                    x -= n * dxscale;
-                }
-                needcharspace = true;
-            }
-            PDFTextSeqItem::Bytes(data) => {
-                let cids: Vec<u32> = if let Some(ref font) = font {
-                    font.decode(data)
-                } else {
-                    data.iter().map(|&b| b as u32).collect()
-                };
-
-                for cid in cids {
-                    if needcharspace {
-                        if is_vertical {
-                            y += charspace;
-                        } else {
-                            x += charspace;
-                        }
-                    }
-
-                    let char_matrix = (
-                        matrix.0,
-                        matrix.1,
-                        matrix.2,
-                        matrix.3,
-                        matrix.0.mul_add(x, matrix.2 * y) + matrix.4,
-                        matrix.1.mul_add(x, matrix.3 * y) + matrix.5,
-                    );
-
-                    let adv = if let Some(ref font) = font {
-                        analyzer.render_char(
-                            char_matrix,
-                            font.as_ref(),
-                            fontsize,
-                            scaling,
-                            rise,
-                            cid,
-                            &graphicstate.ncs,
-                            graphicstate,
-                        )
-                    } else {
-                        render_char_without_font(
-                            analyzer,
-                            graphicstate,
-                            FallbackCharRender {
-                                char_matrix,
-                                fontsize,
-                                scaling,
-                                rise,
-                                cid,
-                                fallback_fontname: fallback_fontname.as_deref(),
-                            },
-                        )
-                    };
-
-                    if is_vertical {
-                        y += adv;
-                    } else {
-                        x += adv;
-                    }
-
-                    if cid == 32 && wordspace != 0.0 {
-                        if is_vertical {
-                            y += wordspace;
-                        } else {
-                            x += wordspace;
-                        }
-                    }
-                    needcharspace = true;
-                }
-            }
-        }
-    }
-
-    textstate.linematrix = (x, y);
-}
-
-// ============================================================================
-// PDFPageAggregator
-// ============================================================================
-
-/// PDF Page Aggregator - collects analyzed pages for later retrieval.
-///
-/// Unlike other converters that output immediately, this aggregator stores
-/// the most recent page for retrieval via get_result().
-pub struct PDFPageAggregator<'a> {
-    #[allow(dead_code)]
-    analyzer: PDFLayoutAnalyzer<'a>,
-    result: Option<LTPage>,
-}
-
-/// Table collector device that captures arena pages (no LTPage materialization).
-pub struct PDFTableCollector<'a> {
-    analyzer: PDFLayoutAnalyzer<'a>,
-    result: Option<ArenaPage<'a>>,
-}
-
-/// Lightweight device to probe for vector edges without building layout.
-pub struct PDFEdgeProbe {
-    has_edges: bool,
-    ctm: Option<Matrix>,
-}
-
-impl PDFEdgeProbe {
-    pub const fn new() -> Self {
-        Self {
-            has_edges: false,
-            ctm: None,
-        }
-    }
-
-    pub const fn has_edges(&self) -> bool {
-        self.has_edges
-    }
-}
-
-impl Default for PDFEdgeProbe {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'a> PDFPageAggregator<'a> {
-    /// Create a new page aggregator.
-    pub fn new(laparams: Option<LAParams>, pageno: i32, arena: &'a mut PageArena) -> Self {
-        Self::new_with_imagewriter(laparams, pageno, None, arena)
-    }
-
-    /// Create a new page aggregator with an optional image writer.
-    pub fn new_with_imagewriter(
-        laparams: Option<LAParams>,
-        pageno: i32,
-        image_writer: Option<Rc<RefCell<ImageWriter>>>,
-        arena: &'a mut PageArena,
-    ) -> Self {
-        Self {
-            analyzer: PDFLayoutAnalyzer::new_with_imagewriter(
-                laparams,
-                pageno,
-                image_writer,
-                arena.context(),
-            ),
-            result: None,
-        }
-    }
-
-    /// Receive the analyzed layout page.
-    pub fn receive_layout(&mut self, ltpage: LTPage) {
-        self.result = Some(ltpage);
-    }
-
-    /// Get the result (if any).
-    pub const fn result(&self) -> Option<&LTPage> {
-        self.result.as_ref()
-    }
-
-    /// Get the result, panicking if none.
-    pub const fn get_result(&self) -> &LTPage {
-        self.result.as_ref().expect("No result available")
-    }
-
-    /// Get the current MCID (Marked Content ID) if inside marked content.
-    pub fn current_mcid(&self) -> Option<i32> {
-        self.analyzer.current_mcid()
-    }
-
-    /// Get the current marked content tag if inside marked content.
-    pub fn current_tag(&self) -> Option<&str> {
-        self.analyzer.current_tag()
-    }
-}
-
-impl<'a> PDFTableCollector<'a> {
-    pub fn new(laparams: Option<LAParams>, pageno: i32, arena: &'a mut PageArena) -> Self {
-        Self {
-            analyzer: PDFLayoutAnalyzer::new(laparams, pageno, arena.context()),
-            result: None,
-        }
-    }
-
-    pub fn take_result(&mut self) -> Option<ArenaPage<'a>> {
-        self.result.take()
-    }
-
-    pub fn arena_lookup(&self) -> &ArenaContext<'a> {
-        self.analyzer.arena_lookup()
-    }
-}
-
-impl<'a> PDFDevice for PDFPageAggregator<'a> {
-    fn set_ctm(&mut self, ctm: Matrix) {
-        self.analyzer.set_ctm(ctm);
-    }
-
-    fn ctm(&self) -> Option<Matrix> {
-        Some(self.analyzer.ctm)
-    }
-
-    fn begin_page(&mut self, _pageid: u32, mediabox: Rect, ctm: Matrix) {
-        self.analyzer.begin_page(mediabox, ctm);
-    }
-
-    fn end_page(&mut self, _pageid: u32) {
-        if let Some(page) = self.analyzer.end_page() {
-            self.result = Some(page);
-        }
-    }
-
-    fn begin_figure(&mut self, name: &str, bbox: Rect, matrix: Matrix) {
-        self.analyzer.begin_figure(name, bbox, matrix);
-    }
-
-    fn end_figure(&mut self, name: &str) {
-        self.analyzer.end_figure(name);
-    }
-
-    fn paint_path(
-        &mut self,
-        graphicstate: &PDFGraphicState,
-        stroke: bool,
-        fill: bool,
-        evenodd: bool,
-        path: &[PathSegment],
-    ) {
-        let path_ops = path_segments_to_path_ops(path);
-        self.analyzer
-            .paint_path(graphicstate, stroke, fill, evenodd, &path_ops);
-    }
-
-    fn render_image(&mut self, name: &str, stream: &PDFStream) {
-        self.analyzer.render_image(name, stream);
-    }
-
-    fn render_string(
-        &mut self,
-        textstate: &mut PDFTextState,
-        seq: &PDFTextSeq,
-        _ncs: &PDFColorSpace,
-        graphicstate: &PDFGraphicState,
-    ) {
-        render_text_sequence(&mut self.analyzer, textstate, seq, graphicstate);
-    }
-
-    fn begin_tag(
-        &mut self,
-        tag: &crate::psparser::PSLiteral,
-        props: Option<&crate::interp::types::PDFStackT>,
-    ) {
-        self.analyzer.begin_tag(tag, props);
-    }
-
-    fn end_tag(&mut self) {
-        self.analyzer.end_tag();
-    }
-}
-
-impl<'a> PDFDevice for PDFTableCollector<'a> {
-    fn set_ctm(&mut self, ctm: Matrix) {
-        self.analyzer.set_ctm(ctm);
-    }
-
-    fn ctm(&self) -> Option<Matrix> {
-        Some(self.analyzer.ctm)
-    }
-
-    fn begin_page(&mut self, _pageid: u32, mediabox: Rect, ctm: Matrix) {
-        self.analyzer.begin_page(mediabox, ctm);
-    }
-
-    fn end_page(&mut self, _pageid: u32) {
-        if let Some(page) = self.analyzer.end_page_arena() {
-            self.result = Some(page);
-        }
-    }
-
-    fn begin_figure(&mut self, name: &str, bbox: Rect, matrix: Matrix) {
-        self.analyzer.begin_figure(name, bbox, matrix);
-    }
-
-    fn end_figure(&mut self, name: &str) {
-        self.analyzer.end_figure(name);
-    }
-
-    fn paint_path(
-        &mut self,
-        graphicstate: &PDFGraphicState,
-        stroke: bool,
-        fill: bool,
-        evenodd: bool,
-        path: &[PathSegment],
-    ) {
-        let path_ops = path_segments_to_path_ops(path);
-        self.analyzer
-            .paint_path(graphicstate, stroke, fill, evenodd, &path_ops);
-    }
-
-    fn render_image(&mut self, name: &str, stream: &PDFStream) {
-        self.analyzer.render_image(name, stream);
-    }
-
-    fn render_string(
-        &mut self,
-        textstate: &mut PDFTextState,
-        seq: &PDFTextSeq,
-        _ncs: &PDFColorSpace,
-        graphicstate: &PDFGraphicState,
-    ) {
-        render_text_sequence(&mut self.analyzer, textstate, seq, graphicstate);
-    }
-}
-
-impl PDFDevice for PDFEdgeProbe {
-    fn set_ctm(&mut self, ctm: Matrix) {
-        self.ctm = Some(ctm);
-    }
-
-    fn ctm(&self) -> Option<Matrix> {
-        self.ctm
-    }
-
-    fn paint_path(
-        &mut self,
-        _graphicstate: &PDFGraphicState,
-        stroke: bool,
-        fill: bool,
-        _evenodd: bool,
-        path: &[PathSegment],
-    ) {
-        if self.has_edges || (!stroke && !fill) {
-            return;
-        }
-        for seg in path {
-            match seg {
-                PathSegment::LineTo(..) | PathSegment::CurveTo(..) => {
-                    self.has_edges = true;
-                    break;
-                }
-                PathSegment::MoveTo(..) | PathSegment::ClosePath => {}
-            }
-        }
-    }
-}
-
-// ============================================================================
-// PDFConverter
-// ============================================================================
-
-/// Base PDF Converter - common functionality for output converters.
-///
-/// Port of PDFConverter from pdfminer.six converter.py
-#[allow(dead_code)]
-pub struct PDFConverter<W: Write> {
-    /// Output writer
-    outfp: W,
-    /// Output encoding
-    codec: String,
-    /// Current page number
-    pageno: i32,
-    /// Layout parameters
-    laparams: Option<LAParams>,
-    /// Whether output is binary
-    outfp_binary: bool,
-}
-
-impl<W: Write> PDFConverter<W> {
-    /// Create a new converter.
-    pub fn new(outfp: W, codec: &str, pageno: i32, laparams: Option<LAParams>) -> Self {
-        Self {
-            outfp,
-            codec: codec.to_string(),
-            pageno,
-            laparams,
-            outfp_binary: true, // Default to binary
-        }
-    }
-
-    /// Check if a stream is binary.
-    ///
-    /// In Rust, we use type-based detection rather than runtime checks.
-    /// This is a simplified version that always returns true for byte writers.
-    pub const fn is_binary_stream<T>(_stream: &T) -> bool {
-        true
-    }
-
-    /// Check if output is text (not binary).
-    pub const fn is_text_stream<T>(_stream: &T) -> bool {
-        false
-    }
-}
-
-#[cfg(test)]
-mod shared_converter_helper_tests {
-    use super::*;
-    use crate::arena::PageArena;
-    use crate::pdfstate::PDFTextState;
-    use crate::utils::MATRIX_IDENTITY;
-
-    #[test]
-    fn path_segments_to_path_ops_converts_variants() {
-        let path = vec![
-            PathSegment::MoveTo(1.0, 2.0),
-            PathSegment::LineTo(3.0, 4.0),
-            PathSegment::CurveTo(5.0, 6.0, 7.0, 8.0, 9.0, 10.0),
-            PathSegment::ClosePath,
-        ];
-
-        let got = path_segments_to_path_ops(&path);
-        let expected: Vec<PathOp> = vec![
-            ('m', vec![1.0, 2.0]),
-            ('l', vec![3.0, 4.0]),
-            ('c', vec![5.0, 6.0, 7.0, 8.0, 9.0, 10.0]),
-            ('h', vec![]),
-        ];
-
-        assert_eq!(got, expected);
-    }
-
-    #[test]
-    fn render_text_sequence_without_font_uses_fallback_and_advances_cursor() {
-        let mut arena = PageArena::new();
-        let mut analyzer = PDFLayoutAnalyzer::new(None, 1, arena.context());
-        analyzer.set_ctm(MATRIX_IDENTITY);
-        analyzer.set_cur_item((0.0, 0.0, 100.0, 100.0));
-
-        let mut textstate = PDFTextState {
-            fontsize: 10.0,
-            matrix: MATRIX_IDENTITY,
-            linematrix: (5.0, 7.0),
-            ..Default::default()
-        };
-        let seq = vec![PDFTextSeqItem::Bytes(vec![65])];
-        let graphicstate = PDFGraphicState::default();
-
-        render_text_sequence(&mut analyzer, &mut textstate, &seq, &graphicstate);
-
-        assert_eq!(analyzer.cur_item_len(), 1);
-        assert!((textstate.linematrix.0 - 11.0).abs() < 1e-9);
-        assert!((textstate.linematrix.1 - 7.0).abs() < 1e-9);
     }
 }

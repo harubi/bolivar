@@ -10,8 +10,8 @@ use bolivar_core::error::Result as CoreResult;
 use bolivar_core::high_level::{
     ExtractOptions, extract_pages_stream, extract_text, extract_text_to_fp,
 };
-use bolivar_core::layout::LTPage;
 use bolivar_core::layout::LAParams;
+use bolivar_core::layout::LTPage;
 use bolivar_core::pdfdocument::PDFDocument;
 use std::io::Cursor;
 
