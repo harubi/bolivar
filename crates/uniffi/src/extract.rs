@@ -1,7 +1,7 @@
+use bolivar_core::extract::ExtractOptions as CoreExtractOptions;
 use bolivar_core::extract::{
     extract_pages_stream_from_doc, extract_tables_metadata_stream_from_doc_with_geometries,
 };
-use bolivar_core::high_level::ExtractOptions as CoreExtractOptions;
 use bolivar_core::layout::LAParams as CoreLAParams;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::table::{PageGeometry, TableSettings};

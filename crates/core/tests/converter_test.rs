@@ -1267,7 +1267,7 @@ mod marked_content_tests {
 
 mod pdf_path_tests {
     use bolivar_core::arena::PageArena;
-    use bolivar_core::high_level::extract_pages_stream;
+    use bolivar_core::extract::extract_pages_stream;
     use bolivar_core::layout::LTItem;
 
     /// Test that pr-00530-ml-lines.pdf produces 6 LTLine objects.
@@ -1443,7 +1443,7 @@ mod pdf_path_tests {
 
 mod color_space_tests {
     use bolivar_core::arena::PageArena;
-    use bolivar_core::high_level::extract_pages_stream;
+    use bolivar_core::extract::extract_pages_stream;
     use bolivar_core::layout::{LTChar, LTItem};
 
     /// Helper to recursively collect all LTChar items from a page

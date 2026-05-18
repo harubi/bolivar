@@ -49,12 +49,6 @@ pub fn clear_thread_log() {
     guard.clear();
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub fn take_thread_log_len() -> usize {
-    take_thread_log().len()
-}
-
 const TABLE_COLLECTOR_NO_RESULT: &str = "table collector produced no result";
 
 /// Standard finisher for `PDFPageAggregator`-backed `process_page` calls: clones the result `LTPage`.

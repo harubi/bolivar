@@ -1,4 +1,4 @@
-use bolivar_core::high_level::{
+use bolivar_core::extract::{
     ExtractOptions as CoreExtractOptions,
     extract_text_with_document as core_extract_text_with_document,
 };

@@ -1,4 +1,4 @@
-use bolivar_core::high_level::{ExtractOptions, extract_pages_stream};
+use bolivar_core::extract::{ExtractOptions, extract_pages_stream};
 
 fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
     let mut out = Vec::new();

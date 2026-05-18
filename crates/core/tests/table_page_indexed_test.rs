@@ -1,6 +1,6 @@
-use bolivar_core::extract::extract_tables_stream_from_doc_with_geometries;
 use bolivar_core::document::PDFDocument;
-use bolivar_core::high_level::ExtractOptions;
+use bolivar_core::extract::ExtractOptions;
+use bolivar_core::extract::extract_tables_stream_from_doc_with_geometries;
 use bolivar_core::table::{PageGeometry, TableSettings};
 use std::sync::Arc;
 

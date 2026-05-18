@@ -5,12 +5,12 @@
 //!
 //! Port of pdfminer.six tools/pdf2txt.py
 
+use bolivar_core::device::{HOCRConverter, HTMLConverter, TextConverter, XMLConverter};
+use bolivar_core::error::{PdfError, Result};
+use bolivar_core::extract::{ExtractOptions, extract_pages_with_images_with_document};
 use bolivar_core::extract::{
     extract_pages_stream_from_doc, extract_tables_stream_from_doc_with_settings,
 };
-use bolivar_core::device::{HOCRConverter, HTMLConverter, TextConverter, XMLConverter};
-use bolivar_core::error::{PdfError, Result};
-use bolivar_core::high_level::{ExtractOptions, extract_pages_with_images_with_document};
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::table::{
@@ -599,6 +599,7 @@ fn parse_page_numbers(args: &Args) -> Option<Vec<usize>> {
 }
 
 fn build_extract_options(args: &Args) -> Result<ExtractOptions> {
+    #[allow(clippy::needless_update)]
     Ok(ExtractOptions {
         password: args.password.clone(),
         page_numbers: parse_page_numbers(args),

@@ -17,10 +17,10 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, criterion_group, criterion_main};
 
-use bolivar_core::extract::extract_pages_stream_from_doc;
 use bolivar_core::document::PDFDocument;
 use bolivar_core::error::Result as CoreResult;
-use bolivar_core::high_level::{ExtractOptions, extract_text};
+use bolivar_core::extract::extract_pages_stream_from_doc;
+use bolivar_core::extract::{ExtractOptions, extract_text};
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfpage::PDFPage;
 use bolivar_core::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
