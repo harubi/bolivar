@@ -557,31 +557,6 @@ pub fn extract_tables_from_ltpage(
         .collect()
 }
 
-/// Extract all tables from a page with per-cell metadata.
-pub fn extract_tables_with_metadata_from_ltpage(
-    page: &LTPage,
-    geom: &PageGeometry,
-    settings: &TableSettings,
-) -> Vec<TableMetadata> {
-    let mut arena = PageArena::new();
-    arena.reset();
-    let finder = TableFinder::new(page, geom, settings.clone(), &mut arena);
-    let mut tables = finder.find_tables();
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
-    }
-    tables
-        .iter()
-        .map(|t| table_to_metadata(t, &finder.chars, &settings.text_settings, finder.arena))
-        .collect()
-}
-
 /// Extract all tables from precomputed characters/edges.
 pub fn extract_tables_from_objects(
     chars: Vec<CharObj>,
