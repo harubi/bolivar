@@ -1113,12 +1113,13 @@ fn test_pdf_with_empty_characters_horizontal() {
     // Regression test for issue #449
     // See: https://github.com/pdfminer/pdfminer.six/pull/689
     // The page aggregator should separate the 3 horizontal lines
-    use bolivar_core::high_level::extract_pages;
+    use bolivar_core::high_level::extract_pages_stream;
     use bolivar_core::layout::TextBoxType;
 
     let pdf_data = include_bytes!("fixtures/contrib/issue-449-horizontal.pdf");
-    let pages: Vec<_> = extract_pages(pdf_data, None)
+    let pages: Vec<_> = extract_pages_stream(pdf_data, None)
         .expect("Failed to extract pages")
+        .map(|r| r.map(|(_, p)| p))
         .collect();
 
     let page = pages
@@ -1139,7 +1140,7 @@ fn test_pdf_with_empty_characters_horizontal() {
 fn test_pdf_with_empty_characters_vertical() {
     // Regression test for issue #449
     // See: https://github.com/pdfminer/pdfminer.six/pull/689
-    use bolivar_core::high_level::{ExtractOptions, extract_pages};
+    use bolivar_core::high_level::{ExtractOptions, extract_pages_stream};
     use bolivar_core::layout::TextBoxType;
 
     let pdf_data = include_bytes!("fixtures/contrib/issue-449-vertical.pdf");
@@ -1154,8 +1155,9 @@ fn test_pdf_with_empty_characters_vertical() {
         ..Default::default()
     };
 
-    let pages: Vec<_> = extract_pages(pdf_data, Some(options))
+    let pages: Vec<_> = extract_pages_stream(pdf_data, Some(options))
         .expect("Failed to extract pages")
+        .map(|r| r.map(|(_, p)| p))
         .collect();
 
     let page = pages

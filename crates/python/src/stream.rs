@@ -6,7 +6,7 @@ use std::sync::Mutex as StdMutex;
 use bolivar_core::api::pipeline::Stream;
 use bolivar_core::api::stream::{
     extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
-    extract_words_pages_from_doc_with_geometries as core_extract_words_pages_from_doc_with_geometries,
+    extract_words_stream_from_doc_with_geometries as core_extract_words_stream_from_doc_with_geometries,
 };
 use bolivar_core::error::Result as CoreResult;
 use bolivar_core::layout::LTPage;
@@ -202,15 +202,17 @@ pub fn extract_words_for_page_indexed(
     let geom = parse_page_geometry(geometry)?;
     let options = build_extract_options("", Some(vec![page_index]), 0, caching, laparams);
 
-    let words: Vec<(usize, Vec<WordObj>)> = py.detach(|| {
-        core_extract_words_pages_from_doc_with_geometries(
-            Arc::clone(&doc.inner),
-            options,
-            settings,
-            vec![geom],
-        )
-        .map_err(|e| PyValueError::new_err(format!("Failed to extract words: {e}")))
-    })?;
+    let words: Vec<(usize, Vec<WordObj>)> = py
+        .detach(|| {
+            core_extract_words_stream_from_doc_with_geometries(
+                Arc::clone(&doc.inner),
+                options,
+                settings,
+                vec![geom],
+            )?
+            .collect::<CoreResult<Vec<_>>>()
+        })
+        .map_err(|e| PyValueError::new_err(format!("Failed to extract words: {e}")))?;
 
     for (page_idx, page_words) in words {
         if page_idx != page_index {

@@ -5,12 +5,12 @@
 //!
 //! Port of pdfminer.six tools/pdf2txt.py
 
-use bolivar_core::api::stream::extract_tables_stream_from_doc_with_settings;
+use bolivar_core::api::stream::{
+    extract_pages_stream_from_doc, extract_tables_stream_from_doc_with_settings,
+};
 use bolivar_core::converter::{HOCRConverter, HTMLConverter, TextConverter, XMLConverter};
 use bolivar_core::error::{PdfError, Result};
-use bolivar_core::high_level::{
-    ExtractOptions, extract_pages_with_document, extract_pages_with_images_with_document,
-};
+use bolivar_core::high_level::{ExtractOptions, extract_pages_with_images_with_document};
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::table::{
@@ -783,7 +783,8 @@ fn process_file<W: Write>(
         OutputType::Text => {
             let laparams = build_laparams(args)?;
             let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
-            for page in extract_pages_with_document(&doc, options)? {
+            for item in extract_pages_stream_from_doc(Arc::clone(&doc), options)? {
+                let (_, page) = item?;
                 converter.receive_layout(page);
             }
         }
@@ -797,7 +798,8 @@ fn process_file<W: Write>(
                 args.scale,
                 1.0, // fontscale
             );
-            for page in extract_pages_with_document(&doc, options)? {
+            for item in extract_pages_stream_from_doc(Arc::clone(&doc), options)? {
+                let (_, page) = item?;
                 converter.receive_layout(page);
             }
             converter.close();
@@ -806,7 +808,8 @@ fn process_file<W: Write>(
             let laparams = build_laparams(args)?;
             let mut converter =
                 XMLConverter::with_options(writer, &args.codec, 1, laparams, args.strip_control);
-            for page in extract_pages_with_document(&doc, options)? {
+            for item in extract_pages_stream_from_doc(Arc::clone(&doc), options)? {
+                let (_, page) = item?;
                 converter.receive_layout(page);
             }
             converter.close();
@@ -815,7 +818,8 @@ fn process_file<W: Write>(
             // Tag output - fall back to text for now
             let laparams = build_laparams(args)?;
             let mut converter = TextConverter::new(writer, &args.codec, 1, laparams, false);
-            for page in extract_pages_with_document(&doc, options)? {
+            for item in extract_pages_stream_from_doc(Arc::clone(&doc), options)? {
+                let (_, page) = item?;
                 converter.receive_layout(page);
             }
         }
@@ -823,7 +827,8 @@ fn process_file<W: Write>(
             let laparams = build_laparams(args)?;
             let mut converter =
                 HOCRConverter::with_options(writer, &args.codec, 1, laparams, args.strip_control);
-            for page in extract_pages_with_document(&doc, options)? {
+            for item in extract_pages_stream_from_doc(Arc::clone(&doc), options)? {
+                let (_, page) = item?;
                 converter.receive_layout(page);
             }
             converter.close();

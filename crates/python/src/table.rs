@@ -3,15 +3,18 @@
 //! Provides functions for extracting tables from PDF pages and converting
 //! page objects to chars/edges for table extraction.
 
+use bolivar_core::api::stream::{
+    extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
+    extract_tables_stream_from_doc_with_geometries as core_extract_tables_stream_from_doc_with_geometries,
+};
 use bolivar_core::arena::PageArena;
+use bolivar_core::error::{PdfError, Result as CoreResult};
 use bolivar_core::high_level::{
-    extract_layout_for_page as core_extract_layout_for_page,
-    extract_layout_for_page_with_rotation as core_extract_layout_for_page_with_rotation,
-    extract_pages_with_document as core_extract_pages_with_document,
+    ExtractOptions,
     extract_pages_with_images_with_document as core_extract_pages_with_images_with_document,
-    extract_tables_for_page as core_extract_tables_for_page,
     extract_text_with_document as core_extract_text_with_document,
 };
+use bolivar_core::layout::LTPage;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -43,22 +46,39 @@ pub fn process_page(
     laparams: Option<&PyLAParams>,
     rotation: i64,
 ) -> PyResult<PyLTPage> {
+    use bolivar_core::api::pipeline::{no_precheck, run_stream};
+    use bolivar_core::converter::PDFPageAggregator;
+    use bolivar_core::high_level::{aggregator_result, process_page as core_process_page};
+    use bolivar_core::interp::PDFResourceManager;
+
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-    let ltpage = py
-        .detach(|| {
-            if rotation.rem_euclid(360) == 0 {
-                core_extract_layout_for_page(&doc.inner, page.page_index, la, true)
-            } else {
-                core_extract_layout_for_page_with_rotation(
-                    &doc.inner,
-                    page.page_index,
-                    la,
-                    true,
+    let page_index = page.page_index;
+    let result: CoreResult<LTPage> = py.detach(|| {
+        let mut stream = run_stream(
+            std::sync::Arc::clone(&doc.inner),
+            Some(vec![page_index]),
+            0,
+            no_precheck::<LTPage>,
+            move |arena, page_idx, page, doc| {
+                let mut rsrcmgr = PDFResourceManager::with_caching(true);
+                let mut aggregator =
+                    PDFPageAggregator::new(la.clone(), page_idx as i32 + 1, arena);
+                core_process_page(
+                    page,
+                    &mut aggregator,
+                    &mut rsrcmgr,
                     rotation,
+                    doc,
+                    aggregator_result,
                 )
-            }
-        })
-        .map_err(|e| core_error_to_py(py, "Failed to process page", e))?;
+            },
+        )?;
+        let (_, page) = stream
+            .next()
+            .ok_or_else(|| PdfError::DecodeError("page index out of range".to_string()))??;
+        Ok(page)
+    });
+    let ltpage = result.map_err(|e| core_error_to_py(py, "Failed to process page", e))?;
 
     Ok(ltpage_to_py(ltpage))
 }
@@ -79,8 +99,12 @@ pub fn process_pages(
 ) -> PyResult<Vec<PyLTPage>> {
     let options = build_extract_options("", None, 0, true, laparams);
 
-    let pages = py
-        .detach(|| core_extract_pages_with_document(&doc.inner, options))
+    let pages: Vec<LTPage> = py
+        .detach(|| {
+            core_extract_pages_stream_from_doc(std::sync::Arc::clone(&doc.inner), options)?
+                .map(|r| r.map(|(_, p)| p))
+                .collect::<CoreResult<Vec<_>>>()
+        })
         .map_err(|e| core_error_to_py(py, "Failed to process pages", e))?;
 
     Ok(pages.into_iter().map(ltpage_to_py).collect())
@@ -100,10 +124,27 @@ pub fn extract_tables_for_page_indexed(
 ) -> PyResult<Vec<Vec<Vec<Option<String>>>>> {
     let settings = parse_table_settings(py, table_settings)?;
     let geom = parse_page_geometry(geometry)?;
-    let options = build_extract_options("", None, 0, caching, laparams);
 
-    py.detach(|| core_extract_tables_for_page(&doc.inner, page_index, &geom, options, &settings))
-        .map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {e}")))
+    let result: CoreResult<Vec<Vec<Vec<Option<String>>>>> = py.detach(|| {
+        let opts = ExtractOptions {
+            page_numbers: Some(vec![page_index]),
+            caching,
+            laparams: laparams.map(|p| p.clone().into()),
+            ..ExtractOptions::default()
+        };
+        let mut stream = core_extract_tables_stream_from_doc_with_geometries(
+            std::sync::Arc::clone(&doc.inner),
+            opts,
+            settings,
+            vec![geom],
+        )?;
+        let (_, tables) = stream
+            .next()
+            .ok_or_else(|| PdfError::DecodeError("page index out of range".to_string()))??;
+        Ok(tables)
+    });
+
+    result.map_err(|e| PyValueError::new_err(format!("Failed to extract tables: {e}")))
 }
 
 /// Extract tables for compatibility-only filtered or cropped page objects.
@@ -202,8 +243,12 @@ pub fn extract_pages(
         rotation,
     );
     let doc = open_document_from_input(py, data, password, caching, true)?;
-    let pages = py
-        .detach(|| core_extract_pages_with_document(doc.as_ref(), options))
+    let pages: Vec<LTPage> = py
+        .detach(|| {
+            core_extract_pages_stream_from_doc(std::sync::Arc::clone(&doc), options)?
+                .map(|r| r.map(|(_, p)| p))
+                .collect::<CoreResult<Vec<_>>>()
+        })
         .map_err(|e| core_error_to_py(py, "Failed to extract pages", e))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
@@ -266,8 +311,12 @@ pub fn extract_pages_from_path(
         rotation,
     );
 
-    let pages = py
-        .detach(|| core_extract_pages_with_document(doc.as_ref(), options))
+    let pages: Vec<LTPage> = py
+        .detach(|| {
+            core_extract_pages_stream_from_doc(std::sync::Arc::clone(&doc), options)?
+                .map(|r| r.map(|(_, p)| p))
+                .collect::<CoreResult<Vec<_>>>()
+        })
         .map_err(|e| core_error_to_py(py, "Failed to extract pages", e))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }

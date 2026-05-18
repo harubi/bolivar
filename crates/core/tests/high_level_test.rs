@@ -6,10 +6,11 @@
 //! - extract_pages() - iterator over pages
 
 use bolivar_core::api::pipeline;
+use bolivar_core::error::Result as CoreResult;
 use bolivar_core::high_level::{
-    ExtractOptions, extract_pages, extract_pages_stream, extract_pages_with_document, extract_text,
-    extract_text_to_fp,
+    ExtractOptions, extract_pages_stream, extract_text, extract_text_to_fp,
 };
+use bolivar_core::layout::LTPage;
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfdocument::PDFDocument;
 use std::io::Cursor;
@@ -136,7 +137,7 @@ fn test_extract_text_to_fp_vec_writer() {
 
 #[test]
 fn test_extract_pages_returns_iterator() {
-    let result = extract_pages(b"", None);
+    let result = extract_pages_stream(b"", None);
 
     // Should return an iterator (or error for invalid PDF)
     match result {
@@ -158,21 +159,21 @@ fn test_extract_pages_with_options() {
         ..Default::default()
     };
 
-    let result = extract_pages(b"", Some(options));
+    let result = extract_pages_stream(b"", Some(options));
     assert!(result.is_err());
 }
 
 #[test]
 fn test_extract_pages_yields_ltpage() {
-    // Each item from extract_pages should be an LTPage
+    // Each item from extract_pages_stream should be an LTPage
     // (This test validates the type system, actual behavior needs real PDF)
-    let result = extract_pages(b"", None);
+    let result = extract_pages_stream(b"", None);
 
     if let Ok(pages) = result {
         for page in pages.flatten() {
             // Verify it has LTPage properties
-            let _ = page.pageid;
-            let _ = page.bbox();
+            let _ = page.1.pageid;
+            let _ = page.1.bbox();
         }
     }
 }
@@ -184,7 +185,7 @@ fn test_extract_pages_page_numbers_filter() {
         ..Default::default()
     };
 
-    let result = extract_pages(b"", Some(options));
+    let result = extract_pages_stream(b"", Some(options));
     assert!(result.is_err());
 }
 
@@ -195,7 +196,7 @@ fn test_extract_pages_maxpages_limit() {
         ..Default::default()
     };
 
-    let result = extract_pages(b"", Some(options));
+    let result = extract_pages_stream(b"", Some(options));
     assert!(result.is_err());
 }
 
@@ -407,16 +408,18 @@ fn test_extract_text_default_matches_options() {
 fn test_extract_pages_order_is_stable() {
     let pdf_data = build_minimal_pdf_with_pages(2);
 
-    let first_pages: Vec<_> = extract_pages(&pdf_data, None)
+    let first_pages: Vec<LTPage> = extract_pages_stream(&pdf_data, None)
         .unwrap()
-        .collect::<Result<Vec<_>, _>>()
+        .map(|r| r.map(|(_, p)| p))
+        .collect::<CoreResult<Vec<_>>>()
         .unwrap();
 
     let options = ExtractOptions::default();
 
-    let second_pages: Vec<_> = extract_pages(&pdf_data, Some(options))
+    let second_pages: Vec<LTPage> = extract_pages_stream(&pdf_data, Some(options))
         .unwrap()
-        .collect::<Result<Vec<_>, _>>()
+        .map(|r| r.map(|(_, p)| p))
+        .collect::<CoreResult<Vec<_>>>()
         .unwrap();
 
     assert_eq!(first_pages.len(), second_pages.len());
@@ -426,25 +429,37 @@ fn test_extract_pages_order_is_stable() {
 }
 
 #[test]
-fn extract_pages_with_document_uses_supplied_document() {
+fn extract_pages_stream_uses_supplied_document() {
+    use bolivar_core::api::stream::extract_pages_stream_from_doc;
     let pdf_path = fixture_path("encryption/rc4-40.pdf");
     let pdf_data = std::fs::read(&pdf_path)
         .unwrap_or_else(|_| panic!("Failed to read {}", pdf_path.display()));
-    let doc = PDFDocument::new(&pdf_data, "foo").unwrap();
+    let doc = std::sync::Arc::new(PDFDocument::new(&pdf_data, "foo").unwrap());
 
-    let pages = extract_pages_with_document(&doc, ExtractOptions::default()).unwrap();
+    let pages: Vec<LTPage> =
+        extract_pages_stream_from_doc(std::sync::Arc::clone(&doc), ExtractOptions::default())
+            .unwrap()
+            .map(|r| r.map(|(_, p)| p))
+            .collect::<CoreResult<Vec<_>>>()
+            .unwrap();
 
     assert_eq!(pages.len(), 1);
 }
 
 #[test]
-fn extract_pages_with_document_reuses_document_cache() {
+fn extract_pages_stream_reuses_document_cache() {
+    use bolivar_core::api::stream::extract_pages_stream_from_doc;
     let pdf_data = build_minimal_pdf_with_pages(1);
-    let doc = PDFDocument::new(&pdf_data, "").unwrap();
+    let doc = std::sync::Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
 
     assert!(doc.get_cached_page(0).is_none());
 
-    let pages = extract_pages_with_document(&doc, ExtractOptions::default()).unwrap();
+    let pages: Vec<LTPage> =
+        extract_pages_stream_from_doc(std::sync::Arc::clone(&doc), ExtractOptions::default())
+            .unwrap()
+            .map(|r| r.map(|(_, p)| p))
+            .collect::<CoreResult<Vec<_>>>()
+            .unwrap();
 
     assert_eq!(pages.len(), 1);
     let cached = doc
@@ -461,27 +476,8 @@ fn planner_applies_page_numbers_then_maxpages_in_order() {
 }
 
 #[test]
-fn batch_and_stream_pages_match_for_same_document() {
-    let pdf = build_minimal_pdf_with_pages(3);
-    let options = ExtractOptions::default();
-    let batch = extract_pages(&pdf, Some(options.clone()))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    let stream = extract_pages_stream(&pdf, Some(options))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-
-    assert_eq!(batch.len(), stream.len());
-    for (batch_page, (_, stream_page)) in batch.iter().zip(stream.iter()) {
-        assert_eq!(batch_page.bbox(), stream_page.bbox());
-    }
-}
-
-#[test]
 fn test_extract_pages_minimal_pdf() {
-    let result = extract_pages(MINIMAL_PDF, None);
+    let result = extract_pages_stream(MINIMAL_PDF, None);
 
     if let Ok(pages) = result {
         let count = pages.count();
@@ -565,7 +561,7 @@ fn test_extract_text_truncated_pdf() {
 #[test]
 fn test_extract_pages_invalid_pdf() {
     let invalid = b"garbage";
-    let result = extract_pages(invalid, None);
+    let result = extract_pages_stream(invalid, None);
 
     assert!(result.is_err());
 }
@@ -821,8 +817,9 @@ fn test_line_margin() {
         ..Default::default()
     };
 
-    let pages: Vec<_> = extract_pages(&pdf_data, Some(options))
+    let pages: Vec<_> = extract_pages_stream(&pdf_data, Some(options))
         .expect("Failed to extract pages")
+        .map(|r| r.map(|(_, p)| p))
         .collect();
 
     assert_eq!(pages.len(), 1);
@@ -856,8 +853,9 @@ fn test_line_margin() {
         ..Default::default()
     };
 
-    let pages: Vec<_> = extract_pages(&pdf_data, Some(options))
+    let pages: Vec<_> = extract_pages_stream(&pdf_data, Some(options))
         .expect("Failed to extract pages")
+        .map(|r| r.map(|(_, p)| p))
         .collect();
 
     assert_eq!(pages.len(), 1);
@@ -895,8 +893,9 @@ fn test_no_boxes_flow() {
         ..Default::default()
     };
 
-    let pages: Vec<_> = extract_pages(&pdf_data, Some(options))
+    let pages: Vec<_> = extract_pages_stream(&pdf_data, Some(options))
         .expect("Failed to extract pages")
+        .map(|r| r.map(|(_, p)| p))
         .collect();
 
     assert_eq!(pages.len(), 1);

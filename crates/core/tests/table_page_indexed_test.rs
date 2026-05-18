@@ -1,6 +1,8 @@
+use bolivar_core::api::stream::extract_tables_stream_from_doc_with_geometries;
 use bolivar_core::document::PDFDocument;
-use bolivar_core::high_level::{ExtractOptions, extract_tables_for_page_indexed};
+use bolivar_core::high_level::ExtractOptions;
 use bolivar_core::table::{PageGeometry, TableSettings};
+use std::sync::Arc;
 
 fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
     let mut out = Vec::new();
@@ -74,7 +76,7 @@ fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
 #[test]
 fn test_extract_tables_for_page_indexed_empty_page() {
     let pdf = build_minimal_pdf_with_pages(2);
-    let doc = PDFDocument::new(pdf, "").unwrap();
+    let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
     let geom = PageGeometry {
         page_bbox: (0.0, 0.0, 200.0, 200.0),
         mediabox: (0.0, 0.0, 200.0, 200.0),
@@ -82,8 +84,17 @@ fn test_extract_tables_for_page_indexed_empty_page() {
         force_crop: false,
     };
     let settings = TableSettings::default();
-    let tables =
-        extract_tables_for_page_indexed(&doc, 0, &geom, ExtractOptions::default(), &settings)
-            .unwrap();
+    let options = ExtractOptions {
+        page_numbers: Some(vec![0]),
+        ..ExtractOptions::default()
+    };
+    let mut stream = extract_tables_stream_from_doc_with_geometries(
+        Arc::clone(&doc),
+        options,
+        settings,
+        vec![geom],
+    )
+    .unwrap();
+    let (_, tables) = stream.next().unwrap().unwrap();
     assert!(tables.is_empty());
 }

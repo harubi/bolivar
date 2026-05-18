@@ -3,16 +3,12 @@
 //! Provides the main public API for PDF text extraction:
 //! - `extract_text()` - Extract all text from a PDF as a String
 //! - `extract_text_to_fp()` - Extract text to a writer
-//! - `extract_pages()` - Iterator over analyzed pages
+//! - `extract_pages_stream()` - Stream of analyzed pages from PDF bytes
 
 use std::io::Write;
 
 use crate::api::pipeline::Stream;
-use crate::api::stream::{
-    extract_pages_stream_from_doc, extract_tables_stream_from_doc_with_geometries,
-    extract_tables_stream_from_doc_with_settings,
-};
-use crate::arena::PageArena;
+use crate::api::stream::extract_pages_stream_from_doc;
 use crate::converter::{PDFPageAggregator, PDFTableCollector, TextConverter};
 use crate::document::catalog::DEFAULT_CACHE_CAPACITY;
 use crate::document::{PDFDocument, PDFPage};
@@ -20,9 +16,6 @@ use crate::error::{PdfError, Result};
 use crate::image::ImageWriter;
 use crate::interp::{PDFPageInterpreter, PDFResourceManager};
 use crate::layout::{LAParams, LTPage};
-use crate::table::{
-    PageGeometry, TableSettings, collect_table_objects_from_arena, extract_tables_from_objects,
-};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -81,12 +74,12 @@ fn cache_capacity(caching: bool) -> usize {
 const TABLE_COLLECTOR_NO_RESULT: &str = "table collector produced no result";
 
 /// Standard finisher for `PDFPageAggregator`-backed `process_page` calls: clones the result `LTPage`.
-pub(crate) fn aggregator_result(agg: &mut PDFPageAggregator<'_>) -> Result<LTPage> {
+pub fn aggregator_result(agg: &mut PDFPageAggregator<'_>) -> Result<LTPage> {
     Ok(agg.get_result().clone())
 }
 
 /// Standard finisher for `PDFTableCollector`-backed `process_page` calls: takes the arena page or errors.
-pub(crate) fn collector_result<'a>(
+pub fn collector_result<'a>(
     collector: &mut PDFTableCollector<'a>,
 ) -> Result<crate::arena::types::ArenaPage<'a>> {
     collector
@@ -299,7 +292,7 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
 /// layout aggregation (`PDFPageAggregator` -> `LTPage`) and arena collection
 /// (`PDFTableCollector` -> `ArenaPage`); helpers `aggregator_result` and
 /// `collector_result` cover the two standard finisher shapes.
-pub(crate) fn process_page<D, R>(
+pub fn process_page<D, R>(
     page: &PDFPage,
     device: &mut D,
     rsrcmgr: &mut PDFResourceManager,
@@ -325,69 +318,6 @@ where
     finish(device)
 }
 
-pub fn extract_layout_for_page(
-    doc: &PDFDocument,
-    page_index: usize,
-    laparams: Option<LAParams>,
-    caching: bool,
-) -> Result<LTPage> {
-    extract_layout_for_page_with_rotation(doc, page_index, laparams, caching, 0)
-}
-
-pub fn extract_layout_for_page_with_rotation(
-    doc: &PDFDocument,
-    page_index: usize,
-    laparams: Option<LAParams>,
-    caching: bool,
-    rotation: i64,
-) -> Result<LTPage> {
-    let page = doc.get_page_cached(page_index)?;
-    let mut arena = PageArena::new();
-    arena.reset();
-    let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-    let mut aggregator = PDFPageAggregator::new(laparams, page_index as i32 + 1, &mut arena);
-    process_page(
-        page.as_ref(),
-        &mut aggregator,
-        &mut rsrcmgr,
-        rotation,
-        doc,
-        aggregator_result,
-    )
-}
-
-/// Iterator over analyzed pages.
-///
-/// Yields LTPage objects for each page in the PDF.
-///
-/// Note: Due to lifetime constraints with the underlying PDF document,
-/// this iterator pre-processes pages into a vector. For very large PDFs,
-/// consider using extract_text_to_fp with streaming output instead.
-pub struct PageIterator {
-    /// Pre-processed pages
-    pages: std::vec::IntoIter<Result<LTPage>>,
-}
-
-impl Iterator for PageIterator {
-    type Item = Result<LTPage>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.pages.next()
-    }
-}
-
-impl PageIterator {
-    /// Returns the number of remaining pages.
-    pub fn len(&self) -> usize {
-        self.pages.len()
-    }
-
-    /// Returns true if there are no more pages.
-    pub fn is_empty(&self) -> bool {
-        self.pages.len() == 0
-    }
-}
-
 /// Extract and stream LTPage objects from PDF data in order.
 ///
 /// Returns a `Stream<LTPage>` that yields ordered `(page_idx, LTPage)` results.
@@ -407,82 +337,6 @@ pub fn extract_pages_stream(
     let doc =
         PDFDocument::new_with_cache(pdf_data, &options.password, cache_capacity(options.caching))?;
     extract_pages_stream_from_doc(Arc::new(doc), options)
-}
-
-/// Extract and yield LTPage objects from PDF data.
-///
-/// Returns an iterator over analyzed pages.
-///
-/// # Arguments
-/// * `pdf_data` - PDF file contents as bytes
-/// * `options` - Extraction options (None for defaults)
-///
-/// # Example
-/// ```ignore
-/// use bolivar_core::high_level::{extract_pages, ExtractOptions};
-/// use bolivar_core::layout::LTTextBox;
-///
-/// let pdf_bytes = std::fs::read("document.pdf")?;
-/// for page_result in extract_pages(&pdf_bytes, None)? {
-///     let page = page_result?;
-///     for item in page.iter() {
-///         // Process layout items
-///     }
-/// }
-/// ```
-pub fn extract_pages(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result<PageIterator> {
-    let mut options = options.unwrap_or_default();
-    // Match pdfminer.high_level.extract_pages default behavior.
-    if options.laparams.is_none() {
-        options.laparams = Some(LAParams::default());
-    }
-
-    // Validate PDF header
-    if pdf_data.len() < 8 || !pdf_data.starts_with(b"%PDF-") {
-        return Err(PdfError::SyntaxError("Invalid PDF header".to_string()));
-    }
-
-    let stream = extract_pages_stream(pdf_data, Some(options))?;
-    let pages: Vec<Result<LTPage>> = stream.map(|r| r.map(|(_, p)| p)).collect();
-
-    Ok(PageIterator {
-        pages: pages.into_iter(),
-    })
-}
-
-/// Extract LTPage objects from an already-parsed PDFDocument.
-pub fn extract_pages_with_document(
-    doc: &PDFDocument,
-    mut options: ExtractOptions,
-) -> Result<Vec<LTPage>> {
-    if options.laparams.is_none() {
-        options.laparams = Some(LAParams::default());
-    }
-
-    let laparams = options.laparams.clone();
-    let caching = options.caching;
-    let rotation = options.rotation;
-
-    let results = crate::api::pipeline::run_batch(
-        doc,
-        options.page_numbers.as_deref(),
-        options.maxpages,
-        |arena, page_idx, page, doc| {
-            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut aggregator =
-                PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
-            process_page(
-                page,
-                &mut aggregator,
-                &mut rsrcmgr,
-                rotation,
-                doc,
-                aggregator_result,
-            )
-        },
-    )?;
-
-    Ok(results.into_iter().map(|(_, p)| p).collect())
 }
 
 /// Extract LTPage objects from an already-parsed PDFDocument while exporting images.
@@ -532,84 +386,15 @@ pub fn extract_pages_with_images_with_document(
         .collect::<Result<Vec<_>>>()
 }
 
-/// Extract tables from an already-parsed PDFDocument.
-pub fn extract_tables_with_document(
-    doc: Arc<PDFDocument>,
-    options: ExtractOptions,
-    settings: &TableSettings,
-) -> Result<DocumentTables> {
-    let pages = extract_tables_stream_from_doc_with_settings(doc, options, settings.clone())?
-        .collect::<Result<Vec<_>>>()?;
-    Ok(pages.into_iter().map(|(_, tables)| tables).collect())
-}
-
-/// Extract tables from an already-parsed PDFDocument using per-page geometry.
-pub fn extract_tables_with_document_geometries(
-    doc: Arc<PDFDocument>,
-    options: ExtractOptions,
-    settings: &TableSettings,
-    geometries: &[PageGeometry],
-) -> Result<DocumentTables> {
-    let pages = extract_tables_stream_from_doc_with_geometries(
-        doc,
-        options,
-        settings.clone(),
-        geometries.to_vec(),
-    )?
-    .collect::<Result<Vec<_>>>()?;
-    Ok(pages.into_iter().map(|(_, tables)| tables).collect())
-}
-
-/// Extract tables for a single page using indexed page lookup.
-pub fn extract_tables_for_page(
-    doc: &PDFDocument,
-    page_index: usize,
-    geometry: &PageGeometry,
-    mut options: ExtractOptions,
-    settings: &TableSettings,
-) -> Result<PageTables> {
-    if options.laparams.is_none() {
-        options.laparams = Some(LAParams::default());
-    }
-    let laparams = options.laparams.clone();
-    let caching = options.caching;
-    let mut arena = PageArena::new();
-    arena.reset();
-    let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-    let page = PDFPage::get_page_by_index(doc, page_index)?;
-    let mut collector = PDFTableCollector::new(laparams, page_index as i32 + 1, &mut arena);
-    let page_arena = process_page(&page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
-        collector_result(c)
-    })?;
-    let arena_lookup = collector.arena_lookup();
-    let (chars, edges) = collect_table_objects_from_arena(&page_arena, geometry);
-    Ok(extract_tables_from_objects(
-        chars,
-        edges,
-        geometry,
-        settings,
-        arena_lookup,
-    ))
-}
-
-/// Extract tables for specific pages with per-page geometry in input order.
-pub fn extract_tables_for_page_indexed(
-    doc: &PDFDocument,
-    page_index: usize,
-    geometry: &PageGeometry,
-    options: ExtractOptions,
-    settings: &TableSettings,
-) -> Result<PageTables> {
-    extract_tables_for_page(doc, page_index, geometry, options, settings)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        ExtractOptions, extract_pages, extract_tables_with_document,
-        extract_tables_with_document_geometries,
+    use super::{ExtractOptions, PageTables, extract_pages_stream};
+    use crate::api::stream::{
+        extract_tables_stream_from_doc_with_geometries,
+        extract_tables_stream_from_doc_with_settings,
     };
     use crate::document::PDFDocument;
+    use crate::error::Result;
     use crate::table::{PageGeometry, TableProbePolicy, TableSettings};
     use std::collections::HashSet;
     use std::sync::{Arc, Mutex, OnceLock};
@@ -771,9 +556,9 @@ mod tests {
         super::clear_thread_log();
 
         let options = ExtractOptions::default();
-        let pages: Vec<_> = extract_pages(&pdf_data, Some(options))
+        let pages: Vec<_> = extract_pages_stream(&pdf_data, Some(options))
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>>>()
             .unwrap();
 
         assert_eq!(pages.len(), 4);
@@ -794,9 +579,9 @@ mod tests {
         crate::api::stream::take_stream_usage();
 
         let options = ExtractOptions::default();
-        let pages: Vec<_> = extract_pages(&pdf_data, Some(options))
+        let pages: Vec<_> = extract_pages_stream(&pdf_data, Some(options))
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<Vec<_>>>()
             .unwrap();
 
         assert_eq!(pages.len(), 2);
@@ -812,7 +597,12 @@ mod tests {
         let options = ExtractOptions::default();
         let settings = TableSettings::default();
 
-        let tables = extract_tables_with_document(Arc::clone(&doc), options, &settings).unwrap();
+        let tables: Vec<PageTables> =
+            extract_tables_stream_from_doc_with_settings(Arc::clone(&doc), options, settings)
+                .unwrap()
+                .map(|r| r.map(|(_, t)| t))
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
         assert_eq!(tables.len(), 3);
     }
 
@@ -829,9 +619,15 @@ mod tests {
             force_crop: false,
         };
 
-        let err =
-            extract_tables_with_document_geometries(Arc::clone(&doc), options, &settings, &[geom])
-                .unwrap_err();
+        let err = match extract_tables_stream_from_doc_with_geometries(
+            Arc::clone(&doc),
+            options,
+            settings,
+            vec![geom],
+        ) {
+            Ok(_) => panic!("expected geometry count mismatch error"),
+            Err(e) => e,
+        };
         assert!(err.to_string().contains("geometry"));
     }
 
@@ -846,7 +642,12 @@ mod tests {
         };
 
         crate::layout::table::edge_probe::take_probe_calls();
-        let out = extract_tables_with_document(Arc::clone(&doc), options, &settings).unwrap();
+        let out: Vec<PageTables> =
+            extract_tables_stream_from_doc_with_settings(Arc::clone(&doc), options, settings)
+                .unwrap()
+                .map(|r| r.map(|(_, t)| t))
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
         assert_eq!(out.len(), 1);
         let calls = crate::layout::table::edge_probe::take_probe_calls();
         assert!(calls > 0);
@@ -859,7 +660,12 @@ mod tests {
         let options = ExtractOptions::default();
         let settings = TableSettings::default();
 
-        let out = extract_tables_with_document(Arc::clone(&doc), options, &settings).unwrap();
+        let out: Vec<PageTables> =
+            extract_tables_stream_from_doc_with_settings(Arc::clone(&doc), options, settings)
+                .unwrap()
+                .map(|r| r.map(|(_, t)| t))
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
         let found = out
             .iter()
             .flatten()

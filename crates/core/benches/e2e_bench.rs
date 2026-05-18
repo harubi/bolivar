@@ -18,7 +18,9 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, criterion_group, criterion_main};
 
 use bolivar_core::document::PDFDocument;
-use bolivar_core::high_level::{ExtractOptions, extract_pages_with_document, extract_text};
+use bolivar_core::api::stream::extract_pages_stream_from_doc;
+use bolivar_core::error::Result as CoreResult;
+use bolivar_core::high_level::{ExtractOptions, extract_text};
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfpage::PDFPage;
 use bolivar_core::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
@@ -96,7 +98,7 @@ fn bench_extract_pages_doc_reuse(c: &mut BenchCriterion) {
     configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
-        let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
+        let doc = std::sync::Arc::new(PDFDocument::new(&fx.bytes, "").expect("parse PDF"));
         let options = ExtractOptions {
             laparams: Some(LAParams::default()),
             ..Default::default()
@@ -104,8 +106,12 @@ fn bench_extract_pages_doc_reuse(c: &mut BenchCriterion) {
         group.throughput(bytes_throughput(fx.bytes.len()));
         group.bench_with_input(BenchmarkId::new("pages", &fx.meta.id), &doc, |b, doc| {
             b.iter(|| {
-                let pages =
-                    extract_pages_with_document(doc, options.clone()).expect("extract pages");
+                let pages: Vec<_> =
+                    extract_pages_stream_from_doc(std::sync::Arc::clone(doc), options.clone())
+                        .expect("extract pages")
+                        .map(|r| r.map(|(_, p)| p))
+                        .collect::<CoreResult<Vec<_>>>()
+                        .expect("extract pages");
                 black_box(pages.len());
             })
         });
@@ -123,12 +129,17 @@ fn bench_extract_tables_e2e(c: &mut BenchCriterion) {
     configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
-        let doc = PDFDocument::new(&fx.bytes, "").expect("parse PDF");
+        let doc = std::sync::Arc::new(PDFDocument::new(&fx.bytes, "").expect("parse PDF"));
         let options = ExtractOptions {
             laparams: Some(LAParams::default()),
             ..Default::default()
         };
-        let pages = extract_pages_with_document(&doc, options.clone()).expect("extract pages");
+        let pages: Vec<_> =
+            extract_pages_stream_from_doc(std::sync::Arc::clone(&doc), options.clone())
+                .expect("extract pages")
+                .map(|r| r.map(|(_, p)| p))
+                .collect::<CoreResult<Vec<_>>>()
+                .expect("extract pages");
         let geoms: Vec<PageGeometry> = pages
             .iter()
             .map(|page| {
