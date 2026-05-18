@@ -702,7 +702,8 @@ fn test_resource_manager_get_cmap_one_byte_identity() {
 // PDFPageInterpreter tests - Graphics operators
 // ============================================================================
 
-use bolivar_core::pdfdevice::{PDFDevice, PDFStackT, PathSegment};
+use bolivar_core::device::PDFDevice;
+use bolivar_core::interp::types::{PDFStackT, PathSegment};
 use bolivar_core::pdfinterp::PDFPageInterpreter;
 use bolivar_core::pdfstate::PDFGraphicState;
 use bolivar_core::psparser::PSLiteral;
@@ -1729,7 +1730,7 @@ fn test_interpreter_do_t_star_multiple_lines() {
 // Text Showing Operators tests - Tj, TJ, ', "
 // ============================================================================
 
-use bolivar_core::pdfdevice::PDFTextSeq;
+use bolivar_core::interp::types::PDFTextSeq;
 
 /// Extended mock device that records text rendering calls.
 #[derive(Debug, Default)]
@@ -1794,7 +1795,7 @@ fn test_interpreter_do_tj_shows_text() {
 /// Test: TJ operator shows text with positioning.
 #[test]
 fn test_interpreter_do_tj_shows_positioned_text() {
-    use bolivar_core::pdfdevice::PDFTextSeqItem;
+    use bolivar_core::interp::types::PDFTextSeqItem;
 
     let mut rsrcmgr = PDFResourceManager::new();
     let mut device = TextMockDevice::default();
@@ -1970,7 +1971,7 @@ fn test_interpreter_bdc_calls_begin_tag_with_props() {
 
     // BDC with tag name and properties dict
     let tag = PSLiteral::new("P");
-    let props = bolivar_core::pdfdevice::PDFStackT::default(); // Empty props for now, just testing it's passed
+    let props = bolivar_core::interp::types::PDFStackT::default(); // Empty props for now, just testing it's passed
     interp.do_BDC(&tag, &props);
 
     assert_eq!(device.tags_begun.len(), 1);

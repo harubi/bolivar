@@ -9,7 +9,7 @@
 //! - ri, i: Rendering intent and flatness
 //! - gs: Set parameters from graphics state dictionary
 
-use crate::interp::device::PDFDevice;
+use crate::device::PDFDevice;
 use crate::interp::interpreter::PDFPageInterpreter;
 use crate::utils::mult_matrix;
 

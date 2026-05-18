@@ -301,7 +301,7 @@ pub fn process_page<D, R>(
     finish: impl FnOnce(&mut D) -> Result<R>,
 ) -> Result<R>
 where
-    D: crate::interp::device::PDFDevice,
+    D: crate::device::PDFDevice,
 {
     record_thread();
 

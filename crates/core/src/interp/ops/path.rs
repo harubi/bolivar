@@ -18,8 +18,9 @@
 //! Clipping:
 //! - W/W*: Set clipping path (non-zero/even-odd)
 
-use crate::interp::device::{PDFDevice, PathSegment};
+use crate::device::PDFDevice;
 use crate::interp::interpreter::PDFPageInterpreter;
+use crate::interp::types::PathSegment;
 
 #[allow(non_snake_case)]
 impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {

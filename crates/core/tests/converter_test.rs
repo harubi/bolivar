@@ -1080,9 +1080,8 @@ mod integration_tests {
 mod marked_content_tests {
     use super::*;
     use bolivar_core::layout::LTItem;
-    use bolivar_core::pdfdevice::{
-        PDFDevice, PDFStackT, PDFStackValue, PDFTextSeq, PDFTextSeqItem,
-    };
+    use bolivar_core::device::PDFDevice;
+    use bolivar_core::interp::types::{PDFStackT, PDFStackValue, PDFTextSeq, PDFTextSeqItem};
     use bolivar_core::pdfstate::PDFTextState;
     use bolivar_core::psparser::PSLiteral;
 

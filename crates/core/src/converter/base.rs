@@ -22,7 +22,8 @@ use crate::arena::types::{
 use crate::image::ImageWriter;
 use crate::layout::{LAParams, LTItem, LTPage};
 use crate::pdfcolor::PDFColorSpace;
-use crate::pdfdevice::{PDFDevice, PDFTextSeq, PDFTextSeqItem, PathSegment};
+use crate::device::PDFDevice;
+use crate::interp::types::{PDFTextSeq, PDFTextSeqItem, PathSegment};
 use crate::pdffont::{CharDisp, PDFFont};
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
 use crate::pdftypes::PDFStream;
@@ -821,12 +822,12 @@ impl<'a> PDFLayoutAnalyzer<'a> {
     pub fn begin_tag(
         &mut self,
         tag: &crate::psparser::PSLiteral,
-        props: Option<&crate::pdfdevice::PDFStackT>,
+        props: Option<&crate::interp::types::PDFStackT>,
     ) {
         // Extract MCID from properties if present
         let mcid = props.and_then(|p| {
             p.get("MCID").and_then(|v| match v {
-                crate::pdfdevice::PDFStackValue::Int(n) => Some(*n as i32),
+                crate::interp::types::PDFStackValue::Int(n) => Some(*n as i32),
                 _ => None,
             })
         });
@@ -1208,7 +1209,7 @@ impl<'a> PDFDevice for PDFPageAggregator<'a> {
     fn begin_tag(
         &mut self,
         tag: &crate::psparser::PSLiteral,
-        props: Option<&crate::pdfdevice::PDFStackT>,
+        props: Option<&crate::interp::types::PDFStackT>,
     ) {
         self.analyzer.begin_tag(tag, props);
     }

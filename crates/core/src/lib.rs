@@ -5,6 +5,7 @@ pub mod api;
 pub mod arena;
 pub mod codec;
 pub mod converter;
+pub mod device;
 pub mod document;
 pub mod error;
 pub mod font;
@@ -59,7 +60,7 @@ pub use document::saslprep;
 pub use document::security;
 
 // Re-export interp modules for backwards compatibility
-pub use interp::device as pdfdevice;
+pub use device as pdfdevice;
 pub use interp::interpreter as pdfinterp;
 
 pub use error::{PdfError, Result};
