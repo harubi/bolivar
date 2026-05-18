@@ -232,7 +232,13 @@ pub fn extract_pages_with_images(
     );
     let doc = open_document_from_input(py, data, password, caching, true)?;
     let pages = py
-        .detach(|| core_extract_pages_with_images_with_document(doc.as_ref(), options, output_dir))
+        .detach(|| {
+            core_extract_pages_with_images_with_document(
+                std::sync::Arc::clone(&doc),
+                options,
+                output_dir,
+            )
+        })
         .map_err(|e| core_error_to_py(py, "Failed to extract pages", e))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
@@ -291,7 +297,13 @@ pub fn extract_pages_with_images_from_path(
     );
 
     let pages = py
-        .detach(|| core_extract_pages_with_images_with_document(doc.as_ref(), options, output_dir))
+        .detach(|| {
+            core_extract_pages_with_images_with_document(
+                std::sync::Arc::clone(&doc),
+                options,
+                output_dir,
+            )
+        })
         .map_err(|e| core_error_to_py(py, "Failed to extract pages", e))?;
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }

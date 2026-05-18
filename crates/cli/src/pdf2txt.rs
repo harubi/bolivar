@@ -716,8 +716,11 @@ fn process_file<W: Write>(
 
     if let Some(ref output_dir) = args.output_dir {
         let output_dir = output_dir.to_string_lossy();
-        let pages =
-            extract_pages_with_images_with_document(&doc, options.clone(), output_dir.as_ref())?;
+        let pages = extract_pages_with_images_with_document(
+            Arc::clone(&doc),
+            options.clone(),
+            output_dir.as_ref(),
+        )?;
         match output_type {
             OutputType::Text => {
                 let laparams = build_laparams(args)?;
