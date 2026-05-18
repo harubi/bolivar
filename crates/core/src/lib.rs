@@ -9,10 +9,6 @@ pub mod engine;
 pub mod error;
 pub mod extract;
 pub mod font;
-
-// Re-export extract as `high_level` for backwards compatibility with callers
-// that imported the legacy pdfminer.six-shaped path.
-pub use extract as high_level;
 pub mod image;
 pub mod interp;
 pub mod layout;
@@ -61,7 +57,6 @@ pub use document::saslprep;
 pub use document::security;
 
 // Re-export interp modules for backwards compatibility
-pub use device as pdfdevice;
 pub use interp::interpreter as pdfinterp;
 
 pub use error::{PdfError, Result};

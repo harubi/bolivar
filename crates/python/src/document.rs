@@ -2,7 +2,7 @@
 //!
 //! Provides PyPDFDocument, PyPDFPage, and parser classes with lazy page loading.
 
-use bolivar_core::high_level::ExtractOptions;
+use bolivar_core::extract::ExtractOptions;
 use bolivar_core::parser::{
     PDFParser as CorePDFParser, PSBaseParser as CorePSBaseParser,
     PSStackParser as CorePSStackParser,

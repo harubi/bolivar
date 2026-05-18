@@ -15,13 +15,12 @@ use std::io::Write;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::device::{PDFPageAggregator, PDFTableCollector};
 use crate::device::TextConverter;
+use crate::device::{PDFPageAggregator, PDFTableCollector};
 use crate::document::PDFDocument;
 use crate::document::catalog::DEFAULT_CACHE_CAPACITY;
-// Re-export engine items via `extract` (and its `high_level` alias) so legacy
-// callers like `bolivar_core::high_level::{ExtractOptions, process_page,
-// aggregator_result}` keep compiling.
+// Re-export engine items via `extract` so callers can reach `ExtractOptions`,
+// `process_page`, `aggregator_result`, etc. through the canonical extract path.
 pub use crate::engine::{
     ExecutionPlan, ExtractOptions, PageTables, Stream, aggregator_result, collector_result,
     no_precheck, process_page, run_batch, run_stream, validate_geometry_count,
@@ -129,6 +128,7 @@ pub fn extract_text_to_fp<W: Write>(
 }
 
 /// Inner implementation of extract_text_to_fp.
+#[allow(clippy::too_many_arguments)]
 fn extract_text_to_fp_inner<W: Write>(
     pdf_data: &[u8],
     writer: &mut W,
@@ -173,24 +173,19 @@ fn extract_text_to_fp_from_doc_inner<W: Write>(
     // Create text converter
     let mut converter = TextConverter::new(writer, "utf-8", 1, Some(laparams.clone()), false);
 
-    let results = run_batch(
-        doc,
-        page_numbers,
-        maxpages,
-        |arena, page_idx, page, doc| {
-            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut aggregator =
-                PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1, arena);
-            process_page(
-                page,
-                &mut aggregator,
-                &mut rsrcmgr,
-                rotation,
-                doc,
-                aggregator_result,
-            )
-        },
-    )?;
+    let results = run_batch(doc, page_numbers, maxpages, |arena, page_idx, page, doc| {
+        let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+        let mut aggregator =
+            PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1, arena);
+        process_page(
+            page,
+            &mut aggregator,
+            &mut rsrcmgr,
+            rotation,
+            doc,
+            aggregator_result,
+        )
+    })?;
 
     for (_, ltpage) in results {
         converter.receive_layout(ltpage);
@@ -625,11 +620,11 @@ pub(crate) fn stream_usage_test_guard() -> std::sync::MutexGuard<'static, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::processor;
     use crate::engine::stream::{
         reset_stream_worker_lifecycle_counters, set_stream_worker_lifecycle_enabled,
         stream_worker_lifecycle_counts, stream_worker_lifecycle_test_guard,
     };
-    use crate::engine::processor;
     use crate::table::{TableProbePolicy, TableSettings};
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};

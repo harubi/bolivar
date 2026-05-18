@@ -4,7 +4,7 @@
 //! The test PDF contains text where the displayed number equals the font size
 //! used to render that number (e.g., "12" rendered in 12pt font).
 
-use bolivar_core::high_level::{ExtractOptions, extract_pages_stream};
+use bolivar_core::extract::{ExtractOptions, extract_pages_stream};
 use bolivar_core::layout::{LAParams, LTItem, LTTextBox, LTTextLine, TextBoxType, TextLineElement};
 
 // ============================================================================

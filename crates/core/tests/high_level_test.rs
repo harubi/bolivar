@@ -7,7 +7,7 @@
 
 use bolivar_core::engine;
 use bolivar_core::error::Result as CoreResult;
-use bolivar_core::high_level::{
+use bolivar_core::extract::{
     ExtractOptions, extract_pages_stream, extract_text, extract_text_to_fp,
 };
 use bolivar_core::layout::LAParams;

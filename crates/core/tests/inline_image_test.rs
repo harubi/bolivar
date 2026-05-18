@@ -1,4 +1,4 @@
-use bolivar_core::pdfdevice::PDFDevice;
+use bolivar_core::device::PDFDevice;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdfinterp::{PDFPageInterpreter, PDFResourceManager};
 use bolivar_core::pdfpage::PDFPage;

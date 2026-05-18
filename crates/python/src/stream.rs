@@ -4,11 +4,11 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
 use bolivar_core::engine::Stream;
+use bolivar_core::error::Result as CoreResult;
 use bolivar_core::extract::{
     extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
     extract_words_stream_from_doc_with_geometries as core_extract_words_stream_from_doc_with_geometries,
 };
-use bolivar_core::error::Result as CoreResult;
 use bolivar_core::layout::LTPage;
 use bolivar_core::table::{TextDir, WordObj};
 use pyo3::exceptions::{PyStopAsyncIteration, PyValueError};

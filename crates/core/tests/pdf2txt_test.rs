@@ -13,7 +13,7 @@ use std::process::Command;
 use std::sync::Once;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use bolivar_core::high_level::extract_text;
+use bolivar_core::extract::extract_text;
 
 // ============================================================================
 // Helper functions

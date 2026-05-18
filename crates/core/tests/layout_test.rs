@@ -1113,7 +1113,7 @@ fn test_pdf_with_empty_characters_horizontal() {
     // Regression test for issue #449
     // See: https://github.com/pdfminer/pdfminer.six/pull/689
     // The page aggregator should separate the 3 horizontal lines
-    use bolivar_core::high_level::extract_pages_stream;
+    use bolivar_core::extract::extract_pages_stream;
     use bolivar_core::layout::TextBoxType;
 
     let pdf_data = include_bytes!("fixtures/contrib/issue-449-horizontal.pdf");
@@ -1140,7 +1140,7 @@ fn test_pdf_with_empty_characters_horizontal() {
 fn test_pdf_with_empty_characters_vertical() {
     // Regression test for issue #449
     // See: https://github.com/pdfminer/pdfminer.six/pull/689
-    use bolivar_core::high_level::{ExtractOptions, extract_pages_stream};
+    use bolivar_core::extract::{ExtractOptions, extract_pages_stream};
     use bolivar_core::layout::TextBoxType;
 
     let pdf_data = include_bytes!("fixtures/contrib/issue-449-vertical.pdf");

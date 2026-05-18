@@ -18,7 +18,7 @@ use stats_alloc::{Stats, StatsAlloc};
 use stats_alloc_helper::{LockedAllocator, memory_measured};
 
 use bolivar_core::document::PDFDocument;
-use bolivar_core::high_level::{ExtractOptions, extract_text_with_document};
+use bolivar_core::extract::{ExtractOptions, extract_text_with_document};
 use bolivar_core::layout::{LAParams, LTChar, LTLayoutContainer};
 use bolivar_core::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
 

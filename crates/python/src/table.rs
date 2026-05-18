@@ -3,16 +3,16 @@
 //! Provides functions for extracting tables from PDF pages and converting
 //! page objects to chars/edges for table extraction.
 
-use bolivar_core::extract::{
-    extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
-    extract_tables_stream_from_doc_with_geometries as core_extract_tables_stream_from_doc_with_geometries,
-};
 use bolivar_core::arena::PageArena;
 use bolivar_core::error::{PdfError, Result as CoreResult};
-use bolivar_core::high_level::{
+use bolivar_core::extract::{
     ExtractOptions,
     extract_pages_with_images_with_document as core_extract_pages_with_images_with_document,
     extract_text_with_document as core_extract_text_with_document,
+};
+use bolivar_core::extract::{
+    extract_pages_stream_from_doc as core_extract_pages_stream_from_doc,
+    extract_tables_stream_from_doc_with_geometries as core_extract_tables_stream_from_doc_with_geometries,
 };
 use bolivar_core::layout::LTPage;
 use pyo3::exceptions::PyValueError;
@@ -46,9 +46,9 @@ pub fn process_page(
     laparams: Option<&PyLAParams>,
     rotation: i64,
 ) -> PyResult<PyLTPage> {
-    use bolivar_core::engine::{no_precheck, run_stream};
     use bolivar_core::device::PDFPageAggregator;
-    use bolivar_core::high_level::{aggregator_result, process_page as core_process_page};
+    use bolivar_core::engine::{no_precheck, run_stream};
+    use bolivar_core::extract::{aggregator_result, process_page as core_process_page};
     use bolivar_core::interp::PDFResourceManager;
 
     let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());

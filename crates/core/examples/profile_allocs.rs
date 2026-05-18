@@ -1,5 +1,5 @@
 use bolivar_core::document::PDFDocument;
-use bolivar_core::high_level::{ExtractOptions, extract_text_with_document};
+use bolivar_core::extract::{ExtractOptions, extract_text_with_document};
 use bolivar_core::layout::LAParams;
 use stats_alloc::StatsAlloc;
 use stats_alloc_helper::{LockedAllocator, memory_measured};
