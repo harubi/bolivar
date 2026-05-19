@@ -1,14 +1,24 @@
 //! High-level text extraction API - port of pdfminer.six high_level.py
 //!
 //! Public extraction entry points. Each function is a thin call into the engine.
-//! Provides the main public API for PDF text extraction:
-//! - `extract_text()` - Extract all text from a PDF as a String
-//! - `extract_text_to_fp()` - Extract text to a writer
-//! - `extract_pages_stream()` - Stream of analyzed pages from PDF bytes
-//! - `extract_pages_stream_from_doc()` - Stream from an open document
-//! - `extract_tables_stream_from_doc*` - Stream tables (with/without settings and geometries)
-//! - `extract_text_stream_from_doc_with_geometries()` / `extract_words_stream_from_doc_with_geometries()`
-//!   - Arena-backed text/word streams
+//!
+//! # Call graph
+//!
+//! Public entry points (callers should use these):
+//! - [`extract_text`] — PDF bytes → `String`
+//! - [`extract_text_with_document`] — pre-parsed `PDFDocument` → `String`
+//! - [`extract_text_to_fp`] — PDF bytes → writer
+//! - [`extract_text_stream_from_doc_with_geometries`] — arena-backed text stream
+//! - [`extract_pages_stream`] / [`extract_pages_stream_from_doc`] — analyzed pages
+//! - [`extract_tables_stream_from_doc`] family — table streams
+//! - [`extract_words_stream_from_doc_with_geometries`] — arena-backed word stream
+//!
+//! Internal helpers (file-private):
+//! - `extract_text_to_fp_impl` — bytes path: validates header, opens doc, delegates
+//! - `extract_text_to_fp_from_doc_impl` — doc path: drives a `TextConverter` over pages
+//!
+//! `extract_text` and `extract_text_to_fp` both lower into `*_from_doc_impl`,
+//! so the actual rendering logic lives in exactly one place.
 
 use std::cell::RefCell;
 use std::io::Write;
@@ -76,7 +86,7 @@ pub fn extract_text_with_document(doc: &PDFDocument, options: ExtractOptions) ->
     // Create output buffer
     let mut output = Vec::new();
 
-    extract_text_to_fp_from_doc_inner(
+    extract_text_to_fp_from_doc_impl(
         doc,
         &mut output,
         options.page_numbers.as_deref(),
@@ -115,7 +125,7 @@ pub fn extract_text_to_fp<W: Write>(
 
     let laparams = options.laparams.as_ref();
 
-    extract_text_to_fp_inner(
+    extract_text_to_fp_impl(
         pdf_data,
         writer,
         &options.password,
@@ -129,7 +139,7 @@ pub fn extract_text_to_fp<W: Write>(
 
 /// Inner implementation of extract_text_to_fp.
 #[allow(clippy::too_many_arguments)]
-fn extract_text_to_fp_inner<W: Write>(
+fn extract_text_to_fp_impl<W: Write>(
     pdf_data: &[u8],
     writer: &mut W,
     password: &str,
@@ -146,7 +156,7 @@ fn extract_text_to_fp_inner<W: Write>(
 
     // Parse PDF document
     let doc = PDFDocument::new_with_cache(pdf_data, password, cache_capacity(caching))?;
-    extract_text_to_fp_from_doc_inner(
+    extract_text_to_fp_from_doc_impl(
         &doc,
         writer,
         page_numbers,
@@ -157,7 +167,7 @@ fn extract_text_to_fp_inner<W: Write>(
     )
 }
 
-fn extract_text_to_fp_from_doc_inner<W: Write>(
+fn extract_text_to_fp_from_doc_impl<W: Write>(
     doc: &PDFDocument,
     writer: &mut W,
     page_numbers: Option<&[usize]>,
