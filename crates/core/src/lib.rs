@@ -45,10 +45,7 @@ pub use model::state as pdfstate;
 // Re-export font modules for backwards compatibility
 pub use font::cmap as cmapdb;
 pub use font::encoding as encodingdb;
-pub use font::latin_enc;
-pub use font::metrics as fontmetrics;
 pub use font::pdffont;
-pub use font::truetype;
 
 // Re-export document modules for backwards compatibility
 pub use document::catalog as pdfdocument;
