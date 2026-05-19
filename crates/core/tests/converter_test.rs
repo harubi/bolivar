@@ -4,8 +4,7 @@
 
 use bolivar_core::arena::PageArena;
 use bolivar_core::device::{
-    HOCRConverter, HTMLConverter, PDFConverter, PDFLayoutAnalyzer, PDFPageAggregator,
-    TextConverter, XMLConverter,
+    HOCRConverter, HTMLConverter, PDFLayoutAnalyzer, PDFPageAggregator, TextConverter, XMLConverter,
 };
 use bolivar_core::layout::{
     LAParams, LTChar, LTItem, LTPage, LTTextBoxHorizontal, LTTextLineHorizontal, TextBoxType,
@@ -16,7 +15,6 @@ use bolivar_core::pdffont::{FontWidthDict, PDFFont};
 use bolivar_core::pdfstate::PDFGraphicState;
 use bolivar_core::pdftypes::{PDFDict, PDFObject, PDFStream};
 use bolivar_core::utils::MATRIX_IDENTITY;
-use std::io::Cursor;
 
 fn sample_rtl_page() -> LTPage {
     let mut line = LTTextLineHorizontal::new(0.1);
@@ -714,27 +712,6 @@ mod page_aggregator_tests {
         aggregator.receive_layout(page);
         let result = aggregator.get_result();
         assert_eq!(result.pageid, 1);
-    }
-}
-
-// ============================================================================
-// PDFConverter Binary Detection Tests
-// ============================================================================
-
-mod binary_detector_tests {
-    use super::*;
-
-    #[test]
-    fn test_is_binary_stream_bytes_io() {
-        let cursor: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        assert!(PDFConverter::<Cursor<Vec<u8>>>::is_binary_stream(&cursor));
-    }
-
-    #[test]
-    fn test_non_file_like_defaults_to_binary() {
-        // Non-standard types default to binary
-        let data: Vec<u8> = vec![];
-        assert!(PDFConverter::<Cursor<Vec<u8>>>::is_binary_stream(&data));
     }
 }
 

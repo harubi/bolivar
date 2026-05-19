@@ -164,13 +164,9 @@ impl<W: Write> PDFTextDevice for TagExtractor<W> {
     /// Unlike the base PDFTextDevice which tracks positions, TagExtractor
     /// only extracts the text content for structured output.
     ///
-    /// TODO: Full implementation requires PDFFont from pdfinterp (Task 8).
-    /// When font is available:
-    /// 1. Get font from textstate
-    /// 2. Iterate through seq, skip non-bytes items
-    /// 3. For each bytes item, decode to CIDs via font.decode()
-    /// 4. For each CID, convert to Unicode via font.to_unichr()
-    /// 5. Write the collected text to output
+    /// Pending: pull font from `textstate`, iterate `seq` skipping non-byte
+    /// items, decode each `Bytes` item to CIDs via `font.decode()`, map each
+    /// CID to Unicode via `font.to_unichr()`, write the collected text.
     fn render_string(
         &mut self,
         textstate: &mut PDFTextState,

@@ -8,7 +8,6 @@ mod helpers;
 
 pub mod aggregator;
 pub mod collector;
-pub mod converter_base;
 pub mod edge_probe;
 pub mod html;
 pub mod layout_analyzer;
@@ -17,7 +16,6 @@ pub mod xml;
 
 pub use aggregator::PDFPageAggregator;
 pub use collector::PDFTableCollector;
-pub use converter_base::PDFConverter;
 pub use edge_probe::PDFEdgeProbe;
 pub use html::{HOCRConverter, HTMLConverter};
 pub use layout_analyzer::{LTContainer, PDFLayoutAnalyzer, PathOp};
@@ -109,7 +107,10 @@ pub trait PDFTextDevice: PDFDevice {
     /// transformation matrix and delegates to render_string_horizontal or
     /// render_string_vertical based on font writing mode.
     ///
-    /// TODO: Full implementation requires PDFFont from pdfinterp (Task 8).
+    /// Default implementation is a stub: the font is not yet pulled from
+    /// `textstate` and dispatch by writing mode is not wired up. Concrete
+    /// devices that need text override this; see `TagExtractor` for the
+    /// Unicode-extraction path.
     fn render_string(
         &mut self,
         textstate: &mut PDFTextState,
@@ -123,11 +124,9 @@ pub trait PDFTextDevice: PDFDevice {
         };
         let matrix = mult_matrix(textstate.matrix, ctm);
 
-        // TODO: When PDFFont is available, implement proper text rendering:
-        // - Get font from textstate
-        // - Calculate dxscale = 0.001 * fontsize * scaling
-        // - Dispatch to render_string_horizontal or render_string_vertical
-        // For now, this is a stub that does basic processing.
+        // Stub: textstate.font is not yet wired to PDFCIDFont here. When it
+        // is, dispatch to render_string_horizontal / render_string_vertical
+        // based on font.is_vertical(). Left as scaffolding for now.
 
         let fontsize = textstate.fontsize;
         let scaling = textstate.scaling * 0.01;

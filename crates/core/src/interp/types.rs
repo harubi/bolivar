@@ -52,10 +52,13 @@ pub enum PathSegment {
     ClosePath,
 }
 
-/// Placeholder font trait for text device operations.
+/// Minimal font interface used by `PDFDevice` text-rendering callbacks
+/// (`render_char`, `render_string_horizontal`, `render_string_vertical`).
 ///
-/// TODO: Replace with actual PDFFont when pdfinterp is implemented.
-/// This provides the interface needed by render_string_horizontal/vertical.
+/// Intentionally narrower than [`crate::font::pdffont::PDFFont`]: device
+/// callbacks only need writing-mode flags and byte-to-Unicode decoding;
+/// glyph metrics live on the layout-side `PDFFont` trait. Production
+/// `PDFCIDFont` (and `MockPdfFont` in tests) implement both traits.
 pub trait PDFFontLike {
     /// Check if font is vertical writing mode.
     fn is_vertical(&self) -> bool;
