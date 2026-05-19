@@ -461,6 +461,13 @@ Cargo.lock
 /check_*.py
 /AGENTS.md
 
+# Local debug / temporary scratch directories
+.tmp-*/
+.ci-debug/
+
+# Bench / profiling outputs
+bench_err.log
+
 # Node.js (semantic-release tooling)
 node_modules/
 
@@ -468,4 +475,3 @@ node_modules/
 crates/uniffi/jvm/.gradle/
 crates/uniffi/jvm/.kotlin/
 crates/uniffi/jvm/build/
-/crates/uniffi/jvm/.gradle
