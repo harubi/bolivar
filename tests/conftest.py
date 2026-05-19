@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,12 @@ PDFPLUMBER_DATASET_MODULES = {
     "test_table_filtering",
 }
 
+_SETUP_HINT = (
+    "Run: git submodule update --init --depth 1 "
+    "references/pdfminer.six references/pdfplumber"
+)
+_IS_CI = os.getenv("CI", "").lower() in ("1", "true", "yes")
+
 
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
@@ -40,11 +47,22 @@ def pytest_collection_modifyitems(
     have_pdfminer_dataset = PDFMINER_SAMPLE.exists() and PDFMINER_FILTER_SAMPLE.exists()
     have_pdfplumber_dataset = PDFPLUMBER_SAMPLE.exists()
 
+    if _IS_CI and not have_pdfminer_dataset:
+        pytest.fail(
+            f"CI: pdfminer.six dataset missing ({PDFMINER_SAMPLE}). {_SETUP_HINT}",
+            pytrace=False,
+        )
+    if _IS_CI and not have_pdfplumber_dataset:
+        pytest.fail(
+            f"CI: pdfplumber dataset missing ({PDFPLUMBER_SAMPLE}). {_SETUP_HINT}",
+            pytrace=False,
+        )
+
     skip_pdfminer = pytest.mark.skip(
-        reason="requires references/pdfminer.six sample PDFs"
+        reason=f"requires pdfminer.six samples. {_SETUP_HINT}"
     )
     skip_pdfplumber = pytest.mark.skip(
-        reason="requires references/pdfplumber test PDFs"
+        reason=f"requires pdfplumber samples. {_SETUP_HINT}"
     )
 
     for item in items:
