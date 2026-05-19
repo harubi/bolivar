@@ -11,10 +11,10 @@ use bolivar_core::layout::{LAParams, LTItem, LTTextBox, LTTextLine, TextBoxType,
 // Helper functions
 // ============================================================================
 
-/// Get absolute path to a test sample file.
+/// Get absolute path to a test sample file (lives under `tests/fixtures/`).
 fn sample_path(name: &str) -> std::path::PathBuf {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.join("tests").join("samples").join(name)
+    manifest_dir.join("tests").join("fixtures").join(name)
 }
 
 // ============================================================================
