@@ -1,7 +1,10 @@
 //! Character-to-line and line-to-box grouping algorithms.
 //!
-//! Contains group_objects() for grouping characters into text lines,
-//! and group_textlines() for grouping text lines into text boxes.
+//! Contains `group_objects()` (characters → text lines) and `group_textlines()`
+//! (text lines → text boxes). Both run sequential alignment over neighbour
+//! pairs with `LayoutSoA`-based SIMD halign/valign flag precomputation.
+//! Distinct from [`super::clustering`], which is a best-first hierarchical
+//! merge over already-formed boxes downstream of this stage.
 
 use crate::simd::F64_LANES;
 use crate::utils::{INF_F64, Rect};
@@ -17,8 +20,7 @@ use super::super::types::{
     LTAnno, LTChar, LTComponent, LTTextLineHorizontal, LTTextLineVertical, TextBoxType,
     TextLineElement, TextLineType,
 };
-use super::soa::RectSoA;
-use super::soa_layout::LayoutSoA;
+use super::soa::{LayoutSoA, RectSoA};
 
 /// Groups character objects into text lines.
 ///
@@ -235,7 +237,7 @@ fn group_objects_pair_flags_soa(laparams: &LAParams, soa: &LayoutSoA) -> (Vec<bo
 #[cfg(test)]
 mod group_objects_simd_tests {
     use super::*;
-    use crate::layout::analysis::soa_layout::LayoutSoA;
+    use crate::layout::analysis::soa::LayoutSoA;
 
     #[test]
     fn group_objects_expected_lines() {

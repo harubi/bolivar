@@ -9,7 +9,6 @@ mod analyze;
 mod clustering;
 mod grouping;
 mod soa;
-mod soa_layout;
 pub mod spatial;
 
 // Re-export public types and functions

@@ -1,6 +1,10 @@
 //! Text box clustering algorithms.
 //!
-//! Contains group_textboxes_exact() for exact pdfminer-compatible hierarchical grouping.
+//! Contains `group_textboxes_exact()` — best-first hierarchical grouping over
+//! already-formed text boxes, using a `BinaryHeap` of bbox-merge candidates and
+//! `RectSoA` for SIMD overlap pruning. Algorithmically distinct from
+//! [`super::grouping`], which does sequential character-pair alignment to
+//! form lines and boxes upstream of this stage.
 
 use std::collections::BinaryHeap;
 
