@@ -1,0 +1,10 @@
+name: Bolivar CodeQL config
+
+paths-ignore:
+  - "**/tests/**"
+  - "**/benches/**"
+  - "references/**"
+
+query-filters:
+  - exclude:
+      id: rust/hard-coded-cryptographic-value

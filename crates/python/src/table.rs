@@ -96,7 +96,10 @@ pub fn process_pages(
     doc: &PyPDFDocument,
     laparams: Option<&PyLAParams>,
 ) -> PyResult<Vec<PyLTPage>> {
-    let options = build_extract_options("", None, 0, true, laparams);
+    let options = ExtractOptions {
+        laparams: Some(laparams.map(|p| p.clone().into()).unwrap_or_default()),
+        ..ExtractOptions::default()
+    };
 
     let pages: Vec<LTPage> = py
         .detach(|| {

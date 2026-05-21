@@ -1,341 +1,101 @@
-# cargo-make task definitions
+# cargo-make tasks for Bolivar
 # Install: cargo install cargo-make
-# Run: cargo make <task>
+# Run:     cargo make <task>
 
 [config]
 default_to_workspace = false
 skip_core_tasks = true
 
-# ============================================================================
-# Python
-# ============================================================================
+[tasks.build]
+description = "Build all Rust crates"
+command = "cargo"
+args = ["build"]
 
 [tasks.build-py]
-category = "Python"
-description = "Build Python extension (development)"
+description = "Build Python extension (maturin develop)"
 command = "uv"
 args = ["run", "maturin", "develop"]
 
-[tasks.build-py-release]
-category = "Python"
-description = "Build Python wheels (release)"
-command = "uv"
-args = ["run", "maturin", "build", "--release"]
+[tasks.test]
+description = "Run Rust tests (nextest)"
+command = "cargo"
+args = ["nextest", "run", "--workspace", "--locked"]
 
 [tasks.test-py]
-category = "Python"
 description = "Run Python tests"
 command = "uv"
 args = ["run", "pytest", "tests/", "-v"]
 dependencies = ["build-py"]
 
-[tasks.test-cov]
-category = "Python"
-description = "Run Python tests with coverage"
-command = "uv"
-args = ["run", "pytest", "tests/", "-v", "--cov=bolivar", "--cov-report=term-missing"]
-dependencies = ["build-py"]
-
-[tasks.typecheck-py]
-category = "Python"
-description = "Run Python type/lint/format checks (ty + ruff)"
+[tasks.test-parity]
+description = "Run upstream pdfminer.six and pdfplumber parity suites"
 script = '''
+set -e
+for suite in pdfminer.six pdfplumber; do
+  if find "references/$suite" -type f -name "test*.py" -print -quit | grep -q .; then
+    PYTHONPATH="crates/python/python:references/$suite" \
+      uv run --with pytest --with pytest-cov --with pandas --with pypdfium2 \
+      -m pytest "references/$suite/"
+  else
+    echo "Skipping $suite: references/$suite missing tests (run git submodule update --init)"
+  fi
+done
+'''
+
+[tasks.bench]
+description = "Run Rust benchmarks"
+command = "cargo"
+args = ["bench", "-p", "bolivar-core"]
+
+[tasks.fmt]
+description = "Format Rust and Python"
+script = '''
+set -e
+cargo fmt
+uv run --group typecheck ruff format crates/python/python
+'''
+
+[tasks.lint]
+description = "Format check, clippy, Python type/lint/stub checks"
+script = '''
+set -e
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
 uv run --group typecheck ty check crates/python/python --error all --error-on-warning
 uv run --group typecheck ruff check crates/python/python
 uv run --group typecheck ruff format --check crates/python/python
-'''
-
-[tasks.typecheck-py-public]
-category = "Python"
-description = "Verify public API type completeness (pyright --verifytypes)"
-script = '''
 uv run --with pyright pyright --verifytypes bolivar --ignoreexternal
 uv run --with pyright pyright --verifytypes pdfminer --ignoreexternal
 uv run --with pyright pyright --verifytypes pdfplumber --ignoreexternal
+uv run python scripts/check_stub_parity.py
 '''
-
-[tasks.check-stub-parity]
-category = "Python"
-description = "Verify every __all__ symbol has a matching .pyi stub entry"
-command = "uv"
-args = ["run", "python", "scripts/check_stub_parity.py"]
-
-[tasks.typecheck-py-report]
-category = "Python"
-description = "Report type-check status per package"
-script = '''
-echo "=== bolivar ==="
-uv run --group typecheck ty check crates/python/python/bolivar 2>&1 | tail -1
-echo "=== pdfminer ==="
-uv run --group typecheck ty check crates/python/python/pdfminer 2>&1 | tail -1
-echo "=== pdfplumber ==="
-uv run --group typecheck ty check crates/python/python/pdfplumber 2>&1 | tail -1
-'''
-
-# ============================================================================
-# Rust
-# ============================================================================
-
-[tasks.build]
-category = "Rust"
-description = "Build all crates (debug)"
-command = "cargo"
-args = ["build"]
-
-[tasks.build-release]
-category = "Rust"
-description = "Build all crates (release)"
-command = "cargo"
-args = ["build", "--release"]
-
-[tasks.build-uniffi]
-category = "Rust"
-description = "Build UniFFI shared library (release)"
-command = "cargo"
-args = ["build", "-p", "bolivar-uniffi", "--release"]
 
 [tasks.gen-kotlin]
-category = "Rust"
-description = "Generate Kotlin bindings from UniFFI UDL and release library"
+description = "Build UniFFI release lib and generate Kotlin bindings"
 script = '''
 set -euo pipefail
-
+cargo build -p bolivar-uniffi --release
 case "$(uname -s)" in
-  Darwin) lib_path="target/release/libbolivar_uniffi.dylib" ;;
-  Linux) lib_path="target/release/libbolivar_uniffi.so" ;;
-  MINGW*|MSYS*|CYGWIN*) lib_path="target/release/bolivar_uniffi.dll" ;;
+  Darwin) lib="target/release/libbolivar_uniffi.dylib" ;;
+  Linux) lib="target/release/libbolivar_uniffi.so" ;;
+  MINGW*|MSYS*|CYGWIN*) lib="target/release/bolivar_uniffi.dll" ;;
   *) echo "Unsupported platform: $(uname -s)" >&2; exit 1 ;;
 esac
-
-if [ ! -f "$lib_path" ]; then
-  echo "Missing UniFFI native library at $lib_path. Run cargo make build-uniffi first." >&2
-  exit 1
-fi
-
 mkdir -p crates/uniffi/kotlin
 find crates/uniffi/kotlin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-
 cargo run --release -p bolivar-uniffi --bin uniffi-bindgen -- \
-  generate \
-  --library "$lib_path" \
-  --language kotlin \
-  --out-dir crates/uniffi/kotlin
+  generate --library "$lib" --language kotlin --out-dir crates/uniffi/kotlin
 '''
-dependencies = ["build-uniffi"]
-
-[tasks.test]
-category = "Rust"
-description = "Run all Rust tests"
-command = "cargo"
-args = ["test"]
-
-[tasks.test-layout]
-category = "Rust"
-description = "Run layout tests only"
-command = "cargo"
-args = ["test", "-p", "bolivar-core", "--test", "layout_test"]
-
-[tasks.bench]
-category = "Rust"
-description = "Run all benchmarks"
-command = "cargo"
-args = ["bench", "-p", "bolivar-core"]
-
-[tasks.bench-quick]
-category = "Rust"
-description = "Run quick benchmarks"
-command = "cargo"
-args = ["bench", "-p", "bolivar-core"]
-env = { BOLIVAR_BENCH_TIER = "quick" }
-
-[tasks.bench-full]
-category = "Rust"
-description = "Run full benchmarks"
-command = "cargo"
-args = ["bench", "-p", "bolivar-core"]
-env = { BOLIVAR_BENCH_TIER = "full" }
-
-[tasks.bench-png]
-category = "Rust"
-description = "Run PNG predictor scalar vs SIMD benchmark"
-command = "cargo"
-args = ["bench", "-p", "bolivar-core", "--bench", "png_predictor_bench"]
-env = { BOLIVAR_BENCH_TIER = "quick" }
-
-[tasks.bench-save]
-category = "Rust"
-description = "Run benchmarks and save baseline"
-command = "cargo"
-args = ["bench", "-p", "bolivar-core", "--", "--save-baseline", "main"]
-
-[tasks.bench-py]
-category = "Python"
-description = "Run Python benchmarks"
-command = "uv"
-args = ["run", "--extra", "bench", "pytest", "benchmarks/python", "-v", "--benchmark-only"]
-
-[tasks.clippy]
-category = "Rust"
-description = "Run clippy lints"
-command = "cargo"
-args = ["clippy", "--all-targets", "--", "-D", "warnings"]
-
-[tasks.fmt]
-category = "Rust"
-description = "Format code"
-command = "cargo"
-args = ["fmt"]
-
-[tasks.fmt-check]
-category = "Rust"
-description = "Check code formatting"
-command = "cargo"
-args = ["fmt", "--check"]
-
-[tasks.docs]
-category = "Rust"
-description = "Build documentation"
-command = "cargo"
-args = ["doc", "--no-deps"]
-
-[tasks.docs-open]
-category = "Rust"
-description = "Build and open documentation"
-command = "cargo"
-args = ["doc", "--no-deps", "--open"]
-
-# ============================================================================
-# Workflow
-# ============================================================================
-
-[tasks.test-all]
-category = "Workflow"
-description = "Run all tests (Rust + Python)"
-dependencies = ["test", "test-py"]
-
-[tasks.lint]
-category = "Workflow"
-description = "Run all lints (format check + clippy)"
-dependencies = [
-    "fmt-check",
-    "clippy",
-    "typecheck-py",
-    "typecheck-py-public",
-    "check-stub-parity",
-]
-
-[tasks.dev]
-category = "Workflow"
-description = "Quick development check (build + test + clippy)"
-dependencies = ["build", "test", "clippy"]
 
 [tasks.ci]
-category = "Workflow"
-description = "Full CI pipeline (format + lint + all tests)"
-dependencies = [
-    "fmt-check",
-    "clippy",
-    "typecheck-py",
-    "typecheck-py-public",
-    "check-stub-parity",
-    "test",
-    "test-py",
-]
-
-# ============================================================================
-# Cleanup
-# ============================================================================
+description = "Lint plus all tests"
+dependencies = ["lint", "test", "test-py"]
 
 [tasks.clean]
-category = "Cleanup"
-description = "Clean all build artifacts (Rust + Python)"
+description = "Remove all build artifacts"
 script = '''
 cargo clean
-rm -rf target/wheels
-rm -rf .pytest_cache
-rm -rf .coverage
-find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
-echo "Cleaned all build artifacts"
+rm -rf target/wheels .pytest_cache .coverage .criterion coverage.xml flamegraph.svg bench_err.log
+find . -type d -name "__pycache__" -prune -exec rm -rf {} +
+find . -type d -name "*.egg-info" -prune -exec rm -rf {} +
 '''
-
-# ============================================================================
-# Publishing
-# ============================================================================
-
-[tasks.publish-crates]
-category = "Publishing"
-description = "Publish Rust crates to crates.io"
-script = '''
-cargo publish -p bolivar-core
-cargo publish -p bolivar-cli
-'''
-
-[tasks.publish-python]
-category = "Publishing"
-description = "Publish Python package to PyPI"
-command = "uv"
-args = ["run", "maturin", "publish"]
-
-[tasks.publish-all]
-category = "Publishing"
-description = "Publish everything (crates + Python)"
-dependencies = ["publish-crates", "publish-python"]
-
-# ============================================================================
-# CLI
-# ============================================================================
-
-[tasks.pdf2txt]
-category = "CLI"
-description = "Run pdf2txt CLI (pass args after --)"
-script = "cargo run --bin pdf2txt -- ${@}"
-
-[tasks.dumppdf]
-category = "CLI"
-description = "Run dumppdf CLI (pass args after --)"
-script = "cargo run --bin dumppdf -- ${@}"
-
-[tasks.test-miner]
-category = "CLI"
-description = "Run pdfminer.six CLI (pass args after --)"
-script = '''
-if find references/pdfminer.six -type f -name "test*.py" -print -quit | grep -q .; then
-  PYTHONPATH=crates/python/python:references/pdfminer.six \
-    uv run --with pytest --with pytest-cov --with pandas --with pypdfium2 -m pytest references/pdfminer.six/
-else
-  echo "Skipping pdfminer parity tests: references/pdfminer.six has no pytest files"
-fi
-'''
-
-[tasks.test-plumber]
-category = "CLI"
-description = "Run pdfminer.six CLI (pass args after --)"
-script = '''
-if find references/pdfplumber -type f -name "test*.py" -print -quit | grep -q .; then
-  PYTHONPATH=crates/python/python:references/pdfplumber \
-    uv run --with pytest --with pytest-cov --with pandas --with pypdfium2 -m pytest references/pdfplumber/
-else
-  echo "Skipping pdfplumber parity tests: references/pdfplumber has no pytest files"
-fi
-'''
-
-
-[tasks.test-parity]
-category = "Workflow"
-description = "Run Rust + pdfminer.six + pdfplumber parity gate"
-command = "bash"
-args = ["-lc", """
-  if find references/pdfminer.six -type f -name "test*.py" -print -quit | grep -q .; then
-    PYTHONPATH=crates/python/python:references/pdfminer.six \
-      uv run --with pytest --with pytest-cov --with pandas --with pypdfium2 -m pytest references/pdfminer.six/
-  else
-    echo "Skipping pdfminer parity tests: references/pdfminer.six has no pytest files"
-  fi
-  if find references/pdfplumber -type f -name "test*.py" -print -quit | grep -q .; then
-    PYTHONPATH=crates/python/python:references/pdfplumber \
-      uv run --with pytest --with pytest-cov --with pandas --with pypdfium2 -m pytest references/pdfplumber/
-  else
-    echo "Skipping pdfplumber parity tests: references/pdfplumber has no pytest files"
-  fi
-"""]
