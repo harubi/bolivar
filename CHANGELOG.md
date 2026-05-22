@@ -1,3 +1,108 @@
+## [1.7.0](https://github.com/harubi/bolivar/compare/v1.6.1...v1.7.0) (2026-05-22)
+
+### Features
+
+* **jvm:** add clojure bindings ([af4d2ad](https://github.com/harubi/bolivar/commit/af4d2ad3773dc8910bf002b1a0dabb61bae8cc59))
+
+### Bug Fixes
+
+* **cli:** preserve rotation in extract options ([4b18f37](https://github.com/harubi/bolivar/commit/4b18f375ee82ef900f27cf957b49c5e2b76b1990))
+* **core:** harden compatibility and extraction contracts ([4199f9f](https://github.com/harubi/bolivar/commit/4199f9f11d50d0a4bd6c72b3135262ba4252eb39))
+* **core:** normalize positive embedded font descent ([12f07b1](https://github.com/harubi/bolivar/commit/12f07b1ca36285595bbe6dc379b292ed392fdca3))
+* **pdfminer:** accept codec in high_level.extract_text ([af8dee8](https://github.com/harubi/bolivar/commit/af8dee8e38d3a2ee0bf62568f5ca885b33b155ce))
+* **pdfminer:** align fallback error edge cases ([3aceb24](https://github.com/harubi/bolivar/commit/3aceb24946e15429553faf8c11c1f81983908955))
+* **pdfminer:** expose render_contents compatibility seam ([b0e198c](https://github.com/harubi/bolivar/commit/b0e198ca01b1cb4c7880462442a10e8cc7daef15))
+* **pdfminer:** honor PDFDocument fallback contract ([5a93a34](https://github.com/harubi/bolivar/commit/5a93a3438315d2870f32a9e318a212c995767e4c))
+* **pdfminer:** honor text-stream codec handling in extract_text_to_fp ([2335094](https://github.com/harubi/bolivar/commit/23350949282b9fbb8debd1e859fae3cfa46fd939))
+* **pdfminer:** keep LTPage iteration to direct children ([7a817a2](https://github.com/harubi/bolivar/commit/7a817a2f76dfd8247a9bbd1342dabe81d945757c))
+* **pdfminer:** match upstream text output in extract_text_to_fp ([ee07e8e](https://github.com/harubi/bolivar/commit/ee07e8e42225c4929826c37e246efdb713db6e8a))
+* **pdfminer:** match upstream text-stream headers ([b7dd57b](https://github.com/harubi/bolivar/commit/b7dd57be5420b3f6d7c2b08acee3b71391202623))
+* **pdfminer:** restore interpreter stack helpers ([0c1a919](https://github.com/harubi/bolivar/commit/0c1a9195df188af39627ba264559ed7aa755b0b7))
+* **pdfminer:** restore tag and rotation parity ([f4e2d66](https://github.com/harubi/bolivar/commit/f4e2d66a144fd38df8307d5b18e90f95bbbf776a))
+* **pdfminer:** support plain PDFDevice subclasses ([df73189](https://github.com/harubi/bolivar/commit/df73189705bef0174a10a12f4b738d76fd10bdc0))
+* **pdfminer:** treat empty page selections like upstream ([6e94d74](https://github.com/harubi/bolivar/commit/6e94d74b997a50654e494345ae3a0f7a36a083a7))
+* **pdfplumber:** make patched pdf.pages list-compatible ([f2da92f](https://github.com/harubi/bolivar/commit/f2da92f270bf894c48218f961dd8114b2c975922))
+* **pdfplumber:** normalize grayscale non-stroking colors ([ff68303](https://github.com/harubi/bolivar/commit/ff683034c1ba0804cae8701222a8beb13a90f035))
+* **pdfplumber:** restore base14 font descent geometry ([29799a6](https://github.com/harubi/bolivar/commit/29799a6ec25b85e951377aa84f9180a2b9cb6097))
+* **pdfplumber:** restore extract_text textmap semantics ([538ba59](https://github.com/harubi/bolivar/commit/538ba59eee486a4e45d675d270db4bf6da4f6855))
+* **pdfplumber:** suggest close table setting names ([19753e3](https://github.com/harubi/bolivar/commit/19753e311bb2aab336db78fb3718a072a169b334))
+* **python:** expose lazy exports through module dir ([4e3b708](https://github.com/harubi/bolivar/commit/4e3b708782c803625d703b7e8222936990d271c0))
+* **python:** make stub parity checker understand manifest-backed exports ([0da69d6](https://github.com/harubi/bolivar/commit/0da69d6a29393ddcd41e7b742963bdad087e2c9a))
+* **python:** tighten shim boundaries and compatibility contracts ([6874e89](https://github.com/harubi/bolivar/commit/6874e89abfb40203f5d902f4602b086c5f56c59a))
+* **runtime:** harden single-pipeline extraction contracts ([dde6f91](https://github.com/harubi/bolivar/commit/dde6f91cfbc4fd3ff4e041e058f68ae32299e5f7))
+* **test:** point font_size_test at fixtures ([b7feea1](https://github.com/harubi/bolivar/commit/b7feea1c5a2ce23cd89f6592b841798f7e288e49))
+
+### Performance Improvements
+
+* **core:** remove serial page warmup ([9c078a8](https://github.com/harubi/bolivar/commit/9c078a8f92737ed86fb4a9780ff153878190bec8))
+* **table:** avoid cloning edge sets when line filtering ([f065f95](https://github.com/harubi/bolivar/commit/f065f952616f56973c552043f26e3bdfb47a3cb5))
+
+### Miscellaneous Chores
+
+* **core:** final sweep ([d9c2db3](https://github.com/harubi/bolivar/commit/d9c2db38f67b04d4a99c751fdbe21cf3a3305f41))
+* **gitignore:** dedupe rules and add patterns ([2d6c385](https://github.com/harubi/bolivar/commit/2d6c38556e4df1f5c46ef03e875233c06aaf4f4e))
+* remove tracked cruft and gradle artifacts ([abe043d](https://github.com/harubi/bolivar/commit/abe043d1a817c279d08dafdbfafa915e2f37555b))
+* simplify build tasks ([a940be5](https://github.com/harubi/bolivar/commit/a940be59192e1d8ea17188f659e0fb19ddea46cd))
+
+### Code Refactoring
+
+* **bridge:** remove dead table stream export ([115f5da](https://github.com/harubi/bolivar/commit/115f5da7b635456158ba7f8fb7aa943074a31218))
+* **core:** clean dead code and stale TODOs ([e5391bc](https://github.com/harubi/bolivar/commit/e5391bc2f7111f33d78599dc98b506a45cb776e6))
+* **core:** collapse Page/TableStream into generic Stream<R> ([1a84b9c](https://github.com/harubi/bolivar/commit/1a84b9c5218aaffa67b2f6cd32802bda6b748a1f))
+* **core:** delete redundant collect-flavored extraction APIs ([14b798b](https://github.com/harubi/bolivar/commit/14b798be95b6c2acd4b13454d7fbbd8aa129ebf1))
+* **core:** extract finisher helpers and clarify process_page doc ([a6617b9](https://github.com/harubi/bolivar/commit/a6617b9d06fb2a5f59ef9e6bf1c1d308852d22f9))
+* **core:** extract PDFDevice trait into device/ module ([1a40c30](https://github.com/harubi/bolivar/commit/1a40c306470d61b75ac0ebb20daf8945af942efc))
+* **core:** introduce run_batch and migrate par_iter callers ([b36bf2f](https://github.com/harubi/bolivar/commit/b36bf2fd6a58295db81100cfadbae5bd43230ac9))
+* **core:** merge soa_layout into soa ([00f88bf](https://github.com/harubi/bolivar/commit/00f88bfb0c4006afafbb6a05c40bcc8445c95d9d))
+* **core:** parallelize image extraction ([1284d6f](https://github.com/harubi/bolivar/commit/1284d6f82487e666a9b0126822470d07f039eeda))
+* **core:** prune unused lib aliases ([3ba59c9](https://github.com/harubi/bolivar/commit/3ba59c924d06a0f5b088ab49ef71ca311712ce82))
+* **core:** rename converter/ to device/ and split base.rs ([b6c998d](https://github.com/harubi/bolivar/commit/b6c998d5753537e8323a5542726fea1e80ee2e11))
+* **core:** split api into engine and extract ([0e190db](https://github.com/harubi/bolivar/commit/0e190dbef8a59de868125dbb3132f1aa426600a6))
+* **core:** unify extraction around a single document pipeline ([ce47968](https://github.com/harubi/bolivar/commit/ce479680f8a950d94a56f5db891dd5bcf92f2596))
+* **core:** unify process_page across devices ([4c658e5](https://github.com/harubi/bolivar/commit/4c658e5644d8ba42ef59af4798f349aea0ed1434))
+* **core:** use impl suffix on extract_text internals ([20e9ec4](https://github.com/harubi/bolivar/commit/20e9ec4f93f23c8bc964340e6d4f3e1eee6894c6))
+* **pdfminer:** align high_level codec with upstream signature ([6b146bd](https://github.com/harubi/bolivar/commit/6b146bd4a2fb24d6d4f370ff068105f758dbc29c))
+* **pdfplumber:** isolate compat-only table helper ([c4ceaaf](https://github.com/harubi/bolivar/commit/c4ceaafa9a72d426ede6607bcd0189a1e5d26630))
+* **pdfplumber:** narrow compat table geometry contract ([4c2f6f2](https://github.com/harubi/bolivar/commit/4c2f6f2f7710c190fd6d909465a541c407894080))
+* **pdfplumber:** remove dead lazy page membership cache ([fccf8e6](https://github.com/harubi/bolivar/commit/fccf8e60f8f173c561f3d1b04db743793c315415))
+* **pdfplumber:** remove dead table geometry cache ([f7601a4](https://github.com/harubi/bolivar/commit/f7601a455f035a94d30685c7e1af948d5343f04a))
+* **pdfplumber:** replace single-page words stream bridge ([db80a2a](https://github.com/harubi/bolivar/commit/db80a2ac9df9be3631f51c023f664830cd4ae6f5))
+* **pdfplumber:** require explicit compat table inputs ([4561128](https://github.com/harubi/bolivar/commit/456112845aadf27ca9d0ecf0e04464111a550cf9))
+* **pdfplumber:** require indexed backend for original pages ([dc1349d](https://github.com/harubi/bolivar/commit/dc1349d3a9281c00c8dcfa315a445c6bd1facc73))
+* **pdfplumber:** trim compat page protocol ([ae48907](https://github.com/harubi/bolivar/commit/ae48907a11a5e66d3e2c074c48da2178eba8906b))
+* **python:** centralize native export manifests ([e3e8467](https://github.com/harubi/bolivar/commit/e3e8467e688963942711fe6c2cadbbbe5d30a1ac))
+* **python:** collapse autoload bootstrap path ([73a65f4](https://github.com/harubi/bolivar/commit/73a65f4d37b743fe5182996730ac12c583b69921))
+* **python:** collapse shim adapters and remove dead bridge code ([4848c45](https://github.com/harubi/bolivar/commit/4848c452826a61e2220dbbf9aead5e50d73b4dd6))
+* **python:** declare composite stub symbol manifests ([a9f7d41](https://github.com/harubi/bolivar/commit/a9f7d418c39783a64d28e7f94ff44baeee69650e))
+* **python:** hide lazy export internals from dir ([976ad70](https://github.com/harubi/bolivar/commit/976ad706bd6cee15b029284d98e76e70c17b8386))
+* **python:** hide loader helpers from module attrs ([caab172](https://github.com/harubi/bolivar/commit/caab172f2d58ea9bbdc8cbbd81a12993420f5b6a))
+* **python:** inline composite stub symbol manifest ([8acd2a6](https://github.com/harubi/bolivar/commit/8acd2a66fe332adbe68260340ec4a526ccb6561f))
+* **python:** isolate compat table conversion helpers ([1120fbe](https://github.com/harubi/bolivar/commit/1120fbe32355155e2100399f398ccf7af11c0a8c))
+* **python:** privatize native loader helpers ([d9d2aae](https://github.com/harubi/bolivar/commit/d9d2aaefe75317840d728dacdfeb04dde6691170))
+* **python:** remove duplicate stub symbol manifest assignment ([ab7b7a3](https://github.com/harubi/bolivar/commit/ab7b7a3aa9247ef41641f335e71156b66cbb2863))
+* **python:** remove preloaded autoload fallback ([e1b5dc3](https://github.com/harubi/bolivar/commit/e1b5dc35a7ba10e73c6cd4385584c941cbbf5fb7))
+* **uniffi:** decompose lib.rs into per concern modules ([263baad](https://github.com/harubi/bolivar/commit/263baad029ed89829fe78fd360a805ac59ebbb83))
+* **uniffi:** route tables through canonical metadata stream ([e3eb725](https://github.com/harubi/bolivar/commit/e3eb7250c8608a155c2d3e3b31df9b02ced299ad))
+
+### Tests
+
+* **core:** guard compat facade boundary ([af1f479](https://github.com/harubi/bolivar/commit/af1f479730faaaa097d2863313959886e4f24a39))
+* **core:** repair high_level ExtractOptions defaults ([1cc9a36](https://github.com/harubi/bolivar/commit/1cc9a36cd1f6c140d3320681f0e1a0563911de57))
+* gate skipped modules loud in CI ([427dd92](https://github.com/harubi/bolivar/commit/427dd9298a93cdc6d03d95535e91a2dd54c8358c))
+* **parity:** lock single-pipeline regressions ([490d9e4](https://github.com/harubi/bolivar/commit/490d9e4afbf92be2524465e17828f6983912ffd1))
+* **python:** guard bridge-only compat helper surface ([ba2f311](https://github.com/harubi/bolivar/commit/ba2f311bb4b3cfa1983282b8da6f5a415263aa2f))
+* **python:** lock bolivar native surface boundary ([0066e91](https://github.com/harubi/bolivar/commit/0066e91754590aa66783737c8d3fcc0eb0c54248))
+* **python:** lock compat table bridge surface ([c9c4209](https://github.com/harubi/bolivar/commit/c9c420938f8bd280fa86fb59cbb4e5bdff6d4503))
+* **python:** lock native stub surface to export manifest ([ae534fb](https://github.com/harubi/bolivar/commit/ae534fb05904507bde603bc4ab7eea3663b66206))
+* **python:** remove redundant dead bridge surface test ([a0f93a5](https://github.com/harubi/bolivar/commit/a0f93a5ce9660e2e2c9a799079e6e6f81906d12c))
+* **python:** tighten bridge-only helper guards ([593248b](https://github.com/harubi/bolivar/commit/593248b386c5d551252087ab6cb37de108cd408f))
+* **python:** verify bridge helper runtime surface ([79a5a90](https://github.com/harubi/bolivar/commit/79a5a90a55ca91e384e74be0b406c7e845f8e50a))
+* **python:** verify loaded native extension exports against manifest ([0631f39](https://github.com/harubi/bolivar/commit/0631f390bcd104d451466a86b3e3d540edc44a9f))
+
+### Continuous Integration
+
+* drop autobuild for CodeQL rust extractor ([cf90a43](https://github.com/harubi/bolivar/commit/cf90a4319c3aabfb097a4a77d82ea9a664d6fed0))
+
 ## [1.6.1](https://github.com/harubi/bolivar/compare/v1.6.0...v1.6.1) (2026-03-05)
 
 ### Performance Improvements
