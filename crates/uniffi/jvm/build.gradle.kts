@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "sa.ingenious"
-version = "1.7.0"  // bumped by scripts/bump-version.sh
+version = "1.8.0"  // bumped by scripts/bump-version.sh
 
 repositories {
     mavenCentral()

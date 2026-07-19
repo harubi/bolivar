@@ -1,3 +1,9 @@
+## [1.8.0](https://github.com/harubi/bolivar/compare/v1.7.0...v1.8.0) (2026-07-19)
+
+### Features
+
+* add table extraction with options ([7edd5a3](https://github.com/harubi/bolivar/commit/7edd5a37399938bb8177be40b3cc31cf530bbad3))
+
 ## [1.7.0](https://github.com/harubi/bolivar/compare/v1.6.1...v1.7.0) (2026-05-22)
 
 ### Features
