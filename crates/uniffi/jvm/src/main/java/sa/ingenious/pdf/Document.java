@@ -253,6 +253,14 @@ public final class Document implements AutoCloseable, Iterable<PageSummary> {
     return translate(backend::extractTables);
   }
 
+  public List<Table> extractTables(TableOptions options) throws PdfException {
+    return translate(() -> backend.extractTables(options));
+  }
+
+  public List<PageTableRows> extractTableRows(TableOptions options) throws PdfException {
+    return translate(() -> backend.extractTableRows(options));
+  }
+
   public List<PageSummary> pages() throws PdfException {
     return extractPageSummaries();
   }

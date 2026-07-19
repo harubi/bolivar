@@ -13,6 +13,14 @@ internal class NativeDocumentBackend(
 
     override fun extractTables(): List<Table> = native.extractTables().map { it.toPublic() }
 
+    override fun extractTables(options: TableOptions?): List<Table> =
+        native.extractTablesWith(options?.toNative()).map { it.toPublic() }
+
+    override fun extractTableRows(options: TableOptions?): List<PageTableRows> =
+        native.extractTableRowsWith(options?.toNative()).map {
+            PageTableRows(pageNumber = it.pageNumber.toInt(), tables = it.tables)
+        }
+
     override fun close() {
         native.close()
     }

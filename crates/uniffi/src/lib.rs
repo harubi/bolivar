@@ -10,7 +10,7 @@ pub use error::BolivarError;
 pub use extract::{quick_extract_text, quick_extract_text_from_bytes};
 pub use types::{
     BoundingBox, ExtractOptions, LayoutChar, LayoutLine, LayoutPage, LayoutParams, LayoutTextBox,
-    PageSummary, Table, TableCell,
+    PageSummary, PageTableRows, Table, TableCell, TableOptions,
 };
 
 uniffi::include_scaffolding!("bolivar");

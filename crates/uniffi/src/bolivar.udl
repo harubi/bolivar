@@ -77,6 +77,30 @@ dictionary ExtractOptions {
     LayoutParams? layout_params;
 };
 
+dictionary PageTableRows {
+    u32 page_number;
+    sequence<sequence<sequence<string?>>> tables;
+};
+
+dictionary TableOptions {
+    string? vertical_strategy;
+    string? horizontal_strategy;
+    double? snap_tolerance;
+    double? snap_x_tolerance;
+    double? snap_y_tolerance;
+    double? join_tolerance;
+    double? join_x_tolerance;
+    double? join_y_tolerance;
+    double? intersection_tolerance;
+    double? intersection_x_tolerance;
+    double? intersection_y_tolerance;
+    sequence<double>? explicit_vertical_lines;
+    sequence<double>? explicit_horizontal_lines;
+    BoundingBox? crop;
+    BoundingBox? first_page_crop;
+    u32? max_pages;
+};
+
 interface NativePdfDocument {
     [Name=from_path, Throws=BolivarError]
     constructor(string path, ExtractOptions? options);
@@ -95,6 +119,12 @@ interface NativePdfDocument {
 
     [Throws=BolivarError]
     sequence<Table> extract_tables();
+
+    [Throws=BolivarError]
+    sequence<Table> extract_tables_with(TableOptions? options);
+
+    [Throws=BolivarError]
+    sequence<PageTableRows> extract_table_rows_with(TableOptions? options);
 };
 
 namespace bolivar {

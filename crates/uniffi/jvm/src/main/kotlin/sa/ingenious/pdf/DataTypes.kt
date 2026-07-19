@@ -12,6 +12,12 @@ import sa.ingenious.ffi.Table as NativeTable
 import sa.ingenious.ffi.TableCell as NativeTableCell
 
 @JvmRecord
+data class PageTableRows(
+    val pageNumber: Int,
+    val tables: List<List<List<String?>>>,
+)
+
+@JvmRecord
 data class BoundingBox(
     val x0: Double,
     val y0: Double,

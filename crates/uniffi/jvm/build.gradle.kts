@@ -85,7 +85,9 @@ tasks.named("check") {
 
 mavenPublishing {
     publishToMavenCentral()
-    signAllPublications()
+    if (providers.gradleProperty("local.skipSigning").orNull != "true") {
+        signAllPublications()
+    }
 
     coordinates("sa.ingenious", "bolivar", version.toString())
 

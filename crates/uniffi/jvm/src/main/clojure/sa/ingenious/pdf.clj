@@ -2,12 +2,21 @@
   (:import [clojure.lang ExceptionInfo]
            [java.io File InputStream]
            [java.nio.file Path]
-           [sa.ingenious.pdf BoundingBox Document DocumentOptions LayoutOptions PdfException]))
+           [sa.ingenious.pdf BoundingBox Document DocumentOptions LayoutOptions PdfException
+            PageTableRows TableOptions]))
 
 (def ^:private byte-array-class (Class/forName "[B"))
 (def ^:private option-keys #{:password :pages :max-pages :caching :layout})
 (def ^:private layout-keys
   #{:line-overlap :char-margin :line-margin :word-margin :boxes-flow :detect-vertical :all-texts})
+(def ^:private table-keys
+  #{:vertical-strategy :horizontal-strategy
+    :snap-tolerance :snap-x-tolerance :snap-y-tolerance
+    :join-tolerance :join-x-tolerance :join-y-tolerance
+    :intersection-tolerance :intersection-x-tolerance :intersection-y-tolerance
+    :explicit-vertical-lines :explicit-horizontal-lines
+    :crop :first-page-crop :max-pages})
+(def ^:private table-strategies #{"lines" "lines_strict" "text" "explicit"})
 
 (defn- fail!
   ([message data]
@@ -17,34 +26,34 @@
 
 (defn- assert-map! [value label]
   (when-not (or (nil? value) (map? value))
-    (fail! (str label " must be a map") {:type :pdf/invalid-options
-                                          :value value})))
+    (fail! (str label " must be a map") {:type  :pdf/invalid-options
+                                         :value value})))
 
 (defn- assert-known-keys! [value allowed label]
   (let [unknown (seq (remove allowed (keys value)))]
     (when unknown
       (fail! (str "Unknown " label (if (= 1 (count unknown)) " key: " " keys: ")
                   (pr-str (vec unknown)))
-             {:type :pdf/invalid-options
+             {:type         :pdf/invalid-options
               :unknown-keys (vec unknown)}))))
 
 (defn- assert-boolean! [value key]
   (when-not (boolean? value)
-    (fail! (str key " must be true or false") {:type :pdf/invalid-options
-                                                :key key
-                                                :value value})))
+    (fail! (str key " must be true or false") {:type  :pdf/invalid-options
+                                               :key   key
+                                               :value value})))
 
 (defn- assert-positive-int! [value message key]
   (when-not (and (integer? value) (pos? value))
-    (fail! message {:type :pdf/invalid-options
-                    :key key
+    (fail! message {:type  :pdf/invalid-options
+                    :key   key
                     :value value})))
 
 (defn- assert-number! [value key]
   (when-not (number? value)
-    (fail! (str key " must be a number") {:type :pdf/invalid-options
-                                           :key key
-                                           :value value})))
+    (fail! (str key " must be a number") {:type  :pdf/invalid-options
+                                          :key   key
+                                          :value value})))
 
 (defn- ->layout-options [opts]
   (assert-map! opts ":layout")
@@ -69,8 +78,8 @@
             (assert-number! boxes-flow ":boxes-flow")
             (when-not (<= -1.0 (double boxes-flow) 1.0)
               (fail! ":boxes-flow must be nil or within [-1.0, 1.0]"
-                     {:type :pdf/invalid-options
-                      :key :boxes-flow
+                     {:type  :pdf/invalid-options
+                      :key   :boxes-flow
                       :value boxes-flow})))
           (.boxesFlow builder (when (some? boxes-flow) (Double/valueOf (double boxes-flow))))))
       (when (contains? opts :detect-vertical)
@@ -91,16 +100,16 @@
         (when (contains? opts :password)
           (let [password (:password opts)]
             (when-not (or (nil? password) (string? password))
-              (fail! ":password must be a string or nil" {:type :pdf/invalid-options
-                                                          :key :password
+              (fail! ":password must be a string or nil" {:type  :pdf/invalid-options
+                                                          :key   :password
                                                           :value password}))
             (.password builder password)))
         (when (contains? opts :pages)
           (let [pages (:pages opts)]
             (when-not (sequential? pages)
               (fail! ":pages must be a sequence of 1-based page numbers"
-                     {:type :pdf/invalid-options
-                      :key :pages
+                     {:type  :pdf/invalid-options
+                      :key   :pages
                       :value pages}))
             (doseq [page pages]
               (assert-positive-int! page "Page numbers are 1-based and must be positive" :pages))
@@ -138,51 +147,51 @@
 (declare layout-line->map)
 
 (defn- layout-char->map [ch]
-  {:text (.text ch)
-   :bbox (bbox->map (.bbox ch))
+  {:text      (.text ch)
+   :bbox      (bbox->map (.bbox ch))
    :font-name (.fontName ch)
-   :size (.size ch)
-   :upright (.upright ch)})
+   :size      (.size ch)
+   :upright   (.upright ch)})
 
 (defn- layout-line->map [line]
-  {:bbox (bbox->map (.bbox line))
+  {:bbox        (bbox->map (.bbox line))
    :orientation (.orientation line)
-   :text (.text line)
-   :chars (mapv layout-char->map (.chars line))})
+   :text        (.text line)
+   :chars       (mapv layout-char->map (.chars line))})
 
 (defn- layout-text-box->map [text-box]
-  {:bbox (bbox->map (.bbox text-box))
+  {:bbox         (bbox->map (.bbox text-box))
    :writing-mode (.writingMode text-box)
-   :text (.text text-box)
-   :lines (mapv layout-line->map (.lines text-box))})
+   :text         (.text text-box)
+   :lines        (mapv layout-line->map (.lines text-box))})
 
 (defn- page-summary->map [summary]
   {:page-number (.pageNumber summary)
-   :text (.text summary)
-   :bbox (bbox->map (.bbox summary))
-   :rotate (.rotate summary)})
+   :text        (.text summary)
+   :bbox        (bbox->map (.bbox summary))
+   :rotate      (.rotate summary)})
 
 (defn- layout-page->map [page]
   {:page-number (.pageNumber page)
-   :bbox (bbox->map (.bbox page))
-   :rotate (.rotate page)
-   :text (.text page)
-   :text-boxes (mapv layout-text-box->map (.textBoxes page))})
+   :bbox        (bbox->map (.bbox page))
+   :rotate      (.rotate page)
+   :text        (.text page)
+   :text-boxes  (mapv layout-text-box->map (.textBoxes page))})
 
 (defn- table-cell->map [cell]
-  {:row-index (.rowIndex cell)
+  {:row-index    (.rowIndex cell)
    :column-index (.columnIndex cell)
-   :row-span (.rowSpan cell)
-   :column-span (.columnSpan cell)
-   :bbox (bbox->map (.bbox cell))
-   :text (.text cell)})
+   :row-span     (.rowSpan cell)
+   :column-span  (.columnSpan cell)
+   :bbox         (bbox->map (.bbox cell))
+   :text         (.text cell)})
 
 (defn- table->map [table]
-  {:page-number (.pageNumber table)
-   :bbox (bbox->map (.bbox table))
-   :row-count (.rowCount table)
+  {:page-number  (.pageNumber table)
+   :bbox         (bbox->map (.bbox table))
+   :row-count    (.rowCount table)
    :column-count (.columnCount table)
-   :cells (mapv table-cell->map (.cells table))})
+   :cells        (mapv table-cell->map (.cells table))})
 
 (defn open
   "Open a PDF source and return an AutoCloseable document handle.
@@ -201,7 +210,7 @@
          (instance? InputStream source) (Document/open ^InputStream source options)
          (byte-array? source) (Document/open ^bytes source options)
          :else (fail! "Unsupported source; expected string, Path, File, InputStream, or byte array"
-                      {:type :pdf/unsupported-source
+                      {:type         :pdf/unsupported-source
                        :source-class (some-> source class .getName)}))))))
 
 (defn text [^Document doc]
@@ -213,8 +222,96 @@
 (defn layout-pages [^Document doc]
   (wrap-jvm-errors #(mapv layout-page->map (.extractLayoutPages doc))))
 
-(defn tables [^Document doc]
-  (wrap-jvm-errors #(mapv table->map (.extractTables doc))))
+(defn- assert-strategy! [value key]
+  (when-not (contains? table-strategies value)
+    (fail! (str key " must be one of " (pr-str (sort table-strategies)))
+           {:type :pdf/invalid-options
+            :key key
+            :value value})))
+
+(defn- assert-crop! [value key]
+  (when-not (and (sequential? value)
+                 (= 4 (count value))
+                 (every? number? value))
+    (fail! (str key " must be [x0 y0 x1 y1]") {:type :pdf/invalid-options
+                                               :key key
+                                               :value value})))
+
+(defn- ->crop ^BoundingBox [[x0 y0 x1 y1]]
+  (BoundingBox. (double x0) (double y0) (double x1) (double y1)))
+
+(defn- ->table-options ^TableOptions [opts]
+  (assert-map! opts "table options")
+  (when opts
+    (assert-known-keys! opts table-keys "table option")
+    (let [builder (TableOptions/builder)]
+      (doseq [[key apply!] [[:vertical-strategy #(.verticalStrategy builder %)]
+                            [:horizontal-strategy #(.horizontalStrategy builder %)]]
+              :let [value (get opts key)]
+              :when (some? value)]
+        (assert-strategy! value key)
+        (apply! value))
+      (doseq [[key apply!] [[:snap-tolerance #(.snapTolerance builder %)]
+                            [:snap-x-tolerance #(.snapXTolerance builder %)]
+                            [:snap-y-tolerance #(.snapYTolerance builder %)]
+                            [:join-tolerance #(.joinTolerance builder %)]
+                            [:join-x-tolerance #(.joinXTolerance builder %)]
+                            [:join-y-tolerance #(.joinYTolerance builder %)]
+                            [:intersection-tolerance #(.intersectionTolerance builder %)]
+                            [:intersection-x-tolerance #(.intersectionXTolerance builder %)]
+                            [:intersection-y-tolerance #(.intersectionYTolerance builder %)]]
+              :let [value (get opts key)]
+              :when (some? value)]
+        (assert-number! value key)
+        (apply! (Double/valueOf (double value))))
+      (doseq [[key apply!] [[:explicit-vertical-lines #(.explicitVerticalLines builder %)]
+                            [:explicit-horizontal-lines #(.explicitHorizontalLines builder %)]]
+              :let [value (get opts key)]
+              :when (some? value)]
+        (when-not (and (sequential? value) (every? number? value))
+          (fail! (str key " must be a sequence of numbers")
+                 {:type :pdf/invalid-options
+                  :key key
+                  :value value}))
+        (apply! (mapv #(Double/valueOf (double %)) value)))
+      (when-some [max-pages (:max-pages opts)]
+        (assert-positive-int! max-pages ":max-pages must be a positive integer" :max-pages)
+        (.maxPages builder (Integer/valueOf (int max-pages))))
+      (doseq [[key apply!] [[:crop #(.crop builder %)]
+                            [:first-page-crop #(.firstPageCrop builder %)]]
+              :let [value (get opts key)]
+              :when (some? value)]
+        (assert-crop! value key)
+        (apply! (->crop value)))
+      (.build builder))))
+
+(defn tables
+  "Extract tables. `opts` tunes extraction (pdfplumber vocabulary):
+  :vertical-strategy/:horizontal-strategy (\"lines\" \"lines_strict\" \"text\"
+  \"explicit\"), :snap-tolerance/:join-tolerance/:intersection-tolerance and
+  their -x-/-y- variants, :explicit-vertical-lines/:explicit-horizontal-lines,
+  and page crops :crop/:first-page-crop as [x0 y0 x1 y1]."
+  ([^Document doc]
+   (wrap-jvm-errors #(mapv table->map (.extractTables doc))))
+  ([^Document doc opts]
+   (if (nil? opts)
+     (tables doc)
+     (wrap-jvm-errors
+      #(mapv table->map (.extractTables doc (->table-options opts)))))))
+
+(defn- page-table-rows->map [^PageTableRows page]
+  {:page-number (.pageNumber page)
+   :tables (mapv (fn [table] (mapv vec table)) (.tables page))})
+
+(defn table-rows
+  "Extract raw table rows per page (nil = empty cell), exactly as the
+  pdfplumber-compatible rows pipeline emits them. Takes the same options as
+  `tables`. Returns [{:page-number n :tables [[[cell ...] ...] ...]}]."
+  ([^Document doc]
+   (table-rows doc nil))
+  ([^Document doc opts]
+   (wrap-jvm-errors
+    #(mapv page-table-rows->map (.extractTableRows doc (->table-options opts))))))
 
 (defn extract-text
   ([source]
@@ -225,7 +322,7 @@
        (when (some? opts)
          (fail! "Options cannot be provided when source is already a Document"
                 {:type :pdf/invalid-options
-                 :key :options}))
+                 :key  :options}))
        (text source))
      (with-open [doc (open source opts)]
        (text doc)))))
