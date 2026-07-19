@@ -112,6 +112,39 @@ impl Default for ExtractOptions {
     }
 }
 
+/// Raw table rows for one page, exactly as the pdfplumber-compatible rows
+/// pipeline emits them (None = empty cell). This is the same core path the
+/// Python binding's `_extract_tables_stream` uses.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageTableRows {
+    pub page_number: u32,
+    pub tables: Vec<Vec<Vec<Option<String>>>>,
+}
+
+/// Table extraction tuning mirroring the pdfplumber-compatible settings the
+/// Python binding accepts. General tolerances fan out into both axes; the
+/// axis-specific values override them. Crops are pdfplumber-space page
+/// regions; `first_page_crop` wins over `crop` on page one.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TableOptions {
+    pub vertical_strategy: Option<String>,
+    pub horizontal_strategy: Option<String>,
+    pub snap_tolerance: Option<f64>,
+    pub snap_x_tolerance: Option<f64>,
+    pub snap_y_tolerance: Option<f64>,
+    pub join_tolerance: Option<f64>,
+    pub join_x_tolerance: Option<f64>,
+    pub join_y_tolerance: Option<f64>,
+    pub intersection_tolerance: Option<f64>,
+    pub intersection_x_tolerance: Option<f64>,
+    pub intersection_y_tolerance: Option<f64>,
+    pub explicit_vertical_lines: Option<Vec<f64>>,
+    pub explicit_horizontal_lines: Option<Vec<f64>>,
+    pub crop: Option<BoundingBox>,
+    pub first_page_crop: Option<BoundingBox>,
+    pub max_pages: Option<u32>,
+}
+
 pub(crate) fn bbox_from_rect(rect: (f64, f64, f64, f64)) -> BoundingBox {
     BoundingBox {
         x0: rect.0,
@@ -320,11 +353,24 @@ fn normalize_rect_from_box(rect: [f64; 4]) -> (f64, f64, f64, f64) {
 }
 
 pub(crate) fn page_geometry_from_pdf_page(page: &PDFPage) -> PageGeometry {
-    let mediabox = normalize_rect_from_box(page.mediabox.unwrap_or([0.0, 0.0, 0.0, 0.0]));
-    let page_bbox = normalize_rect_from_box(
-        page.cropbox
-            .unwrap_or([mediabox.0, mediabox.1, mediabox.2, mediabox.3]),
-    );
+    // Layout space is post-rotation (pdfplumber semantics): 90/270 pages swap
+    // their box axes so crops and pdf-space conversions line up with the
+    // coordinates layout emits.
+    let rotated = |b: (f64, f64, f64, f64)| -> (f64, f64, f64, f64) {
+        match page.rotate.rem_euclid(360) {
+            90 | 270 => (b.1, b.0, b.3, b.2),
+            _ => b,
+        }
+    };
+    let raw_mediabox = normalize_rect_from_box(page.mediabox.unwrap_or([0.0, 0.0, 0.0, 0.0]));
+    let raw_page_bbox = normalize_rect_from_box(page.cropbox.unwrap_or([
+        raw_mediabox.0,
+        raw_mediabox.1,
+        raw_mediabox.2,
+        raw_mediabox.3,
+    ]));
+    let mediabox = rotated(raw_mediabox);
+    let page_bbox = rotated(raw_page_bbox);
     PageGeometry {
         page_bbox,
         mediabox,

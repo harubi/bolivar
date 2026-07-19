@@ -7,10 +7,13 @@ use std::sync::Arc;
 
 use crate::error::BolivarError;
 use crate::extract::{
-    core_extract_options, extract_layout_pages_core, extract_tables_core, open_pdf_document,
-    read_pdf_bytes,
+    core_extract_options, extract_layout_pages_core, extract_table_rows_with_core,
+    extract_tables_core, extract_tables_with_core, open_pdf_document, read_pdf_bytes,
 };
-use crate::types::{ExtractOptions, LayoutPage, PageSummary, Table, summary_from_layout_page};
+use crate::types::{
+    ExtractOptions, LayoutPage, PageSummary, PageTableRows, Table, TableOptions,
+    summary_from_layout_page,
+};
 
 pub struct NativePdfDocument {
     doc: Arc<PDFDocument>,
@@ -62,5 +65,21 @@ impl NativePdfDocument {
     pub fn extract_tables(&self) -> Result<Vec<Table>, BolivarError> {
         let options = self.core_options()?;
         extract_tables_core(Arc::clone(&self.doc), options)
+    }
+
+    pub fn extract_tables_with(
+        &self,
+        table_options: Option<TableOptions>,
+    ) -> Result<Vec<Table>, BolivarError> {
+        let options = self.core_options()?;
+        extract_tables_with_core(Arc::clone(&self.doc), options, table_options)
+    }
+
+    pub fn extract_table_rows_with(
+        &self,
+        table_options: Option<TableOptions>,
+    ) -> Result<Vec<PageTableRows>, BolivarError> {
+        let options = self.core_options()?;
+        extract_table_rows_with_core(Arc::clone(&self.doc), options, table_options)
     }
 }

@@ -1,17 +1,19 @@
 use bolivar_core::extract::ExtractOptions as CoreExtractOptions;
 use bolivar_core::extract::{
     extract_pages_stream_from_doc, extract_tables_metadata_stream_from_doc_with_geometries,
+    extract_tables_stream_from_doc_with_geometries,
 };
 use bolivar_core::layout::LAParams as CoreLAParams;
 use bolivar_core::pdfdocument::PDFDocument;
-use bolivar_core::table::{PageGeometry, TableSettings};
+use bolivar_core::table::{ExplicitLine, PageGeometry, TableSettings};
 use std::sync::Arc;
 
 use crate::document::NativePdfDocument;
 use crate::error::{BolivarError, map_io_error_kind};
 use crate::types::{
-    ExtractOptions, LayoutPage, LayoutParams, Table, cache_capacity, layout_page_from_ltpage,
-    page_geometry_from_pdf_page, page_number, table_from_core,
+    BoundingBox, ExtractOptions, LayoutPage, LayoutParams, PageTableRows, Table, TableOptions,
+    cache_capacity, layout_page_from_ltpage, page_geometry_from_pdf_page, page_number,
+    table_from_core,
 };
 
 fn normalize_page_numbers(
@@ -120,28 +122,205 @@ pub(crate) fn extract_layout_pages_core(
     Ok(pages)
 }
 
+fn table_settings_from_options(options: &TableOptions) -> Result<TableSettings, BolivarError> {
+    let mut settings = TableSettings::default();
+
+    if let Some(strategy) = &options.vertical_strategy {
+        settings.vertical_strategy = strategy
+            .parse()
+            .map_err(|()| BolivarError::InvalidArgument)?;
+    }
+    if let Some(strategy) = &options.horizontal_strategy {
+        settings.horizontal_strategy = strategy
+            .parse()
+            .map_err(|()| BolivarError::InvalidArgument)?;
+    }
+
+    // General tolerances fan into both axes; axis-specific values override.
+    if let Some(v) = options.snap_tolerance {
+        settings.snap_x_tolerance = v;
+        settings.snap_y_tolerance = v;
+    }
+    if let Some(v) = options.snap_x_tolerance {
+        settings.snap_x_tolerance = v;
+    }
+    if let Some(v) = options.snap_y_tolerance {
+        settings.snap_y_tolerance = v;
+    }
+    if let Some(v) = options.join_tolerance {
+        settings.join_x_tolerance = v;
+        settings.join_y_tolerance = v;
+    }
+    if let Some(v) = options.join_x_tolerance {
+        settings.join_x_tolerance = v;
+    }
+    if let Some(v) = options.join_y_tolerance {
+        settings.join_y_tolerance = v;
+    }
+    if let Some(v) = options.intersection_tolerance {
+        settings.intersection_x_tolerance = v;
+        settings.intersection_y_tolerance = v;
+    }
+    if let Some(v) = options.intersection_x_tolerance {
+        settings.intersection_x_tolerance = v;
+    }
+    if let Some(v) = options.intersection_y_tolerance {
+        settings.intersection_y_tolerance = v;
+    }
+
+    for tolerance in [
+        settings.snap_x_tolerance,
+        settings.snap_y_tolerance,
+        settings.join_x_tolerance,
+        settings.join_y_tolerance,
+        settings.intersection_x_tolerance,
+        settings.intersection_y_tolerance,
+    ] {
+        if !tolerance.is_finite() || tolerance < 0.0 {
+            return Err(BolivarError::InvalidArgument);
+        }
+    }
+
+    if let Some(lines) = &options.explicit_vertical_lines {
+        settings.explicit_vertical_lines =
+            lines.iter().map(|&coord| ExplicitLine::Coord(coord)).collect();
+    }
+    if let Some(lines) = &options.explicit_horizontal_lines {
+        settings.explicit_horizontal_lines =
+            lines.iter().map(|&coord| ExplicitLine::Coord(coord)).collect();
+    }
+
+    Ok(settings)
+}
+
+/// Clamp a pdfplumber-space crop to the page region; degenerate or
+/// out-of-bounds crops fall back to the uncropped page (mirrors the
+/// decision-layer `_sanitize_bbox` the Python binding relies on).
+fn cropped_geometry(geometry: PageGeometry, crop: &BoundingBox) -> PageGeometry {
+    if !(crop.x0.is_finite() && crop.y0.is_finite() && crop.x1.is_finite() && crop.y1.is_finite()) {
+        return geometry;
+    }
+    let (px0, py0, px1, py1) = geometry.page_bbox;
+    let x0 = crop.x0.max(px0).min(px1);
+    let y0 = crop.y0.max(py0).min(py1);
+    let x1 = crop.x1.max(px0).min(px1);
+    let y1 = crop.y1.max(py0).min(py1);
+    if x1 <= x0 || y1 <= y0 {
+        return geometry;
+    }
+    let clamped = (x0, y0, x1, y1);
+    if clamped == geometry.page_bbox {
+        return geometry;
+    }
+    PageGeometry {
+        page_bbox: clamped,
+        force_crop: true,
+        ..geometry
+    }
+}
+
 pub(crate) fn extract_tables_core(
     doc: Arc<PDFDocument>,
     options: CoreExtractOptions,
 ) -> Result<Vec<Table>, BolivarError> {
+    extract_tables_with_core(doc, options, None)
+}
+
+fn resolved_geometries(
+    doc: &Arc<PDFDocument>,
+    selected_indices: &[usize],
+    table_options: &TableOptions,
+) -> Result<Vec<PageGeometry>, BolivarError> {
+    selected_indices
+        .iter()
+        .map(|&idx| {
+            doc.get_page_cached(idx)
+                .map(|pdf_page| {
+                    let geometry = page_geometry_from_pdf_page(pdf_page.as_ref());
+                    let crop = if idx == 0 {
+                        table_options
+                            .first_page_crop
+                            .as_ref()
+                            .or(table_options.crop.as_ref())
+                    } else {
+                        table_options.crop.as_ref()
+                    };
+                    match crop {
+                        Some(c) => cropped_geometry(geometry, c),
+                        None => geometry,
+                    }
+                })
+                .map_err(BolivarError::from)
+        })
+        .collect()
+}
+
+fn prepared_extraction(
+    doc: &Arc<PDFDocument>,
+    mut options: CoreExtractOptions,
+    table_options: Option<TableOptions>,
+) -> Result<
+    (
+        CoreExtractOptions,
+        TableSettings,
+        Vec<usize>,
+        Vec<PageGeometry>,
+    ),
+    BolivarError,
+> {
+    let table_options = table_options.unwrap_or_default();
+    let settings = table_settings_from_options(&table_options)?;
+    if let Some(max_pages) = table_options.max_pages {
+        options.maxpages = usize::try_from(max_pages).map_err(|_| BolivarError::InvalidArgument)?;
+    }
     let selected_indices = bolivar_core::engine::select_pages(
         doc.page_tree_len(),
         options.page_numbers.clone(),
         options.maxpages,
     );
-    let geometries: Vec<PageGeometry> = selected_indices
-        .iter()
-        .map(|&idx| {
-            doc.get_page_cached(idx)
-                .map(|pdf_page| page_geometry_from_pdf_page(pdf_page.as_ref()))
-                .map_err(BolivarError::from)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let geometries = resolved_geometries(doc, &selected_indices, &table_options)?;
+    Ok((options, settings, selected_indices, geometries))
+}
+
+pub(crate) fn extract_table_rows_with_core(
+    doc: Arc<PDFDocument>,
+    options: CoreExtractOptions,
+    table_options: Option<TableOptions>,
+) -> Result<Vec<PageTableRows>, BolivarError> {
+    let (options, settings, selected_indices, geometries) =
+        prepared_extraction(&doc, options, table_options)?;
+
+    let stream = extract_tables_stream_from_doc_with_geometries(
+        Arc::clone(&doc),
+        options,
+        settings,
+        geometries,
+    )
+    .map_err(BolivarError::from)?;
+
+    let mut pages = Vec::new();
+    for (i, item) in stream.enumerate() {
+        let (_page_idx, tables) = item.map_err(BolivarError::from)?;
+        pages.push(PageTableRows {
+            page_number: page_number((selected_indices[i] + 1) as i32),
+            tables,
+        });
+    }
+    Ok(pages)
+}
+
+pub(crate) fn extract_tables_with_core(
+    doc: Arc<PDFDocument>,
+    options: CoreExtractOptions,
+    table_options: Option<TableOptions>,
+) -> Result<Vec<Table>, BolivarError> {
+    let (options, settings, selected_indices, geometries) =
+        prepared_extraction(&doc, options, table_options)?;
 
     let stream = extract_tables_metadata_stream_from_doc_with_geometries(
         Arc::clone(&doc),
         options,
-        TableSettings::default(),
+        settings,
         geometries.clone(),
     )
     .map_err(BolivarError::from)?;

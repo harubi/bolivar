@@ -750,7 +750,11 @@ internal object IntegrityCheckingUniffiLib {
 
     external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_page_summaries(): Short
 
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_table_rows_with(): Short
+
     external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_tables(): Short
+
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_tables_with(): Short
 
     external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_text(): Short
 
@@ -803,8 +807,20 @@ internal object UniffiLib {
         uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
 
+    external fun uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_table_rows_with(
+        `ptr`: Long,
+        `options`: RustBuffer.ByValue,
+        uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+
     external fun uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_tables(
         `ptr`: Long,
+        uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+
+    external fun uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_tables_with(
+        `ptr`: Long,
+        `options`: RustBuffer.ByValue,
         uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
 
@@ -1051,7 +1067,13 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_page_summaries() != 9331.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_table_rows_with() != 27012.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_tables() != 16296.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_tables_with() != 13664.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_text() != 44718.toShort()) {
@@ -1477,7 +1499,11 @@ public interface NativePdfDocumentInterface {
 
     fun `extractPageSummaries`(): List<PageSummary>
 
+    fun `extractTableRowsWith`(`options`: TableOptions?): List<PageTableRows>
+
     fun `extractTables`(): List<Table>
+
+    fun `extractTablesWith`(`options`: TableOptions?): List<Table>
 
     fun `extractText`(): kotlin.String
 
@@ -1610,12 +1636,40 @@ open class NativePdfDocument :
         )
 
     @Throws(BolivarException::class)
+    override fun `extractTableRowsWith`(`options`: TableOptions?): List<PageTableRows> =
+        FfiConverterSequenceTypePageTableRows.lift(
+            callWithHandle {
+                uniffiRustCallWithError(BolivarException) { _status ->
+                    UniffiLib.uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_table_rows_with(
+                        it,
+                        FfiConverterOptionalTypeTableOptions.lower(`options`),
+                        _status,
+                    )
+                }
+            },
+        )
+
+    @Throws(BolivarException::class)
     override fun `extractTables`(): List<Table> =
         FfiConverterSequenceTypeTable.lift(
             callWithHandle {
                 uniffiRustCallWithError(BolivarException) { _status ->
                     UniffiLib.uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_tables(
                         it,
+                        _status,
+                    )
+                }
+            },
+        )
+
+    @Throws(BolivarException::class)
+    override fun `extractTablesWith`(`options`: TableOptions?): List<Table> =
+        FfiConverterSequenceTypeTable.lift(
+            callWithHandle {
+                uniffiRustCallWithError(BolivarException) { _status ->
+                    UniffiLib.uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_tables_with(
+                        it,
+                        FfiConverterOptionalTypeTableOptions.lower(`options`),
                         _status,
                     )
                 }
@@ -2032,6 +2086,38 @@ public object FfiConverterTypePageSummary : FfiConverterRustBuffer<PageSummary> 
     }
 }
 
+data class PageTableRows(
+    val `pageNumber`: kotlin.UInt,
+    val `tables`: List<List<List<kotlin.String?>>>,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePageTableRows : FfiConverterRustBuffer<PageTableRows> {
+    override fun read(buf: ByteBuffer): PageTableRows =
+        PageTableRows(
+            FfiConverterUInt.read(buf),
+            FfiConverterSequenceSequenceSequenceOptionalString.read(buf),
+        )
+
+    override fun allocationSize(value: PageTableRows) =
+        (
+            FfiConverterUInt.allocationSize(value.`pageNumber`) +
+                FfiConverterSequenceSequenceSequenceOptionalString.allocationSize(value.`tables`)
+        )
+
+    override fun write(
+        value: PageTableRows,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterUInt.write(value.`pageNumber`, buf)
+        FfiConverterSequenceSequenceSequenceOptionalString.write(value.`tables`, buf)
+    }
+}
+
 data class Table(
     val `pageNumber`: kotlin.UInt,
     val `bbox`: BoundingBox,
@@ -2121,6 +2207,94 @@ public object FfiConverterTypeTableCell : FfiConverterRustBuffer<TableCell> {
         FfiConverterUInt.write(value.`columnSpan`, buf)
         FfiConverterTypeBoundingBox.write(value.`bbox`, buf)
         FfiConverterString.write(value.`text`, buf)
+    }
+}
+
+data class TableOptions(
+    val `verticalStrategy`: kotlin.String?,
+    val `horizontalStrategy`: kotlin.String?,
+    val `snapTolerance`: kotlin.Double?,
+    val `snapXTolerance`: kotlin.Double?,
+    val `snapYTolerance`: kotlin.Double?,
+    val `joinTolerance`: kotlin.Double?,
+    val `joinXTolerance`: kotlin.Double?,
+    val `joinYTolerance`: kotlin.Double?,
+    val `intersectionTolerance`: kotlin.Double?,
+    val `intersectionXTolerance`: kotlin.Double?,
+    val `intersectionYTolerance`: kotlin.Double?,
+    val `explicitVerticalLines`: List<kotlin.Double>?,
+    val `explicitHorizontalLines`: List<kotlin.Double>?,
+    val `crop`: BoundingBox?,
+    val `firstPageCrop`: BoundingBox?,
+    val `maxPages`: kotlin.UInt?,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTableOptions : FfiConverterRustBuffer<TableOptions> {
+    override fun read(buf: ByteBuffer): TableOptions =
+        TableOptions(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterOptionalDouble.read(buf),
+            FfiConverterOptionalSequenceDouble.read(buf),
+            FfiConverterOptionalSequenceDouble.read(buf),
+            FfiConverterOptionalTypeBoundingBox.read(buf),
+            FfiConverterOptionalTypeBoundingBox.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+        )
+
+    override fun allocationSize(value: TableOptions) =
+        (
+            FfiConverterOptionalString.allocationSize(value.`verticalStrategy`) +
+                FfiConverterOptionalString.allocationSize(value.`horizontalStrategy`) +
+                FfiConverterOptionalDouble.allocationSize(value.`snapTolerance`) +
+                FfiConverterOptionalDouble.allocationSize(value.`snapXTolerance`) +
+                FfiConverterOptionalDouble.allocationSize(value.`snapYTolerance`) +
+                FfiConverterOptionalDouble.allocationSize(value.`joinTolerance`) +
+                FfiConverterOptionalDouble.allocationSize(value.`joinXTolerance`) +
+                FfiConverterOptionalDouble.allocationSize(value.`joinYTolerance`) +
+                FfiConverterOptionalDouble.allocationSize(value.`intersectionTolerance`) +
+                FfiConverterOptionalDouble.allocationSize(value.`intersectionXTolerance`) +
+                FfiConverterOptionalDouble.allocationSize(value.`intersectionYTolerance`) +
+                FfiConverterOptionalSequenceDouble.allocationSize(value.`explicitVerticalLines`) +
+                FfiConverterOptionalSequenceDouble.allocationSize(value.`explicitHorizontalLines`) +
+                FfiConverterOptionalTypeBoundingBox.allocationSize(value.`crop`) +
+                FfiConverterOptionalTypeBoundingBox.allocationSize(value.`firstPageCrop`) +
+                FfiConverterOptionalUInt.allocationSize(value.`maxPages`)
+        )
+
+    override fun write(
+        value: TableOptions,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterOptionalString.write(value.`verticalStrategy`, buf)
+        FfiConverterOptionalString.write(value.`horizontalStrategy`, buf)
+        FfiConverterOptionalDouble.write(value.`snapTolerance`, buf)
+        FfiConverterOptionalDouble.write(value.`snapXTolerance`, buf)
+        FfiConverterOptionalDouble.write(value.`snapYTolerance`, buf)
+        FfiConverterOptionalDouble.write(value.`joinTolerance`, buf)
+        FfiConverterOptionalDouble.write(value.`joinXTolerance`, buf)
+        FfiConverterOptionalDouble.write(value.`joinYTolerance`, buf)
+        FfiConverterOptionalDouble.write(value.`intersectionTolerance`, buf)
+        FfiConverterOptionalDouble.write(value.`intersectionXTolerance`, buf)
+        FfiConverterOptionalDouble.write(value.`intersectionYTolerance`, buf)
+        FfiConverterOptionalSequenceDouble.write(value.`explicitVerticalLines`, buf)
+        FfiConverterOptionalSequenceDouble.write(value.`explicitHorizontalLines`, buf)
+        FfiConverterOptionalTypeBoundingBox.write(value.`crop`, buf)
+        FfiConverterOptionalTypeBoundingBox.write(value.`firstPageCrop`, buf)
+        FfiConverterOptionalUInt.write(value.`maxPages`, buf)
     }
 }
 
@@ -2382,6 +2556,38 @@ public object FfiConverterOptionalString : FfiConverterRustBuffer<kotlin.String?
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeBoundingBox : FfiConverterRustBuffer<BoundingBox?> {
+    override fun read(buf: ByteBuffer): BoundingBox? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeBoundingBox.read(buf)
+    }
+
+    override fun allocationSize(value: BoundingBox?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeBoundingBox.allocationSize(value)
+        }
+    }
+
+    override fun write(
+        value: BoundingBox?,
+        buf: ByteBuffer,
+    ) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeBoundingBox.write(value, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeExtractOptions : FfiConverterRustBuffer<ExtractOptions?> {
     override fun read(buf: ByteBuffer): ExtractOptions? {
         if (buf.get().toInt() == 0) {
@@ -2446,6 +2652,38 @@ public object FfiConverterOptionalTypeLayoutParams : FfiConverterRustBuffer<Layo
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeTableOptions : FfiConverterRustBuffer<TableOptions?> {
+    override fun read(buf: ByteBuffer): TableOptions? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeTableOptions.read(buf)
+    }
+
+    override fun allocationSize(value: TableOptions?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeTableOptions.allocationSize(value)
+        }
+    }
+
+    override fun write(
+        value: TableOptions?,
+        buf: ByteBuffer,
+    ) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeTableOptions.write(value, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalSequenceUInt : FfiConverterRustBuffer<List<kotlin.UInt>?> {
     override fun read(buf: ByteBuffer): List<kotlin.UInt>? {
         if (buf.get().toInt() == 0) {
@@ -2478,6 +2716,38 @@ public object FfiConverterOptionalSequenceUInt : FfiConverterRustBuffer<List<kot
 /**
  * @suppress
  */
+public object FfiConverterOptionalSequenceDouble : FfiConverterRustBuffer<List<kotlin.Double>?> {
+    override fun read(buf: ByteBuffer): List<kotlin.Double>? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterSequenceDouble.read(buf)
+    }
+
+    override fun allocationSize(value: List<kotlin.Double>?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterSequenceDouble.allocationSize(value)
+        }
+    }
+
+    override fun write(
+        value: List<kotlin.Double>?,
+        buf: ByteBuffer,
+    ) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterSequenceDouble.write(value, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceUInt : FfiConverterRustBuffer<List<kotlin.UInt>> {
     override fun read(buf: ByteBuffer): List<kotlin.UInt> {
         val len = buf.getInt()
@@ -2499,6 +2769,34 @@ public object FfiConverterSequenceUInt : FfiConverterRustBuffer<List<kotlin.UInt
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterUInt.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceDouble : FfiConverterRustBuffer<List<kotlin.Double>> {
+    override fun read(buf: ByteBuffer): List<kotlin.Double> {
+        val len = buf.getInt()
+        return List<kotlin.Double>(len) {
+            FfiConverterDouble.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.Double>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterDouble.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<kotlin.Double>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterDouble.write(it, buf)
         }
     }
 }
@@ -2646,6 +2944,34 @@ public object FfiConverterSequenceTypePageSummary : FfiConverterRustBuffer<List<
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypePageTableRows : FfiConverterRustBuffer<List<PageTableRows>> {
+    override fun read(buf: ByteBuffer): List<PageTableRows> {
+        val len = buf.getInt()
+        return List<PageTableRows>(len) {
+            FfiConverterTypePageTableRows.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<PageTableRows>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypePageTableRows.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<PageTableRows>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypePageTableRows.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeTable : FfiConverterRustBuffer<List<Table>> {
     override fun read(buf: ByteBuffer): List<Table> {
         val len = buf.getInt()
@@ -2695,6 +3021,90 @@ public object FfiConverterSequenceTypeTableCell : FfiConverterRustBuffer<List<Ta
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeTableCell.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceOptionalString : FfiConverterRustBuffer<List<kotlin.String?>> {
+    override fun read(buf: ByteBuffer): List<kotlin.String?> {
+        val len = buf.getInt()
+        return List<kotlin.String?>(len) {
+            FfiConverterOptionalString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.String?>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterOptionalString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<kotlin.String?>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterOptionalString.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceSequenceOptionalString : FfiConverterRustBuffer<List<List<kotlin.String?>>> {
+    override fun read(buf: ByteBuffer): List<List<kotlin.String?>> {
+        val len = buf.getInt()
+        return List<List<kotlin.String?>>(len) {
+            FfiConverterSequenceOptionalString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<List<kotlin.String?>>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterSequenceOptionalString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<List<kotlin.String?>>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterSequenceOptionalString.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceSequenceSequenceOptionalString : FfiConverterRustBuffer<List<List<List<kotlin.String?>>>> {
+    override fun read(buf: ByteBuffer): List<List<List<kotlin.String?>>> {
+        val len = buf.getInt()
+        return List<List<List<kotlin.String?>>>(len) {
+            FfiConverterSequenceSequenceOptionalString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<List<List<kotlin.String?>>>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterSequenceSequenceOptionalString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<List<List<kotlin.String?>>>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterSequenceSequenceOptionalString.write(it, buf)
         }
     }
 }

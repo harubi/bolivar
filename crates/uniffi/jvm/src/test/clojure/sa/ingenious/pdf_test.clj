@@ -4,7 +4,7 @@
   (:import [clojure.lang ExceptionInfo]
            [java.util Arrays]
            [sa.ingenious.pdf BoundingBox DocumentOptions LayoutChar LayoutLine LayoutOptions
-            LayoutPage LayoutTextBox PageSummary Table TableCell]))
+            LayoutPage LayoutTextBox PageSummary PageTableRows Table TableCell TableOptions]))
 
 (defn- one-list [value]
   (Arrays/asList (object-array [value])))
@@ -108,6 +108,57 @@
     (catch ExceptionInfo ex
       (is (= :pdf/jvm-error (:type (ex-data ex))))
       (is (= "text failed" (.getMessage (.getCause ex)))))))
+
+(deftest table-options-build-from-idiomatic-maps
+  (testing "every supported key maps onto the builder"
+    (let [^TableOptions options
+          (#'pdf/->table-options
+           {:vertical-strategy        "explicit"
+            :horizontal-strategy      "text"
+            :snap-tolerance           3
+            :snap-x-tolerance         4
+            :snap-y-tolerance         1
+            :join-tolerance           20
+            :intersection-x-tolerance 63
+            :explicit-vertical-lines  [20 50 150]
+            :crop                     [0 25 842 575]
+            :first-page-crop          [0 15 842 575]
+            :max-pages                10})]
+      (is (= "explicit" (.verticalStrategy options)))
+      (is (= "text" (.horizontalStrategy options)))
+      (is (= 3.0 (.snapTolerance options)))
+      (is (= 4.0 (.snapXTolerance options)))
+      (is (= 1.0 (.snapYTolerance options)))
+      (is (= 20.0 (.joinTolerance options)))
+      (is (= 63.0 (.intersectionXTolerance options)))
+      (is (nil? (.intersectionYTolerance options)))
+      (is (= [20.0 50.0 150.0] (vec (.explicitVerticalLines options))))
+      (is (= (BoundingBox. 0.0 25.0 842.0 575.0) (.crop options)))
+      (is (= (BoundingBox. 0.0 15.0 842.0 575.0) (.firstPageCrop options)))
+      (is (= 10 (.maxPages options)))))
+  (testing "nil options mean defaults"
+    (is (nil? (#'pdf/->table-options nil))))
+  (testing "unknown keys are rejected"
+    (is (thrown-with-msg?
+         ExceptionInfo
+         #"Unknown table option"
+         (#'pdf/->table-options {:snap-tolerence 3}))))
+  (testing "strategies are validated"
+    (is (thrown-with-msg?
+         ExceptionInfo
+         #"vertical-strategy"
+         (#'pdf/->table-options {:vertical-strategy "diagonal"}))))
+  (testing "crops must be 4-number vectors"
+    (is (thrown-with-msg?
+         ExceptionInfo
+         #"x0 y0 x1 y1"
+         (#'pdf/->table-options {:crop [1 2 3]})))))
+
+(deftest page-table-rows-convert-to-idiomatic-clojure-data
+  (let [page (PageTableRows. 3 [[["a" nil] [nil "b"]]])]
+    (is (= {:page-number 3
+            :tables      [[["a" nil] [nil "b"]]]}
+           (#'pdf/page-table-rows->map page)))))
 
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'sa.ingenious.pdf-test)]
