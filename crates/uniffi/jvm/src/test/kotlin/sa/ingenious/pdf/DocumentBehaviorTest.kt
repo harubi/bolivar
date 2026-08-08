@@ -21,6 +21,8 @@ class DocumentBehaviorTest {
 
                 override fun extractLayoutPages(): List<LayoutPage> = emptyList()
 
+                override fun extractRawDocument(): RawDocument = RawDocument(0, 0, emptyList())
+
                 override fun extractTables(): List<Table> = emptyList()
 
                 override fun close() {}
@@ -60,6 +62,8 @@ class DocumentBehaviorTest {
 
                 override fun extractLayoutPages(): List<LayoutPage> = emptyList()
 
+                override fun extractRawDocument(): RawDocument = RawDocument(0, 0, emptyList())
+
                 override fun extractTables(): List<Table> = emptyList()
 
                 override fun close() {}
@@ -82,6 +86,8 @@ class DocumentBehaviorTest {
                 override fun extractPageSummaries(): List<PageSummary> = emptyList()
 
                 override fun extractLayoutPages(): List<LayoutPage> = emptyList()
+
+                override fun extractRawDocument(): RawDocument = RawDocument(0, 0, emptyList())
 
                 override fun extractTables(): List<Table> = emptyList()
 

@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Supplier;
+import sa.ingenious.ffi.BolivarKt;
 import sa.ingenious.ffi.NativePdfDocument;
 
 public final class Document implements AutoCloseable, Iterable<PageSummary> {
@@ -24,6 +25,11 @@ public final class Document implements AutoCloseable, Iterable<PageSummary> {
 
   public static String loadNativeLibrary() {
     return NativeLibrary.load();
+  }
+
+  public static String version() {
+    loadNativeLibrary();
+    return BolivarKt.bolivarVersion();
   }
 
   public static Document open(String path) throws PdfException {
@@ -247,6 +253,21 @@ public final class Document implements AutoCloseable, Iterable<PageSummary> {
 
   public CompletableFuture<List<LayoutPage>> extractLayoutPagesAsync(Executor executor) {
     return future(executor, this::extractLayoutPages);
+  }
+
+  public RawDocument extractRawDocument() throws PdfException {
+    return translate(backend::extractRawDocument);
+  }
+
+  public RawPage extractRawPage(int pageNumber) throws PdfException {
+    if (pageNumber <= 0) {
+      throw new PdfException.InvalidArgument("pageNumber must be >= 1", null);
+    }
+    return translate(() -> backend.extractRawPage(pageNumber));
+  }
+
+  public RawDocumentMetadata metadata() throws PdfException {
+    return translate(backend::metadata);
   }
 
   public List<Table> extractTables() throws PdfException {

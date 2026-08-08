@@ -6,14 +6,15 @@ use bolivar_core::extract::{
 use bolivar_core::layout::LAParams as CoreLAParams;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::table::{ExplicitLine, PageGeometry, TableSettings};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::document::NativePdfDocument;
 use crate::error::{BolivarError, map_io_error_kind};
 use crate::types::{
-    BoundingBox, ExtractOptions, LayoutPage, LayoutParams, PageTableRows, Table, TableOptions,
-    cache_capacity, layout_page_from_ltpage, page_geometry_from_pdf_page, page_number,
-    table_from_core,
+    BoundingBox, ExtractOptions, LayoutPage, LayoutParams, PageTableRows, RawDocument, Table,
+    TableOptions, cache_capacity, layout_page_from_ltpage, page_geometry_from_pdf_page,
+    page_number, raw_page_from_parts, table_from_core, usize_to_u32,
 };
 
 fn normalize_page_numbers(
@@ -122,6 +123,79 @@ pub(crate) fn extract_layout_pages_core(
     Ok(pages)
 }
 
+pub(crate) fn extract_raw_document_core(
+    doc: Arc<PDFDocument>,
+    options: CoreExtractOptions,
+) -> Result<RawDocument, BolivarError> {
+    let selected_indices = bolivar_core::engine::select_pages(
+        doc.page_tree_len(),
+        options.page_numbers.clone(),
+        options.maxpages,
+    );
+    let mut pdf_pages = BTreeMap::new();
+    let mut geometries = Vec::with_capacity(selected_indices.len());
+    for &page_index in &selected_indices {
+        let page = doc
+            .get_page_cached(page_index)
+            .map_err(BolivarError::from)?;
+        geometries.push(page_geometry_from_pdf_page(page.as_ref()));
+        pdf_pages.insert(page_index, page);
+    }
+
+    let table_stream = extract_tables_metadata_stream_from_doc_with_geometries(
+        Arc::clone(&doc),
+        options.clone(),
+        TableSettings::default(),
+        geometries,
+    )
+    .map_err(BolivarError::from)?;
+    let mut tables_by_page = BTreeMap::new();
+    for item in table_stream {
+        let (page_index, tables) = item.map_err(BolivarError::from)?;
+        tables_by_page.insert(page_index, tables);
+    }
+
+    let page_stream =
+        extract_pages_stream_from_doc(Arc::clone(&doc), options).map_err(BolivarError::from)?;
+    let mut pages = Vec::with_capacity(selected_indices.len());
+    for item in page_stream {
+        let (page_index, layout_page) = item.map_err(BolivarError::from)?;
+        let pdf_page = pdf_pages
+            .get(&page_index)
+            .ok_or(BolivarError::RuntimeError)?;
+        let tables = tables_by_page.remove(&page_index).unwrap_or_default();
+        pages.push(raw_page_from_parts(
+            page_index,
+            pdf_page.as_ref(),
+            layout_page,
+            tables,
+        ));
+    }
+
+    Ok(RawDocument {
+        declared_page_count: usize_to_u32(doc.page_count()),
+        page_count: usize_to_u32(pages.len()),
+        pages,
+    })
+}
+
+pub(crate) fn extract_raw_page_core(
+    doc: Arc<PDFDocument>,
+    mut options: CoreExtractOptions,
+    page_number: u32,
+) -> Result<crate::types::RawPage, BolivarError> {
+    if page_number == 0 || page_number as usize > doc.page_tree_len() {
+        return Err(BolivarError::InvalidArgument);
+    }
+    options.page_numbers = Some(vec![page_number as usize - 1]);
+    options.maxpages = 1;
+    extract_raw_document_core(doc, options)?
+        .pages
+        .into_iter()
+        .next()
+        .ok_or(BolivarError::InvalidArgument)
+}
+
 fn table_settings_from_options(options: &TableOptions) -> Result<TableSettings, BolivarError> {
     let mut settings = TableSettings::default();
 
@@ -182,12 +256,16 @@ fn table_settings_from_options(options: &TableOptions) -> Result<TableSettings, 
     }
 
     if let Some(lines) = &options.explicit_vertical_lines {
-        settings.explicit_vertical_lines =
-            lines.iter().map(|&coord| ExplicitLine::Coord(coord)).collect();
+        settings.explicit_vertical_lines = lines
+            .iter()
+            .map(|&coord| ExplicitLine::Coord(coord))
+            .collect();
     }
     if let Some(lines) = &options.explicit_horizontal_lines {
-        settings.explicit_horizontal_lines =
-            lines.iter().map(|&coord| ExplicitLine::Coord(coord)).collect();
+        settings.explicit_horizontal_lines = lines
+            .iter()
+            .map(|&coord| ExplicitLine::Coord(coord))
+            .collect();
     }
 
     Ok(settings)

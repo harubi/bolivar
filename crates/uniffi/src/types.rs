@@ -81,6 +81,144 @@ pub struct Table {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct RawTableBoundingBox {
+    pub x0: f64,
+    pub top: f64,
+    pub x1: f64,
+    pub bottom: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawCharacter {
+    pub text: String,
+    pub bbox: BoundingBox,
+    pub font_name: String,
+    pub size: f64,
+    pub upright: bool,
+    pub advance: f64,
+    pub matrix: Vec<f64>,
+    pub marked_content_id: Option<i32>,
+    pub tag: Option<String>,
+    pub non_stroking_color_space: Option<String>,
+    pub stroking_color_space: Option<String>,
+    pub non_stroking_color: Option<Vec<f64>>,
+    pub stroking_color: Option<Vec<f64>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawTextLine {
+    pub bbox: BoundingBox,
+    pub orientation: String,
+    pub text: String,
+    pub characters: Vec<RawCharacter>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawTextBox {
+    pub bbox: BoundingBox,
+    pub writing_mode: String,
+    pub text: String,
+    pub lines: Vec<RawTextLine>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawTableCell {
+    pub row_index: u32,
+    pub column_index: u32,
+    pub row_span: u32,
+    pub column_span: u32,
+    pub bbox: RawTableBoundingBox,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawTable {
+    pub bbox: RawTableBoundingBox,
+    pub row_count: u32,
+    pub column_count: u32,
+    pub cells: Vec<RawTableCell>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawPageBoxes {
+    pub media: Option<Vec<f64>>,
+    pub crop: Option<Vec<f64>>,
+    pub bleed: Option<Vec<f64>>,
+    pub trim: Option<Vec<f64>>,
+    pub art: Option<Vec<f64>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawPage {
+    pub page_index: u32,
+    pub page_number: u32,
+    pub object_id: u32,
+    pub label: Option<String>,
+    pub rotation: i64,
+    pub user_unit: f64,
+    pub boxes: RawPageBoxes,
+    pub layout_bbox: BoundingBox,
+    pub text: String,
+    pub text_boxes: Vec<RawTextBox>,
+    pub tables: Vec<RawTable>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawDocument {
+    pub declared_page_count: u32,
+    pub page_count: u32,
+    pub pages: Vec<RawPage>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetadataEntry {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PdfVersion {
+    pub header: Option<String>,
+    pub catalog: Option<String>,
+    pub effective: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PdfPermissions {
+    pub printable: bool,
+    pub modifiable: bool,
+    pub extractable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawDocumentMetadata {
+    pub document_info: Vec<MetadataEntry>,
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub subject: Option<String>,
+    pub keywords: Option<String>,
+    pub creator: Option<String>,
+    pub producer: Option<String>,
+    pub creation_date_raw: Option<String>,
+    pub creation_date_iso: Option<String>,
+    pub modification_date_raw: Option<String>,
+    pub modification_date_iso: Option<String>,
+    pub version: PdfVersion,
+    pub file_size_bytes: u64,
+    pub page_count: u32,
+    pub encrypted: bool,
+    pub permissions: PdfPermissions,
+    pub linearized: bool,
+    pub tagged: bool,
+    pub user_properties: bool,
+    pub suspects: bool,
+    pub form: String,
+    pub has_javascript: bool,
+    pub has_metadata_stream: bool,
+    pub xmp_metadata: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct LayoutParams {
     pub line_overlap: Option<f64>,
     pub char_margin: Option<f64>,
@@ -315,6 +453,162 @@ pub(crate) fn layout_page_from_ltpage(page: &LTPage) -> LayoutPage {
     }
 }
 
+pub(crate) fn raw_character_from_ltchar(character: &bolivar_core::layout::LTChar) -> RawCharacter {
+    let matrix = character.matrix();
+    RawCharacter {
+        text: character.get_text().to_owned(),
+        bbox: bbox_from_rect(character.bbox()),
+        font_name: character.fontname().to_owned(),
+        size: character.size(),
+        upright: character.upright(),
+        advance: character.adv(),
+        matrix: vec![matrix.0, matrix.1, matrix.2, matrix.3, matrix.4, matrix.5],
+        marked_content_id: character.mcid(),
+        tag: character.tag(),
+        non_stroking_color_space: character.ncs(),
+        stroking_color_space: character.scs(),
+        non_stroking_color: character.non_stroking_color().clone(),
+        stroking_color: character.stroking_color().clone(),
+    }
+}
+
+fn raw_characters<'a>(elements: impl Iterator<Item = &'a TextLineElement>) -> Vec<RawCharacter> {
+    elements
+        .filter_map(|element| match element {
+            TextLineElement::Char(character) => Some(raw_character_from_ltchar(character)),
+            TextLineElement::Anno(_) => None,
+        })
+        .collect()
+}
+
+fn raw_text_line_from_horizontal(line: &LTTextLineHorizontal) -> RawTextLine {
+    RawTextLine {
+        bbox: bbox_from_rect(line.bbox()),
+        orientation: "horizontal".to_owned(),
+        text: line.get_text(),
+        characters: raw_characters(line.iter()),
+    }
+}
+
+fn raw_text_line_from_vertical(line: &LTTextLineVertical) -> RawTextLine {
+    RawTextLine {
+        bbox: bbox_from_rect(line.bbox()),
+        orientation: "vertical".to_owned(),
+        text: line.get_text(),
+        characters: raw_characters(line.iter()),
+    }
+}
+
+fn raw_text_box_from_text_box_type(text_box: &TextBoxType) -> RawTextBox {
+    match text_box {
+        TextBoxType::Horizontal(text_box) => RawTextBox {
+            bbox: bbox_from_rect(text_box.bbox()),
+            writing_mode: text_box.get_writing_mode().to_owned(),
+            text: text_box.get_text(),
+            lines: text_box.iter().map(raw_text_line_from_horizontal).collect(),
+        },
+        TextBoxType::Vertical(text_box) => RawTextBox {
+            bbox: bbox_from_rect(text_box.bbox()),
+            writing_mode: text_box.get_writing_mode().to_owned(),
+            text: text_box.get_text(),
+            lines: text_box.iter().map(raw_text_line_from_vertical).collect(),
+        },
+    }
+}
+
+fn collect_raw_text_boxes(item: &LTItem, output: &mut Vec<RawTextBox>) {
+    match item {
+        LTItem::TextBox(text_box) => output.push(raw_text_box_from_text_box_type(text_box)),
+        LTItem::Figure(figure) => {
+            for child in figure.iter() {
+                collect_raw_text_boxes(child, output);
+            }
+        }
+        LTItem::Page(page) => {
+            for child in page.iter() {
+                collect_raw_text_boxes(child, output);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn raw_text_boxes(page: &LTPage) -> Vec<RawTextBox> {
+    let mut output = Vec::new();
+    for item in page.iter() {
+        collect_raw_text_boxes(item, &mut output);
+    }
+    output
+}
+
+fn raw_table_bbox(bbox: CoreTableBBox) -> RawTableBoundingBox {
+    RawTableBoundingBox {
+        x0: bbox.x0,
+        top: bbox.top,
+        x1: bbox.x1,
+        bottom: bbox.bottom,
+    }
+}
+
+fn raw_table_from_core(table: CoreTableMetadata) -> RawTable {
+    RawTable {
+        bbox: raw_table_bbox(table.bbox),
+        row_count: usize_to_u32(table.row_count),
+        column_count: usize_to_u32(table.column_count),
+        cells: table
+            .cells
+            .into_iter()
+            .map(|cell| RawTableCell {
+                row_index: usize_to_u32(cell.row_index),
+                column_index: usize_to_u32(cell.column_index),
+                row_span: usize_to_u32(cell.row_span),
+                column_span: usize_to_u32(cell.column_span),
+                bbox: raw_table_bbox(cell.bbox),
+                text: cell.text,
+            })
+            .collect(),
+    }
+}
+
+fn raw_page_boxes(page: &PDFPage) -> RawPageBoxes {
+    RawPageBoxes {
+        media: page.mediabox.map(Vec::from),
+        crop: page.cropbox.map(Vec::from),
+        bleed: page.bleedbox.map(Vec::from),
+        trim: page.trimbox.map(Vec::from),
+        art: page.artbox.map(Vec::from),
+    }
+}
+
+pub(crate) fn raw_page_from_parts(
+    page_index: usize,
+    pdf_page: &PDFPage,
+    layout_page: LTPage,
+    tables: Vec<CoreTableMetadata>,
+) -> RawPage {
+    let layout_bbox = bbox_from_rect(layout_page.bbox());
+    let text_boxes = raw_text_boxes(&layout_page);
+    let text = text_boxes
+        .iter()
+        .map(|text_box| text_box.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    RawPage {
+        page_index: usize_to_u32(page_index),
+        page_number: usize_to_u32(page_index.saturating_add(1)),
+        object_id: pdf_page.pageid,
+        label: pdf_page.label.clone(),
+        rotation: pdf_page.rotate,
+        user_unit: pdf_page.user_unit,
+        boxes: raw_page_boxes(pdf_page),
+        layout_bbox,
+        text,
+        text_boxes,
+        tables: tables.into_iter().map(raw_table_from_core).collect(),
+    }
+}
+
 fn table_cell_from_core(cell: CoreTableCellMetadata, geometry: &PageGeometry) -> TableCell {
     TableCell {
         row_index: usize_to_u32(cell.row_index),
@@ -488,5 +782,89 @@ mod tests {
     fn page_number_clamps_non_positive_to_one() {
         assert_eq!(page_number(0), 1);
         assert_eq!(page_number(-5), 1);
+    }
+
+    #[test]
+    fn raw_character_preserves_matrix_marked_content_and_colors() {
+        let character = LTChar::builder((1.0, 2.0, 3.0, 4.0), "A", "Helvetica", 12.0)
+            .upright(true)
+            .adv(7.5)
+            .matrix((1.0, 0.1, 0.2, 1.0, 20.0, 30.0))
+            .mcid(Some(17))
+            .tag(Some("Span".to_owned()))
+            .ncs(Some("DeviceRGB".to_owned()))
+            .scs(Some("DeviceGray".to_owned()))
+            .non_stroking_color(Some(vec![0.1, 0.2, 0.3]))
+            .stroking_color(Some(vec![0.4]))
+            .build();
+
+        let raw = raw_character_from_ltchar(&character);
+
+        assert_eq!(raw.text, "A");
+        assert_eq!(raw.advance, 7.5);
+        assert_eq!(raw.matrix, vec![1.0, 0.1, 0.2, 1.0, 20.0, 30.0]);
+        assert_eq!(raw.marked_content_id, Some(17));
+        assert_eq!(raw.tag.as_deref(), Some("Span"));
+        assert_eq!(raw.non_stroking_color_space.as_deref(), Some("DeviceRGB"));
+        assert_eq!(raw.stroking_color_space.as_deref(), Some("DeviceGray"));
+        assert_eq!(raw.non_stroking_color, Some(vec![0.1, 0.2, 0.3]));
+        assert_eq!(raw.stroking_color, Some(vec![0.4]));
+    }
+
+    #[test]
+    fn raw_page_preserves_pdf_identity_boxes_and_table_coordinates() {
+        let page = PDFPage {
+            pageid: 42,
+            attrs: PDFDict::default(),
+            label: Some("iv".to_owned()),
+            mediabox: Some([0.0, 0.0, 200.0, 300.0]),
+            cropbox: Some([10.0, 20.0, 190.0, 280.0]),
+            bleedbox: Some([5.0, 6.0, 195.0, 294.0]),
+            trimbox: Some([7.0, 8.0, 193.0, 292.0]),
+            artbox: Some([9.0, 10.0, 191.0, 290.0]),
+            rotate: 90,
+            annots: None,
+            resources: PDFDict::default(),
+            contents: Vec::new(),
+            user_unit: 2.0,
+        };
+        let layout_page = LTPage::new(1, (0.0, 0.0, 300.0, 200.0), 90.0);
+        let table = CoreTableMetadata {
+            bbox: CoreTableBBox {
+                x0: 11.0,
+                top: 22.0,
+                x1: 99.0,
+                bottom: 88.0,
+            },
+            row_count: 1,
+            column_count: 1,
+            cells: vec![CoreTableCellMetadata {
+                row_index: 0,
+                column_index: 0,
+                row_span: 1,
+                column_span: 1,
+                bbox: CoreTableBBox {
+                    x0: 11.0,
+                    top: 22.0,
+                    x1: 99.0,
+                    bottom: 88.0,
+                },
+                text: "value".to_owned(),
+            }],
+        };
+
+        let raw = raw_page_from_parts(3, &page, layout_page, vec![table]);
+
+        assert_eq!(raw.page_index, 3);
+        assert_eq!(raw.page_number, 4);
+        assert_eq!(raw.object_id, 42);
+        assert_eq!(raw.label.as_deref(), Some("iv"));
+        assert_eq!(raw.rotation, 90);
+        assert_eq!(raw.user_unit, 2.0);
+        assert_eq!(raw.boxes.media, Some(vec![0.0, 0.0, 200.0, 300.0]));
+        assert_eq!(raw.boxes.crop, Some(vec![10.0, 20.0, 190.0, 280.0]));
+        assert_eq!(raw.tables[0].bbox.top, 22.0);
+        assert_eq!(raw.tables[0].bbox.bottom, 88.0);
+        assert_eq!(raw.tables[0].cells[0].bbox.top, 22.0);
     }
 }

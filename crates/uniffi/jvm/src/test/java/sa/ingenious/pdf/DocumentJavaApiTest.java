@@ -44,6 +44,10 @@ class DocumentJavaApiTest {
     assertEquals(
         String.class,
         Document.class.getMethod("extractText", Path.class, DocumentOptions.class).getReturnType());
+    assertEquals(RawDocument.class, Document.class.getMethod("extractRawDocument").getReturnType());
+    assertEquals(RawPage.class, Document.class.getMethod("extractRawPage", int.class).getReturnType());
+    assertEquals(RawDocumentMetadata.class, Document.class.getMethod("metadata").getReturnType());
+    assertEquals(String.class, Document.class.getMethod("version").getReturnType());
   }
 
   @Test
@@ -76,6 +80,8 @@ class DocumentJavaApiTest {
 
     assertTrue(BoundingBox.class.isRecord());
     assertTrue(PageSummary.class.isRecord());
+    assertTrue(RawDocument.class.isRecord());
+    assertTrue(RawDocumentMetadata.class.isRecord());
     assertEquals(1.0, bbox.x0());
     assertEquals(1, summary.pageNumber());
     assertThrows(NoSuchMethodException.class, () -> PageSummary.class.getMethod("getPageNumber"));
