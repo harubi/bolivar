@@ -24,7 +24,7 @@ args = ["nextest", "run", "--workspace", "--locked"]
 [tasks.test-py]
 description = "Run Python tests"
 command = "uv"
-args = ["run", "pytest", "tests/", "-v"]
+args = ["run", "--group", "test", "pytest", "tests/", "-v"]
 dependencies = ["build-py"]
 
 [tasks.test-parity]
