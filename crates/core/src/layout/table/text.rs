@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::arena::ArenaLookup;
-use crate::layout::bidi::reorder_text_for_output;
+use crate::layout::bidi::{reorder_text_for_output, reorder_visual_word_runs};
 
 use super::clustering::{bbox_from_chars, cluster_objects};
 use super::types::{CharId, CharObj, TextDir, TextSettings, WordObj};
@@ -16,67 +16,6 @@ const DEFAULT_Y_DENSITY: f64 = 13.0;
 
 fn char_text<'a>(obj: &CharObj, arena: &'a dyn ArenaLookup) -> &'a str {
     arena.resolve(obj.text)
-}
-
-fn contains_rtl_script(text: &str) -> bool {
-    text.chars().any(|c| {
-        matches!(
-            c,
-            '\u{0590}'..='\u{05FF}'
-                | '\u{0600}'..='\u{06FF}'
-                | '\u{0750}'..='\u{077F}'
-                | '\u{0870}'..='\u{089F}'
-                | '\u{08A0}'..='\u{08FF}'
-                | '\u{FB1D}'..='\u{FDFF}'
-                | '\u{FE70}'..='\u{FEFF}'
-                | '\u{10E60}'..='\u{10E7F}'
-                | '\u{1EE00}'..='\u{1EEFF}'
-        )
-    })
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum WordBidiClass {
-    Rtl,
-    Ltr,
-    Neutral,
-}
-
-fn word_bidi_class(text: &str) -> WordBidiClass {
-    if contains_rtl_script(text) {
-        return WordBidiClass::Rtl;
-    }
-    if text.chars().any(char::is_alphabetic) {
-        return WordBidiClass::Ltr;
-    }
-    WordBidiClass::Neutral
-}
-
-fn reorder_visual_words_for_rtl_line(words: Vec<WordObj>) -> Vec<WordObj> {
-    let mut runs: Vec<(WordBidiClass, Vec<WordObj>)> = Vec::new();
-    for word in words {
-        let class = word_bidi_class(&word.text);
-        if let Some((last_class, run)) = runs.last_mut()
-            && *last_class == class
-        {
-            run.push(word);
-            continue;
-        }
-        runs.push((class, vec![word]));
-    }
-
-    for (class, run) in &mut runs {
-        if *class == WordBidiClass::Rtl {
-            run.reverse();
-        }
-    }
-    runs.reverse();
-
-    let mut reordered = Vec::new();
-    for (_class, mut run) in runs {
-        reordered.append(&mut run);
-    }
-    reordered
 }
 
 fn maybe_reorder_bidi_default(text: String, settings: &TextSettings) -> String {
@@ -636,10 +575,8 @@ fn extract_text_refs(
                 .partial_cmp(&key_b)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        if char_dir_render == TextDir::Ltr
-            && line_sorted.iter().any(|w| contains_rtl_script(&w.text))
-        {
-            line_sorted = reorder_visual_words_for_rtl_line(line_sorted);
+        if char_dir_render == TextDir::Ltr {
+            line_sorted = reorder_visual_word_runs(line_sorted, |word| word.text.as_str());
         }
         let line_str = line_sorted
             .iter()
