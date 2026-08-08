@@ -617,36 +617,6 @@ pub fn reorder_text_for_output(text: &str) -> String {
     normalize_presentation_forms_for_output(&reorder_text_per_line(text))
 }
 
-/// Reorder geometric text with the legacy output policy.
-pub fn reorder_visual_text_for_output(text: &str) -> String {
-    if text.is_empty() {
-        return String::new();
-    }
-
-    let mut output = String::with_capacity(text.len());
-    for chunk in text.split_inclusive('\n') {
-        let (line, has_newline) = match chunk.strip_suffix('\n') {
-            Some(prefix) => (prefix, true),
-            None => (chunk, false),
-        };
-
-        if contains_rtl_script(line) {
-            let words = line
-                .split_whitespace()
-                .map(reorder_text_for_output)
-                .collect::<Vec<_>>();
-            let reordered = reorder_visual_word_runs(words, String::as_str);
-            output.push_str(&reordered.join(" "));
-        } else {
-            output.push_str(line);
-        }
-        if has_newline {
-            output.push('\n');
-        }
-    }
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

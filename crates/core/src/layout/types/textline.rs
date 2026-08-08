@@ -6,7 +6,7 @@ use std::hash::Hash;
 
 use crate::layout::bidi::{
     ReconstructedLine, reconstruct_textline_elements, reconstruct_textline_text,
-    reorder_visual_text_for_output,
+    reorder_text_for_output,
 };
 use crate::utils::{HasBBox, INF_F64, Plane, Rect};
 
@@ -61,7 +61,7 @@ fn text_from_elements(elements: &[TextLineElement], axis: Axis, bidi: bool) -> S
     if bidi {
         reconstruct_textline_text(elements, axis)
     } else {
-        reorder_visual_text_for_output(&collect_text_from_elements(elements))
+        reorder_text_for_output(&collect_text_from_elements(elements))
     }
 }
 
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn bidi_is_opt_in_for_layout_lines() {
-        let visual = "abc 123 ﺔﻴﺑﺮﻌﻟﺍ";
+        let visual = "P1 Term 6467299202155588 07/02 14:47:05:ﺔﻈﺣﻼﻣ**23:11:18:ﺖﻗﻮﻟﺍ";
         let mut line = LTTextLineHorizontal::new(0.1);
         for (index, ch) in visual.chars().enumerate() {
             line.add_element(TextLineElement::Char(Box::new(LTChar::new(
@@ -518,8 +518,11 @@ mod tests {
             ))));
         }
 
-        assert_eq!(line.get_text(), "العربية 123 abc");
+        assert_eq!(line.get_text(), reorder_text_for_output(visual));
         line.set_bidi(true);
-        assert_eq!(line.get_text(), "abc 123 العربية");
+        assert_eq!(
+            line.get_text(),
+            "P1 Term 6467299202155588 07/02 الوقت:23:11:18**ملاحظة:14:47:05"
+        );
     }
 }
