@@ -71,7 +71,7 @@ public final class Document implements AutoCloseable, Iterable<PageSummary> {
         () -> {
           loadNativeLibrary();
           var nativeDocument =
-              NativePdfDocument.Companion.fromBytes(pdfData.clone(), DocumentOptionsKt.toNative(options));
+              NativePdfDocument.Companion.fromBytes(pdfData, DocumentOptionsKt.toNative(options));
           return new Document(new NativeDocumentBackend(nativeDocument));
         });
   }

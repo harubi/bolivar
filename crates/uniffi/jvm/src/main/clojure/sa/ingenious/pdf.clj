@@ -2,8 +2,12 @@
   (:import [clojure.lang ExceptionInfo]
            [java.io File InputStream]
            [java.nio.file Path]
-           [sa.ingenious.pdf BoundingBox Document DocumentOptions LayoutOptions PdfException
-            PageTableRows TableOptions]))
+           [sa.ingenious.pdf BoundingBox Document DocumentOptions LayoutChar LayoutLine LayoutOptions
+            LayoutPage LayoutTextBox MetadataEntry PageSummary PageTableRows PdfException PdfPermissions
+            PdfVersion RawCharacter RawDocument RawDocumentMetadata RawPage RawPageBoxes RawTable
+            RawTableBoundingBox RawTableCell RawTextBox RawTextLine Table TableCell TableOptions]))
+
+(set! *warn-on-reflection* true)
 
 (def ^:private byte-array-class (Class/forName "[B"))
 (def ^:private option-keys #{:password :pages :max-pages :caching :layout :bidi})
@@ -30,12 +34,12 @@
                                          :value value})))
 
 (defn- assert-known-keys! [value allowed label]
-  (let [unknown (seq (remove allowed (keys value)))]
-    (when unknown
+  (let [unknown (into [] (remove allowed) (keys value))]
+    (when (seq unknown)
       (fail! (str "Unknown " label (if (= 1 (count unknown)) " key: " " keys: ")
-                  (pr-str (vec unknown)))
+                  (pr-str unknown))
              {:type         :pdf/invalid-options
-              :unknown-keys (vec unknown)}))))
+              :unknown-keys unknown}))))
 
 (defn- assert-boolean! [value key]
   (when-not (boolean? value)
@@ -55,7 +59,7 @@
                                           :key   key
                                           :value value})))
 
-(defn- ->layout-options [opts]
+(defn- ->layout-options ^LayoutOptions [opts]
   (assert-map! opts ":layout")
   (when opts
     (assert-known-keys! opts layout-keys "layout option")
@@ -90,7 +94,7 @@
         (.allTexts builder (:all-texts opts)))
       (.build builder))))
 
-(defn- ->document-options [opts]
+(defn- ->document-options ^DocumentOptions [opts]
   (assert-map! opts "options")
   (if-not opts
     (DocumentOptions.)
@@ -111,9 +115,12 @@
                      {:type  :pdf/invalid-options
                       :key   :pages
                       :value pages}))
-            (doseq [page pages]
-              (assert-positive-int! page "Page numbers are 1-based and must be positive" :pages))
-            (.pageNumbers builder (mapv #(Integer/valueOf (int %)) pages))))
+            (.pageNumbers builder
+                          (mapv (fn [page]
+                                  (assert-positive-int!
+                                   page "Page numbers are 1-based and must be positive" :pages)
+                                  (Integer/valueOf (int page)))
+                                pages))))
         (when (contains? opts :max-pages)
           (let [max-pages (:max-pages opts)]
             (assert-positive-int! max-pages ":max-pages must be a positive integer" :max-pages)
@@ -149,39 +156,39 @@
 
 (declare layout-line->map)
 
-(defn- layout-char->map [ch]
+(defn- layout-char->map [^LayoutChar ch]
   {:text      (.text ch)
    :bbox      (bbox->map (.bbox ch))
    :font-name (.fontName ch)
    :size      (.size ch)
    :upright   (.upright ch)})
 
-(defn- layout-line->map [line]
+(defn- layout-line->map [^LayoutLine line]
   {:bbox        (bbox->map (.bbox line))
    :orientation (.orientation line)
    :text        (.text line)
    :chars       (mapv layout-char->map (.chars line))})
 
-(defn- layout-text-box->map [text-box]
+(defn- layout-text-box->map [^LayoutTextBox text-box]
   {:bbox         (bbox->map (.bbox text-box))
    :writing-mode (.writingMode text-box)
    :text         (.text text-box)
    :lines        (mapv layout-line->map (.lines text-box))})
 
-(defn- page-summary->map [summary]
+(defn- page-summary->map [^PageSummary summary]
   {:page-number (.pageNumber summary)
    :text        (.text summary)
    :bbox        (bbox->map (.bbox summary))
    :rotate      (.rotate summary)})
 
-(defn- layout-page->map [page]
+(defn- layout-page->map [^LayoutPage page]
   {:page-number (.pageNumber page)
    :bbox        (bbox->map (.bbox page))
    :rotate      (.rotate page)
    :text        (.text page)
    :text-boxes  (mapv layout-text-box->map (.textBoxes page))})
 
-(defn- table-cell->map [cell]
+(defn- table-cell->map [^TableCell cell]
   {:row-index    (.rowIndex cell)
    :column-index (.columnIndex cell)
    :row-span     (.rowSpan cell)
@@ -189,20 +196,20 @@
    :bbox         (bbox->map (.bbox cell))
    :text         (.text cell)})
 
-(defn- table->map [table]
+(defn- table->map [^Table table]
   {:page-number  (.pageNumber table)
    :bbox         (bbox->map (.bbox table))
    :row-count    (.rowCount table)
    :column-count (.columnCount table)
    :cells        (mapv table-cell->map (.cells table))})
 
-(defn- raw-table-bbox->map [bbox]
+(defn- raw-table-bbox->map [^RawTableBoundingBox bbox]
   {:x0 (.x0 bbox)
    :top (.top bbox)
    :x1 (.x1 bbox)
    :bottom (.bottom bbox)})
 
-(defn- raw-character->map [character]
+(defn- raw-character->map [^RawCharacter character]
   {:text (.text character)
    :bbox (bbox->map (.bbox character))
    :font-name (.fontName character)
@@ -217,20 +224,20 @@
    :non-stroking-color (some-> (.nonStrokingColor character) vec)
    :stroking-color (some-> (.strokingColor character) vec)})
 
-(defn- raw-text-line->map [line]
+(defn- raw-text-line->map [^RawTextLine line]
   {:bbox (bbox->map (.bbox line))
    :orientation (.orientation line)
    :raw-text (.rawText line)
    :text (.text line)
    :characters (mapv raw-character->map (.characters line))})
 
-(defn- raw-text-box->map [text-box]
+(defn- raw-text-box->map [^RawTextBox text-box]
   {:bbox (bbox->map (.bbox text-box))
    :writing-mode (.writingMode text-box)
    :text (.text text-box)
    :lines (mapv raw-text-line->map (.lines text-box))})
 
-(defn- raw-table-cell->map [cell]
+(defn- raw-table-cell->map [^RawTableCell cell]
   {:row-index (.rowIndex cell)
    :column-index (.columnIndex cell)
    :row-span (.rowSpan cell)
@@ -238,20 +245,20 @@
    :bbox (raw-table-bbox->map (.bbox cell))
    :text (.text cell)})
 
-(defn- raw-table->map [table]
+(defn- raw-table->map [^RawTable table]
   {:bbox (raw-table-bbox->map (.bbox table))
    :row-count (.rowCount table)
    :column-count (.columnCount table)
    :cells (mapv raw-table-cell->map (.cells table))})
 
-(defn- raw-page-boxes->map [boxes]
+(defn- raw-page-boxes->map [^RawPageBoxes boxes]
   {:media (some-> (.media boxes) vec)
    :crop (some-> (.crop boxes) vec)
    :bleed (some-> (.bleed boxes) vec)
    :trim (some-> (.trim boxes) vec)
    :art (some-> (.art boxes) vec)})
 
-(defn- raw-page->map [page]
+(defn- raw-page->map [^RawPage page]
   {:page-index (.pageIndex page)
    :page-number (.pageNumber page)
    :object-id (.objectId page)
@@ -264,44 +271,47 @@
    :text-boxes (mapv raw-text-box->map (.textBoxes page))
    :tables (mapv raw-table->map (.tables page))})
 
-(defn- raw-document->map [document]
+(defn- raw-document->map [^RawDocument document]
   {:declared-page-count (.declaredPageCount document)
    :page-count (.pageCount document)
    :pages (mapv raw-page->map (.pages document))})
 
-(defn- raw-document-metadata->map [metadata]
-  {:document-info (into {}
-                        (map (juxt #(.key %) #(.value %)))
-                        (.documentInfo metadata))
-   :title (.title metadata)
-   :author (.author metadata)
-   :subject (.subject metadata)
-   :keywords (.keywords metadata)
-   :creator (.creator metadata)
-   :producer (.producer metadata)
-   :creation-date-raw (.creationDateRaw metadata)
-   :creation-date-iso (.creationDateIso metadata)
-   :modification-date-raw (.modificationDateRaw metadata)
-   :modification-date-iso (.modificationDateIso metadata)
-   :version {:header (.header (.version metadata))
-             :catalog (.catalog (.version metadata))
-             :effective (.effective (.version metadata))}
-   :file-size-bytes (.fileSizeBytes metadata)
-   :page-count (.pageCount metadata)
-   :encrypted (.encrypted metadata)
-   :permissions {:printable (.printable (.permissions metadata))
-                 :modifiable (.modifiable (.permissions metadata))
-                 :extractable (.extractable (.permissions metadata))}
-   :linearized (.linearized metadata)
-   :tagged (.tagged metadata)
-   :user-properties (.userProperties metadata)
-   :suspects (.suspects metadata)
-   :form (.form metadata)
-   :has-javascript (.hasJavascript metadata)
-   :has-metadata-stream (.hasMetadataStream metadata)
-   :xmp-metadata (.xmpMetadata metadata)})
+(defn- raw-document-metadata->map [^RawDocumentMetadata metadata]
+  (let [^PdfVersion version (.version metadata)
+        ^PdfPermissions permissions (.permissions metadata)]
+    {:document-info (into {}
+                          (map (fn [^MetadataEntry entry]
+                                 [(.key entry) (.value entry)]))
+                          (.documentInfo metadata))
+     :title (.title metadata)
+     :author (.author metadata)
+     :subject (.subject metadata)
+     :keywords (.keywords metadata)
+     :creator (.creator metadata)
+     :producer (.producer metadata)
+     :creation-date-raw (.creationDateRaw metadata)
+     :creation-date-iso (.creationDateIso metadata)
+     :modification-date-raw (.modificationDateRaw metadata)
+     :modification-date-iso (.modificationDateIso metadata)
+     :version {:header (.header version)
+               :catalog (.catalog version)
+               :effective (.effective version)}
+     :file-size-bytes (.fileSizeBytes metadata)
+     :page-count (.pageCount metadata)
+     :encrypted (.encrypted metadata)
+     :permissions {:printable (.printable permissions)
+                   :modifiable (.modifiable permissions)
+                   :extractable (.extractable permissions)}
+     :linearized (.linearized metadata)
+     :tagged (.tagged metadata)
+     :user-properties (.userProperties metadata)
+     :suspects (.suspects metadata)
+     :form (.form metadata)
+     :has-javascript (.hasJavascript metadata)
+     :has-metadata-stream (.hasMetadataStream metadata)
+     :xmp-metadata (.xmpMetadata metadata)}))
 
-(defn open
+(defn ^Document open
   "Open a PDF source and return an AutoCloseable document handle.
 
   Source may be a path string, java.nio.file.Path, java.io.File, java.io.InputStream,
@@ -396,12 +406,19 @@
                             [:explicit-horizontal-lines #(.explicitHorizontalLines builder %)]]
               :let [value (get opts key)]
               :when (some? value)]
-        (when-not (and (sequential? value) (every? number? value))
+        (when-not (sequential? value)
           (fail! (str key " must be a sequence of numbers")
                  {:type :pdf/invalid-options
                   :key key
                   :value value}))
-        (apply! (mapv #(Double/valueOf (double %)) value)))
+        (apply! (mapv (fn [line]
+                        (when-not (number? line)
+                          (fail! (str key " must be a sequence of numbers")
+                                 {:type :pdf/invalid-options
+                                  :key key
+                                  :value value}))
+                        (Double/valueOf (double line)))
+                      value)))
       (when-some [max-pages (:max-pages opts)]
         (assert-positive-int! max-pages ":max-pages must be a positive integer" :max-pages)
         (.maxPages builder (Integer/valueOf (int max-pages))))
