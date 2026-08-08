@@ -227,7 +227,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-cli"
-version = "1.9.0"
+version = "1.8.0"
 dependencies = [
  "bolivar-core",
  "clap",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-core"
-version = "1.9.0"
+version = "1.8.0"
 dependencies = [
  "aes",
  "bolivar-icu",
@@ -282,7 +282,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-icu"
-version = "1.9.0"
+version = "1.8.0"
 dependencies = [
  "cc",
  "flate2",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-python"
-version = "1.9.0"
+version = "1.8.0"
 dependencies = [
  "bolivar-core",
  "bytes",
@@ -308,7 +308,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-uniffi"
-version = "1.9.0"
+version = "1.8.0"
 dependencies = [
  "bolivar-core",
  "pollster",
