@@ -1,8 +1,8 @@
 use bolivar_core::layout::{
-    LTItem, LTPage, LTTextBox as CoreLTTextBox, LTTextLine, LTTextLineHorizontal,
+    LTItem, LTPage, LTTextBox as CoreLTTextBox, LTTextLine as CoreLTTextLine, LTTextLineHorizontal,
     LTTextLineVertical, TextBoxType,
 };
-use bolivar_core::layout::{TextLineElement, TextLineType};
+use bolivar_core::layout::{ReconstructedLine, TextLineElement, TextLineType};
 use bolivar_core::pdfdocument::DEFAULT_CACHE_CAPACITY;
 use bolivar_core::pdfpage::PDFPage;
 use bolivar_core::table::{
@@ -109,6 +109,7 @@ pub struct RawCharacter {
 pub struct RawTextLine {
     pub bbox: BoundingBox,
     pub orientation: String,
+    pub raw_text: String,
     pub text: String,
     pub characters: Vec<RawCharacter>,
 }
@@ -236,6 +237,7 @@ pub struct ExtractOptions {
     pub max_pages: Option<u32>,
     pub caching: Option<bool>,
     pub layout_params: Option<LayoutParams>,
+    pub bidi: Option<bool>,
 }
 
 impl Default for ExtractOptions {
@@ -246,6 +248,7 @@ impl Default for ExtractOptions {
             max_pages: None,
             caching: Some(true),
             layout_params: None,
+            bidi: Some(false),
         }
     }
 }
@@ -323,42 +326,64 @@ pub(crate) fn usize_to_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
-fn line_text_chars_from_horizontal(line: &LTTextLineHorizontal) -> (String, Vec<LayoutChar>) {
+fn layout_chars(
+    elements: &[&TextLineElement],
+    reconstructed: &ReconstructedLine,
+) -> Vec<LayoutChar> {
     let mut chars = Vec::new();
-    for element in line.iter() {
-        match element {
-            TextLineElement::Char(ch) => {
-                chars.push(LayoutChar {
-                    text: ch.get_text().to_string(),
-                    bbox: bbox_from_rect((ch.x0(), ch.y0(), ch.x1(), ch.y1())),
-                    font_name: ch.fontname().to_string(),
-                    size: ch.size(),
-                    upright: ch.upright(),
-                });
-            }
-            TextLineElement::Anno(_) => {}
+    for span in &reconstructed.spans {
+        if let Some(TextLineElement::Char(ch)) = elements.get(span.source_index).copied() {
+            chars.push(LayoutChar {
+                text: span.text.clone(),
+                bbox: bbox_from_rect((ch.x0(), ch.y0(), ch.x1(), ch.y1())),
+                font_name: ch.fontname().to_string(),
+                size: ch.size(),
+                upright: ch.upright(),
+            });
         }
     }
-    (line.get_text(), chars)
+    chars
+}
+
+fn line_text_chars_from_horizontal(line: &LTTextLineHorizontal) -> (String, Vec<LayoutChar>) {
+    if !line.bidi() {
+        return (line.get_text(), layout_chars_from_source(line.iter()));
+    }
+    let elements = line.iter().collect::<Vec<_>>();
+    let reconstructed = line.reconstructed();
+    (
+        reconstructed.text.clone(),
+        layout_chars(&elements, &reconstructed),
+    )
 }
 
 fn line_text_chars_from_vertical(line: &LTTextLineVertical) -> (String, Vec<LayoutChar>) {
-    let mut chars = Vec::new();
-    for element in line.iter() {
-        match element {
-            TextLineElement::Char(ch) => {
-                chars.push(LayoutChar {
-                    text: ch.get_text().to_string(),
-                    bbox: bbox_from_rect((ch.x0(), ch.y0(), ch.x1(), ch.y1())),
-                    font_name: ch.fontname().to_string(),
-                    size: ch.size(),
-                    upright: ch.upright(),
-                });
-            }
-            TextLineElement::Anno(_) => {}
-        }
+    if !line.bidi() {
+        return (line.get_text(), layout_chars_from_source(line.iter()));
     }
-    (line.get_text(), chars)
+    let elements = line.iter().collect::<Vec<_>>();
+    let reconstructed = line.reconstructed();
+    (
+        reconstructed.text.clone(),
+        layout_chars(&elements, &reconstructed),
+    )
+}
+
+fn layout_chars_from_source<'a>(
+    elements: impl Iterator<Item = &'a TextLineElement>,
+) -> Vec<LayoutChar> {
+    elements
+        .filter_map(|element| match element {
+            TextLineElement::Char(character) => Some(LayoutChar {
+                text: character.get_text().to_owned(),
+                bbox: bbox_from_rect(character.bbox()),
+                font_name: character.fontname().to_owned(),
+                size: character.size(),
+                upright: character.upright(),
+            }),
+            TextLineElement::Anno(_) => None,
+        })
+        .collect()
 }
 
 pub(crate) fn layout_line_from_textline(textline: &TextLineType) -> LayoutLine {
@@ -485,6 +510,7 @@ fn raw_text_line_from_horizontal(line: &LTTextLineHorizontal) -> RawTextLine {
     RawTextLine {
         bbox: bbox_from_rect(line.bbox()),
         orientation: "horizontal".to_owned(),
+        raw_text: source_text(line.iter()),
         text: line.get_text(),
         characters: raw_characters(line.iter()),
     }
@@ -494,9 +520,19 @@ fn raw_text_line_from_vertical(line: &LTTextLineVertical) -> RawTextLine {
     RawTextLine {
         bbox: bbox_from_rect(line.bbox()),
         orientation: "vertical".to_owned(),
+        raw_text: source_text(line.iter()),
         text: line.get_text(),
         characters: raw_characters(line.iter()),
     }
+}
+
+fn source_text<'a>(elements: impl Iterator<Item = &'a TextLineElement>) -> String {
+    elements
+        .map(|element| match element {
+            TextLineElement::Char(character) => character.get_text(),
+            TextLineElement::Anno(annotation) => annotation.get_text(),
+        })
+        .collect()
 }
 
 fn raw_text_box_from_text_box_type(text_box: &TextBoxType) -> RawTextBox {
@@ -759,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn layout_line_text_normalizes_arabic_presentation_forms() {
+    fn layout_line_text_uses_icu_mapping_when_enabled() {
         let mut line = LTTextLineHorizontal::new(0.1);
         let visual = ["ﺏ", "ﺎ", "ﺴ", "ﺤ", "ﻟ", "ﺍ", " ", "ﻒ", "ﺸ", "ﻛ"];
         for (idx, glyph) in visual.into_iter().enumerate() {
@@ -773,9 +809,22 @@ mod tests {
             ))));
         }
         line.analyze();
+        line.set_bidi(true);
 
+        let raw_line = raw_text_line_from_horizontal(&line);
         let layout_line = layout_line_from_textline(&TextLineType::Horizontal(line));
         assert_eq!(layout_line.text, "كشف الحساب\n");
+        assert_eq!(
+            layout_line
+                .chars
+                .iter()
+                .map(|character| character.text.as_str())
+                .collect::<String>(),
+            "كشف الحساب"
+        );
+        assert_eq!(raw_line.raw_text, "ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ\n");
+        assert_eq!(raw_line.text, "كشف الحساب\n");
+        assert_eq!(raw_line.characters[0].text, "ﺏ");
     }
 
     #[test]

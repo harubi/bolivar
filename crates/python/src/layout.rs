@@ -3,6 +3,7 @@
 //! Provides PyLTPage, PyLTChar, PyLTTextLine*, PyLTTextBox*, PyLTItem and other
 //! layout element types for exposing PDF layout analysis results to Python.
 
+use bolivar_core::layout::{ReconstructedLine, TextLineElement};
 use bolivar_core::utils::HasBBox;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -566,9 +567,13 @@ pub struct PyLTChar {
 
 impl PyLTChar {
     pub fn from_core(c: &bolivar_core::layout::LTChar) -> Self {
+        Self::from_core_with_text(c, c.get_text())
+    }
+
+    fn from_core_with_text(c: &bolivar_core::layout::LTChar, text: &str) -> Self {
         Self {
             bbox: (c.x0(), c.y0(), c.x1(), c.y1()),
-            text: c.get_text().to_string(),
+            text: text.to_owned(),
             fontname: c.fontname().to_string(),
             size: c.size(),
             upright: c.upright(),
@@ -582,6 +587,61 @@ impl PyLTChar {
             stroking_color: c.stroking_color().clone(),
         }
     }
+}
+
+fn py_textline_item(element: &TextLineElement, text: Option<&str>) -> PyLTItem {
+    match element {
+        TextLineElement::Char(character) => PyLTItem::Char(match text {
+            Some(text) => PyLTChar::from_core_with_text(character, text),
+            None => PyLTChar::from_core(character),
+        }),
+        TextLineElement::Anno(annotation) => PyLTItem::Anno(PyLTAnno {
+            text: text.unwrap_or_else(|| annotation.get_text()).to_owned(),
+        }),
+    }
+}
+
+fn py_textline_parts<'a>(
+    elements: impl IntoIterator<Item = &'a TextLineElement>,
+    reconstructed: Option<ReconstructedLine>,
+) -> (Vec<PyLTItem>, Option<String>) {
+    let elements = elements.into_iter().collect::<Vec<_>>();
+    let Some(reconstructed) = reconstructed else {
+        return (
+            elements
+                .into_iter()
+                .map(|element| py_textline_item(element, None))
+                .collect(),
+            None,
+        );
+    };
+
+    let items = reconstructed
+        .spans
+        .iter()
+        .filter_map(|span| {
+            elements
+                .get(span.source_index)
+                .map(|element| py_textline_item(element, Some(&span.text)))
+        })
+        .collect();
+    (items, Some(reconstructed.text))
+}
+
+fn py_textline_text(items: &[PyLTItem], reconstructed_text: Option<&str>) -> String {
+    if let Some(text) = reconstructed_text {
+        return text.to_owned();
+    }
+
+    let mut text = String::new();
+    for item in items {
+        match item {
+            PyLTItem::Char(character) => text.push_str(character.get_text()),
+            PyLTItem::Anno(annotation) => text.push_str(annotation.get_text()),
+            _ => {}
+        }
+    }
+    bolivar_core::layout::reorder_text_for_output(&text)
 }
 
 #[pymethods]
@@ -684,24 +744,17 @@ impl PyLTChar {
 pub struct PyLTTextLineHorizontal {
     pub bbox: (f64, f64, f64, f64),
     pub items: Vec<PyLTItem>,
+    reconstructed_text: Option<String>,
 }
 
 impl PyLTTextLineHorizontal {
     pub fn from_core(line: &bolivar_core::layout::LTTextLineHorizontal) -> Self {
-        let mut items = Vec::new();
-        for elem in line.iter() {
-            match elem {
-                bolivar_core::layout::TextLineElement::Char(c) => {
-                    items.push(PyLTItem::Char(PyLTChar::from_core(c)));
-                }
-                bolivar_core::layout::TextLineElement::Anno(a) => {
-                    items.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
-                }
-            }
-        }
+        let reconstructed = line.bidi().then(|| line.reconstructed());
+        let (items, reconstructed_text) = py_textline_parts(line.iter(), reconstructed);
         Self {
             bbox: (line.x0(), line.y0(), line.x1(), line.y1()),
             items,
+            reconstructed_text,
         }
     }
 }
@@ -744,15 +797,7 @@ impl PyLTTextLineHorizontal {
     }
 
     fn get_text(&self) -> String {
-        let mut out = String::new();
-        for item in &self.items {
-            match item {
-                PyLTItem::Char(c) => out.push_str(c.get_text()),
-                PyLTItem::Anno(a) => out.push_str(a.get_text()),
-                _ => {}
-            }
-        }
-        bolivar_core::layout::reorder_text_for_output(&out)
+        py_textline_text(&self.items, self.reconstructed_text.as_deref())
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
@@ -773,24 +818,17 @@ impl PyLTTextLineHorizontal {
 pub struct PyLTTextLineVertical {
     pub bbox: (f64, f64, f64, f64),
     pub items: Vec<PyLTItem>,
+    reconstructed_text: Option<String>,
 }
 
 impl PyLTTextLineVertical {
     pub fn from_core(line: &bolivar_core::layout::LTTextLineVertical) -> Self {
-        let mut items = Vec::new();
-        for elem in line.iter() {
-            match elem {
-                bolivar_core::layout::TextLineElement::Char(c) => {
-                    items.push(PyLTItem::Char(PyLTChar::from_core(c)));
-                }
-                bolivar_core::layout::TextLineElement::Anno(a) => {
-                    items.push(PyLTItem::Anno(PyLTAnno::from_core(a)));
-                }
-            }
-        }
+        let reconstructed = line.bidi().then(|| line.reconstructed());
+        let (items, reconstructed_text) = py_textline_parts(line.iter(), reconstructed);
         Self {
             bbox: (line.x0(), line.y0(), line.x1(), line.y1()),
             items,
+            reconstructed_text,
         }
     }
 }
@@ -833,15 +871,7 @@ impl PyLTTextLineVertical {
     }
 
     fn get_text(&self) -> String {
-        let mut out = String::new();
-        for item in &self.items {
-            match item {
-                PyLTItem::Char(c) => out.push_str(c.get_text()),
-                PyLTItem::Anno(a) => out.push_str(a.get_text()),
-                _ => {}
-            }
-        }
-        bolivar_core::layout::reorder_text_for_output(&out)
+        py_textline_text(&self.items, self.reconstructed_text.as_deref())
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyLTPageIter {
@@ -1719,7 +1749,7 @@ pub struct PyTextConverter {
 #[pymethods]
 impl PyTextConverter {
     #[new]
-    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, showpageno=false, imagewriter=None))]
+    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, showpageno=false, imagewriter=None, bidi=false))]
     pub fn new(
         rsrcmgr: &Bound<'_, PyAny>,
         outfp: Py<PyAny>,
@@ -1728,6 +1758,7 @@ impl PyTextConverter {
         laparams: Option<&PyLAParams>,
         showpageno: bool,
         imagewriter: Option<&Bound<'_, PyAny>>,
+        bidi: bool,
     ) -> Self {
         let _ = rsrcmgr;
         let _ = imagewriter;
@@ -1740,6 +1771,7 @@ impl PyTextConverter {
             showpageno,
         );
         converter.set_showpageno(showpageno);
+        converter.set_bidi(bidi);
         Self { converter }
     }
 
@@ -1762,7 +1794,7 @@ pub struct PyHTMLConverter {
 #[pymethods]
 impl PyHTMLConverter {
     #[new]
-    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, scale=1.0, fontscale=1.0, layoutmode="normal", showpageno=true, pagemargin=50, imagewriter=None, debug=0, rect_colors=None, text_colors=None))]
+    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, scale=1.0, fontscale=1.0, layoutmode="normal", showpageno=true, pagemargin=50, imagewriter=None, debug=0, rect_colors=None, text_colors=None, bidi=false))]
     pub fn new(
         rsrcmgr: &Bound<'_, PyAny>,
         outfp: Py<PyAny>,
@@ -1778,6 +1810,7 @@ impl PyHTMLConverter {
         debug: i32,
         rect_colors: Option<&Bound<'_, PyAny>>,
         text_colors: Option<&Bound<'_, PyAny>>,
+        bidi: bool,
     ) -> PyResult<Self> {
         use crate::convert::py_any_to_string_map;
 
@@ -1801,6 +1834,7 @@ impl PyHTMLConverter {
         converter.set_pagemargin(pagemargin);
         converter.set_scale(scale);
         converter.set_fontscale(fontscale);
+        converter.set_bidi(bidi);
 
         if let Some(obj) = rect_colors {
             converter.set_rect_colors(py_any_to_string_map(obj)?);
@@ -1841,7 +1875,7 @@ pub struct PyXMLConverter {
 #[pymethods]
 impl PyXMLConverter {
     #[new]
-    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, stripcontrol=false, imagewriter=None))]
+    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, stripcontrol=false, imagewriter=None, bidi=false))]
     pub fn new(
         rsrcmgr: &Bound<'_, PyAny>,
         outfp: Py<PyAny>,
@@ -1850,6 +1884,7 @@ impl PyXMLConverter {
         laparams: Option<&PyLAParams>,
         stripcontrol: bool,
         imagewriter: Option<&Bound<'_, PyAny>>,
+        bidi: bool,
     ) -> Self {
         let _ = rsrcmgr;
         let _ = imagewriter;
@@ -1862,6 +1897,7 @@ impl PyXMLConverter {
             stripcontrol,
         );
         converter.set_stripcontrol(stripcontrol);
+        converter.set_bidi(bidi);
         Self { converter }
     }
 
@@ -1885,7 +1921,7 @@ pub struct PyHOCRConverter {
 #[pymethods]
 impl PyHOCRConverter {
     #[new]
-    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, stripcontrol=false, imagewriter=None))]
+    #[pyo3(signature = (rsrcmgr, outfp, codec="utf-8", pageno=1, laparams=None, stripcontrol=false, imagewriter=None, bidi=false))]
     pub fn new(
         rsrcmgr: &Bound<'_, PyAny>,
         outfp: Py<PyAny>,
@@ -1894,17 +1930,19 @@ impl PyHOCRConverter {
         laparams: Option<&PyLAParams>,
         stripcontrol: bool,
         imagewriter: Option<&Bound<'_, PyAny>>,
+        bidi: bool,
     ) -> Self {
         let _ = rsrcmgr;
         let _ = imagewriter;
         let la: Option<bolivar_core::layout::LAParams> = laparams.map(|p| p.clone().into());
-        let converter = bolivar_core::device::HOCRConverter::with_options(
+        let mut converter = bolivar_core::device::HOCRConverter::with_options(
             PyWriter::new(outfp),
             codec,
             pageno,
             la,
             stripcontrol,
         );
+        converter.set_bidi(bidi);
         Self { converter }
     }
 
@@ -2270,8 +2308,12 @@ pub fn ltitem_to_py(item: &bolivar_core::layout::LTItem) -> PyLTItem {
 
 #[cfg(test)]
 mod tests {
-    use super::{conversion_count, ltpage_to_py, reset_conversion_count};
-    use bolivar_core::layout::{LTItem, LTPage, LTRect};
+    use super::{
+        PyLTItem, PyLTTextLineHorizontal, conversion_count, ltpage_to_py, reset_conversion_count,
+    };
+    use bolivar_core::layout::{
+        LTChar, LTItem, LTPage, LTRect, LTTextLineHorizontal, TextLineElement,
+    };
 
     #[test]
     fn test_ltpage_to_py_is_lazy() {
@@ -2287,6 +2329,39 @@ mod tests {
         assert_eq!(conversion_count(), 0);
         let _ = py_page.materialize_items();
         assert_eq!(conversion_count(), 1);
+    }
+
+    #[test]
+    fn python_textline_preserves_legacy_default_and_maps_icu_output() {
+        let mut line = LTTextLineHorizontal::new(0.1);
+        for (index, character) in "abc 123 ﺔﻴﺑﺮﻌﻟﺍ".chars().enumerate() {
+            line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+                (index as f64, 0.0, index as f64 + 1.0, 1.0),
+                &character.to_string(),
+                "F",
+                10.0,
+                true,
+                1.0,
+            ))));
+        }
+
+        let legacy = PyLTTextLineHorizontal::from_core(&line);
+        assert_eq!(legacy.get_text(), "العربية abc 123");
+
+        line.set_bidi(true);
+        let reconstructed = PyLTTextLineHorizontal::from_core(&line);
+        assert_eq!(reconstructed.get_text(), "abc 123 العربية");
+        assert_eq!(
+            reconstructed
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    PyLTItem::Char(character) => Some(character.get_text()),
+                    _ => None,
+                })
+                .collect::<String>(),
+            "abc 123 العربية"
+        );
     }
 }
 

@@ -173,6 +173,7 @@ pub fn apply_text_settings_from_dict(
             }
             "expand_ligatures" => settings.expand_ligatures = v.extract()?,
             "layout" => settings.layout = v.extract()?,
+            "bidi" => settings.bidi = v.extract()?,
             _ => {}
         }
     }

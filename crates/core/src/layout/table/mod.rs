@@ -637,6 +637,23 @@ mod table_extraction_tests {
     }
 
     #[test]
+    fn table_extraction_reconstructs_compact_al_rajhi_fields() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let visual = "P1 Term 6467299202155588 07/02 14:47:05:ﺔﻈﺣﻼﻣ**23:11:18:ﺖﻗﻮﻟﺍ";
+        let expected = "P1 Term 6467299202155588 07/02 الوقت:23:11:18**ملاحظة:14:47:05";
+        let chars = chars_from_visual_line(&mut arena, visual);
+
+        let settings = TextSettings {
+            bidi: true,
+            ..TextSettings::default()
+        };
+        let text = extract_text(&chars, &settings, &arena);
+        assert_eq!(text, expected);
+    }
+
+    #[test]
     fn intersections_simd_mask_expected() {
         let tops = [-5.0, -1.0, 1.0, -5.0];
         let bottoms = [5.0, 1.0, 5.0, 5.0];

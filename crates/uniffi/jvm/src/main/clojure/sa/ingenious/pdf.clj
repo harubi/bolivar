@@ -6,7 +6,7 @@
             PageTableRows TableOptions]))
 
 (def ^:private byte-array-class (Class/forName "[B"))
-(def ^:private option-keys #{:password :pages :max-pages :caching :layout})
+(def ^:private option-keys #{:password :pages :max-pages :caching :layout :bidi})
 (def ^:private layout-keys
   #{:line-overlap :char-margin :line-margin :word-margin :boxes-flow :detect-vertical :all-texts})
 (def ^:private table-keys
@@ -123,6 +123,9 @@
           (.caching builder (:caching opts)))
         (when (contains? opts :layout)
           (.layout builder (->layout-options (:layout opts))))
+        (when (contains? opts :bidi)
+          (assert-boolean! (:bidi opts) ":bidi")
+          (.bidi builder (:bidi opts)))
         (.build builder)))))
 
 (defn- byte-array? [value]
@@ -217,6 +220,7 @@
 (defn- raw-text-line->map [line]
   {:bbox (bbox->map (.bbox line))
    :orientation (.orientation line)
+   :raw-text (.rawText line)
    :text (.text line)
    :characters (mapv raw-character->map (.characters line))})
 

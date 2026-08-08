@@ -121,8 +121,17 @@ pub(crate) fn build_extract_options(
     maxpages: usize,
     caching: bool,
     laparams: Option<&PyLAParams>,
+    bidi: bool,
 ) -> ExtractOptions {
-    build_extract_options_with_rotation(password, page_numbers, maxpages, caching, laparams, 0)
+    build_extract_options_with_rotation(
+        password,
+        page_numbers,
+        maxpages,
+        caching,
+        laparams,
+        0,
+        bidi,
+    )
 }
 
 pub(crate) fn build_extract_options_with_rotation(
@@ -132,6 +141,7 @@ pub(crate) fn build_extract_options_with_rotation(
     caching: bool,
     laparams: Option<&PyLAParams>,
     rotation: i64,
+    bidi: bool,
 ) -> ExtractOptions {
     let mut options = ExtractOptions {
         password: password.to_string(),
@@ -140,6 +150,7 @@ pub(crate) fn build_extract_options_with_rotation(
         caching,
         laparams: laparams.map(|p| p.clone().into()),
         rotation,
+        bidi,
     };
     if options.laparams.is_none() {
         options.laparams = Some(bolivar_core::layout::LAParams::default());

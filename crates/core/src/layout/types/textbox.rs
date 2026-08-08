@@ -62,6 +62,12 @@ impl LTTextBoxHorizontal {
         self.lines.iter()
     }
 
+    pub(crate) fn set_bidi(&mut self, bidi: bool) {
+        for line in &mut self.lines {
+            line.set_bidi(bidi);
+        }
+    }
+
     /// Analyze this text box: sort lines by y-position (top to bottom).
     /// Matches Python's LTTextBoxHorizontal.analyze() which sorts by -obj.y1.
     pub fn analyze(&mut self) {
@@ -147,6 +153,12 @@ impl LTTextBoxVertical {
     /// Returns an iterator over lines in this text box.
     pub fn iter(&self) -> impl Iterator<Item = &LTTextLineVertical> {
         self.lines.iter()
+    }
+
+    pub(crate) fn set_bidi(&mut self, bidi: bool) {
+        for line in &mut self.lines {
+            line.set_bidi(bidi);
+        }
     }
 
     /// Analyze this text box: sort lines by x-position (right to left).

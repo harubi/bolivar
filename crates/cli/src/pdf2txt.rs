@@ -169,6 +169,10 @@ struct Args {
     #[arg(short = 'S', long = "strip-control", action = ArgAction::SetTrue)]
     strip_control: bool,
 
+    /// Use ICU to reconstruct bidirectional text
+    #[arg(long, action = ArgAction::SetTrue)]
+    bidi: bool,
+
     // === Table extraction options ===
     /// Extract tables instead of text
     #[arg(long = "extract-tables", action = ArgAction::SetTrue)]
@@ -607,6 +611,7 @@ fn build_extract_options(args: &Args) -> Result<ExtractOptions> {
         caching: !args.disable_caching,
         laparams: build_laparams(args)?,
         rotation: i64::from(args.rotation),
+        bidi: args.bidi,
         ..ExtractOptions::default()
     })
 }
@@ -919,6 +924,7 @@ mod tests {
             layoutmode: LayoutMode::Normal,
             scale: 1.0,
             strip_control: false,
+            bidi: false,
             extract_tables: false,
             table_format: TableFormat::Csv,
             table_settings_json: None,
@@ -989,5 +995,15 @@ mod tests {
         assert!(!options.caching);
         assert_eq!(options.rotation, 90);
         assert!(options.laparams.is_some());
+        assert!(!options.bidi);
+    }
+
+    #[test]
+    fn bidi_flag_is_opt_in() {
+        let default_args = Args::try_parse_from(["pdf2txt", "input.pdf"]).unwrap();
+        let bidi_args = Args::try_parse_from(["pdf2txt", "--bidi", "input.pdf"]).unwrap();
+
+        assert!(!default_args.bidi);
+        assert!(bidi_args.bidi);
     }
 }

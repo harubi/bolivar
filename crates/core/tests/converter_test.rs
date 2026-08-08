@@ -53,7 +53,29 @@ fn sample_rtl_page() -> LTPage {
     page
 }
 
-fn sample_mixed_bidi_page() -> LTPage {
+fn sample_arabic_page() -> LTPage {
+    let mut line = LTTextLineHorizontal::new(0.1);
+    line.set_bbox((0.0, 0.0, 20.0, 10.0));
+    for (index, glyph) in ["ﺏ", "ﺎ", "ﺴ", "ﺤ", "ﻟ", "ﺍ"].into_iter().enumerate() {
+        line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+            (index as f64, 0.0, index as f64 + 1.0, 1.0),
+            glyph,
+            "F",
+            10.0,
+            true,
+            1.0,
+        ))));
+    }
+    line.analyze();
+
+    let mut text_box = LTTextBoxHorizontal::new();
+    text_box.add(line);
+    let mut page = LTPage::new(1, (0.0, 0.0, 612.0, 792.0), 0.0);
+    page.add(LTItem::TextBox(TextBoxType::Horizontal(text_box)));
+    page
+}
+
+fn sample_mixed_arabic_page() -> LTPage {
     let mut line = LTTextLineHorizontal::new(0.1);
     line.set_bbox((0.0, 0.0, 20.0, 10.0));
     line.add_element(TextLineElement::Char(Box::new(LTChar::new(
@@ -83,30 +105,18 @@ fn sample_mixed_bidi_page() -> LTPage {
     line.add_element(TextLineElement::Anno(bolivar_core::layout::LTAnno::new(
         " ",
     )));
-    line.add_element(TextLineElement::Char(Box::new(LTChar::new(
-        (4.0, 0.0, 5.0, 1.0),
-        "\u{05D0}",
-        "F",
-        10.0,
-        true,
-        1.0,
-    ))));
-    line.add_element(TextLineElement::Char(Box::new(LTChar::new(
-        (5.0, 0.0, 6.0, 1.0),
-        "\u{05D1}",
-        "F",
-        10.0,
-        true,
-        1.0,
-    ))));
-    line.add_element(TextLineElement::Char(Box::new(LTChar::new(
-        (6.0, 0.0, 7.0, 1.0),
-        "\u{05D2}",
-        "F",
-        10.0,
-        true,
-        1.0,
-    ))));
+    for (index, glyph) in ["ﺔ", "ﻴ", "ﺑ", "ﺮ", "ﻌ", "ﻟ", "ﺍ"].into_iter().enumerate()
+    {
+        let x0 = index as f64 + 4.0;
+        line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+            (x0, 0.0, x0 + 1.0, 1.0),
+            glyph,
+            "F",
+            10.0,
+            true,
+            1.0,
+        ))));
+    }
     line.analyze();
 
     let mut boxh = LTTextBoxHorizontal::new();
@@ -781,6 +791,15 @@ mod text_converter_tests {
         let result = String::from_utf8(output).expect("utf8");
         assert!(result.contains("\u{05D2}\u{05D1}\u{05D0}\n\n"));
     }
+
+    #[test]
+    fn test_text_converter_returns_nominal_logical_arabic() {
+        let mut output = Vec::new();
+        let mut converter = TextConverter::new(&mut output, "utf-8", 1, None, false);
+        converter.receive_layout(sample_arabic_page());
+
+        assert!(String::from_utf8(output).unwrap().contains("الحساب"));
+    }
 }
 
 // ============================================================================
@@ -863,6 +882,15 @@ mod html_converter_tests {
         }
         let result = String::from_utf8(output).expect("utf8");
         assert!(result.contains("\u{05D2}\u{05D1}\u{05D0}"));
+    }
+
+    #[test]
+    fn test_html_converter_returns_nominal_logical_arabic() {
+        let mut output = Vec::new();
+        let mut converter = HTMLConverter::new(&mut output, "utf-8", 1, None);
+        converter.receive_layout(sample_arabic_page());
+
+        assert!(String::from_utf8(output).unwrap().contains("الحساب"));
     }
 
     #[test]
@@ -993,7 +1021,8 @@ mod xml_converter_tests {
         let mut output: Vec<u8> = Vec::new();
         {
             let mut converter = XMLConverter::new(&mut output, "utf-8", 1, None);
-            converter.receive_layout(sample_mixed_bidi_page());
+            converter.set_bidi(true);
+            converter.receive_layout(sample_mixed_arabic_page());
             converter.close();
         }
         let result = String::from_utf8(output).expect("utf8");
@@ -1002,13 +1031,39 @@ mod xml_converter_tests {
         let idx_b_ltr = result.find(">b</text>").expect("b");
         let idx_c_ltr = result.find(">c</text>").expect("c");
         let idx_space = result.find("> </text>").expect("space");
-        let idx_g_rtl = result.find(">\u{05D2}</text>").expect("gimel");
-        let idx_b_rtl = result.find(">\u{05D1}</text>").expect("bet");
-        let idx_a_rtl = result.find(">\u{05D0}</text>").expect("alef");
+        let idx_alef = result.find(">ا</text>").expect("alef");
+        let idx_lam = result.find(">ل</text>").expect("lam");
+        let idx_ain = result.find(">ع</text>").expect("ain");
+        let idx_ra = result.find(">ر</text>").expect("ra");
+        let idx_ba = result.find(">ب</text>").expect("ba");
+        let idx_ya = result.find(">ي</text>").expect("ya");
+        let idx_ta = result.find(">ة</text>").expect("ta marbuta");
 
         assert!(idx_a_ltr < idx_b_ltr && idx_b_ltr < idx_c_ltr);
         assert!(idx_c_ltr < idx_space);
-        assert!(idx_space < idx_g_rtl && idx_g_rtl < idx_b_rtl && idx_b_rtl < idx_a_rtl);
+        assert!(idx_space < idx_alef && idx_alef < idx_lam && idx_lam < idx_ain);
+        assert!(idx_ain < idx_ra && idx_ra < idx_ba && idx_ba < idx_ya && idx_ya < idx_ta);
+    }
+
+    #[test]
+    fn test_xml_converter_maps_nominal_logical_arabic_to_source_chars() {
+        let mut output = Vec::new();
+        {
+            let mut converter = XMLConverter::new(&mut output, "utf-8", 1, None);
+            converter.set_bidi(true);
+            converter.receive_layout(sample_arabic_page());
+            converter.close();
+        }
+        let result = String::from_utf8(output).unwrap();
+
+        let first_alef = result.find(">ا</text>").unwrap();
+        let lam = result.find(">ل</text>").unwrap();
+        let hah = result.find(">ح</text>").unwrap();
+        let seen = result.find(">س</text>").unwrap();
+        let last_alef = result.rfind(">ا</text>").unwrap();
+        let beh = result.find(">ب</text>").unwrap();
+        assert!(first_alef < lam && lam < hah && hah < seen);
+        assert!(seen < last_alef && last_alef < beh);
     }
 }
 
@@ -1821,5 +1876,17 @@ mod hocr_converter_tests {
         }
         let result = String::from_utf8(output).expect("utf8");
         assert!(result.contains("\u{05D2}\u{05D1}\u{05D0}"));
+    }
+
+    #[test]
+    fn test_hocr_converter_returns_nominal_logical_arabic() {
+        let mut output = Vec::new();
+        {
+            let mut converter = HOCRConverter::new(&mut output, "utf-8", 1, None);
+            converter.receive_layout(sample_arabic_page());
+            converter.close();
+        }
+
+        assert!(String::from_utf8(output).unwrap().contains("الحساب"));
     }
 }

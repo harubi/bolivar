@@ -28,19 +28,16 @@ def test_extract_text_normalizes_presentation_forms_and_rtl_order():
     assert pdfplumber.utils.extract_text(chars) == "كشف الحساب"
 
 
-def test_page_extract_text_defaults_to_logical_rtl_output():
-    chars = _chars_from_visual_line("ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ")
-    fake_page = type(
-        "FakePage",
-        (),
-        {
-            "chars": chars,
-            "bbox": (0.0, 0.0, float(len(chars)), 1.0),
-            "width": float(len(chars)),
-            "height": 1.0,
-        },
-    )()
-    assert Page.extract_text(fake_page) == "كشف الحساب"
+def test_page_extract_text_keeps_legacy_default_and_opts_into_bidi():
+    visual_text = "ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ"
+
+    class FakePage:
+        def get_textmap(self, **kwargs):
+            return type("FakeTextMap", (), {"as_string": visual_text})()
+
+    fake_page = FakePage()
+    assert Page.extract_text(fake_page) == visual_text
+    assert Page.extract_text(fake_page, bidi=True) == "كشف الحساب"
 
 
 def test_extract_text_keeps_ltr_segments_in_mixed_rtl_line():

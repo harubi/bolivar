@@ -214,6 +214,8 @@ pub struct TextSettings {
     pub split_at_punctuation: String,
     pub expand_ligatures: bool,
     pub layout: bool,
+    /// Use ICU to reconstruct visual bidirectional text into logical order.
+    pub bidi: bool,
 }
 
 impl Default for TextSettings {
@@ -234,6 +236,7 @@ impl Default for TextSettings {
             split_at_punctuation: String::new(),
             expand_ligatures: true,
             layout: false,
+            bidi: false,
         }
     }
 }

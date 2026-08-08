@@ -723,6 +723,33 @@ def test_extract_words_calls_indexed_backend_for_original_page(monkeypatch):
     assert len(calls) == 1
 
 
+def test_extract_words_passes_bidi_to_indexed_backend(monkeypatch):
+    import bolivar._bridge_api as bridge_api
+
+    calls = []
+
+    def _fake_extract_words_for_page_indexed(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+        return [{"text": "logical"}]
+
+    monkeypatch.setattr(
+        bridge_api,
+        "_extract_words_for_page_indexed",
+        _fake_extract_words_for_page_indexed,
+    )
+    pdfplumber = _reload_pdfplumber(monkeypatch)
+    pdf_path = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "crates/core/tests/fixtures/pdfplumber/pdffill-demo.pdf",
+    )
+    with pdfplumber.open(pdf_path) as pdf:
+        words = pdf.pages[0].extract_words(bidi=True)
+
+    assert words == [{"text": "logical"}]
+    assert calls[0]["kwargs"]["text_settings"] == {"bidi": True}
+
+
 def test_extract_words_raises_when_native_page_output_is_missing(monkeypatch):
     import bolivar._bridge_api as bridge_api
 

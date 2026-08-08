@@ -25,6 +25,7 @@ pub struct ArenaTextLineHorizontal {
     pub(crate) word_margin: f64,
     pub(crate) x1_tracker: f64,
     pub(crate) elements: Vec<ArenaElem>,
+    pub(crate) bidi: bool,
 }
 
 impl ArenaTextLineHorizontal {
@@ -39,7 +40,20 @@ impl ArenaTextLineHorizontal {
             word_margin,
             x1_tracker,
             elements,
+            bidi: false,
         }
+    }
+
+    fn new_with_bidi(
+        component: LTComponent,
+        word_margin: f64,
+        x1_tracker: f64,
+        elements: Vec<ArenaElem>,
+        bidi: bool,
+    ) -> Self {
+        let mut line = Self::new(component, word_margin, x1_tracker, elements);
+        line.bidi = bidi;
+        line
     }
 }
 
@@ -49,6 +63,7 @@ pub struct ArenaTextLineVertical {
     pub(crate) word_margin: f64,
     pub(crate) y0_tracker: f64,
     pub(crate) elements: Vec<ArenaElem>,
+    pub(crate) bidi: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +125,7 @@ impl LayoutArena {
                     word_margin,
                     x1_tracker,
                     elements,
+                    bidi,
                 } = h;
                 let mut arena_elems = Vec::with_capacity(elements.len());
                 for element in elements {
@@ -124,11 +140,12 @@ impl LayoutArena {
                         }
                     }
                 }
-                let arena_line = ArenaTextLine::Horizontal(ArenaTextLineHorizontal::new(
+                let arena_line = ArenaTextLine::Horizontal(ArenaTextLineHorizontal::new_with_bidi(
                     component,
                     word_margin,
                     x1_tracker,
                     arena_elems,
+                    bidi,
                 ));
                 self.push_line(arena_line)
             }
@@ -138,6 +155,7 @@ impl LayoutArena {
                     word_margin,
                     y0_tracker,
                     elements,
+                    bidi,
                 } = v;
                 let mut arena_elems = Vec::with_capacity(elements.len());
                 for element in elements {
@@ -157,6 +175,7 @@ impl LayoutArena {
                     word_margin,
                     y0_tracker,
                     elements: arena_elems,
+                    bidi,
                 });
                 self.push_line(arena_line)
             }
@@ -212,6 +231,7 @@ impl LayoutArena {
                         ArenaElem::Anno(aid) => TextLineElement::Anno(self.annos[aid.0].clone()),
                     })
                     .collect();
+                line.bidi = h.bidi;
                 TextLineType::Horizontal(line)
             }
             ArenaTextLine::Vertical(v) => {
@@ -228,6 +248,7 @@ impl LayoutArena {
                         ArenaElem::Anno(aid) => TextLineElement::Anno(self.annos[aid.0].clone()),
                     })
                     .collect();
+                line.bidi = v.bidi;
                 TextLineType::Vertical(line)
             }
         }

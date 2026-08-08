@@ -213,6 +213,7 @@ fn test_extract_options_default() {
     assert_eq!(options.maxpages, 0);
     assert!(options.caching);
     assert!(options.laparams.is_none());
+    assert!(!options.bidi);
 }
 
 #[test]

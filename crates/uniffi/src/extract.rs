@@ -95,6 +95,7 @@ pub(crate) fn core_extract_options(
         caching: options.caching.unwrap_or(true),
         laparams: normalize_layout_params(options.layout_params)?,
         rotation: 0,
+        bidi: options.bidi.unwrap_or(false),
     })
 }
 
@@ -453,6 +454,7 @@ mod tests {
             page_numbers: None,
             max_pages: None,
             caching: None,
+            bidi: None,
             layout_params: Some(LayoutParams {
                 line_overlap: None,
                 char_margin: None,

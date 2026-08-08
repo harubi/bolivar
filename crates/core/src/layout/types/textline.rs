@@ -4,7 +4,10 @@
 
 use std::hash::Hash;
 
-use crate::layout::bidi::reorder_visual_text_for_output;
+use crate::layout::bidi::{
+    ReconstructedLine, reconstruct_textline_elements, reconstruct_textline_text,
+    reorder_visual_text_for_output,
+};
 use crate::utils::{HasBBox, INF_F64, Plane, Rect};
 
 use super::character::{LTAnno, LTChar};
@@ -43,20 +46,23 @@ fn element_text(element: &TextLineElement) -> &str {
 }
 
 fn collect_text_from_elements(elements: &[TextLineElement]) -> String {
-    let mut total_len = 0;
-    for e in elements {
-        total_len += element_text(e).len();
+    let capacity = elements
+        .iter()
+        .map(|element| element_text(element).len())
+        .sum();
+    let mut output = String::with_capacity(capacity);
+    for element in elements {
+        output.push_str(element_text(element));
     }
-
-    let mut out = String::with_capacity(total_len);
-    for e in elements {
-        out.push_str(element_text(e));
-    }
-    out
+    output
 }
 
-fn collect_reordered_text(elements: &[TextLineElement]) -> String {
-    reorder_visual_text_for_output(&collect_text_from_elements(elements))
+fn text_from_elements(elements: &[TextLineElement], axis: Axis, bidi: bool) -> String {
+    if bidi {
+        reconstruct_textline_text(elements, axis)
+    } else {
+        reorder_visual_text_for_output(&collect_text_from_elements(elements))
+    }
 }
 
 fn elements_are_blank_or_whitespace(elements: &[TextLineElement]) -> bool {
@@ -80,6 +86,7 @@ pub struct LTTextLineHorizontal {
     pub(crate) word_margin: f64,
     pub(crate) x1_tracker: f64,
     pub(crate) elements: Vec<TextLineElement>,
+    pub(crate) bidi: bool,
 }
 
 impl LTTextLineHorizontal {
@@ -89,6 +96,7 @@ impl LTTextLineHorizontal {
             word_margin,
             x1_tracker: INF_F64,
             elements: Vec::new(),
+            bidi: false,
         }
     }
 
@@ -144,6 +152,21 @@ impl LTTextLineHorizontal {
         self.elements.iter()
     }
 
+    /// Return logical text and its mapping to source layout elements.
+    pub fn reconstructed(&self) -> ReconstructedLine {
+        reconstruct_textline_elements(&self.elements, Axis::Horizontal)
+    }
+
+    /// Enable or disable ICU bidi reconstruction for this line.
+    pub const fn set_bidi(&mut self, bidi: bool) {
+        self.bidi = bidi;
+    }
+
+    /// Return whether ICU bidi reconstruction is enabled.
+    pub const fn bidi(&self) -> bool {
+        self.bidi
+    }
+
     /// Add a text line element.
     pub fn add_element(&mut self, element: TextLineElement) {
         self.elements.push(element);
@@ -174,7 +197,7 @@ impl LTTextLine for LTTextLineHorizontal {
     }
 
     fn get_text(&self) -> String {
-        collect_reordered_text(&self.elements)
+        text_from_elements(&self.elements, Axis::Horizontal, self.bidi)
     }
 
     fn is_empty(&self) -> bool {
@@ -200,6 +223,7 @@ pub struct LTTextLineVertical {
     pub(crate) word_margin: f64,
     pub(crate) y0_tracker: f64,
     pub(crate) elements: Vec<TextLineElement>,
+    pub(crate) bidi: bool,
 }
 
 impl LTTextLineVertical {
@@ -209,6 +233,7 @@ impl LTTextLineVertical {
             word_margin,
             y0_tracker: -INF_F64,
             elements: Vec::new(),
+            bidi: false,
         }
     }
 
@@ -264,6 +289,21 @@ impl LTTextLineVertical {
         self.elements.iter()
     }
 
+    /// Return logical text and its mapping to source layout elements.
+    pub fn reconstructed(&self) -> ReconstructedLine {
+        reconstruct_textline_elements(&self.elements, Axis::Vertical)
+    }
+
+    /// Enable or disable ICU bidi reconstruction for this line.
+    pub const fn set_bidi(&mut self, bidi: bool) {
+        self.bidi = bidi;
+    }
+
+    /// Return whether ICU bidi reconstruction is enabled.
+    pub const fn bidi(&self) -> bool {
+        self.bidi
+    }
+
     /// Add a text line element.
     pub fn add_element(&mut self, element: TextLineElement) {
         self.elements.push(element);
@@ -294,7 +334,7 @@ impl LTTextLine for LTTextLineVertical {
     }
 
     fn get_text(&self) -> String {
-        collect_reordered_text(&self.elements)
+        text_from_elements(&self.elements, Axis::Vertical, self.bidi)
     }
 
     fn is_empty(&self) -> bool {
@@ -461,5 +501,25 @@ mod tests {
         line.analyze();
 
         assert_eq!(line.get_text(), "\u{05D2}\u{05D1}\u{05D0}\n");
+    }
+
+    #[test]
+    fn bidi_is_opt_in_for_layout_lines() {
+        let visual = "abc 123 ﺔﻴﺑﺮﻌﻟﺍ";
+        let mut line = LTTextLineHorizontal::new(0.1);
+        for (index, ch) in visual.chars().enumerate() {
+            line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+                (index as f64, 0.0, index as f64 + 1.0, 1.0),
+                &ch.to_string(),
+                "F",
+                10.0,
+                true,
+                1.0,
+            ))));
+        }
+
+        assert_eq!(line.get_text(), "العربية 123 abc");
+        line.set_bidi(true);
+        assert_eq!(line.get_text(), "abc 123 العربية");
     }
 }

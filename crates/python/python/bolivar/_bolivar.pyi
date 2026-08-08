@@ -50,7 +50,7 @@ def apply_matrix_rect(m: _Matrix, rect: _Rect, /) -> _Rect: ...
 def format_int_alpha(value: int, /) -> str: ...
 def format_int_roman(value: int, /) -> str: ...
 def shorten_str(s: str, size: int, /) -> str: ...
-def reorder_text_for_output(text: str, /) -> str: ...
+def reorder_text_for_output(text: str, bidi: bool = False, /) -> str: ...
 def unpad_aes(data: bytes | bytearray, /) -> bytes: ...
 
 class Plane:
@@ -641,6 +641,7 @@ class TextConverter:
         laparams: LAParams | None = None,
         showpageno: bool = False,
         imagewriter: Any = None,
+        bidi: bool = False,
     ) -> None: ...
     def _receive_layout(self, ltpage: LTPage, /) -> None: ...
     def close(self) -> None: ...
@@ -662,6 +663,7 @@ class HTMLConverter:
         debug: int = 0,
         rect_colors: dict[str, str] | None = None,
         text_colors: dict[str, str] | None = None,
+        bidi: bool = False,
     ) -> None: ...
     def _receive_layout(self, ltpage: LTPage, /) -> None: ...
     def close(self) -> None: ...
@@ -676,6 +678,7 @@ class XMLConverter:
         laparams: LAParams | None = None,
         stripcontrol: bool = False,
         imagewriter: Any = None,
+        bidi: bool = False,
     ) -> None: ...
     def _receive_layout(self, ltpage: LTPage, /) -> None: ...
     def close(self) -> None: ...
@@ -690,6 +693,7 @@ class HOCRConverter:
         laparams: LAParams | None = None,
         stripcontrol: bool = False,
         imagewriter: Any = None,
+        bidi: bool = False,
     ) -> None: ...
     def _receive_layout(self, ltpage: LTPage, /) -> None: ...
     def close(self) -> None: ...
@@ -721,6 +725,7 @@ def extract_text(
     maxpages: int = 0,
     caching: bool = True,
     laparams: LAParams | None = None,
+    bidi: bool = False,
 ) -> str: ...
 def extract_text_from_path(
     path: str,
@@ -729,6 +734,7 @@ def extract_text_from_path(
     maxpages: int = 0,
     caching: bool = True,
     laparams: LAParams | None = None,
+    bidi: bool = False,
 ) -> str: ...
 def extract_pages(
     data: bytes | bytearray | BinaryIO,
@@ -738,6 +744,7 @@ def extract_pages(
     caching: bool = True,
     laparams: LAParams | None = None,
     rotation: int = 0,
+    bidi: bool = False,
 ) -> list[LTPage]: ...
 def extract_pages_from_path(
     path: str,
@@ -747,6 +754,7 @@ def extract_pages_from_path(
     caching: bool = True,
     laparams: LAParams | None = None,
     rotation: int = 0,
+    bidi: bool = False,
 ) -> list[LTPage]: ...
 def extract_pages_with_images(
     data: bytes | bytearray | BinaryIO,
@@ -757,6 +765,7 @@ def extract_pages_with_images(
     caching: bool = True,
     laparams: LAParams | None = None,
     rotation: int = 0,
+    bidi: bool = False,
 ) -> list[LTPage]: ...
 def extract_pages_with_images_from_path(
     path: str,
@@ -767,16 +776,19 @@ def extract_pages_with_images_from_path(
     caching: bool = True,
     laparams: LAParams | None = None,
     rotation: int = 0,
+    bidi: bool = False,
 ) -> list[LTPage]: ...
 def process_page(
     doc: PDFDocument,
     page: PDFPage,
     laparams: LAParams | None = None,
     rotation: int = 0,
+    bidi: bool = False,
 ) -> LTPage: ...
 def process_pages(
     doc: PDFDocument,
     laparams: LAParams | None = None,
+    bidi: bool = False,
 ) -> list[LTPage]: ...
 def _extract_tables_for_page_indexed(
     doc: PDFDocument,
@@ -813,6 +825,7 @@ def extract_pages_async(
     maxpages: int = 0,
     caching: bool = True,
     laparams: LAParams | None = None,
+    bidi: bool = False,
 ) -> _AsyncPageStream: ...
 
 class _AsyncPageStream:

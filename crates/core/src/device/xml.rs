@@ -7,8 +7,9 @@ use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 
 use crate::layout::{
-    LAParams, LTItem, LTPage, LTTextBox, LTTextGroup, TextBoxType, TextGroupElement,
-    TextLineElement, TextLineType, normalize_presentation_forms_for_output, reorder_text_per_line,
+    LAParams, LTItem, LTPage, LTTextBox, LTTextGroup, ReconstructedLine, TextBoxType,
+    TextGroupElement, TextLineElement, TextLineType, normalize_arabic_presentation_forms,
+    normalize_presentation_forms_for_output, reorder_text_per_line,
 };
 use crate::utils::{HasBBox, bbox2str, enc};
 
@@ -30,6 +31,8 @@ pub struct XMLConverter<W: Write> {
     stripcontrol: bool,
     /// Regex for control characters
     control_re: Regex,
+    /// Whether to force ICU bidi reconstruction on received pages.
+    bidi: bool,
 }
 
 impl<W: Write> XMLConverter<W> {
@@ -42,6 +45,7 @@ impl<W: Write> XMLConverter<W> {
             laparams,
             stripcontrol: false,
             control_re: Regex::new(r"[\x00-\x08\x0b-\x0c\x0e-\x1f]").unwrap(),
+            bidi: false,
         };
         converter.write_header();
         converter
@@ -102,7 +106,10 @@ impl<W: Write> XMLConverter<W> {
     }
 
     /// Receive and render a layout page.
-    pub fn receive_layout(&mut self, ltpage: LTPage) {
+    pub fn receive_layout(&mut self, mut ltpage: LTPage) {
+        if self.bidi {
+            ltpage.set_bidi(true);
+        }
         let page_xml = format!(
             "<page id=\"{}\" bbox=\"{}\" rotate=\"{}\">\n",
             ltpage.pageid,
@@ -201,10 +208,24 @@ impl<W: Write> XMLConverter<W> {
                 // Render children (characters and annotations)
                 match tl {
                     TextLineType::Horizontal(h) => {
-                        self.render_textline_elements_with_bidi(h.iter());
+                        if h.bidi() {
+                            self.render_reconstructed_textline_elements(
+                                h.iter(),
+                                &h.reconstructed(),
+                            );
+                        } else {
+                            self.render_legacy_textline_elements(h.iter());
+                        }
                     }
                     TextLineType::Vertical(v) => {
-                        self.render_textline_elements_with_bidi(v.iter());
+                        if v.bidi() {
+                            self.render_reconstructed_textline_elements(
+                                v.iter(),
+                                &v.reconstructed(),
+                            );
+                        } else {
+                            self.render_legacy_textline_elements(v.iter());
+                        }
                     }
                 }
 
@@ -230,7 +251,14 @@ impl<W: Write> XMLConverter<W> {
                             let line_xml =
                                 format!("<textline bbox=\"{}\">\n", bbox2str(line.bbox()));
                             self.write(&line_xml);
-                            self.render_textline_elements_with_bidi(line.iter());
+                            if line.bidi() {
+                                self.render_reconstructed_textline_elements(
+                                    line.iter(),
+                                    &line.reconstructed(),
+                                );
+                            } else {
+                                self.render_legacy_textline_elements(line.iter());
+                            }
                             self.write("</textline>\n");
                         }
                     }
@@ -239,7 +267,14 @@ impl<W: Write> XMLConverter<W> {
                             let line_xml =
                                 format!("<textline bbox=\"{}\">\n", bbox2str(line.bbox()));
                             self.write(&line_xml);
-                            self.render_textline_elements_with_bidi(line.iter());
+                            if line.bidi() {
+                                self.render_reconstructed_textline_elements(
+                                    line.iter(),
+                                    &line.reconstructed(),
+                                );
+                            } else {
+                                self.render_legacy_textline_elements(line.iter());
+                            }
                             self.write("</textline>\n");
                         }
                     }
@@ -255,13 +290,13 @@ impl<W: Write> XMLConverter<W> {
                     c.size()
                 );
                 self.write(&xml);
-                let normalized = normalize_presentation_forms_for_output(c.get_text());
+                let normalized = self.normalize_text(c.get_text());
                 self.write_text(&normalized);
                 self.write("</text>\n");
             }
             LTItem::Anno(a) => {
                 self.write("<text>");
-                let normalized = normalize_presentation_forms_for_output(a.get_text());
+                let normalized = self.normalize_text(a.get_text());
                 self.write_text(&normalized);
                 self.write("</text>\n");
             }
@@ -277,48 +312,67 @@ impl<W: Write> XMLConverter<W> {
         }
     }
 
-    fn render_textline_elements_with_bidi<'a, I>(&mut self, elements: I)
+    fn render_reconstructed_textline_elements<'a, I>(
+        &mut self,
+        elements: I,
+        line: &ReconstructedLine,
+    ) where
+        I: IntoIterator<Item = &'a TextLineElement>,
+    {
+        let elements: Vec<&TextLineElement> = elements.into_iter().collect();
+        for span in &line.spans {
+            if let Some(element) = elements.get(span.source_index) {
+                self.render_textline_element_text(element, &span.text);
+            }
+        }
+    }
+
+    fn normalize_text(&self, text: &str) -> String {
+        if self.bidi {
+            normalize_arabic_presentation_forms(text)
+        } else {
+            normalize_presentation_forms_for_output(text)
+        }
+    }
+
+    fn render_legacy_textline_elements<'a, I>(&mut self, elements: I)
     where
         I: IntoIterator<Item = &'a TextLineElement>,
     {
-        fn text_of_element(elem: &TextLineElement) -> &str {
-            match elem {
-                TextLineElement::Char(c) => c.get_text(),
-                TextLineElement::Anno(a) => a.get_text(),
+        fn element_text(element: &TextLineElement) -> &str {
+            match element {
+                TextLineElement::Char(character) => character.get_text(),
+                TextLineElement::Anno(annotation) => annotation.get_text(),
             }
         }
 
-        let elements: Vec<&TextLineElement> = elements.into_iter().collect();
+        let elements = elements.into_iter().collect::<Vec<_>>();
         if elements.is_empty() {
             return;
         }
 
-        // Keep trailing newlines at the end; only consider content before them.
         let mut split = elements.len();
         while split > 0 {
             match elements[split - 1] {
-                TextLineElement::Anno(a) if a.get_text() == "\n" => split -= 1,
+                TextLineElement::Anno(annotation) if annotation.get_text() == "\n" => split -= 1,
                 _ => break,
             }
         }
         let (content, suffix) = elements.split_at(split);
 
-        let mut content_text = String::new();
-        for elem in content {
-            content_text.push_str(text_of_element(elem));
-        }
-
+        let content_text = content
+            .iter()
+            .map(|element| element_text(element))
+            .collect::<String>();
         let reordered = reorder_text_per_line(&content_text);
         if reordered != content_text {
-            // For 1-char elements, map visual-order characters back to original
-            // elements so mixed-direction lines keep consistent XML ordering.
             let mut buckets: HashMap<char, VecDeque<&TextLineElement>> = HashMap::new();
             let mut can_map_per_char = true;
-            for elem in content {
-                let mut chars = text_of_element(elem).chars();
+            for element in content {
+                let mut chars = element_text(element).chars();
                 match (chars.next(), chars.next()) {
                     (Some(ch), None) => {
-                        buckets.entry(ch).or_default().push_back(elem);
+                        buckets.entry(ch).or_default().push_back(element);
                     }
                     _ => {
                         can_map_per_char = false;
@@ -328,61 +382,80 @@ impl<W: Write> XMLConverter<W> {
             }
 
             if can_map_per_char {
-                let mut reordered_elements: Vec<&TextLineElement> =
-                    Vec::with_capacity(content.len());
+                let mut reordered_elements = Vec::with_capacity(content.len());
                 for ch in reordered.chars() {
-                    let Some(queue) = buckets.get_mut(&ch) else {
+                    let Some(element) = buckets.get_mut(&ch).and_then(VecDeque::pop_front) else {
                         can_map_per_char = false;
                         break;
                     };
-                    let Some(elem) = queue.pop_front() else {
-                        can_map_per_char = false;
-                        break;
-                    };
-                    reordered_elements.push(elem);
+                    reordered_elements.push(element);
                 }
 
                 if can_map_per_char && reordered_elements.len() == content.len() {
-                    for elem in reordered_elements {
-                        self.render_textline_element(elem);
+                    for element in reordered_elements {
+                        self.render_legacy_textline_element(element);
                     }
                 } else {
-                    let reversed: String = content_text.chars().rev().collect();
-                    if !content_text.is_empty() && reordered == reversed {
-                        for elem in content.iter().rev() {
-                            self.render_textline_element(elem);
-                        }
-                    } else {
-                        for elem in content {
-                            self.render_textline_element(elem);
-                        }
-                    }
+                    self.render_legacy_fallback(content, &content_text, &reordered);
                 }
             } else {
-                let reversed: String = content_text.chars().rev().collect();
-                if !content_text.is_empty() && reordered == reversed {
-                    for elem in content.iter().rev() {
-                        self.render_textline_element(elem);
-                    }
-                } else {
-                    for elem in content {
-                        self.render_textline_element(elem);
-                    }
-                }
+                self.render_legacy_fallback(content, &content_text, &reordered);
             }
         } else {
-            for elem in content {
-                self.render_textline_element(elem);
+            for element in content {
+                self.render_legacy_textline_element(element);
             }
         }
 
-        for elem in suffix {
-            self.render_textline_element(elem);
+        for element in suffix {
+            self.render_legacy_textline_element(element);
         }
     }
 
-    /// Render a text line element (char or annotation).
-    fn render_textline_element(&mut self, elem: &TextLineElement) {
+    fn render_legacy_fallback(
+        &mut self,
+        elements: &[&TextLineElement],
+        source: &str,
+        reordered: &str,
+    ) {
+        let reversed = source.chars().rev().collect::<String>();
+        if !source.is_empty() && reordered == reversed {
+            for element in elements.iter().rev() {
+                self.render_legacy_textline_element(element);
+            }
+        } else {
+            for element in elements {
+                self.render_legacy_textline_element(element);
+            }
+        }
+    }
+
+    fn render_legacy_textline_element(&mut self, element: &TextLineElement) {
+        match element {
+            TextLineElement::Char(character) => {
+                let xml = format!(
+                    "<text font=\"{}\" bbox=\"{}\" size=\"{:.3}\">",
+                    enc(character.fontname()),
+                    bbox2str(character.bbox()),
+                    character.size()
+                );
+                self.write(&xml);
+                self.write_text(&normalize_presentation_forms_for_output(
+                    character.get_text(),
+                ));
+                self.write("</text>\n");
+            }
+            TextLineElement::Anno(annotation) => {
+                self.write("<text>");
+                self.write_text(&normalize_presentation_forms_for_output(
+                    annotation.get_text(),
+                ));
+                self.write("</text>\n");
+            }
+        }
+    }
+
+    fn render_textline_element_text(&mut self, elem: &TextLineElement, text: &str) {
         match elem {
             TextLineElement::Char(c) => {
                 let xml = format!(
@@ -392,14 +465,12 @@ impl<W: Write> XMLConverter<W> {
                     c.size()
                 );
                 self.write(&xml);
-                let normalized = normalize_presentation_forms_for_output(c.get_text());
-                self.write_text(&normalized);
+                self.write_text(text);
                 self.write("</text>\n");
             }
-            TextLineElement::Anno(a) => {
+            TextLineElement::Anno(_) => {
                 self.write("<text>");
-                let normalized = normalize_presentation_forms_for_output(a.get_text());
-                self.write_text(&normalized);
+                self.write_text(text);
                 self.write("</text>\n");
             }
         }
@@ -408,5 +479,10 @@ impl<W: Write> XMLConverter<W> {
     /// Close the converter.
     pub fn close(&mut self) {
         self.write_footer();
+    }
+
+    /// Set whether to use ICU bidi reconstruction.
+    pub const fn set_bidi(&mut self, bidi: bool) {
+        self.bidi = bidi;
     }
 }

@@ -246,6 +246,7 @@ fn options_with_page_range(page_numbers: Vec<u32>, max_pages: Option<u32>) -> Ex
         max_pages,
         caching: Some(true),
         layout_params: None,
+        bidi: None,
     }
 }
 
@@ -395,6 +396,7 @@ fn native_document_extract_layout_pages_with_custom_laparams() {
         page_numbers: None,
         max_pages: None,
         caching: Some(true),
+        bidi: None,
         layout_params: Some(LayoutParams {
             line_overlap: Some(0.5),
             char_margin: Some(3.0),

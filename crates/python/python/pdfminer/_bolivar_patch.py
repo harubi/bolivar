@@ -143,7 +143,7 @@ def _apply_patch(module: ModuleType) -> bool:
         extra_attrs = kwargs.get("extra_attrs")
         if extra_attrs not in (None, []):
             return False
-        allowed = {"return_chars", "extra_attrs"}
+        allowed = {"return_chars", "extra_attrs", "bidi"}
         return not any(key not in allowed for key in kwargs)
 
     def _extract_words_for_page(

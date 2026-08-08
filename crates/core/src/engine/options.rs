@@ -24,6 +24,9 @@ pub struct ExtractOptions {
 
     /// Additional rotation to apply when interpreting pages.
     pub rotation: i64,
+
+    /// Use ICU to reconstruct visual bidirectional text into logical order.
+    pub bidi: bool,
 }
 
 impl Default for ExtractOptions {
@@ -35,6 +38,7 @@ impl Default for ExtractOptions {
             caching: true,
             laparams: None,
             rotation: 0,
+            bidi: false,
         }
     }
 }

@@ -167,7 +167,7 @@ impl Drop for AsyncPageStream {
 
 /// Extract pages asynchronously from PDF bytes.
 #[pyfunction]
-#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
+#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, bidi = false))]
 pub fn extract_pages_async(
     data: &Bound<'_, PyAny>,
     password: &str,
@@ -175,8 +175,9 @@ pub fn extract_pages_async(
     maxpages: usize,
     caching: bool,
     laparams: Option<&PyLAParams>,
+    bidi: bool,
 ) -> PyResult<AsyncPageStream> {
-    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
+    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams, bidi);
     let doc = open_document_from_input(data.py(), data, password, caching, true)?;
     let stream = core_extract_pages_stream_from_doc(doc, options)
         .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {e}")))?;
@@ -200,7 +201,7 @@ pub fn extract_words_for_page_indexed(
 ) -> PyResult<Option<Vec<Py<PyAny>>>> {
     let settings = parse_text_settings(py, text_settings)?;
     let geom = parse_page_geometry(geometry)?;
-    let options = build_extract_options("", Some(vec![page_index]), 0, caching, laparams);
+    let options = build_extract_options("", Some(vec![page_index]), 0, caching, laparams, false);
 
     let words: Vec<(usize, Vec<WordObj>)> = py
         .detach(|| {

@@ -1932,6 +1932,7 @@ data class ExtractOptions(
     val `maxPages`: kotlin.UInt?,
     val `caching`: kotlin.Boolean?,
     val `layoutParams`: LayoutParams?,
+    val `bidi`: kotlin.Boolean?,
 ) {
     companion object
 }
@@ -1947,6 +1948,7 @@ public object FfiConverterTypeExtractOptions : FfiConverterRustBuffer<ExtractOpt
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalBoolean.read(buf),
             FfiConverterOptionalTypeLayoutParams.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
         )
 
     override fun allocationSize(value: ExtractOptions) =
@@ -1955,7 +1957,8 @@ public object FfiConverterTypeExtractOptions : FfiConverterRustBuffer<ExtractOpt
                 FfiConverterOptionalSequenceUInt.allocationSize(value.`pageNumbers`) +
                 FfiConverterOptionalUInt.allocationSize(value.`maxPages`) +
                 FfiConverterOptionalBoolean.allocationSize(value.`caching`) +
-                FfiConverterOptionalTypeLayoutParams.allocationSize(value.`layoutParams`)
+                FfiConverterOptionalTypeLayoutParams.allocationSize(value.`layoutParams`) +
+                FfiConverterOptionalBoolean.allocationSize(value.`bidi`)
         )
 
     override fun write(
@@ -1967,6 +1970,7 @@ public object FfiConverterTypeExtractOptions : FfiConverterRustBuffer<ExtractOpt
         FfiConverterOptionalUInt.write(value.`maxPages`, buf)
         FfiConverterOptionalBoolean.write(value.`caching`, buf)
         FfiConverterOptionalTypeLayoutParams.write(value.`layoutParams`, buf)
+        FfiConverterOptionalBoolean.write(value.`bidi`, buf)
     }
 }
 
@@ -2881,6 +2885,7 @@ public object FfiConverterTypeRawTextBox : FfiConverterRustBuffer<RawTextBox> {
 data class RawTextLine(
     val `bbox`: BoundingBox,
     val `orientation`: kotlin.String,
+    val `rawText`: kotlin.String,
     val `text`: kotlin.String,
     val `characters`: List<RawCharacter>,
 ) {
@@ -2896,6 +2901,7 @@ public object FfiConverterTypeRawTextLine : FfiConverterRustBuffer<RawTextLine> 
             FfiConverterTypeBoundingBox.read(buf),
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
             FfiConverterSequenceTypeRawCharacter.read(buf),
         )
 
@@ -2903,6 +2909,7 @@ public object FfiConverterTypeRawTextLine : FfiConverterRustBuffer<RawTextLine> 
         (
             FfiConverterTypeBoundingBox.allocationSize(value.`bbox`) +
                 FfiConverterString.allocationSize(value.`orientation`) +
+                FfiConverterString.allocationSize(value.`rawText`) +
                 FfiConverterString.allocationSize(value.`text`) +
                 FfiConverterSequenceTypeRawCharacter.allocationSize(value.`characters`)
         )
@@ -2913,6 +2920,7 @@ public object FfiConverterTypeRawTextLine : FfiConverterRustBuffer<RawTextLine> 
     ) {
         FfiConverterTypeBoundingBox.write(value.`bbox`, buf)
         FfiConverterString.write(value.`orientation`, buf)
+        FfiConverterString.write(value.`rawText`, buf)
         FfiConverterString.write(value.`text`, buf)
         FfiConverterSequenceTypeRawCharacter.write(value.`characters`, buf)
     }

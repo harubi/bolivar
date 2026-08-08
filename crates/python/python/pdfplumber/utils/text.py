@@ -61,7 +61,7 @@ def _text_contains_rtl(text: str) -> bool:
     return any(_contains_rtl_char(ch) for ch in text)
 
 
-def _reorder_text_for_output_with_core(text: str) -> str:
+def _reorder_text_for_output_with_core(text: str, bidi: bool = False) -> str:
     try:
         from bolivar._native_api import reorder_text_for_output
     except Exception:
@@ -69,19 +69,21 @@ def _reorder_text_for_output_with_core(text: str) -> str:
             return unicodedata.normalize("NFKC", text)
         return text
     try:
-        return reorder_text_for_output(text)
+        return reorder_text_for_output(text, bidi)
     except Exception:
+        if bidi:
+            raise
         if _contains_arabic_presentation_forms(text):
             return unicodedata.normalize("NFKC", text)
         return text
 
 
-def _normalize_rtl_output_text(text: str) -> str:
+def _normalize_rtl_output_text(text: str, bidi: bool = False) -> str:
     if not text:
         return text
     if not _contains_arabic_presentation_forms(text) and not _text_contains_rtl(text):
         return text
-    return _reorder_text_for_output_with_core(text)
+    return _reorder_text_for_output_with_core(text, bidi)
 
 
 def get_line_cluster_key(line_dir: T_dir) -> Callable[[T_obj], T_num]:
@@ -795,6 +797,7 @@ def extract_text(
     if len(chars) == 0:
         return ""
     auto_rtl = cast("bool", kwargs.pop("auto_rtl", True))
+    bidi = cast("bool", kwargs.pop("bidi", False))
 
     if kwargs.get("layout"):
         textmap_kwargs = cast(
@@ -808,7 +811,7 @@ def extract_text(
             },
         )
         out = chars_to_textmap(chars, **textmap_kwargs).as_string
-        return _normalize_rtl_output_text(out) if auto_rtl else out
+        return _normalize_rtl_output_text(out, bidi) if auto_rtl else out
     else:
         extractor_kwargs = cast(
             "dict[str, Any]",
@@ -844,7 +847,7 @@ def extract_text(
             line_dir_render=line_dir_render,
             char_dir_render=char_dir_render,
         ).as_string
-        return _normalize_rtl_output_text(out) if auto_rtl else out
+        return _normalize_rtl_output_text(out, bidi) if auto_rtl else out
 
 
 def collate_line(
