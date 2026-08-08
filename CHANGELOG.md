@@ -1,36 +1,3 @@
-## [1.9.0](https://github.com/harubi/bolivar/compare/v1.8.0...v1.9.0) (2026-08-08)
-
-### Features
-
-* add raw document extraction and metadata API ([3a7513b](https://github.com/harubi/bolivar/commit/3a7513b7d176ebc6e3bfbbd7b305a2b64619d666))
-* **bidi:** add opt in text reconstruction ([724a221](https://github.com/harubi/bolivar/commit/724a221021ca5f59af317588702bc77870fb070a))
-
-### Bug Fixes
-
-* **bidi:** preserve legacy output ([f2f152a](https://github.com/harubi/bolivar/commit/f2f152a544e014027655e6ebdc6bca0be016c64b))
-* **core:** preserve bidi extraction order ([90c12f0](https://github.com/harubi/bolivar/commit/90c12f003eff3d672ffe7c9aa9476fa2aeff1f47))
-* **python:** declare document permissions ([26bf6b2](https://github.com/harubi/bolivar/commit/26bf6b2c2ba4dac498fd961cc611fc1f5b441171))
-
-### Performance Improvements
-
-* **core:** reduce extraction overhead ([30837bb](https://github.com/harubi/bolivar/commit/30837bb1a8ea81c9eb28e38793bd8de263db9cb1))
-* **jvm:** reduce binding overhead ([57b1cd6](https://github.com/harubi/bolivar/commit/57b1cd614a482f31cba26bff0aa89e1c039cc8ed))
-* **uniffi:** reduce extraction copies ([f7b8fd4](https://github.com/harubi/bolivar/commit/f7b8fd4115a0b0f2e302a56eac20e0e2f713d275))
-
-### Code Refactoring
-
-* **python:** tighten compatibility types ([2453015](https://github.com/harubi/bolivar/commit/2453015e333b5b1bdd12a885e28658e336085b79))
-
-### Build System
-
-* **icu:** add internal static crate ([afe5cff](https://github.com/harubi/bolivar/commit/afe5cff3fda21f17b98515e0ea3dcabec561f6cc))
-* **python:** include test dependencies ([1abb961](https://github.com/harubi/bolivar/commit/1abb961fe1dd9ec6ec0ba9161c5df0096289d9fd))
-
-### Continuous Integration
-
-* support ICU builds ([b94386f](https://github.com/harubi/bolivar/commit/b94386f52d1e5183e59bf06d974ad9fe956b2ad6))
-* verify static ICU builds ([c25d849](https://github.com/harubi/bolivar/commit/c25d849074e69d2a55fb8b716834e5323258860c))
-
 ## [1.8.0](https://github.com/harubi/bolivar/compare/v1.7.0...v1.8.0) (2026-07-19)
 
 ### Features
