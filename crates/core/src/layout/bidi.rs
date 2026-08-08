@@ -2,13 +2,79 @@
 //!
 //! This module provides optional UAX#9 reordering for extracted text output.
 
-use unicode_bidi::BidiInfo;
+use unicode_bidi::{BidiInfo, Level};
 use unicode_normalization::UnicodeNormalization;
 
-/// Reorder bidirectional text per line (split on `\n`) using UAX#9.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WordBidiClass {
+    Rtl,
+    Ltr,
+    Neutral,
+}
+
+fn contains_rtl_script(text: &str) -> bool {
+    text.chars().any(|ch| {
+        matches!(
+            ch,
+            '\u{0590}'..='\u{05FF}'
+                | '\u{0600}'..='\u{06FF}'
+                | '\u{0750}'..='\u{077F}'
+                | '\u{0870}'..='\u{089F}'
+                | '\u{08A0}'..='\u{08FF}'
+                | '\u{FB1D}'..='\u{FDFF}'
+                | '\u{FE70}'..='\u{FEFF}'
+                | '\u{10E60}'..='\u{10E7F}'
+                | '\u{1EE00}'..='\u{1EEFF}'
+        )
+    })
+}
+
+fn word_bidi_class(text: &str) -> WordBidiClass {
+    if contains_rtl_script(text) {
+        return WordBidiClass::Rtl;
+    }
+    if text.chars().any(char::is_alphabetic) {
+        return WordBidiClass::Ltr;
+    }
+    WordBidiClass::Neutral
+}
+
+/// Reorder left-to-right geometric word runs into logical reading order.
+pub(crate) fn reorder_visual_word_runs<T>(
+    words: Vec<T>,
+    text: impl for<'a> Fn(&'a T) -> &'a str,
+) -> Vec<T> {
+    if !words.iter().any(|word| contains_rtl_script(text(word))) {
+        return words;
+    }
+
+    let mut runs: Vec<(WordBidiClass, Vec<T>)> = Vec::new();
+    for word in words {
+        let class = word_bidi_class(text(&word));
+        if let Some((last_class, run)) = runs.last_mut()
+            && *last_class == class
+        {
+            run.push(word);
+            continue;
+        }
+        runs.push((class, vec![word]));
+    }
+
+    for (class, run) in &mut runs {
+        if *class == WordBidiClass::Rtl {
+            run.reverse();
+        }
+    }
+    runs.reverse();
+
+    runs.into_iter().flat_map(|(_, run)| run).collect()
+}
+
+/// Reorder bidirectional PDF text per line using UAX#9.
 ///
-/// This keeps newline structure stable while converting each logical line
-/// to visual order for plain-text output.
+/// PDF layout input is geometrically ordered. RTL-containing lines force an RTL
+/// paragraph level so mixed visual runs become logical extraction text while
+/// newline structure remains unchanged.
 pub fn reorder_text_per_line(text: &str) -> String {
     if text.is_empty() {
         return String::new();
@@ -47,7 +113,7 @@ pub fn normalize_presentation_forms_for_output(text: &str) -> String {
     text.nfkc().collect()
 }
 
-/// Reorder bidirectional text and normalize Arabic presentation forms.
+/// Reorder a visual bidi token and normalize Arabic presentation forms.
 ///
 /// This is the canonical string output path for user-facing text extraction.
 pub fn reorder_text_for_output(text: &str) -> String {
@@ -55,8 +121,43 @@ pub fn reorder_text_for_output(text: &str) -> String {
     normalize_presentation_forms_for_output(&reordered)
 }
 
+/// Convert geometrically ordered PDF text into logical reading order.
+///
+/// PDF layout elements are stored from left to right. Mixed-direction lines
+/// therefore need their visual word runs reordered in addition to the
+/// character-level UAX#9 conversion applied to each word.
+pub fn reorder_visual_text_for_output(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::with_capacity(text.len());
+    for chunk in text.split_inclusive('\n') {
+        let (line, has_newline) = match chunk.strip_suffix('\n') {
+            Some(prefix) => (prefix, true),
+            None => (chunk, false),
+        };
+
+        if contains_rtl_script(line) {
+            let words = line
+                .split_whitespace()
+                .map(reorder_text_for_output)
+                .collect::<Vec<_>>();
+            let reordered = reorder_visual_word_runs(words, String::as_str);
+            out.push_str(&reordered.join(" "));
+        } else {
+            out.push_str(line);
+        }
+        if has_newline {
+            out.push('\n');
+        }
+    }
+    out
+}
+
 fn reorder_single_line(line: &str) -> String {
-    let info = BidiInfo::new(line, None);
+    let paragraph_level = contains_rtl_script(line).then_some(Level::rtl());
+    let info = BidiInfo::new(line, paragraph_level);
     if info.paragraphs.is_empty() {
         return line.to_string();
     }
