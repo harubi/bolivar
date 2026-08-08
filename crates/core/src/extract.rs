@@ -43,12 +43,37 @@ use crate::table::probe::{page_has_edges, should_skip_tables};
 use crate::table::{
     PageGeometry, TableMetadata, TableSettings, TextSettings, WordObj,
     collect_table_objects_from_arena, extract_tables_from_objects,
-    extract_tables_with_metadata_from_objects, extract_text_from_objects,
-    extract_words_from_objects,
+    extract_tables_with_metadata_from_objects, extract_text_from_objects_borrowed,
+    extract_words_from_objects_borrowed,
 };
 
 fn cache_capacity(caching: bool) -> usize {
     if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
+}
+
+fn index_geometries(
+    page_count: usize,
+    order: &[usize],
+    geometries: Vec<PageGeometry>,
+) -> Result<Arc<[Option<PageGeometry>]>> {
+    validate_geometry_count(order, geometries.len())?;
+
+    let mut by_page: Vec<Option<PageGeometry>> =
+        std::iter::repeat_with(|| None).take(page_count).collect();
+    for (page_idx, geometry) in order.iter().copied().zip(geometries) {
+        by_page[page_idx] = Some(geometry);
+    }
+    Ok(by_page.into())
+}
+
+fn geometry_for_page(
+    geometries: &[Option<PageGeometry>],
+    page_idx: usize,
+) -> Result<&PageGeometry> {
+    geometries
+        .get(page_idx)
+        .and_then(Option::as_ref)
+        .ok_or_else(|| PdfError::DecodeError("page geometry not in plan".to_string()))
 }
 
 /// Parse and return the text contained in PDF data.
@@ -129,10 +154,10 @@ fn extract_text_to_fp_from_doc_impl<W: Write>(
     options: &ExtractOptions,
 ) -> Result<()> {
     // Get LAParams (use default if not provided)
-    let laparams = options.laparams.clone().unwrap_or_default();
+    let laparams = options.laparams.unwrap_or_default();
 
     // Create text converter
-    let mut converter = TextConverter::new(writer, "utf-8", 1, Some(laparams.clone()), false);
+    let mut converter = TextConverter::new(writer, "utf-8", 1, Some(laparams), false);
 
     let results = run_batch(
         doc,
@@ -140,8 +165,7 @@ fn extract_text_to_fp_from_doc_impl<W: Write>(
         options.maxpages,
         |arena, page_idx, page, doc| {
             let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
-            let mut aggregator =
-                PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1, arena);
+            let mut aggregator = PDFPageAggregator::new(Some(laparams), page_idx as i32 + 1, arena);
             let mut ltpage = process_page(
                 page,
                 &mut aggregator,
@@ -194,7 +218,7 @@ pub fn extract_pages_with_images_with_document(
     options: ExtractOptions,
     output_dir: &str,
 ) -> Result<Vec<LTPage>> {
-    let laparams = options.laparams.clone().unwrap_or_default();
+    let laparams = options.laparams.unwrap_or_default();
     let caching = options.caching;
     let rotation = options.rotation;
     let bidi = options.bidi;
@@ -210,7 +234,7 @@ pub fn extract_pages_with_images_with_document(
             let writer = Rc::new(RefCell::new(writer));
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut aggregator = PDFPageAggregator::new_with_imagewriter(
-                Some(laparams.clone()),
+                Some(laparams),
                 page_idx as i32 + 1,
                 Some(writer),
                 arena,
@@ -243,7 +267,7 @@ pub fn extract_pages_stream_from_doc(
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
-    let laparams = options.laparams.clone();
+    let laparams = options.laparams;
     let caching = options.caching;
     let rotation = options.rotation;
     let bidi = options.bidi;
@@ -255,8 +279,7 @@ pub fn extract_pages_stream_from_doc(
         no_precheck::<LTPage>,
         move |arena, page_idx, page, doc| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut aggregator =
-                PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
+            let mut aggregator = PDFPageAggregator::new(laparams, page_idx as i32 + 1, arena);
             let mut ltpage = process_page(
                 page,
                 &mut aggregator,
@@ -297,17 +320,11 @@ pub fn extract_tables_stream_from_doc_with_geometries(
     settings: TableSettings,
     geometries: Vec<PageGeometry>,
 ) -> Result<Stream<PageTables>> {
-    let plan = ExecutionPlan::new(
-        doc.page_index().len(),
-        options.page_numbers.as_deref(),
-        options.maxpages,
-    );
-    validate_geometry_count(&plan.order, geometries.len())?;
     extract_tables_stream_from_doc_with_geometries_internal(
         doc,
         options,
         settings,
-        Some(Arc::new(geometries)),
+        Some(geometries),
     )
 }
 
@@ -331,17 +348,9 @@ pub fn extract_tables_metadata_stream_from_doc_with_geometries(
         options.page_numbers.as_deref(),
         options.maxpages,
     );
-    validate_geometry_count(&plan.order, geometries.len())?;
-
-    let order_index: std::collections::HashMap<usize, usize> = plan
-        .order
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| (p, i))
-        .collect();
-    let laparams = options.laparams.clone();
+    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries)?;
+    let laparams = options.laparams;
     let caching = options.caching;
-    let geoms = Arc::new(geometries);
 
     run_stream(
         doc,
@@ -350,16 +359,12 @@ pub fn extract_tables_metadata_stream_from_doc_with_geometries(
         no_precheck::<Vec<TableMetadata>>,
         move |arena, page_idx, page, doc| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut collector =
-                PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, arena);
+            let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
             let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
                 collector_result(c)
             })?;
             let arena_lookup = collector.arena_lookup();
-            let selected_idx = *order_index
-                .get(&page_idx)
-                .ok_or_else(|| PdfError::DecodeError("page not in plan".to_string()))?;
-            let geom = &geoms[selected_idx];
+            let geom = geometry_for_page(&geoms, page_idx)?;
             let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
             Ok(extract_tables_with_metadata_from_objects(
                 chars,
@@ -368,6 +373,68 @@ pub fn extract_tables_metadata_stream_from_doc_with_geometries(
                 &settings,
                 arena_lookup,
             ))
+        },
+    )
+}
+
+/// Stream analyzed layout and table metadata from one interpreter pass per page.
+pub fn extract_layout_tables_metadata_stream_from_doc_with_geometries(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    mut settings: TableSettings,
+    geometries: Vec<PageGeometry>,
+) -> Result<Stream<(LTPage, Vec<TableMetadata>)>> {
+    if options.laparams.is_none() {
+        options.laparams = Some(LAParams::default());
+    }
+    settings.text_settings.bidi |= options.bidi;
+
+    let plan = ExecutionPlan::new(
+        doc.page_index().len(),
+        options.page_numbers.as_deref(),
+        options.maxpages,
+    );
+    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries)?;
+    let laparams = options.laparams;
+    let caching = options.caching;
+    let rotation = options.rotation;
+    let bidi = options.bidi;
+
+    run_stream(
+        doc,
+        options.page_numbers,
+        options.maxpages,
+        no_precheck::<(LTPage, Vec<TableMetadata>)>,
+        move |arena, page_idx, page, doc| {
+            #[cfg(test)]
+            record_combined_pass();
+
+            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+            let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
+            let page_arena = process_page(
+                page,
+                &mut collector,
+                &mut rsrcmgr,
+                rotation,
+                doc,
+                collector_result,
+            )?;
+            let arena_lookup = collector.arena_lookup();
+            let geom = geometry_for_page(&geoms, page_idx)?;
+            let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
+            let tables = extract_tables_with_metadata_from_objects(
+                chars,
+                edges,
+                geom,
+                &settings,
+                arena_lookup,
+            );
+            let mut layout_page = page_arena.materialize(arena_lookup);
+            if let Some(laparams) = laparams {
+                layout_page.analyze(&laparams);
+            }
+            layout_page.set_bidi(bidi);
+            Ok((layout_page, tables))
         },
     )
 }
@@ -389,17 +456,9 @@ pub fn extract_text_stream_from_doc_with_geometries(
         options.page_numbers.as_deref(),
         options.maxpages,
     );
-    validate_geometry_count(&plan.order, geometries.len())?;
-
-    let order_index: std::collections::HashMap<usize, usize> = plan
-        .order
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| (p, i))
-        .collect();
-    let laparams = options.laparams.clone();
+    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries)?;
+    let laparams = options.laparams;
     let caching = options.caching;
-    let geoms = Arc::new(geometries);
 
     run_stream(
         doc,
@@ -408,20 +467,16 @@ pub fn extract_text_stream_from_doc_with_geometries(
         no_precheck::<String>,
         move |arena, page_idx, page, doc| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut collector =
-                PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, arena);
+            let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
             let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
                 collector_result(c)
             })?;
             let arena_lookup = collector.arena_lookup();
-            let selected_idx = *order_index
-                .get(&page_idx)
-                .ok_or_else(|| PdfError::DecodeError("page not in plan".to_string()))?;
-            let geom = &geoms[selected_idx];
+            let geom = geometry_for_page(&geoms, page_idx)?;
             let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
-            Ok(extract_text_from_objects(
+            Ok(extract_text_from_objects_borrowed(
                 chars,
-                settings.clone(),
+                &settings,
                 arena_lookup,
             ))
         },
@@ -445,17 +500,9 @@ pub fn extract_words_stream_from_doc_with_geometries(
         options.page_numbers.as_deref(),
         options.maxpages,
     );
-    validate_geometry_count(&plan.order, geometries.len())?;
-
-    let order_index: std::collections::HashMap<usize, usize> = plan
-        .order
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| (p, i))
-        .collect();
-    let laparams = options.laparams.clone();
+    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries)?;
+    let laparams = options.laparams;
     let caching = options.caching;
-    let geoms = Arc::new(geometries);
 
     run_stream(
         doc,
@@ -464,20 +511,16 @@ pub fn extract_words_stream_from_doc_with_geometries(
         no_precheck::<Vec<WordObj>>,
         move |arena, page_idx, page, doc| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut collector =
-                PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, arena);
+            let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
             let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
                 collector_result(c)
             })?;
             let arena_lookup = collector.arena_lookup();
-            let selected_idx = *order_index
-                .get(&page_idx)
-                .ok_or_else(|| PdfError::DecodeError("page not in plan".to_string()))?;
-            let geom = &geoms[selected_idx];
+            let geom = geometry_for_page(&geoms, page_idx)?;
             let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
-            Ok(extract_words_from_objects(
+            Ok(extract_words_from_objects_borrowed(
                 chars,
-                settings.clone(),
+                &settings,
                 arena_lookup,
             ))
         },
@@ -488,7 +531,7 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
     mut settings: TableSettings,
-    geometries: Option<Arc<Vec<PageGeometry>>>,
+    geometries: Option<Vec<PageGeometry>>,
 ) -> Result<Stream<PageTables>> {
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
@@ -500,13 +543,15 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
         options.page_numbers.as_deref(),
         options.maxpages,
     );
-    let order_index: std::collections::HashMap<usize, usize> = plan
-        .order
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| (p, i))
-        .collect();
-    let laparams = options.laparams.clone();
+    let geometries = match geometries {
+        Some(geometries) => Some(index_geometries(
+            doc.page_index().len(),
+            &plan.order,
+            geometries,
+        )?),
+        None => None,
+    };
+    let laparams = options.laparams;
     let caching = options.caching;
     let settings_for_pre = settings.clone();
     let settings_for_run = settings;
@@ -528,29 +573,29 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
         },
         move |arena, page_idx, page, doc| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut collector =
-                PDFTableCollector::new(laparams.clone(), page_idx as i32 + 1, arena);
+            let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
             let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
                 collector_result(c)
             })?;
             let arena_lookup = collector.arena_lookup();
-            let selected_idx = *order_index
-                .get(&page_idx)
-                .ok_or_else(|| PdfError::DecodeError("page not in plan".to_string()))?;
+            let default_geometry;
             let geom = match geoms.as_ref() {
-                Some(g) => g[selected_idx].clone(),
-                None => PageGeometry {
-                    page_bbox: page_arena.bbox,
-                    mediabox: page_arena.bbox,
-                    initial_doctop: 0.0,
-                    force_crop: false,
-                },
+                Some(g) => geometry_for_page(g, page_idx)?,
+                None => {
+                    default_geometry = PageGeometry {
+                        page_bbox: page_arena.bbox,
+                        mediabox: page_arena.bbox,
+                        initial_doctop: 0.0,
+                        force_crop: false,
+                    };
+                    &default_geometry
+                }
             };
-            let (chars, edges) = collect_table_objects_from_arena(&page_arena, &geom);
+            let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
             Ok(extract_tables_from_objects(
                 chars,
                 edges,
-                &geom,
+                geom,
                 &settings_for_run,
                 arena_lookup,
             ))
@@ -569,12 +614,45 @@ static STREAM_USAGE_ENABLED: std::sync::atomic::AtomicBool =
 #[cfg(test)]
 static STREAM_USAGE_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
     std::sync::OnceLock::new();
+#[cfg(test)]
+static COMBINED_PASS_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+static COMBINED_PASS_COUNT_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+static COMBINED_PASS_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
 
 #[cfg(test)]
 fn record_stream_usage() {
     if STREAM_USAGE_ENABLED.load(Ordering::Relaxed) {
         STREAM_USAGE.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+#[cfg(test)]
+fn record_combined_pass() {
+    if COMBINED_PASS_COUNT_ENABLED.load(Ordering::Relaxed) {
+        COMBINED_PASS_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+fn take_combined_pass_count() -> usize {
+    COMBINED_PASS_COUNT.swap(0, Ordering::Relaxed)
+}
+
+#[cfg(test)]
+fn set_combined_pass_count_enabled(enabled: bool) {
+    COMBINED_PASS_COUNT_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+fn combined_pass_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    COMBINED_PASS_TEST_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .expect("combined pass test lock")
 }
 
 #[cfg(test)]
@@ -891,6 +969,48 @@ mod tests {
             .flatten()
             .any(|c| c.as_deref() == Some("Total"));
         assert!(found, "tables: {:?}", out);
+    }
+
+    #[test]
+    fn combined_layout_and_tables_use_one_interpreter_pass() {
+        use crate::layout::{LTItem, LTTextBox, TextBoxType};
+
+        let _guard = combined_pass_test_guard();
+        let pdf_data = build_table_pdf_with_text();
+        let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
+        let options = ExtractOptions::default();
+        let settings = TableSettings::default();
+
+        set_combined_pass_count_enabled(true);
+        take_combined_pass_count();
+        let mut out = extract_layout_tables_metadata_stream_from_doc_with_geometries(
+            Arc::clone(&doc),
+            options,
+            settings,
+            full_page_geometries(1),
+        )
+        .unwrap()
+        .collect::<Result<Vec<_>>>()
+        .unwrap();
+
+        assert_eq!(take_combined_pass_count(), 1);
+        set_combined_pass_count_enabled(false);
+        let (_, (page, tables)) = out.pop().unwrap();
+        let page_has_text = page.iter().any(|item| match item {
+            LTItem::TextBox(TextBoxType::Horizontal(text_box)) => {
+                text_box.get_text().contains("Total")
+            }
+            LTItem::TextBox(TextBoxType::Vertical(text_box)) => {
+                text_box.get_text().contains("Total")
+            }
+            _ => false,
+        });
+        let table_has_text = tables
+            .iter()
+            .flat_map(|table| &table.cells)
+            .any(|cell| cell.text == "Total");
+        assert!(page_has_text);
+        assert!(table_has_text);
     }
 
     #[test]

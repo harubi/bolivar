@@ -21,6 +21,7 @@ pub use types::{
 };
 
 pub(crate) use collector::collect_table_objects_from_arena;
+pub(crate) use finder::{extract_text_from_objects_borrowed, extract_words_from_objects_borrowed};
 
 // Re-export public API functions
 pub use finder::{

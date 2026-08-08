@@ -319,6 +319,15 @@ impl PDFDocument {
         Self::new_from_bytes_with_cache_and_fallback(data, password, cache_capacity, true)
     }
 
+    /// Create a PDF document by taking ownership of a byte vector without copying it.
+    pub fn new_from_vec_with_cache(
+        data: Vec<u8>,
+        password: &str,
+        cache_capacity: usize,
+    ) -> Result<Self> {
+        Self::new_from_bytes_with_cache(Bytes::from(data), password, cache_capacity)
+    }
+
     /// Create a new PDFDocument from shared bytes with cache capacity and fallback policy.
     pub fn new_from_bytes_with_cache_and_fallback(
         data: Bytes,

@@ -1,6 +1,5 @@
 //! Ordered streaming worker pool for selected pages.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, sync_channel};
@@ -95,9 +94,9 @@ impl Drop for StreamWorkerLifecycleCounter {
 /// callers receive each result tagged with its page index in selection order.
 pub struct Stream<R> {
     rx: Option<Receiver<(usize, Result<R>)>>,
-    order: Vec<usize>,
+    order: Arc<[usize]>,
     next_pos: usize,
-    buffer: BTreeMap<usize, Result<R>>,
+    buffer: Vec<Option<Result<R>>>,
     done: bool,
     failed: bool,
     cancel: Arc<AtomicBool>,
@@ -107,15 +106,16 @@ pub struct Stream<R> {
 impl<R> Stream<R> {
     fn new(
         rx: Receiver<(usize, Result<R>)>,
-        order: Vec<usize>,
+        order: Arc<[usize]>,
         cancel: Arc<AtomicBool>,
         worker: JoinHandle<()>,
     ) -> Self {
+        let buffer = std::iter::repeat_with(|| None).take(order.len()).collect();
         Self {
             rx: Some(rx),
             order,
             next_pos: 0,
-            buffer: BTreeMap::new(),
+            buffer,
             done: false,
             failed: false,
             cancel,
@@ -136,7 +136,7 @@ impl<R> Iterator for Stream<R> {
                 return None;
             }
             let expected = self.order[self.next_pos];
-            if let Some(result) = self.buffer.remove(&expected) {
+            if let Some(result) = self.buffer[self.next_pos].take() {
                 self.next_pos += 1;
                 if result.is_err() {
                     self.failed = true;
@@ -159,8 +159,21 @@ impl<R> Iterator for Stream<R> {
                 }
             };
             match recv {
-                Ok((page_idx, result)) => {
-                    self.buffer.insert(page_idx, result);
+                Ok((position, result)) => {
+                    let Some(slot) = self.buffer.get_mut(position) else {
+                        self.failed = true;
+                        self.cancel.store(true, Ordering::Relaxed);
+                        return Some(Err(PdfError::DecodeError(format!(
+                            "stream received invalid result position {position}"
+                        ))));
+                    };
+                    if slot.replace(result).is_some() {
+                        self.failed = true;
+                        self.cancel.store(true, Ordering::Relaxed);
+                        return Some(Err(PdfError::DecodeError(format!(
+                            "stream received duplicate result position {position}"
+                        ))));
+                    }
                 }
                 Err(_) => self.done = true,
             }
@@ -200,10 +213,10 @@ where
     F: Fn(&mut PageArena, usize, &PDFPage, &PDFDocument) -> Result<R> + Send + Sync + 'static,
 {
     let plan = ExecutionPlan::new(doc.page_index().len(), page_numbers.as_deref(), maxpages);
-    let order = plan.order.clone();
-    let work_order = order.clone();
     let worker_count = plan.worker_count;
     let pool = plan.build_pool()?;
+    let order: Arc<[usize]> = plan.order.into();
+    let work_order = Arc::clone(&order);
 
     let (tx, rx) = sync_channel(DEFAULT_STREAM_BUFFER_CAPACITY);
     let cancel = Arc::new(AtomicBool::new(false));
@@ -235,7 +248,7 @@ where
                     let page = match doc_worker.get_page_cached(page_idx) {
                         Ok(page) => page,
                         Err(e) => {
-                            if tx.send((page_idx, Err(e))).is_err() {
+                            if tx.send((pos, Err(e))).is_err() {
                                 cancel_worker.store(true, Ordering::Relaxed);
                             }
                             continue;
@@ -253,7 +266,7 @@ where
                     if cancel_worker.load(Ordering::Relaxed) {
                         return;
                     }
-                    if tx.send((page_idx, result)).is_err() {
+                    if tx.send((pos, result)).is_err() {
                         cancel_worker.store(true, Ordering::Relaxed);
                         return;
                     }

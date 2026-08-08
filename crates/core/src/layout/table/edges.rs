@@ -34,18 +34,16 @@ pub fn clip_edge_to_bbox(edge: EdgeObj, crop: BBox) -> Option<EdgeObj> {
     })
 }
 
-/// Snap edges to align with nearby edges of the same orientation.
-pub fn snap_edges(edges: &[EdgeObj], x_tolerance: f64, y_tolerance: f64) -> Vec<EdgeObj> {
-    let mut v_edges: Vec<EdgeObj> = edges
-        .iter()
-        .filter(|e| e.orientation == Some(Orientation::Vertical))
-        .cloned()
-        .collect();
-    let mut h_edges: Vec<EdgeObj> = edges
-        .iter()
-        .filter(|e| e.orientation == Some(Orientation::Horizontal))
-        .cloned()
-        .collect();
+fn snap_edges(edges: Vec<EdgeObj>, x_tolerance: f64, y_tolerance: f64) -> Vec<EdgeObj> {
+    let mut v_edges = Vec::new();
+    let mut h_edges = Vec::new();
+    for edge in edges {
+        match edge.orientation {
+            Some(Orientation::Vertical) => v_edges.push(edge),
+            Some(Orientation::Horizontal) => h_edges.push(edge),
+            None => {}
+        }
+    }
 
     if x_tolerance > 0.0 {
         let clusters = cluster_objects(&v_edges, |e| e.x0, x_tolerance, false);
@@ -74,13 +72,11 @@ pub fn snap_edges(edges: &[EdgeObj], x_tolerance: f64, y_tolerance: f64) -> Vec<
     v_edges.into_iter().chain(h_edges).collect()
 }
 
-/// Join collinear edges that are within tolerance of each other.
-pub fn join_edge_group(
-    edges: &[EdgeObj],
+fn join_edge_group(
+    mut sorted: Vec<EdgeObj>,
     orientation: Orientation,
     tolerance: f64,
 ) -> Vec<EdgeObj> {
-    let mut sorted = edges.to_vec();
     sorted.sort_by(|a, b| {
         let a_min = if orientation == Orientation::Horizontal {
             a.x0
@@ -100,8 +96,9 @@ pub fn join_edge_group(
     if sorted.is_empty() {
         return joined;
     }
-    joined.push(sorted[0].clone());
-    for e in sorted.into_iter().skip(1) {
+    let mut sorted = sorted.into_iter();
+    joined.push(sorted.next().expect("non-empty edge group"));
+    for e in sorted {
         let last = joined.last_mut().unwrap();
         let e_min = if orientation == Orientation::Horizontal {
             e.x0
@@ -145,12 +142,12 @@ pub fn merge_edges(
 ) -> Vec<EdgeObj> {
     let mut edges = edges;
     if snap_x_tolerance > 0.0 || snap_y_tolerance > 0.0 {
-        edges = snap_edges(&edges, snap_x_tolerance, snap_y_tolerance);
+        edges = snap_edges(edges, snap_x_tolerance, snap_y_tolerance);
     }
 
     // Group by orientation and position (match pdfplumber exact grouping)
     let mut grouped: BTreeMap<(Orientation, OrderedFloat<f64>), Vec<EdgeObj>> = BTreeMap::new();
-    for e in &edges {
+    for e in edges {
         let orientation = match e.orientation {
             Some(o) => o,
             None => continue,
@@ -160,7 +157,7 @@ pub fn merge_edges(
             Orientation::Vertical => e.x0,
         };
         let key = (orientation, OrderedFloat(key_val));
-        grouped.entry(key).or_default().push(e.clone());
+        grouped.entry(key).or_default().push(e);
     }
 
     let mut merged: Vec<EdgeObj> = Vec::new();
@@ -170,7 +167,7 @@ pub fn merge_edges(
         } else {
             join_y_tolerance
         };
-        merged.extend(join_edge_group(&group, orientation, tol));
+        merged.extend(join_edge_group(group, orientation, tol));
     }
 
     merged
@@ -212,7 +209,25 @@ pub fn filter_edges(
     edge_type: Option<&str>,
     min_length: f64,
 ) -> Vec<EdgeObj> {
-    filter_edges_ref(&edges, orientation, edge_type, min_length)
+    edges
+        .into_iter()
+        .filter(|e| {
+            let dim = if e.orientation == Some(Orientation::Vertical) {
+                e.height
+            } else {
+                e.width
+            };
+            let et_ok = match edge_type {
+                Some(t) => e.object_type == t,
+                None => true,
+            };
+            let orient_ok = match orientation {
+                Some(o) => e.orientation == Some(o),
+                None => true,
+            };
+            et_ok && orient_ok && dim >= min_length
+        })
+        .collect()
 }
 
 /// Convert a rectangle to four edges.

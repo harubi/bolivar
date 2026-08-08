@@ -64,6 +64,11 @@ impl<'a> PDFPageAggregator<'a> {
         self.result.as_ref().expect("No result available")
     }
 
+    /// Take the analyzed page without cloning it.
+    pub fn take_result(&mut self) -> Option<LTPage> {
+        self.result.take()
+    }
+
     /// Get the current MCID (Marked Content ID) if inside marked content.
     pub fn current_mcid(&self) -> Option<i32> {
         self.analyzer.current_mcid()

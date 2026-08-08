@@ -5,7 +5,7 @@
 /// Parameters for layout analysis.
 ///
 /// Controls how characters are grouped into lines, words, and text boxes.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LAParams {
     /// If two characters have more overlap than this they are considered to be
     /// on the same line. Specified relative to the minimum height of both characters.
