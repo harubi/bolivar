@@ -34,6 +34,8 @@ jobs:
         run: git submodule update --init --depth 1 references/pdfplumber references/tabula-java references/pdfminer.six
       - name: Setup Rust
         run: rustup show active-toolchain
+      - name: Install ICU
+        run: sudo apt-get update && sudo apt-get install -y libicu-dev
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
@@ -66,12 +68,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Install ICU on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install icu4c@78
+          echo "ICU_ROOT=$(brew --prefix icu4c@78)" >> "$GITHUB_ENV"
+      - name: Install ICU on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install icu:x64-windows-static-md
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
       - name: Build wheel
         uses: PyO3/maturin-action@v1.50.0
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
           sccache: true
+          manylinux: 2_28
+          before-script-linux: dnf install -y libicu-devel
+          docker-options: ${{ runner.os == 'Linux' && '-e BOLIVAR_DYNAMIC_ICU=1' || '' }}
       - name: Smoke test
         shell: bash
         run: |
