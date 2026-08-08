@@ -193,6 +193,110 @@
    :column-count (.columnCount table)
    :cells        (mapv table-cell->map (.cells table))})
 
+(defn- raw-table-bbox->map [bbox]
+  {:x0 (.x0 bbox)
+   :top (.top bbox)
+   :x1 (.x1 bbox)
+   :bottom (.bottom bbox)})
+
+(defn- raw-character->map [character]
+  {:text (.text character)
+   :bbox (bbox->map (.bbox character))
+   :font-name (.fontName character)
+   :size (.size character)
+   :upright (.upright character)
+   :advance (.advance character)
+   :matrix (vec (.matrix character))
+   :marked-content-id (.markedContentId character)
+   :tag (.tag character)
+   :non-stroking-color-space (.nonStrokingColorSpace character)
+   :stroking-color-space (.strokingColorSpace character)
+   :non-stroking-color (some-> (.nonStrokingColor character) vec)
+   :stroking-color (some-> (.strokingColor character) vec)})
+
+(defn- raw-text-line->map [line]
+  {:bbox (bbox->map (.bbox line))
+   :orientation (.orientation line)
+   :text (.text line)
+   :characters (mapv raw-character->map (.characters line))})
+
+(defn- raw-text-box->map [text-box]
+  {:bbox (bbox->map (.bbox text-box))
+   :writing-mode (.writingMode text-box)
+   :text (.text text-box)
+   :lines (mapv raw-text-line->map (.lines text-box))})
+
+(defn- raw-table-cell->map [cell]
+  {:row-index (.rowIndex cell)
+   :column-index (.columnIndex cell)
+   :row-span (.rowSpan cell)
+   :column-span (.columnSpan cell)
+   :bbox (raw-table-bbox->map (.bbox cell))
+   :text (.text cell)})
+
+(defn- raw-table->map [table]
+  {:bbox (raw-table-bbox->map (.bbox table))
+   :row-count (.rowCount table)
+   :column-count (.columnCount table)
+   :cells (mapv raw-table-cell->map (.cells table))})
+
+(defn- raw-page-boxes->map [boxes]
+  {:media (some-> (.media boxes) vec)
+   :crop (some-> (.crop boxes) vec)
+   :bleed (some-> (.bleed boxes) vec)
+   :trim (some-> (.trim boxes) vec)
+   :art (some-> (.art boxes) vec)})
+
+(defn- raw-page->map [page]
+  {:page-index (.pageIndex page)
+   :page-number (.pageNumber page)
+   :object-id (.objectId page)
+   :label (.label page)
+   :rotation (.rotation page)
+   :user-unit (.userUnit page)
+   :boxes (raw-page-boxes->map (.boxes page))
+   :layout-bbox (bbox->map (.layoutBbox page))
+   :text (.text page)
+   :text-boxes (mapv raw-text-box->map (.textBoxes page))
+   :tables (mapv raw-table->map (.tables page))})
+
+(defn- raw-document->map [document]
+  {:declared-page-count (.declaredPageCount document)
+   :page-count (.pageCount document)
+   :pages (mapv raw-page->map (.pages document))})
+
+(defn- raw-document-metadata->map [metadata]
+  {:document-info (into {}
+                        (map (juxt #(.key %) #(.value %)))
+                        (.documentInfo metadata))
+   :title (.title metadata)
+   :author (.author metadata)
+   :subject (.subject metadata)
+   :keywords (.keywords metadata)
+   :creator (.creator metadata)
+   :producer (.producer metadata)
+   :creation-date-raw (.creationDateRaw metadata)
+   :creation-date-iso (.creationDateIso metadata)
+   :modification-date-raw (.modificationDateRaw metadata)
+   :modification-date-iso (.modificationDateIso metadata)
+   :version {:header (.header (.version metadata))
+             :catalog (.catalog (.version metadata))
+             :effective (.effective (.version metadata))}
+   :file-size-bytes (.fileSizeBytes metadata)
+   :page-count (.pageCount metadata)
+   :encrypted (.encrypted metadata)
+   :permissions {:printable (.printable (.permissions metadata))
+                 :modifiable (.modifiable (.permissions metadata))
+                 :extractable (.extractable (.permissions metadata))}
+   :linearized (.linearized metadata)
+   :tagged (.tagged metadata)
+   :user-properties (.userProperties metadata)
+   :suspects (.suspects metadata)
+   :form (.form metadata)
+   :has-javascript (.hasJavascript metadata)
+   :has-metadata-stream (.hasMetadataStream metadata)
+   :xmp-metadata (.xmpMetadata metadata)})
+
 (defn open
   "Open a PDF source and return an AutoCloseable document handle.
 
@@ -221,6 +325,26 @@
 
 (defn layout-pages [^Document doc]
   (wrap-jvm-errors #(mapv layout-page->map (.extractLayoutPages doc))))
+
+(defn raw-document
+  "Extract the lossless page, character, and raw table graph."
+  [^Document doc]
+  (wrap-jvm-errors #(raw-document->map (.extractRawDocument doc))))
+
+(defn raw-page
+  "Extract one 1-based page as the lossless page, character, and table graph."
+  [^Document doc page-number]
+  (wrap-jvm-errors #(raw-page->map (.extractRawPage doc (int page-number)))))
+
+(defn metadata
+  "Return canonical and raw PDF document metadata."
+  [^Document doc]
+  (wrap-jvm-errors #(raw-document-metadata->map (.metadata doc))))
+
+(defn version
+  "Return the Bolivar library version."
+  []
+  (wrap-jvm-errors #(Document/version)))
 
 (defn- assert-strategy! [value key]
   (when-not (contains? table-strategies value)

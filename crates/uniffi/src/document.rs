@@ -7,12 +7,14 @@ use std::sync::Arc;
 
 use crate::error::BolivarError;
 use crate::extract::{
-    core_extract_options, extract_layout_pages_core, extract_table_rows_with_core,
-    extract_tables_core, extract_tables_with_core, open_pdf_document, read_pdf_bytes,
+    core_extract_options, extract_layout_pages_core, extract_raw_document_core,
+    extract_raw_page_core, extract_table_rows_with_core, extract_tables_core,
+    extract_tables_with_core, open_pdf_document, read_pdf_bytes,
 };
+use crate::metadata::metadata_from_document;
 use crate::types::{
-    ExtractOptions, LayoutPage, PageSummary, PageTableRows, Table, TableOptions,
-    summary_from_layout_page,
+    ExtractOptions, LayoutPage, PageSummary, PageTableRows, RawDocument, RawDocumentMetadata,
+    RawPage, Table, TableOptions, summary_from_layout_page,
 };
 
 pub struct NativePdfDocument {
@@ -60,6 +62,20 @@ impl NativePdfDocument {
     pub fn extract_layout_pages(&self) -> Result<Vec<LayoutPage>, BolivarError> {
         let options = self.core_options()?;
         extract_layout_pages_core(Arc::clone(&self.doc), options)
+    }
+
+    pub fn extract_raw_document(&self) -> Result<RawDocument, BolivarError> {
+        let options = self.core_options()?;
+        extract_raw_document_core(Arc::clone(&self.doc), options)
+    }
+
+    pub fn extract_raw_page(&self, page_number: u32) -> Result<RawPage, BolivarError> {
+        let options = self.core_options()?;
+        extract_raw_page_core(Arc::clone(&self.doc), options, page_number)
+    }
+
+    pub fn metadata(&self) -> Result<RawDocumentMetadata, BolivarError> {
+        Ok(metadata_from_document(self.doc.as_ref()))
     }
 
     pub fn extract_tables(&self) -> Result<Vec<Table>, BolivarError> {

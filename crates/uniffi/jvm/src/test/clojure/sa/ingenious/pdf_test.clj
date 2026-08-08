@@ -4,7 +4,9 @@
   (:import [clojure.lang ExceptionInfo]
            [java.util Arrays]
            [sa.ingenious.pdf BoundingBox DocumentOptions LayoutChar LayoutLine LayoutOptions
-            LayoutPage LayoutTextBox PageSummary PageTableRows Table TableCell TableOptions]))
+            LayoutPage LayoutTextBox MetadataEntry PageSummary PageTableRows PdfPermissions
+            PdfVersion RawCharacter RawDocument RawDocumentMetadata RawPage RawPageBoxes RawTable
+            RawTableBoundingBox RawTableCell RawTextBox RawTextLine Table TableCell TableOptions]))
 
 (defn- one-list [value]
   (Arrays/asList (object-array [value])))
@@ -159,6 +161,104 @@
     (is (= {:page-number 3
             :tables      [[["a" nil] [nil "b"]]]}
            (#'pdf/page-table-rows->map page)))))
+
+(deftest raw-document-converts-to-lossless-clojure-data
+  (let [bbox (BoundingBox. 1.0 2.0 3.0 4.0)
+        table-bbox (RawTableBoundingBox. 10.0 20.0 30.0 40.0)
+        character (RawCharacter. "A" bbox "Helvetica" 12.0 true 7.5
+                                 [1.0 0.0 0.0 1.0 20.0 30.0]
+                                 (int 17) "Span" "DeviceRGB" "DeviceGray"
+                                 [0.1 0.2 0.3] [0.4])
+        line (RawTextLine. bbox "horizontal" "A" (one-list character))
+        text-box (RawTextBox. bbox "lr-tb" "A" (one-list line))
+        cell (RawTableCell. (int 0) (int 0) (int 1) (int 1) table-bbox "value")
+        table (RawTable. table-bbox (int 1) (int 1) (one-list cell))
+        boxes (RawPageBoxes. [0.0 0.0 200.0 300.0] nil nil nil nil)
+        page (RawPage. (int 0) (int 1) (int 42) "iv" (long 90) 2.0 boxes bbox "A"
+                       (one-list text-box) (one-list table))
+        document (RawDocument. (int 1) (int 1) (one-list page))]
+    (is (= {:declared-page-count 1
+            :page-count 1
+            :pages [{:page-index 0
+                     :page-number 1
+                     :object-id 42
+                     :label "iv"
+                     :rotation 90
+                     :user-unit 2.0
+                     :boxes {:media [0.0 0.0 200.0 300.0]
+                             :crop nil
+                             :bleed nil
+                             :trim nil
+                             :art nil}
+                     :layout-bbox {:x0 1.0 :y0 2.0 :x1 3.0 :y1 4.0}
+                     :text "A"
+                     :text-boxes [{:bbox {:x0 1.0 :y0 2.0 :x1 3.0 :y1 4.0}
+                                   :writing-mode "lr-tb"
+                                   :text "A"
+                                   :lines [{:bbox {:x0 1.0 :y0 2.0 :x1 3.0 :y1 4.0}
+                                            :orientation "horizontal"
+                                            :text "A"
+                                            :characters [{:text "A"
+                                                          :bbox {:x0 1.0 :y0 2.0 :x1 3.0 :y1 4.0}
+                                                          :font-name "Helvetica"
+                                                          :size 12.0
+                                                          :upright true
+                                                          :advance 7.5
+                                                          :matrix [1.0 0.0 0.0 1.0 20.0 30.0]
+                                                          :marked-content-id 17
+                                                          :tag "Span"
+                                                          :non-stroking-color-space "DeviceRGB"
+                                                          :stroking-color-space "DeviceGray"
+                                                          :non-stroking-color [0.1 0.2 0.3]
+                                                          :stroking-color [0.4]}]}]}]
+                     :tables [{:bbox {:x0 10.0 :top 20.0 :x1 30.0 :bottom 40.0}
+                               :row-count 1
+                               :column-count 1
+                               :cells [{:row-index 0
+                                        :column-index 0
+                                        :row-span 1
+                                        :column-span 1
+                                        :bbox {:x0 10.0 :top 20.0 :x1 30.0 :bottom 40.0}
+                                        :text "value"}]}]}]}
+           (#'pdf/raw-document->map document)))))
+
+(deftest metadata-converts-to-canonical-clojure-data
+  (let [metadata (RawDocumentMetadata.
+                  [(MetadataEntry. "Title" "Statement Of Account")
+                   (MetadataEntry. "CustomField" "custom value")]
+                  "Statement Of Account" "Al Rajhi Bank" nil nil "Octagon" "iText"
+                  "D:20260704114317+03'00'" "2026-07-04T11:43:17+03:00"
+                  nil nil
+                  (PdfVersion. "1.4" "1.7" "1.7")
+                  (long 1225686) (int 91) false
+                  (PdfPermissions. true true true)
+                  false true true false "acroform" true true "<x:xmpmeta/>")]
+    (is (= {:document-info {"Title" "Statement Of Account"
+                            "CustomField" "custom value"}
+            :title "Statement Of Account"
+            :author "Al Rajhi Bank"
+            :subject nil
+            :keywords nil
+            :creator "Octagon"
+            :producer "iText"
+            :creation-date-raw "D:20260704114317+03'00'"
+            :creation-date-iso "2026-07-04T11:43:17+03:00"
+            :modification-date-raw nil
+            :modification-date-iso nil
+            :version {:header "1.4" :catalog "1.7" :effective "1.7"}
+            :file-size-bytes 1225686
+            :page-count 91
+            :encrypted false
+            :permissions {:printable true :modifiable true :extractable true}
+            :linearized false
+            :tagged true
+            :user-properties true
+            :suspects false
+            :form "acroform"
+            :has-javascript true
+            :has-metadata-stream true
+            :xmp-metadata "<x:xmpmeta/>"}
+           (#'pdf/raw-document-metadata->map metadata)))))
 
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'sa.ingenious.pdf-test)]

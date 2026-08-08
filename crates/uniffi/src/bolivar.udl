@@ -59,6 +59,131 @@ dictionary Table {
     sequence<TableCell> cells;
 };
 
+dictionary RawTableBoundingBox {
+    double x0;
+    double top;
+    double x1;
+    double bottom;
+};
+
+dictionary RawCharacter {
+    string text;
+    BoundingBox bbox;
+    string font_name;
+    double size;
+    boolean upright;
+    double advance;
+    sequence<double> matrix;
+    i32? marked_content_id;
+    string? tag;
+    string? non_stroking_color_space;
+    string? stroking_color_space;
+    sequence<double>? non_stroking_color;
+    sequence<double>? stroking_color;
+};
+
+dictionary RawTextLine {
+    BoundingBox bbox;
+    string orientation;
+    string text;
+    sequence<RawCharacter> characters;
+};
+
+dictionary RawTextBox {
+    BoundingBox bbox;
+    string writing_mode;
+    string text;
+    sequence<RawTextLine> lines;
+};
+
+dictionary RawTableCell {
+    u32 row_index;
+    u32 column_index;
+    u32 row_span;
+    u32 column_span;
+    RawTableBoundingBox bbox;
+    string text;
+};
+
+dictionary RawTable {
+    RawTableBoundingBox bbox;
+    u32 row_count;
+    u32 column_count;
+    sequence<RawTableCell> cells;
+};
+
+dictionary RawPageBoxes {
+    sequence<double>? media;
+    sequence<double>? crop;
+    sequence<double>? bleed;
+    sequence<double>? trim;
+    sequence<double>? art;
+};
+
+dictionary RawPage {
+    u32 page_index;
+    u32 page_number;
+    u32 object_id;
+    string? label;
+    i64 rotation;
+    double user_unit;
+    RawPageBoxes boxes;
+    BoundingBox layout_bbox;
+    string text;
+    sequence<RawTextBox> text_boxes;
+    sequence<RawTable> tables;
+};
+
+dictionary RawDocument {
+    u32 declared_page_count;
+    u32 page_count;
+    sequence<RawPage> pages;
+};
+
+dictionary MetadataEntry {
+    string key;
+    string value;
+};
+
+dictionary PdfVersion {
+    string? header;
+    string? catalog;
+    string? effective;
+};
+
+dictionary PdfPermissions {
+    boolean printable;
+    boolean modifiable;
+    boolean extractable;
+};
+
+dictionary RawDocumentMetadata {
+    sequence<MetadataEntry> document_info;
+    string? title;
+    string? author;
+    string? subject;
+    string? keywords;
+    string? creator;
+    string? producer;
+    string? creation_date_raw;
+    string? creation_date_iso;
+    string? modification_date_raw;
+    string? modification_date_iso;
+    PdfVersion version;
+    u64 file_size_bytes;
+    u32 page_count;
+    boolean encrypted;
+    PdfPermissions permissions;
+    boolean linearized;
+    boolean tagged;
+    boolean user_properties;
+    boolean suspects;
+    string form;
+    boolean has_javascript;
+    boolean has_metadata_stream;
+    string? xmp_metadata;
+};
+
 dictionary LayoutParams {
     double? line_overlap;
     double? char_margin;
@@ -118,6 +243,15 @@ interface NativePdfDocument {
     sequence<LayoutPage> extract_layout_pages();
 
     [Throws=BolivarError]
+    RawDocument extract_raw_document();
+
+    [Throws=BolivarError]
+    RawPage extract_raw_page(u32 page_number);
+
+    [Throws=BolivarError]
+    RawDocumentMetadata metadata();
+
+    [Throws=BolivarError]
     sequence<Table> extract_tables();
 
     [Throws=BolivarError]
@@ -128,6 +262,8 @@ interface NativePdfDocument {
 };
 
 namespace bolivar {
+    string bolivar_version();
+
     [Throws=BolivarError]
     string quick_extract_text(string path, ExtractOptions? options);
 

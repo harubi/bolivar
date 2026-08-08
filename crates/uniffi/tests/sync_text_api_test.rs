@@ -137,6 +137,87 @@ fn build_single_page_multiline_text_pdf(first: &str, second: &str) -> Vec<u8> {
     out
 }
 
+fn build_metadata_pdf() -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(b"%PDF-1.4\n");
+
+    let mut offsets: Vec<usize> = Vec::new();
+    let push_obj = |buf: &mut Vec<u8>, obj: String, offsets: &mut Vec<usize>| {
+        offsets.push(buf.len());
+        buf.extend_from_slice(obj.as_bytes());
+    };
+
+    push_obj(
+        &mut out,
+        "1 0 obj\n<< /Type /Catalog /Version /1.7 /Pages 2 0 R /Names << /JavaScript 6 0 R >> /MarkInfo << /Marked true /UserProperties true /Suspects false >> /StructTreeRoot 9 0 R /AcroForm << >> /Metadata 7 0 R >>\nendobj\n".to_string(),
+        &mut offsets,
+    );
+    push_obj(
+        &mut out,
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_string(),
+        &mut offsets,
+    );
+    push_obj(
+        &mut out,
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> >>\nendobj\n".to_string(),
+        &mut offsets,
+    );
+    push_obj(
+        &mut out,
+        "4 0 obj\n<< >>\nendobj\n".to_string(),
+        &mut offsets,
+    );
+    push_obj(
+        &mut out,
+        "5 0 obj\n<< >>\nendobj\n".to_string(),
+        &mut offsets,
+    );
+    push_obj(
+        &mut out,
+        "6 0 obj\n<< /Names [(startup) 10 0 R] >>\nendobj\n".to_string(),
+        &mut offsets,
+    );
+    let xmp = "<x:xmpmeta>fixture</x:xmpmeta>";
+    push_obj(
+        &mut out,
+        format!(
+            "7 0 obj\n<< /Type /Metadata /Subtype /XML /Length {} >>\nstream\n{}\nendstream\nendobj\n",
+            xmp.len(),
+            xmp
+        ),
+        &mut offsets,
+    );
+    push_obj(
+        &mut out,
+        "8 0 obj\n<< /Title (Statement Of Account) /Author (Al Rajhi Bank) /Creator (Octagon 5.0) /Producer (iText) /CreationDate (D:20260704114317+03'00') /CustomField (custom value) >>\nendobj\n".to_string(),
+        &mut offsets,
+    );
+    push_obj(
+        &mut out,
+        "9 0 obj\n<< /Type /StructTreeRoot >>\nendobj\n".to_string(),
+        &mut offsets,
+    );
+    push_obj(
+        &mut out,
+        "10 0 obj\n<< /S /JavaScript /JS (app.alert\\(1\\)) >>\nendobj\n".to_string(),
+        &mut offsets,
+    );
+
+    let xref_pos = out.len();
+    let obj_count = offsets.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", obj_count + 1).as_bytes());
+    for offset in offsets {
+        out.extend_from_slice(format!("{:010} 00000 n \n", offset).as_bytes());
+    }
+    out.extend_from_slice(b"trailer\n<< /Size ");
+    out.extend_from_slice((obj_count + 1).to_string().as_bytes());
+    out.extend_from_slice(b" /Root 1 0 R /Info 8 0 R >>\nstartxref\n");
+    out.extend_from_slice(xref_pos.to_string().as_bytes());
+    out.extend_from_slice(b"\n%%EOF");
+
+    out
+}
+
 fn write_temp_pdf(data: &[u8]) -> PathBuf {
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
     let mut path = std::env::temp_dir();
@@ -215,6 +296,95 @@ fn native_document_extract_layout_pages_contains_text_lines_and_chars() {
     assert!(!pages[0].text_boxes[0].lines.is_empty());
     assert!(pages[0].text_boxes[0].lines[0].text.contains("Hello"));
     assert!(!pages[0].text_boxes[0].lines[0].chars.is_empty());
+}
+
+#[test]
+fn native_document_extract_raw_document_preserves_page_and_character_details() {
+    let pdf = build_single_page_text_pdf("Hello");
+    let doc = NativePdfDocument::from_bytes(pdf, None).expect("doc from bytes");
+
+    let raw = doc.extract_raw_document().expect("raw document");
+
+    assert_eq!(raw.declared_page_count, 1);
+    assert_eq!(raw.page_count, 1);
+    assert_eq!(raw.pages[0].page_index, 0);
+    assert_eq!(raw.pages[0].page_number, 1);
+    assert_eq!(raw.pages[0].object_id, 3);
+    assert_eq!(raw.pages[0].boxes.media, Some(vec![0.0, 0.0, 200.0, 200.0]));
+    assert!(raw.pages[0].text.contains("Hello"));
+    let character = &raw.pages[0].text_boxes[0].lines[0].characters[0];
+    assert_eq!(character.text, "H");
+    assert_eq!(character.matrix.len(), 6);
+    assert!(character.advance > 0.0);
+}
+
+#[test]
+fn native_document_extract_raw_page_returns_only_the_requested_page() {
+    let pdf = build_minimal_pdf_with_pages(3);
+    let doc = NativePdfDocument::from_bytes(pdf, None).expect("doc from bytes");
+
+    let page = doc.extract_raw_page(2).expect("raw page 2");
+
+    assert_eq!(page.page_index, 1);
+    assert_eq!(page.page_number, 2);
+}
+
+#[test]
+fn native_document_metadata_preserves_info_and_derives_pdf_flags() {
+    let pdf = build_metadata_pdf();
+    let expected_size = pdf.len() as u64;
+    let doc = NativePdfDocument::from_bytes(pdf, None).expect("doc from bytes");
+
+    let metadata = doc.metadata().expect("document metadata");
+    let info = metadata
+        .document_info
+        .into_iter()
+        .map(|entry| (entry.key, entry.value))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    assert_eq!(
+        info.get("Title").map(String::as_str),
+        Some("Statement Of Account")
+    );
+    assert_eq!(
+        info.get("CustomField").map(String::as_str),
+        Some("custom value")
+    );
+    assert_eq!(metadata.title.as_deref(), Some("Statement Of Account"));
+    assert_eq!(metadata.author.as_deref(), Some("Al Rajhi Bank"));
+    assert_eq!(
+        metadata.creation_date_raw.as_deref(),
+        Some("D:20260704114317+03'00'")
+    );
+    assert_eq!(
+        metadata.creation_date_iso.as_deref(),
+        Some("2026-07-04T11:43:17+03:00")
+    );
+    assert_eq!(metadata.version.header.as_deref(), Some("1.4"));
+    assert_eq!(metadata.version.catalog.as_deref(), Some("1.7"));
+    assert_eq!(metadata.version.effective.as_deref(), Some("1.7"));
+    assert_eq!(metadata.file_size_bytes, expected_size);
+    assert_eq!(metadata.page_count, 1);
+    assert!(!metadata.encrypted);
+    assert!(metadata.permissions.printable);
+    assert!(metadata.permissions.modifiable);
+    assert!(metadata.permissions.extractable);
+    assert!(!metadata.linearized);
+    assert!(metadata.tagged);
+    assert!(metadata.user_properties);
+    assert!(!metadata.suspects);
+    assert_eq!(metadata.form, "acroform");
+    assert!(metadata.has_javascript);
+    assert!(metadata.has_metadata_stream);
+    assert_eq!(
+        metadata.xmp_metadata.as_deref(),
+        Some("<x:xmpmeta>fixture</x:xmpmeta>")
+    );
+}
+
+#[test]
+fn bolivar_version_matches_the_crate_version() {
+    assert_eq!(bolivar_uniffi::bolivar_version(), env!("CARGO_PKG_VERSION"));
 }
 
 #[test]

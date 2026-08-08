@@ -11,6 +11,12 @@ internal class NativeDocumentBackend(
 
     override fun extractLayoutPages(): List<LayoutPage> = native.extractLayoutPages().map { it.toPublic() }
 
+    override fun extractRawDocument(): RawDocument = native.extractRawDocument().toPublic()
+
+    override fun extractRawPage(pageNumber: Int): RawPage = native.extractRawPage(pageNumber.toPageNumberUInt()).toPublic()
+
+    override fun metadata(): RawDocumentMetadata = native.metadata().toPublic()
+
     override fun extractTables(): List<Table> = native.extractTables().map { it.toPublic() }
 
     override fun extractTables(options: TableOptions?): List<Table> =

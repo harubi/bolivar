@@ -742,6 +742,8 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckApiChecksums(this)
     }
 
+    external fun uniffi_bolivar_uniffi_checksum_func_bolivar_version(): Short
+
     external fun uniffi_bolivar_uniffi_checksum_func_quick_extract_text(): Short
 
     external fun uniffi_bolivar_uniffi_checksum_func_quick_extract_text_from_bytes(): Short
@@ -750,6 +752,10 @@ internal object IntegrityCheckingUniffiLib {
 
     external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_page_summaries(): Short
 
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_document(): Short
+
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_page(): Short
+
     external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_table_rows_with(): Short
 
     external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_tables(): Short
@@ -757,6 +763,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_tables_with(): Short
 
     external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_text(): Short
+
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_metadata(): Short
 
     external fun uniffi_bolivar_uniffi_checksum_constructor_nativepdfdocument_from_bytes(): Short
 
@@ -807,6 +815,17 @@ internal object UniffiLib {
         uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
 
+    external fun uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_raw_document(
+        `ptr`: Long,
+        uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+
+    external fun uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_raw_page(
+        `ptr`: Long,
+        `pageNumber`: Int,
+        uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+
     external fun uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_table_rows_with(
         `ptr`: Long,
         `options`: RustBuffer.ByValue,
@@ -828,6 +847,13 @@ internal object UniffiLib {
         `ptr`: Long,
         uniffi_out_err: UniffiRustCallStatus,
     ): RustBuffer.ByValue
+
+    external fun uniffi_bolivar_uniffi_fn_method_nativepdfdocument_metadata(
+        `ptr`: Long,
+        uniffi_out_err: UniffiRustCallStatus,
+    ): RustBuffer.ByValue
+
+    external fun uniffi_bolivar_uniffi_fn_func_bolivar_version(uniffi_out_err: UniffiRustCallStatus): RustBuffer.ByValue
 
     external fun uniffi_bolivar_uniffi_fn_func_quick_extract_text(
         `path`: RustBuffer.ByValue,
@@ -1055,6 +1081,9 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_bolivar_uniffi_checksum_func_bolivar_version() != 51568.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_bolivar_uniffi_checksum_func_quick_extract_text() != 23574.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1067,6 +1096,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_page_summaries() != 9331.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_document() != 53067.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_page() != 21090.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_table_rows_with() != 27012.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1077,6 +1112,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_text() != 44718.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_metadata() != 36498.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_bolivar_uniffi_checksum_constructor_nativepdfdocument_from_bytes() != 1608.toShort()) {
@@ -1275,6 +1313,66 @@ public object FfiConverterUInt : FfiConverter<UInt, Int> {
         buf: ByteBuffer,
     ) {
         buf.putInt(value.toInt())
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterInt : FfiConverter<Int, Int> {
+    override fun lift(value: Int): Int = value
+
+    override fun read(buf: ByteBuffer): Int = buf.getInt()
+
+    override fun lower(value: Int): Int = value
+
+    override fun allocationSize(value: Int) = 4UL
+
+    override fun write(
+        value: Int,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterULong : FfiConverter<ULong, Long> {
+    override fun lift(value: Long): ULong = value.toULong()
+
+    override fun read(buf: ByteBuffer): ULong = lift(buf.getLong())
+
+    override fun lower(value: ULong): Long = value.toLong()
+
+    override fun allocationSize(value: ULong) = 8UL
+
+    override fun write(
+        value: ULong,
+        buf: ByteBuffer,
+    ) {
+        buf.putLong(value.toLong())
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterLong : FfiConverter<Long, Long> {
+    override fun lift(value: Long): Long = value
+
+    override fun read(buf: ByteBuffer): Long = buf.getLong()
+
+    override fun lower(value: Long): Long = value
+
+    override fun allocationSize(value: Long) = 8UL
+
+    override fun write(
+        value: Long,
+        buf: ByteBuffer,
+    ) {
+        buf.putLong(value)
     }
 }
 
@@ -1499,6 +1597,10 @@ public interface NativePdfDocumentInterface {
 
     fun `extractPageSummaries`(): List<PageSummary>
 
+    fun `extractRawDocument`(): RawDocument
+
+    fun `extractRawPage`(`pageNumber`: kotlin.UInt): RawPage
+
     fun `extractTableRowsWith`(`options`: TableOptions?): List<PageTableRows>
 
     fun `extractTables`(): List<Table>
@@ -1506,6 +1608,8 @@ public interface NativePdfDocumentInterface {
     fun `extractTablesWith`(`options`: TableOptions?): List<Table>
 
     fun `extractText`(): kotlin.String
+
+    fun `metadata`(): RawDocumentMetadata
 
     companion object
 }
@@ -1636,6 +1740,33 @@ open class NativePdfDocument :
         )
 
     @Throws(BolivarException::class)
+    override fun `extractRawDocument`(): RawDocument =
+        FfiConverterTypeRawDocument.lift(
+            callWithHandle {
+                uniffiRustCallWithError(BolivarException) { _status ->
+                    UniffiLib.uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_raw_document(
+                        it,
+                        _status,
+                    )
+                }
+            },
+        )
+
+    @Throws(BolivarException::class)
+    override fun `extractRawPage`(`pageNumber`: kotlin.UInt): RawPage =
+        FfiConverterTypeRawPage.lift(
+            callWithHandle {
+                uniffiRustCallWithError(BolivarException) { _status ->
+                    UniffiLib.uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_raw_page(
+                        it,
+                        FfiConverterUInt.lower(`pageNumber`),
+                        _status,
+                    )
+                }
+            },
+        )
+
+    @Throws(BolivarException::class)
     override fun `extractTableRowsWith`(`options`: TableOptions?): List<PageTableRows> =
         FfiConverterSequenceTypePageTableRows.lift(
             callWithHandle {
@@ -1682,6 +1813,19 @@ open class NativePdfDocument :
             callWithHandle {
                 uniffiRustCallWithError(BolivarException) { _status ->
                     UniffiLib.uniffi_bolivar_uniffi_fn_method_nativepdfdocument_extract_text(
+                        it,
+                        _status,
+                    )
+                }
+            },
+        )
+
+    @Throws(BolivarException::class)
+    override fun `metadata`(): RawDocumentMetadata =
+        FfiConverterTypeRawDocumentMetadata.lift(
+            callWithHandle {
+                uniffiRustCallWithError(BolivarException) { _status ->
+                    UniffiLib.uniffi_bolivar_uniffi_fn_method_nativepdfdocument_metadata(
                         it,
                         _status,
                     )
@@ -2046,6 +2190,38 @@ public object FfiConverterTypeLayoutTextBox : FfiConverterRustBuffer<LayoutTextB
     }
 }
 
+data class MetadataEntry(
+    val `key`: kotlin.String,
+    val `value`: kotlin.String,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMetadataEntry : FfiConverterRustBuffer<MetadataEntry> {
+    override fun read(buf: ByteBuffer): MetadataEntry =
+        MetadataEntry(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+
+    override fun allocationSize(value: MetadataEntry) =
+        (
+            FfiConverterString.allocationSize(value.`key`) +
+                FfiConverterString.allocationSize(value.`value`)
+        )
+
+    override fun write(
+        value: MetadataEntry,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterString.write(value.`key`, buf)
+        FfiConverterString.write(value.`value`, buf)
+    }
+}
+
 data class PageSummary(
     val `pageNumber`: kotlin.UInt,
     val `text`: kotlin.String,
@@ -2115,6 +2291,630 @@ public object FfiConverterTypePageTableRows : FfiConverterRustBuffer<PageTableRo
     ) {
         FfiConverterUInt.write(value.`pageNumber`, buf)
         FfiConverterSequenceSequenceSequenceOptionalString.write(value.`tables`, buf)
+    }
+}
+
+data class PdfPermissions(
+    val `printable`: kotlin.Boolean,
+    val `modifiable`: kotlin.Boolean,
+    val `extractable`: kotlin.Boolean,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePdfPermissions : FfiConverterRustBuffer<PdfPermissions> {
+    override fun read(buf: ByteBuffer): PdfPermissions =
+        PdfPermissions(
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+
+    override fun allocationSize(value: PdfPermissions) =
+        (
+            FfiConverterBoolean.allocationSize(value.`printable`) +
+                FfiConverterBoolean.allocationSize(value.`modifiable`) +
+                FfiConverterBoolean.allocationSize(value.`extractable`)
+        )
+
+    override fun write(
+        value: PdfPermissions,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterBoolean.write(value.`printable`, buf)
+        FfiConverterBoolean.write(value.`modifiable`, buf)
+        FfiConverterBoolean.write(value.`extractable`, buf)
+    }
+}
+
+data class PdfVersion(
+    val `header`: kotlin.String?,
+    val `catalog`: kotlin.String?,
+    val `effective`: kotlin.String?,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePdfVersion : FfiConverterRustBuffer<PdfVersion> {
+    override fun read(buf: ByteBuffer): PdfVersion =
+        PdfVersion(
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+
+    override fun allocationSize(value: PdfVersion) =
+        (
+            FfiConverterOptionalString.allocationSize(value.`header`) +
+                FfiConverterOptionalString.allocationSize(value.`catalog`) +
+                FfiConverterOptionalString.allocationSize(value.`effective`)
+        )
+
+    override fun write(
+        value: PdfVersion,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterOptionalString.write(value.`header`, buf)
+        FfiConverterOptionalString.write(value.`catalog`, buf)
+        FfiConverterOptionalString.write(value.`effective`, buf)
+    }
+}
+
+data class RawCharacter(
+    val `text`: kotlin.String,
+    val `bbox`: BoundingBox,
+    val `fontName`: kotlin.String,
+    val `size`: kotlin.Double,
+    val `upright`: kotlin.Boolean,
+    val `advance`: kotlin.Double,
+    val `matrix`: List<kotlin.Double>,
+    val `markedContentId`: kotlin.Int?,
+    val `tag`: kotlin.String?,
+    val `nonStrokingColorSpace`: kotlin.String?,
+    val `strokingColorSpace`: kotlin.String?,
+    val `nonStrokingColor`: List<kotlin.Double>?,
+    val `strokingColor`: List<kotlin.Double>?,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRawCharacter : FfiConverterRustBuffer<RawCharacter> {
+    override fun read(buf: ByteBuffer): RawCharacter =
+        RawCharacter(
+            FfiConverterString.read(buf),
+            FfiConverterTypeBoundingBox.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterSequenceDouble.read(buf),
+            FfiConverterOptionalInt.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalSequenceDouble.read(buf),
+            FfiConverterOptionalSequenceDouble.read(buf),
+        )
+
+    override fun allocationSize(value: RawCharacter) =
+        (
+            FfiConverterString.allocationSize(value.`text`) +
+                FfiConverterTypeBoundingBox.allocationSize(value.`bbox`) +
+                FfiConverterString.allocationSize(value.`fontName`) +
+                FfiConverterDouble.allocationSize(value.`size`) +
+                FfiConverterBoolean.allocationSize(value.`upright`) +
+                FfiConverterDouble.allocationSize(value.`advance`) +
+                FfiConverterSequenceDouble.allocationSize(value.`matrix`) +
+                FfiConverterOptionalInt.allocationSize(value.`markedContentId`) +
+                FfiConverterOptionalString.allocationSize(value.`tag`) +
+                FfiConverterOptionalString.allocationSize(value.`nonStrokingColorSpace`) +
+                FfiConverterOptionalString.allocationSize(value.`strokingColorSpace`) +
+                FfiConverterOptionalSequenceDouble.allocationSize(value.`nonStrokingColor`) +
+                FfiConverterOptionalSequenceDouble.allocationSize(value.`strokingColor`)
+        )
+
+    override fun write(
+        value: RawCharacter,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterString.write(value.`text`, buf)
+        FfiConverterTypeBoundingBox.write(value.`bbox`, buf)
+        FfiConverterString.write(value.`fontName`, buf)
+        FfiConverterDouble.write(value.`size`, buf)
+        FfiConverterBoolean.write(value.`upright`, buf)
+        FfiConverterDouble.write(value.`advance`, buf)
+        FfiConverterSequenceDouble.write(value.`matrix`, buf)
+        FfiConverterOptionalInt.write(value.`markedContentId`, buf)
+        FfiConverterOptionalString.write(value.`tag`, buf)
+        FfiConverterOptionalString.write(value.`nonStrokingColorSpace`, buf)
+        FfiConverterOptionalString.write(value.`strokingColorSpace`, buf)
+        FfiConverterOptionalSequenceDouble.write(value.`nonStrokingColor`, buf)
+        FfiConverterOptionalSequenceDouble.write(value.`strokingColor`, buf)
+    }
+}
+
+data class RawDocument(
+    val `declaredPageCount`: kotlin.UInt,
+    val `pageCount`: kotlin.UInt,
+    val `pages`: List<RawPage>,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRawDocument : FfiConverterRustBuffer<RawDocument> {
+    override fun read(buf: ByteBuffer): RawDocument =
+        RawDocument(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterSequenceTypeRawPage.read(buf),
+        )
+
+    override fun allocationSize(value: RawDocument) =
+        (
+            FfiConverterUInt.allocationSize(value.`declaredPageCount`) +
+                FfiConverterUInt.allocationSize(value.`pageCount`) +
+                FfiConverterSequenceTypeRawPage.allocationSize(value.`pages`)
+        )
+
+    override fun write(
+        value: RawDocument,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterUInt.write(value.`declaredPageCount`, buf)
+        FfiConverterUInt.write(value.`pageCount`, buf)
+        FfiConverterSequenceTypeRawPage.write(value.`pages`, buf)
+    }
+}
+
+data class RawDocumentMetadata(
+    val `documentInfo`: List<MetadataEntry>,
+    val `title`: kotlin.String?,
+    val `author`: kotlin.String?,
+    val `subject`: kotlin.String?,
+    val `keywords`: kotlin.String?,
+    val `creator`: kotlin.String?,
+    val `producer`: kotlin.String?,
+    val `creationDateRaw`: kotlin.String?,
+    val `creationDateIso`: kotlin.String?,
+    val `modificationDateRaw`: kotlin.String?,
+    val `modificationDateIso`: kotlin.String?,
+    val `version`: PdfVersion,
+    val `fileSizeBytes`: kotlin.ULong,
+    val `pageCount`: kotlin.UInt,
+    val `encrypted`: kotlin.Boolean,
+    val `permissions`: PdfPermissions,
+    val `linearized`: kotlin.Boolean,
+    val `tagged`: kotlin.Boolean,
+    val `userProperties`: kotlin.Boolean,
+    val `suspects`: kotlin.Boolean,
+    val `form`: kotlin.String,
+    val `hasJavascript`: kotlin.Boolean,
+    val `hasMetadataStream`: kotlin.Boolean,
+    val `xmpMetadata`: kotlin.String?,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRawDocumentMetadata : FfiConverterRustBuffer<RawDocumentMetadata> {
+    override fun read(buf: ByteBuffer): RawDocumentMetadata =
+        RawDocumentMetadata(
+            FfiConverterSequenceTypeMetadataEntry.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterTypePdfVersion.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterTypePdfPermissions.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterOptionalString.read(buf),
+        )
+
+    override fun allocationSize(value: RawDocumentMetadata) =
+        (
+            FfiConverterSequenceTypeMetadataEntry.allocationSize(value.`documentInfo`) +
+                FfiConverterOptionalString.allocationSize(value.`title`) +
+                FfiConverterOptionalString.allocationSize(value.`author`) +
+                FfiConverterOptionalString.allocationSize(value.`subject`) +
+                FfiConverterOptionalString.allocationSize(value.`keywords`) +
+                FfiConverterOptionalString.allocationSize(value.`creator`) +
+                FfiConverterOptionalString.allocationSize(value.`producer`) +
+                FfiConverterOptionalString.allocationSize(value.`creationDateRaw`) +
+                FfiConverterOptionalString.allocationSize(value.`creationDateIso`) +
+                FfiConverterOptionalString.allocationSize(value.`modificationDateRaw`) +
+                FfiConverterOptionalString.allocationSize(value.`modificationDateIso`) +
+                FfiConverterTypePdfVersion.allocationSize(value.`version`) +
+                FfiConverterULong.allocationSize(value.`fileSizeBytes`) +
+                FfiConverterUInt.allocationSize(value.`pageCount`) +
+                FfiConverterBoolean.allocationSize(value.`encrypted`) +
+                FfiConverterTypePdfPermissions.allocationSize(value.`permissions`) +
+                FfiConverterBoolean.allocationSize(value.`linearized`) +
+                FfiConverterBoolean.allocationSize(value.`tagged`) +
+                FfiConverterBoolean.allocationSize(value.`userProperties`) +
+                FfiConverterBoolean.allocationSize(value.`suspects`) +
+                FfiConverterString.allocationSize(value.`form`) +
+                FfiConverterBoolean.allocationSize(value.`hasJavascript`) +
+                FfiConverterBoolean.allocationSize(value.`hasMetadataStream`) +
+                FfiConverterOptionalString.allocationSize(value.`xmpMetadata`)
+        )
+
+    override fun write(
+        value: RawDocumentMetadata,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterSequenceTypeMetadataEntry.write(value.`documentInfo`, buf)
+        FfiConverterOptionalString.write(value.`title`, buf)
+        FfiConverterOptionalString.write(value.`author`, buf)
+        FfiConverterOptionalString.write(value.`subject`, buf)
+        FfiConverterOptionalString.write(value.`keywords`, buf)
+        FfiConverterOptionalString.write(value.`creator`, buf)
+        FfiConverterOptionalString.write(value.`producer`, buf)
+        FfiConverterOptionalString.write(value.`creationDateRaw`, buf)
+        FfiConverterOptionalString.write(value.`creationDateIso`, buf)
+        FfiConverterOptionalString.write(value.`modificationDateRaw`, buf)
+        FfiConverterOptionalString.write(value.`modificationDateIso`, buf)
+        FfiConverterTypePdfVersion.write(value.`version`, buf)
+        FfiConverterULong.write(value.`fileSizeBytes`, buf)
+        FfiConverterUInt.write(value.`pageCount`, buf)
+        FfiConverterBoolean.write(value.`encrypted`, buf)
+        FfiConverterTypePdfPermissions.write(value.`permissions`, buf)
+        FfiConverterBoolean.write(value.`linearized`, buf)
+        FfiConverterBoolean.write(value.`tagged`, buf)
+        FfiConverterBoolean.write(value.`userProperties`, buf)
+        FfiConverterBoolean.write(value.`suspects`, buf)
+        FfiConverterString.write(value.`form`, buf)
+        FfiConverterBoolean.write(value.`hasJavascript`, buf)
+        FfiConverterBoolean.write(value.`hasMetadataStream`, buf)
+        FfiConverterOptionalString.write(value.`xmpMetadata`, buf)
+    }
+}
+
+data class RawPage(
+    val `pageIndex`: kotlin.UInt,
+    val `pageNumber`: kotlin.UInt,
+    val `objectId`: kotlin.UInt,
+    val `label`: kotlin.String?,
+    val `rotation`: kotlin.Long,
+    val `userUnit`: kotlin.Double,
+    val `boxes`: RawPageBoxes,
+    val `layoutBbox`: BoundingBox,
+    val `text`: kotlin.String,
+    val `textBoxes`: List<RawTextBox>,
+    val `tables`: List<RawTable>,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRawPage : FfiConverterRustBuffer<RawPage> {
+    override fun read(buf: ByteBuffer): RawPage =
+        RawPage(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterTypeRawPageBoxes.read(buf),
+            FfiConverterTypeBoundingBox.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeRawTextBox.read(buf),
+            FfiConverterSequenceTypeRawTable.read(buf),
+        )
+
+    override fun allocationSize(value: RawPage) =
+        (
+            FfiConverterUInt.allocationSize(value.`pageIndex`) +
+                FfiConverterUInt.allocationSize(value.`pageNumber`) +
+                FfiConverterUInt.allocationSize(value.`objectId`) +
+                FfiConverterOptionalString.allocationSize(value.`label`) +
+                FfiConverterLong.allocationSize(value.`rotation`) +
+                FfiConverterDouble.allocationSize(value.`userUnit`) +
+                FfiConverterTypeRawPageBoxes.allocationSize(value.`boxes`) +
+                FfiConverterTypeBoundingBox.allocationSize(value.`layoutBbox`) +
+                FfiConverterString.allocationSize(value.`text`) +
+                FfiConverterSequenceTypeRawTextBox.allocationSize(value.`textBoxes`) +
+                FfiConverterSequenceTypeRawTable.allocationSize(value.`tables`)
+        )
+
+    override fun write(
+        value: RawPage,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterUInt.write(value.`pageIndex`, buf)
+        FfiConverterUInt.write(value.`pageNumber`, buf)
+        FfiConverterUInt.write(value.`objectId`, buf)
+        FfiConverterOptionalString.write(value.`label`, buf)
+        FfiConverterLong.write(value.`rotation`, buf)
+        FfiConverterDouble.write(value.`userUnit`, buf)
+        FfiConverterTypeRawPageBoxes.write(value.`boxes`, buf)
+        FfiConverterTypeBoundingBox.write(value.`layoutBbox`, buf)
+        FfiConverterString.write(value.`text`, buf)
+        FfiConverterSequenceTypeRawTextBox.write(value.`textBoxes`, buf)
+        FfiConverterSequenceTypeRawTable.write(value.`tables`, buf)
+    }
+}
+
+data class RawPageBoxes(
+    val `media`: List<kotlin.Double>?,
+    val `crop`: List<kotlin.Double>?,
+    val `bleed`: List<kotlin.Double>?,
+    val `trim`: List<kotlin.Double>?,
+    val `art`: List<kotlin.Double>?,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRawPageBoxes : FfiConverterRustBuffer<RawPageBoxes> {
+    override fun read(buf: ByteBuffer): RawPageBoxes =
+        RawPageBoxes(
+            FfiConverterOptionalSequenceDouble.read(buf),
+            FfiConverterOptionalSequenceDouble.read(buf),
+            FfiConverterOptionalSequenceDouble.read(buf),
+            FfiConverterOptionalSequenceDouble.read(buf),
+            FfiConverterOptionalSequenceDouble.read(buf),
+        )
+
+    override fun allocationSize(value: RawPageBoxes) =
+        (
+            FfiConverterOptionalSequenceDouble.allocationSize(value.`media`) +
+                FfiConverterOptionalSequenceDouble.allocationSize(value.`crop`) +
+                FfiConverterOptionalSequenceDouble.allocationSize(value.`bleed`) +
+                FfiConverterOptionalSequenceDouble.allocationSize(value.`trim`) +
+                FfiConverterOptionalSequenceDouble.allocationSize(value.`art`)
+        )
+
+    override fun write(
+        value: RawPageBoxes,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterOptionalSequenceDouble.write(value.`media`, buf)
+        FfiConverterOptionalSequenceDouble.write(value.`crop`, buf)
+        FfiConverterOptionalSequenceDouble.write(value.`bleed`, buf)
+        FfiConverterOptionalSequenceDouble.write(value.`trim`, buf)
+        FfiConverterOptionalSequenceDouble.write(value.`art`, buf)
+    }
+}
+
+data class RawTable(
+    val `bbox`: RawTableBoundingBox,
+    val `rowCount`: kotlin.UInt,
+    val `columnCount`: kotlin.UInt,
+    val `cells`: List<RawTableCell>,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRawTable : FfiConverterRustBuffer<RawTable> {
+    override fun read(buf: ByteBuffer): RawTable =
+        RawTable(
+            FfiConverterTypeRawTableBoundingBox.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterSequenceTypeRawTableCell.read(buf),
+        )
+
+    override fun allocationSize(value: RawTable) =
+        (
+            FfiConverterTypeRawTableBoundingBox.allocationSize(value.`bbox`) +
+                FfiConverterUInt.allocationSize(value.`rowCount`) +
+                FfiConverterUInt.allocationSize(value.`columnCount`) +
+                FfiConverterSequenceTypeRawTableCell.allocationSize(value.`cells`)
+        )
+
+    override fun write(
+        value: RawTable,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterTypeRawTableBoundingBox.write(value.`bbox`, buf)
+        FfiConverterUInt.write(value.`rowCount`, buf)
+        FfiConverterUInt.write(value.`columnCount`, buf)
+        FfiConverterSequenceTypeRawTableCell.write(value.`cells`, buf)
+    }
+}
+
+data class RawTableBoundingBox(
+    val `x0`: kotlin.Double,
+    val `top`: kotlin.Double,
+    val `x1`: kotlin.Double,
+    val `bottom`: kotlin.Double,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRawTableBoundingBox : FfiConverterRustBuffer<RawTableBoundingBox> {
+    override fun read(buf: ByteBuffer): RawTableBoundingBox =
+        RawTableBoundingBox(
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+            FfiConverterDouble.read(buf),
+        )
+
+    override fun allocationSize(value: RawTableBoundingBox) =
+        (
+            FfiConverterDouble.allocationSize(value.`x0`) +
+                FfiConverterDouble.allocationSize(value.`top`) +
+                FfiConverterDouble.allocationSize(value.`x1`) +
+                FfiConverterDouble.allocationSize(value.`bottom`)
+        )
+
+    override fun write(
+        value: RawTableBoundingBox,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterDouble.write(value.`x0`, buf)
+        FfiConverterDouble.write(value.`top`, buf)
+        FfiConverterDouble.write(value.`x1`, buf)
+        FfiConverterDouble.write(value.`bottom`, buf)
+    }
+}
+
+data class RawTableCell(
+    val `rowIndex`: kotlin.UInt,
+    val `columnIndex`: kotlin.UInt,
+    val `rowSpan`: kotlin.UInt,
+    val `columnSpan`: kotlin.UInt,
+    val `bbox`: RawTableBoundingBox,
+    val `text`: kotlin.String,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRawTableCell : FfiConverterRustBuffer<RawTableCell> {
+    override fun read(buf: ByteBuffer): RawTableCell =
+        RawTableCell(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterTypeRawTableBoundingBox.read(buf),
+            FfiConverterString.read(buf),
+        )
+
+    override fun allocationSize(value: RawTableCell) =
+        (
+            FfiConverterUInt.allocationSize(value.`rowIndex`) +
+                FfiConverterUInt.allocationSize(value.`columnIndex`) +
+                FfiConverterUInt.allocationSize(value.`rowSpan`) +
+                FfiConverterUInt.allocationSize(value.`columnSpan`) +
+                FfiConverterTypeRawTableBoundingBox.allocationSize(value.`bbox`) +
+                FfiConverterString.allocationSize(value.`text`)
+        )
+
+    override fun write(
+        value: RawTableCell,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterUInt.write(value.`rowIndex`, buf)
+        FfiConverterUInt.write(value.`columnIndex`, buf)
+        FfiConverterUInt.write(value.`rowSpan`, buf)
+        FfiConverterUInt.write(value.`columnSpan`, buf)
+        FfiConverterTypeRawTableBoundingBox.write(value.`bbox`, buf)
+        FfiConverterString.write(value.`text`, buf)
+    }
+}
+
+data class RawTextBox(
+    val `bbox`: BoundingBox,
+    val `writingMode`: kotlin.String,
+    val `text`: kotlin.String,
+    val `lines`: List<RawTextLine>,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRawTextBox : FfiConverterRustBuffer<RawTextBox> {
+    override fun read(buf: ByteBuffer): RawTextBox =
+        RawTextBox(
+            FfiConverterTypeBoundingBox.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeRawTextLine.read(buf),
+        )
+
+    override fun allocationSize(value: RawTextBox) =
+        (
+            FfiConverterTypeBoundingBox.allocationSize(value.`bbox`) +
+                FfiConverterString.allocationSize(value.`writingMode`) +
+                FfiConverterString.allocationSize(value.`text`) +
+                FfiConverterSequenceTypeRawTextLine.allocationSize(value.`lines`)
+        )
+
+    override fun write(
+        value: RawTextBox,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterTypeBoundingBox.write(value.`bbox`, buf)
+        FfiConverterString.write(value.`writingMode`, buf)
+        FfiConverterString.write(value.`text`, buf)
+        FfiConverterSequenceTypeRawTextLine.write(value.`lines`, buf)
+    }
+}
+
+data class RawTextLine(
+    val `bbox`: BoundingBox,
+    val `orientation`: kotlin.String,
+    val `text`: kotlin.String,
+    val `characters`: List<RawCharacter>,
+) {
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRawTextLine : FfiConverterRustBuffer<RawTextLine> {
+    override fun read(buf: ByteBuffer): RawTextLine =
+        RawTextLine(
+            FfiConverterTypeBoundingBox.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeRawCharacter.read(buf),
+        )
+
+    override fun allocationSize(value: RawTextLine) =
+        (
+            FfiConverterTypeBoundingBox.allocationSize(value.`bbox`) +
+                FfiConverterString.allocationSize(value.`orientation`) +
+                FfiConverterString.allocationSize(value.`text`) +
+                FfiConverterSequenceTypeRawCharacter.allocationSize(value.`characters`)
+        )
+
+    override fun write(
+        value: RawTextLine,
+        buf: ByteBuffer,
+    ) {
+        FfiConverterTypeBoundingBox.write(value.`bbox`, buf)
+        FfiConverterString.write(value.`orientation`, buf)
+        FfiConverterString.write(value.`text`, buf)
+        FfiConverterSequenceTypeRawCharacter.write(value.`characters`, buf)
     }
 }
 
@@ -2453,6 +3253,38 @@ public object FfiConverterOptionalUInt : FfiConverterRustBuffer<kotlin.UInt?> {
         } else {
             buf.put(1)
             FfiConverterUInt.write(value, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalInt : FfiConverterRustBuffer<kotlin.Int?> {
+    override fun read(buf: ByteBuffer): kotlin.Int? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterInt.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.Int?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterInt.allocationSize(value)
+        }
+    }
+
+    override fun write(
+        value: kotlin.Int?,
+        buf: ByteBuffer,
+    ) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterInt.write(value, buf)
         }
     }
 }
@@ -2916,6 +3748,34 @@ public object FfiConverterSequenceTypeLayoutTextBox : FfiConverterRustBuffer<Lis
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeMetadataEntry : FfiConverterRustBuffer<List<MetadataEntry>> {
+    override fun read(buf: ByteBuffer): List<MetadataEntry> {
+        val len = buf.getInt()
+        return List<MetadataEntry>(len) {
+            FfiConverterTypeMetadataEntry.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<MetadataEntry>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeMetadataEntry.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<MetadataEntry>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeMetadataEntry.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypePageSummary : FfiConverterRustBuffer<List<PageSummary>> {
     override fun read(buf: ByteBuffer): List<PageSummary> {
         val len = buf.getInt()
@@ -2965,6 +3825,174 @@ public object FfiConverterSequenceTypePageTableRows : FfiConverterRustBuffer<Lis
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypePageTableRows.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRawCharacter : FfiConverterRustBuffer<List<RawCharacter>> {
+    override fun read(buf: ByteBuffer): List<RawCharacter> {
+        val len = buf.getInt()
+        return List<RawCharacter>(len) {
+            FfiConverterTypeRawCharacter.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RawCharacter>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRawCharacter.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<RawCharacter>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRawCharacter.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRawPage : FfiConverterRustBuffer<List<RawPage>> {
+    override fun read(buf: ByteBuffer): List<RawPage> {
+        val len = buf.getInt()
+        return List<RawPage>(len) {
+            FfiConverterTypeRawPage.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RawPage>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRawPage.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<RawPage>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRawPage.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRawTable : FfiConverterRustBuffer<List<RawTable>> {
+    override fun read(buf: ByteBuffer): List<RawTable> {
+        val len = buf.getInt()
+        return List<RawTable>(len) {
+            FfiConverterTypeRawTable.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RawTable>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRawTable.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<RawTable>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRawTable.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRawTableCell : FfiConverterRustBuffer<List<RawTableCell>> {
+    override fun read(buf: ByteBuffer): List<RawTableCell> {
+        val len = buf.getInt()
+        return List<RawTableCell>(len) {
+            FfiConverterTypeRawTableCell.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RawTableCell>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRawTableCell.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<RawTableCell>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRawTableCell.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRawTextBox : FfiConverterRustBuffer<List<RawTextBox>> {
+    override fun read(buf: ByteBuffer): List<RawTextBox> {
+        val len = buf.getInt()
+        return List<RawTextBox>(len) {
+            FfiConverterTypeRawTextBox.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RawTextBox>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRawTextBox.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<RawTextBox>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRawTextBox.write(it, buf)
+        }
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeRawTextLine : FfiConverterRustBuffer<List<RawTextLine>> {
+    override fun read(buf: ByteBuffer): List<RawTextLine> {
+        val len = buf.getInt()
+        return List<RawTextLine>(len) {
+            FfiConverterTypeRawTextLine.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<RawTextLine>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeRawTextLine.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(
+        value: List<RawTextLine>,
+        buf: ByteBuffer,
+    ) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeRawTextLine.write(it, buf)
         }
     }
 }
@@ -3108,6 +4136,13 @@ public object FfiConverterSequenceSequenceSequenceOptionalString : FfiConverterR
         }
     }
 }
+
+fun `bolivarVersion`(): kotlin.String =
+    FfiConverterString.lift(
+        uniffiRustCall { _status ->
+            UniffiLib.uniffi_bolivar_uniffi_fn_func_bolivar_version(_status)
+        },
+    )
 
 @Throws(BolivarException::class)
 fun `quickExtractText`(
