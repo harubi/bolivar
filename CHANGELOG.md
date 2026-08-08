@@ -1,3 +1,9 @@
+## [1.9.1](https://github.com/harubi/bolivar/compare/v1.9.0...v1.9.1) (2026-08-08)
+
+### Continuous Integration
+
+* add ICU caching and improve release workflow ([#24](https://github.com/harubi/bolivar/issues/24)) ([50c7b01](https://github.com/harubi/bolivar/commit/50c7b01cdbf960aecbe965ccd23a2c4ac1dd16b0))
+
 ## [1.9.0](https://github.com/harubi/bolivar/compare/v1.8.0...v1.9.0) (2026-08-08)
 
 ### Features
