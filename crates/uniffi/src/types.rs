@@ -1,8 +1,8 @@
 use bolivar_core::layout::{
     LTItem, LTPage, LTTextBox as CoreLTTextBox, LTTextLine as CoreLTTextLine, LTTextLineHorizontal,
-    LTTextLineVertical, TextBoxType,
+    LTTextLineVertical, TextBoxType, reorder_text_for_output,
 };
-use bolivar_core::layout::{ReconstructedLine, TextLineElement, TextLineType};
+use bolivar_core::layout::{ReconstructedLine, TextLineElement};
 use bolivar_core::pdfdocument::DEFAULT_CACHE_CAPACITY;
 use bolivar_core::pdfpage::PDFPage;
 use bolivar_core::table::{
@@ -326,15 +326,15 @@ pub(crate) fn usize_to_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
-fn layout_chars(
-    elements: &[&TextLineElement],
-    reconstructed: &ReconstructedLine,
-) -> Vec<LayoutChar> {
-    let mut chars = Vec::new();
-    for span in &reconstructed.spans {
-        if let Some(TextLineElement::Char(ch)) = elements.get(span.source_index).copied() {
+fn layout_chars_from_reconstructed(
+    elements: &[TextLineElement],
+    reconstructed: ReconstructedLine,
+) -> (String, Vec<LayoutChar>) {
+    let mut chars = Vec::with_capacity(reconstructed.spans.len());
+    for span in reconstructed.spans {
+        if let Some(TextLineElement::Char(ch)) = elements.get(span.source_index) {
             chars.push(LayoutChar {
-                text: span.text.clone(),
+                text: span.text,
                 bbox: bbox_from_rect((ch.x0(), ch.y0(), ch.x1(), ch.y1())),
                 font_name: ch.fontname().to_string(),
                 size: ch.size(),
@@ -342,100 +342,91 @@ fn layout_chars(
             });
         }
     }
-    chars
+    (reconstructed.text, chars)
 }
 
 fn line_text_chars_from_horizontal(line: &LTTextLineHorizontal) -> (String, Vec<LayoutChar>) {
     if !line.bidi() {
-        return (line.get_text(), layout_chars_from_source(line.iter()));
+        return (line.get_text(), layout_chars_from_source(line.elements()));
     }
-    let elements = line.iter().collect::<Vec<_>>();
-    let reconstructed = line.reconstructed();
-    (
-        reconstructed.text.clone(),
-        layout_chars(&elements, &reconstructed),
-    )
+    layout_chars_from_reconstructed(line.elements(), line.reconstructed())
 }
 
 fn line_text_chars_from_vertical(line: &LTTextLineVertical) -> (String, Vec<LayoutChar>) {
     if !line.bidi() {
-        return (line.get_text(), layout_chars_from_source(line.iter()));
+        return (line.get_text(), layout_chars_from_source(line.elements()));
     }
-    let elements = line.iter().collect::<Vec<_>>();
-    let reconstructed = line.reconstructed();
-    (
-        reconstructed.text.clone(),
-        layout_chars(&elements, &reconstructed),
-    )
+    layout_chars_from_reconstructed(line.elements(), line.reconstructed())
 }
 
-fn layout_chars_from_source<'a>(
-    elements: impl Iterator<Item = &'a TextLineElement>,
-) -> Vec<LayoutChar> {
-    elements
-        .filter_map(|element| match element {
-            TextLineElement::Char(character) => Some(LayoutChar {
+fn layout_chars_from_source(elements: &[TextLineElement]) -> Vec<LayoutChar> {
+    let mut characters = Vec::with_capacity(elements.len());
+    for element in elements {
+        if let TextLineElement::Char(character) = element {
+            characters.push(LayoutChar {
                 text: character.get_text().to_owned(),
                 bbox: bbox_from_rect(character.bbox()),
                 font_name: character.fontname().to_owned(),
                 size: character.size(),
                 upright: character.upright(),
-            }),
-            TextLineElement::Anno(_) => None,
-        })
-        .collect()
-}
-
-pub(crate) fn layout_line_from_textline(textline: &TextLineType) -> LayoutLine {
-    match textline {
-        TextLineType::Horizontal(line) => {
-            let (text, chars) = line_text_chars_from_horizontal(line);
-            LayoutLine {
-                bbox: bbox_from_rect(line.bbox()),
-                orientation: "horizontal".to_string(),
-                text,
-                chars,
-            }
-        }
-        TextLineType::Vertical(line) => {
-            let (text, chars) = line_text_chars_from_vertical(line);
-            LayoutLine {
-                bbox: bbox_from_rect(line.bbox()),
-                orientation: "vertical".to_string(),
-                text,
-                chars,
-            }
+            });
         }
     }
+    characters
+}
+
+fn layout_line_from_horizontal(line: &LTTextLineHorizontal) -> LayoutLine {
+    let (text, chars) = line_text_chars_from_horizontal(line);
+    LayoutLine {
+        bbox: bbox_from_rect(line.bbox()),
+        orientation: "horizontal".to_owned(),
+        text,
+        chars,
+    }
+}
+
+fn layout_line_from_vertical(line: &LTTextLineVertical) -> LayoutLine {
+    let (text, chars) = line_text_chars_from_vertical(line);
+    LayoutLine {
+        bbox: bbox_from_rect(line.bbox()),
+        orientation: "vertical".to_owned(),
+        text,
+        chars,
+    }
+}
+
+fn concatenate_text<T: TextContent>(values: &[T], separator: &str) -> String {
+    let capacity = values.iter().map(|value| value.text().len()).sum::<usize>()
+        + separator.len() * values.len().saturating_sub(1);
+    let mut text = String::with_capacity(capacity);
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            text.push_str(separator);
+        }
+        text.push_str(value.text());
+    }
+    text
 }
 
 fn layout_text_box_from_text_box_type(text_box: &TextBoxType) -> LayoutTextBox {
     match text_box {
         TextBoxType::Horizontal(b) => {
-            let mut lines = Vec::new();
-            for line in b.iter() {
-                lines.push(layout_line_from_textline(&TextLineType::Horizontal(
-                    line.clone(),
-                )));
-            }
+            let lines: Vec<_> = b.iter().map(layout_line_from_horizontal).collect();
+            let text = concatenate_text(&lines, "");
             LayoutTextBox {
                 bbox: bbox_from_rect(b.bbox()),
-                writing_mode: "lr-tb".to_string(),
-                text: b.get_text(),
+                writing_mode: "lr-tb".to_owned(),
+                text,
                 lines,
             }
         }
         TextBoxType::Vertical(b) => {
-            let mut lines = Vec::new();
-            for line in b.iter() {
-                lines.push(layout_line_from_textline(&TextLineType::Vertical(
-                    line.clone(),
-                )));
-            }
+            let lines: Vec<_> = b.iter().map(layout_line_from_vertical).collect();
+            let text = concatenate_text(&lines, "");
             LayoutTextBox {
                 bbox: bbox_from_rect(b.bbox()),
-                writing_mode: "tb-rl".to_string(),
-                text: b.get_text(),
+                writing_mode: "tb-rl".to_owned(),
+                text,
                 lines,
             }
         }
@@ -464,17 +455,41 @@ pub(crate) fn layout_page_from_ltpage(page: &LTPage) -> LayoutPage {
     for item in page.iter() {
         collect_layout_text_boxes(item, &mut text_boxes);
     }
-    let text = text_boxes
-        .iter()
-        .map(|text_box| text_box.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = concatenate_text(&text_boxes, "\n");
     LayoutPage {
         page_number: page_number(page.pageid),
         bbox: bbox_from_rect(page.bbox()),
         rotate: page.rotate,
         text,
         text_boxes,
+    }
+}
+
+trait TextContent {
+    fn text(&self) -> &str;
+}
+
+impl TextContent for LayoutLine {
+    fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+impl TextContent for LayoutTextBox {
+    fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+impl TextContent for RawTextLine {
+    fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+impl TextContent for RawTextBox {
+    fn text(&self) -> &str {
+        &self.text
     }
 }
 
@@ -497,58 +512,78 @@ pub(crate) fn raw_character_from_ltchar(character: &bolivar_core::layout::LTChar
     }
 }
 
-fn raw_characters<'a>(elements: impl Iterator<Item = &'a TextLineElement>) -> Vec<RawCharacter> {
-    elements
-        .filter_map(|element| match element {
-            TextLineElement::Char(character) => Some(raw_character_from_ltchar(character)),
-            TextLineElement::Anno(_) => None,
-        })
-        .collect()
-}
-
 fn raw_text_line_from_horizontal(line: &LTTextLineHorizontal) -> RawTextLine {
+    let (raw_text, text, characters) =
+        raw_line_content(line.elements(), line.bidi().then(|| line.get_text()));
     RawTextLine {
         bbox: bbox_from_rect(line.bbox()),
         orientation: "horizontal".to_owned(),
-        raw_text: source_text(line.iter()),
-        text: line.get_text(),
-        characters: raw_characters(line.iter()),
+        raw_text,
+        text,
+        characters,
     }
 }
 
 fn raw_text_line_from_vertical(line: &LTTextLineVertical) -> RawTextLine {
+    let (raw_text, text, characters) =
+        raw_line_content(line.elements(), line.bidi().then(|| line.get_text()));
     RawTextLine {
         bbox: bbox_from_rect(line.bbox()),
         orientation: "vertical".to_owned(),
-        raw_text: source_text(line.iter()),
-        text: line.get_text(),
-        characters: raw_characters(line.iter()),
+        raw_text,
+        text,
+        characters,
     }
 }
 
-fn source_text<'a>(elements: impl Iterator<Item = &'a TextLineElement>) -> String {
-    elements
+fn raw_line_content(
+    elements: &[TextLineElement],
+    processed_text: Option<String>,
+) -> (String, String, Vec<RawCharacter>) {
+    let text_capacity = elements
+        .iter()
         .map(|element| match element {
-            TextLineElement::Char(character) => character.get_text(),
-            TextLineElement::Anno(annotation) => annotation.get_text(),
+            TextLineElement::Char(character) => character.get_text().len(),
+            TextLineElement::Anno(annotation) => annotation.get_text().len(),
         })
-        .collect()
+        .sum();
+    let mut raw_text = String::with_capacity(text_capacity);
+    let mut characters = Vec::with_capacity(elements.len());
+    for element in elements {
+        match element {
+            TextLineElement::Char(character) => {
+                raw_text.push_str(character.get_text());
+                characters.push(raw_character_from_ltchar(character));
+            }
+            TextLineElement::Anno(annotation) => raw_text.push_str(annotation.get_text()),
+        }
+    }
+    let text = processed_text.unwrap_or_else(|| reorder_text_for_output(&raw_text));
+    (raw_text, text, characters)
 }
 
 fn raw_text_box_from_text_box_type(text_box: &TextBoxType) -> RawTextBox {
     match text_box {
-        TextBoxType::Horizontal(text_box) => RawTextBox {
-            bbox: bbox_from_rect(text_box.bbox()),
-            writing_mode: text_box.get_writing_mode().to_owned(),
-            text: text_box.get_text(),
-            lines: text_box.iter().map(raw_text_line_from_horizontal).collect(),
-        },
-        TextBoxType::Vertical(text_box) => RawTextBox {
-            bbox: bbox_from_rect(text_box.bbox()),
-            writing_mode: text_box.get_writing_mode().to_owned(),
-            text: text_box.get_text(),
-            lines: text_box.iter().map(raw_text_line_from_vertical).collect(),
-        },
+        TextBoxType::Horizontal(text_box) => {
+            let lines: Vec<_> = text_box.iter().map(raw_text_line_from_horizontal).collect();
+            let text = concatenate_text(&lines, "");
+            RawTextBox {
+                bbox: bbox_from_rect(text_box.bbox()),
+                writing_mode: text_box.get_writing_mode().to_owned(),
+                text,
+                lines,
+            }
+        }
+        TextBoxType::Vertical(text_box) => {
+            let lines: Vec<_> = text_box.iter().map(raw_text_line_from_vertical).collect();
+            let text = concatenate_text(&lines, "");
+            RawTextBox {
+                bbox: bbox_from_rect(text_box.bbox()),
+                writing_mode: text_box.get_writing_mode().to_owned(),
+                text,
+                lines,
+            }
+        }
     }
 }
 
@@ -624,11 +659,7 @@ pub(crate) fn raw_page_from_parts(
 ) -> RawPage {
     let layout_bbox = bbox_from_rect(layout_page.bbox());
     let text_boxes = raw_text_boxes(&layout_page);
-    let text = text_boxes
-        .iter()
-        .map(|text_box| text_box.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let text = concatenate_text(&text_boxes, "\n");
 
     RawPage {
         page_index: usize_to_u32(page_index),
@@ -713,12 +744,52 @@ pub(crate) fn cache_capacity(caching: bool) -> usize {
     if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
 }
 
-pub(crate) fn summary_from_layout_page(layout_page: LayoutPage) -> PageSummary {
+fn append_summary_text(item: &LTItem, text: &mut String, first_box: &mut bool) {
+    match item {
+        LTItem::TextBox(text_box) => {
+            if !*first_box {
+                text.push('\n');
+            }
+            *first_box = false;
+            match text_box {
+                TextBoxType::Horizontal(text_box) => {
+                    for line in text_box.iter() {
+                        text.push_str(&line.get_text());
+                    }
+                }
+                TextBoxType::Vertical(text_box) => {
+                    for line in text_box.iter() {
+                        text.push_str(&line.get_text());
+                    }
+                }
+            }
+        }
+        LTItem::Figure(figure) => {
+            for child in figure.iter() {
+                append_summary_text(child, text, first_box);
+            }
+        }
+        LTItem::Page(page) => {
+            for child in page.iter() {
+                append_summary_text(child, text, first_box);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(crate) fn summary_from_ltpage(page: &LTPage) -> PageSummary {
+    let mut text = String::new();
+    let mut first_box = true;
+    for item in page.iter() {
+        append_summary_text(item, &mut text, &mut first_box);
+    }
+
     PageSummary {
-        page_number: layout_page.page_number,
-        text: layout_page.text,
-        bbox: layout_page.bbox,
-        rotate: layout_page.rotate,
+        page_number: page_number(page.pageid),
+        text,
+        bbox: bbox_from_rect(page.bbox()),
+        rotate: page.rotate,
     }
 }
 
@@ -812,7 +883,7 @@ mod tests {
         line.set_bidi(true);
 
         let raw_line = raw_text_line_from_horizontal(&line);
-        let layout_line = layout_line_from_textline(&TextLineType::Horizontal(line));
+        let layout_line = layout_line_from_horizontal(&line);
         assert_eq!(layout_line.text, "كشف الحساب\n");
         assert_eq!(
             layout_line

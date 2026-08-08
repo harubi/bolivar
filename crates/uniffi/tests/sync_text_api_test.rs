@@ -476,8 +476,7 @@ fn native_document_from_path_rejects_invalid_path_inputs() {
 fn native_document_rejects_zero_page_number() {
     let pdf = build_minimal_pdf_with_pages(2);
     let options = options_with_page_range(vec![0], None);
-    let doc = NativePdfDocument::from_bytes(pdf, Some(options)).expect("doc construction");
-
-    let err = doc.extract_text().expect_err("page numbers are 1-based");
+    let err =
+        NativePdfDocument::from_bytes(pdf, Some(options)).expect_err("page numbers are 1-based");
     assert!(matches!(err, BolivarError::InvalidArgument));
 }

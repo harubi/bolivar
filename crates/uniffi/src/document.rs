@@ -14,12 +14,12 @@ use crate::extract::{
 use crate::metadata::metadata_from_document;
 use crate::types::{
     ExtractOptions, LayoutPage, PageSummary, PageTableRows, RawDocument, RawDocumentMetadata,
-    RawPage, Table, TableOptions, summary_from_layout_page,
+    RawPage, Table, TableOptions, summary_from_ltpage,
 };
 
 pub struct NativePdfDocument {
     doc: Arc<PDFDocument>,
-    options: Option<ExtractOptions>,
+    options: CoreExtractOptions,
 }
 
 impl std::fmt::Debug for NativePdfDocument {
@@ -38,39 +38,47 @@ impl NativePdfDocument {
         pdf_data: Vec<u8>,
         options: Option<ExtractOptions>,
     ) -> Result<Self, BolivarError> {
-        let doc = open_pdf_document(&pdf_data, &options)?;
+        let mut options = core_extract_options(options)?;
+        let doc = open_pdf_document(pdf_data, &options)?;
+        options.password = String::new();
         Ok(Self { doc, options })
     }
 
-    fn core_options(&self) -> Result<CoreExtractOptions, BolivarError> {
-        core_extract_options(self.options.clone())
+    fn core_options(&self) -> CoreExtractOptions {
+        self.options.clone()
     }
 
     pub fn extract_text(&self) -> Result<String, BolivarError> {
-        let options = self.core_options()?;
+        let options = self.core_options();
         core_extract_text_with_document(self.doc.as_ref(), options).map_err(BolivarError::from)
     }
 
     pub fn extract_page_summaries(&self) -> Result<Vec<PageSummary>, BolivarError> {
-        Ok(self
-            .extract_layout_pages()?
-            .into_iter()
-            .map(summary_from_layout_page)
-            .collect())
+        let stream = bolivar_core::extract::extract_pages_stream_from_doc(
+            Arc::clone(&self.doc),
+            self.core_options(),
+        )
+        .map_err(BolivarError::from)?;
+        let mut summaries = Vec::new();
+        for page in stream {
+            let (_, page) = page.map_err(BolivarError::from)?;
+            summaries.push(summary_from_ltpage(&page));
+        }
+        Ok(summaries)
     }
 
     pub fn extract_layout_pages(&self) -> Result<Vec<LayoutPage>, BolivarError> {
-        let options = self.core_options()?;
+        let options = self.core_options();
         extract_layout_pages_core(Arc::clone(&self.doc), options)
     }
 
     pub fn extract_raw_document(&self) -> Result<RawDocument, BolivarError> {
-        let options = self.core_options()?;
+        let options = self.core_options();
         extract_raw_document_core(Arc::clone(&self.doc), options)
     }
 
     pub fn extract_raw_page(&self, page_number: u32) -> Result<RawPage, BolivarError> {
-        let options = self.core_options()?;
+        let options = self.core_options();
         extract_raw_page_core(Arc::clone(&self.doc), options, page_number)
     }
 
@@ -79,7 +87,7 @@ impl NativePdfDocument {
     }
 
     pub fn extract_tables(&self) -> Result<Vec<Table>, BolivarError> {
-        let options = self.core_options()?;
+        let options = self.core_options();
         extract_tables_core(Arc::clone(&self.doc), options)
     }
 
@@ -87,7 +95,7 @@ impl NativePdfDocument {
         &self,
         table_options: Option<TableOptions>,
     ) -> Result<Vec<Table>, BolivarError> {
-        let options = self.core_options()?;
+        let options = self.core_options();
         extract_tables_with_core(Arc::clone(&self.doc), options, table_options)
     }
 
@@ -95,7 +103,7 @@ impl NativePdfDocument {
         &self,
         table_options: Option<TableOptions>,
     ) -> Result<Vec<PageTableRows>, BolivarError> {
-        let options = self.core_options()?;
+        let options = self.core_options();
         extract_table_rows_with_core(Arc::clone(&self.doc), options, table_options)
     }
 }
