@@ -49,11 +49,13 @@ pub fn clear_thread_log() {
     guard.clear();
 }
 
+const AGGREGATOR_NO_RESULT: &str = "page aggregator produced no result";
 const TABLE_COLLECTOR_NO_RESULT: &str = "table collector produced no result";
 
-/// Standard finisher for `PDFPageAggregator`-backed `process_page` calls: clones the result `LTPage`.
+/// Standard finisher for `PDFPageAggregator`-backed `process_page` calls.
 pub fn aggregator_result(agg: &mut PDFPageAggregator<'_>) -> Result<LTPage> {
-    Ok(agg.get_result().clone())
+    agg.take_result()
+        .ok_or_else(|| PdfError::DecodeError(AGGREGATOR_NO_RESULT.to_string()))
 }
 
 /// Standard finisher for `PDFTableCollector`-backed `process_page` calls: takes the arena page or errors.

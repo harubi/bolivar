@@ -231,7 +231,7 @@ fn test_extract_options_with_laparams() {
     let laparams = LAParams::default();
 
     let options = ExtractOptions {
-        laparams: Some(laparams.clone()),
+        laparams: Some(laparams),
         ..Default::default()
     };
 

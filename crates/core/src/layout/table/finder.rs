@@ -219,7 +219,7 @@ struct TableFinder<'a> {
     page_bbox: BBox,
     chars: Vec<CharObj>,
     edges: Vec<EdgeObj>,
-    settings: TableSettings,
+    settings: &'a TableSettings,
     arena: &'a dyn ArenaLookup,
 }
 
@@ -227,7 +227,7 @@ impl<'a> TableFinder<'a> {
     fn new(
         page: &LTPage,
         geom: &PageGeometry,
-        settings: TableSettings,
+        settings: &'a TableSettings,
         arena: &'a mut PageArena,
     ) -> Self {
         let (chars, edges) = collect_page_objects(page, geom, arena);
@@ -251,7 +251,7 @@ impl<'a> TableFinder<'a> {
         chars: Vec<CharObj>,
         edges: Vec<EdgeObj>,
         geom: &PageGeometry,
-        settings: TableSettings,
+        settings: &'a TableSettings,
         arena: &'a dyn ArenaLookup,
     ) -> Self {
         let page_bbox = BBox {
@@ -540,7 +540,7 @@ pub fn extract_tables_from_ltpage(
 ) -> Vec<Vec<Vec<Option<String>>>> {
     let mut arena = PageArena::new();
     arena.reset();
-    let finder = TableFinder::new(page, geom, settings.clone(), &mut arena);
+    let finder = TableFinder::new(page, geom, settings, &mut arena);
     let mut tables = finder.find_tables();
     if geom.force_crop {
         let crop = BBox {
@@ -566,7 +566,7 @@ pub fn extract_tables_from_objects(
     arena: &impl ArenaLookup,
 ) -> Vec<Vec<Vec<Option<String>>>> {
     let arena: &dyn ArenaLookup = arena;
-    let finder = TableFinder::from_objects(chars, edges, geom, settings.clone(), arena);
+    let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
     let mut tables = finder.find_tables();
     if geom.force_crop {
         let crop = BBox {
@@ -592,7 +592,7 @@ pub fn extract_tables_with_metadata_from_objects(
     arena: &impl ArenaLookup,
 ) -> Vec<TableMetadata> {
     let arena: &dyn ArenaLookup = arena;
-    let finder = TableFinder::from_objects(chars, edges, geom, settings.clone(), arena);
+    let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
     let mut tables = finder.find_tables();
     if geom.force_crop {
         let crop = BBox {
@@ -617,7 +617,7 @@ pub fn extract_table_from_ltpage(
 ) -> Option<Vec<Vec<Option<String>>>> {
     let mut arena = PageArena::new();
     arena.reset();
-    let finder = TableFinder::new(page, geom, settings.clone(), &mut arena);
+    let finder = TableFinder::new(page, geom, settings, &mut arena);
     let mut tables = finder.find_tables();
     if geom.force_crop {
         let crop = BBox {
@@ -676,7 +676,7 @@ pub fn extract_table_from_objects(
     arena: &impl ArenaLookup,
 ) -> Option<Vec<Vec<Option<String>>>> {
     let arena: &dyn ArenaLookup = arena;
-    let finder = TableFinder::from_objects(chars, edges, geom, settings.clone(), arena);
+    let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
     let mut tables = finder.find_tables();
     if geom.force_crop {
         let crop = BBox {
@@ -744,8 +744,16 @@ pub fn extract_words_from_objects(
     settings: TextSettings,
     arena: &impl ArenaLookup,
 ) -> Vec<WordObj> {
+    extract_words_from_objects_borrowed(chars, &settings, arena)
+}
+
+pub(crate) fn extract_words_from_objects_borrowed(
+    chars: Vec<CharObj>,
+    settings: &TextSettings,
+    arena: &impl ArenaLookup,
+) -> Vec<WordObj> {
     let arena_lookup: &dyn ArenaLookup = arena;
-    extract_words(&chars, &settings, arena_lookup)
+    extract_words(&chars, settings, arena_lookup)
 }
 
 /// Extract text from a page.
@@ -766,8 +774,16 @@ pub fn extract_text_from_objects(
     settings: TextSettings,
     arena: &impl ArenaLookup,
 ) -> String {
+    extract_text_from_objects_borrowed(chars, &settings, arena)
+}
+
+pub(crate) fn extract_text_from_objects_borrowed(
+    chars: Vec<CharObj>,
+    settings: &TextSettings,
+    arena: &impl ArenaLookup,
+) -> String {
     let arena_lookup: &dyn ArenaLookup = arena;
-    extract_text(&chars, &settings, arena_lookup)
+    extract_text(&chars, settings, arena_lookup)
 }
 
 #[cfg(test)]
