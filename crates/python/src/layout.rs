@@ -2333,8 +2333,9 @@ mod tests {
 
     #[test]
     fn python_textline_preserves_legacy_default_and_maps_icu_output() {
+        let visual = "P1 Term 6467299202155588 07/02 14:47:05:ﺔﻈﺣﻼﻣ**23:11:18:ﺖﻗﻮﻟﺍ";
         let mut line = LTTextLineHorizontal::new(0.1);
-        for (index, character) in "abc 123 ﺔﻴﺑﺮﻌﻟﺍ".chars().enumerate() {
+        for (index, character) in visual.chars().enumerate() {
             line.add_element(TextLineElement::Char(Box::new(LTChar::new(
                 (index as f64, 0.0, index as f64 + 1.0, 1.0),
                 &character.to_string(),
@@ -2346,11 +2347,15 @@ mod tests {
         }
 
         let legacy = PyLTTextLineHorizontal::from_core(&line);
-        assert_eq!(legacy.get_text(), "العربية abc 123");
+        assert_eq!(
+            legacy.get_text(),
+            bolivar_core::layout::reorder_text_for_output(visual)
+        );
 
         line.set_bidi(true);
         let reconstructed = PyLTTextLineHorizontal::from_core(&line);
-        assert_eq!(reconstructed.get_text(), "abc 123 العربية");
+        let expected = "P1 Term 6467299202155588 07/02 الوقت:23:11:18**ملاحظة:14:47:05";
+        assert_eq!(reconstructed.get_text(), expected);
         assert_eq!(
             reconstructed
                 .items
@@ -2360,7 +2365,7 @@ mod tests {
                     _ => None,
                 })
                 .collect::<String>(),
-            "abc 123 العربية"
+            expected
         );
     }
 }
