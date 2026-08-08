@@ -1314,7 +1314,7 @@ mod pdf_path_tests {
     /// ```
     #[test]
     fn test_paint_path_ml_lines_from_pdf() {
-        let pdf_data = include_bytes!("fixtures/contrib/pr-00530-ml-lines.pdf");
+        let pdf_data = include_bytes!("../fixtures/contrib/pr-00530-ml-lines.pdf");
         let pages: Vec<_> = extract_pages_stream(pdf_data, None)
             .expect("Failed to extract pages")
             .map(|r| r.map(|(_, p)| p))
@@ -1363,7 +1363,7 @@ mod pdf_path_tests {
     /// extraction works and documents expected behavior.
     #[test]
     fn test_linewidth() {
-        let pdf_data = include_bytes!("fixtures/contrib/issue_1165_linewidth.pdf");
+        let pdf_data = include_bytes!("../fixtures/contrib/issue_1165_linewidth.pdf");
         let pages: Vec<_> = extract_pages_stream(pdf_data, None)
             .expect("Failed to extract pages")
             .map(|r| r.map(|(_, p)| p))
@@ -1518,7 +1518,7 @@ mod color_space_tests {
     /// Once font handling is complete, this test should verify color extraction.
     #[test]
     fn test_do_rg() {
-        let pdf_data = include_bytes!("fixtures/contrib/issue-00352-hash-twos-complement.pdf");
+        let pdf_data = include_bytes!("../fixtures/contrib/issue-00352-hash-twos-complement.pdf");
         let pages: Vec<_> = extract_pages_stream(pdf_data, None)
             .expect("Failed to extract pages")
             .map(|r| r.map(|(_, p)| p))
@@ -1695,7 +1695,7 @@ mod color_space_tests {
     /// This verifies that PDFs with pattern colors don't cause parsing errors.
     #[test]
     fn test_pattern_colors_pdf_parses() {
-        let pdf_data = include_bytes!("fixtures/test_pattern_colors.pdf");
+        let pdf_data = include_bytes!("../fixtures/test_pattern_colors.pdf");
         let pages: Vec<_> = extract_pages_stream(pdf_data, None)
             .expect("Failed to extract pages from test_pattern_colors.pdf")
             .map(|r| r.map(|(_, p)| p))

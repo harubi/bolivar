@@ -28,12 +28,22 @@ jobs:
   rust-tests:
     name: Rust tests
     runs-on: ubuntu-24.04
+    env:
+      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - uses: actions/checkout@v6.0.2
       - name: Checkout test submodules
         run: git submodule update --init --depth 1 references/pdfplumber references/tabula-java references/pdfminer.six
       - name: Setup Rust
         run: rustup show active-toolchain
+      - name: Cache static ICU
+        uses: actions/cache@v4
+        with:
+          # install/ only: the sibling source and build trees are ~380 MB.
+          path: .icu-cache/*/*/install
+          # "native" keeps this distinct from the manylinux container build,
+          # which shares a target triple but not a glibc.
+          key: icu-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
@@ -52,27 +62,48 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux builds inside the manylinux container, where the host's
+          # setup-python path does not exist. The others build on the host.
           - os: ubuntu-24.04
             target: x86_64
+            interpreter: /opt/python/cp311-cp311/bin/python
           - os: windows-latest
             target: x64
           - os: macos-latest
             target: aarch64
+    env:
+      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions/setup-python@v6.2.0
+        id: setup-python
         with:
           python-version: '3.13'
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Cache static ICU
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: .icu-cache/*/*/install
+          key: icu-${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
+      - name: Cache vcpkg binaries
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          # Rotating key: vcpkg's ABI hash covers the MSVC/CMake/PowerShell
+          # versions, so a runner image bump must be able to re-save.
+          key: vcpkg-icu-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}-${{ github.run_id }}
+          restore-keys: vcpkg-icu-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}-
       - name: Install ICU on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $baseline = (Get-Content "$env:GITHUB_WORKSPACE\vcpkg.json" | ConvertFrom-Json).'builtin-baseline'
           git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --depth 1 origin $baseline
-          $env:VCPKG_BINARY_SOURCES = "clear"
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$env:GITHUB_WORKSPACE\.vcpkg-cache,readwrite"
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static-md-release --host-triplet x64-windows-release --overlay-triplets "$env:GITHUB_WORKSPACE\triplets" --x-install-root "$env:VCPKG_INSTALLATION_ROOT\installed" --x-manifest-root "$env:GITHUB_WORKSPACE" --clean-after-build
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
           "VCPKGRS_TRIPLET=x64-windows-static-md-release" >> $env:GITHUB_ENV
@@ -80,9 +111,12 @@ jobs:
         uses: PyO3/maturin-action@v1.50.0
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-          sccache: true
+          # --features replaces the pyproject list, so extension-module must
+          # be repeated here.
+          args: --release --out dist -i ${{ matrix.interpreter || steps.setup-python.outputs.python-path }} --features pyo3/extension-module,pyo3/abi3-py311
           manylinux: 2_28
+          # Not in maturin-action's env passthrough prefixes.
+          docker-options: -e BOLIVAR_ICU_CACHE_DIR
       - name: Verify ICU is static
         if: runner.os != 'Windows'
         run: sh scripts/verify-wheel-static-icu.sh dist
@@ -96,7 +130,7 @@ jobs:
           else
             source .venv/bin/activate
           fi
-          pip install bolivar --find-links dist --force-reinstall
+          pip install bolivar --no-index --find-links dist --force-reinstall
           python - <<'PY'
           from io import BytesIO
           from pathlib import Path

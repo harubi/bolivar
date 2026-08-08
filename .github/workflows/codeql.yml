@@ -1,9 +1,8 @@
 name: CodeQL
 
+# Not on pull requests: Rust CodeQL takes ~7 min and set the PR floor.
 on:
   push:
-    branches: [master]
-  pull_request:
     branches: [master]
   schedule:
     - cron: "0 6 * * 1"

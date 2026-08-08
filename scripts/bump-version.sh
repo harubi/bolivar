@@ -13,5 +13,6 @@ sed -i "s/\(bolivar-icu = { path = \"crates\/icu\", version = \)\".*\"/\1\"$VERS
 
 sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/uniffi/jvm/build.gradle.kts
 
-# Regenerate Cargo.lock to reflect the new version
-cargo check --quiet
+# Regenerate Cargo.lock. Not `cargo check`: that runs build scripts, which
+# made this job compile ICU from source on every release.
+cargo update --workspace --quiet

@@ -7,19 +7,33 @@ if [ "$#" -ne 1 ]; then
 fi
 
 wheel_directory=$1
-wheel_path=$(find "$wheel_directory" -maxdepth 1 -name '*.whl' -print | head -n 1)
-if [ -z "$wheel_path" ]; then
+
+wheel_count=0
+for wheel_path in "$wheel_directory"/*.whl; do
+    [ -e "$wheel_path" ] || continue
+    wheel_count=$((wheel_count + 1))
+
+    wheel_extract_dir=$(mktemp -d)
+    unzip -q "$wheel_path" -d "$wheel_extract_dir"
+
+    library_count=0
+    for native_library in $(find "$wheel_extract_dir" -type f \( -name '*.so' -o -name '*.dylib' \) -print); do
+        library_count=$((library_count + 1))
+        echo "Checking $(basename "$wheel_path") -> $(basename "$native_library")"
+        sh scripts/verify-static-icu.sh "$native_library"
+    done
+
+    rm -rf -- "$wheel_extract_dir"
+
+    if [ "$library_count" -eq 0 ]; then
+        echo "native library not found in $wheel_path" >&2
+        exit 1
+    fi
+done
+
+if [ "$wheel_count" -eq 0 ]; then
     echo "wheel not found in $wheel_directory" >&2
     exit 1
 fi
 
-wheel_extract_dir=$(mktemp -d)
-trap 'rm -rf -- "$wheel_extract_dir"' EXIT HUP INT TERM
-unzip -q "$wheel_path" -d "$wheel_extract_dir"
-native_library=$(find "$wheel_extract_dir" -type f \( -name '*.so' -o -name '*.dylib' \) -print | head -n 1)
-if [ -z "$native_library" ]; then
-    echo "native library not found in $wheel_path" >&2
-    exit 1
-fi
-
-sh scripts/verify-static-icu.sh "$native_library"
+echo "Verified static ICU in $wheel_count wheel(s)"

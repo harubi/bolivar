@@ -1,0 +1,16 @@
+[package]
+name = "bolivar-uniffi-bindgen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "UniFFI binding generator for bolivar"
+publish = false
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+
+[dependencies]
+# Must match crates/uniffi exactly: `generate --library` rejects a mismatch.
+uniffi = { version = "0.31.0", features = ["cli"] }

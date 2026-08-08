@@ -8,6 +8,11 @@ on:
         required: false
         default: master
         type: string
+      publish_tag:
+        description: 'Recovery: build and publish an existing tag (e.g. v1.9.0). Leave empty for a normal release.'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: release
@@ -20,8 +25,11 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  semantic-release:
-    name: Semantic release
+  # Publishes to no package registry: crates.io, PyPI and Maven Central are
+  # permanent, so they are gated on every build below.
+  version:
+    name: Version and tag
+    if: inputs.publish_tag == ''
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -40,12 +48,12 @@ jobs:
           persist-credentials: true
       - name: Setup Rust
         run: rustup show active-toolchain
-      - uses: Swatinem/rust-cache@v2
       - name: Setup Node.js
         uses: actions/setup-node@v6.2.0
         with:
           node-version: 22
           cache: npm
+      # verifyConditionsCmd runs `cargo owner --list`.
       - name: Authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@v1.0.3
         id: crates-auth
@@ -62,30 +70,89 @@ jobs:
           GIT_COMMITTER_NAME: "github-actions[bot]"
           GIT_COMMITTER_EMAIL: "41898282+github-actions[bot]@users.noreply.github.com"
 
-  build-wheels-linux:
-    name: Build wheels (linux-${{ matrix.target }})
-    needs: semantic-release
-    if: needs.semantic-release.outputs.new_release_published == 'true'
+  # Collapses the normal path and the publish_tag recovery path into one set
+  # of outputs.
+  resolve:
+    name: Resolve release target
+    needs: [version]
+    if: always() && (inputs.publish_tag != '' || needs.version.result == 'success')
     runs-on: ubuntu-24.04
+    outputs:
+      proceed: ${{ steps.resolve.outputs.proceed }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        env:
+          PUBLISH_TAG: ${{ inputs.publish_tag }}
+          NEW_PUBLISHED: ${{ needs.version.outputs.new_release_published }}
+          NEW_VERSION: ${{ needs.version.outputs.new_release_version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PUBLISH_TAG" ]; then
+            # Validated because it is interpolated into `ref:` further down.
+            case "$PUBLISH_TAG" in
+              v[0-9]*.[0-9]*.[0-9]*) ;;
+              *) echo "publish_tag must look like v1.2.3, got: $PUBLISH_TAG" >&2; exit 1 ;;
+            esac
+            echo "Recovery run for existing tag $PUBLISH_TAG"
+            {
+              echo "proceed=true"
+              echo "tag=$PUBLISH_TAG"
+              echo "version=${PUBLISH_TAG#v}"
+            } >> "$GITHUB_OUTPUT"
+          elif [ "$NEW_PUBLISHED" = "true" ]; then
+            echo "New release v$NEW_VERSION"
+            {
+              echo "proceed=true"
+              echo "tag=v$NEW_VERSION"
+              echo "version=$NEW_VERSION"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "No release to publish"
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-wheels-linux:
+    name: Build wheels (manylinux-${{ matrix.target }})
+    needs: resolve
+    if: needs.resolve.outputs.proceed == 'true'
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        target: [x86_64, aarch64]
+        include:
+          - target: x86_64
+            runner: ubuntu-24.04
+          - target: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - uses: actions/checkout@v6.0.2
         with:
-          ref: v${{ needs.semantic-release.outputs.new_release_version }}
-      - name: Setup QEMU
-        if: matrix.target == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-      - name: Build wheels
+          ref: ${{ needs.resolve.outputs.tag }}
+      - name: Cache static ICU
+        uses: actions/cache@v4
+        with:
+          path: .icu-cache/*/*/install
+          key: icu-manylinux2_28-${{ matrix.target }}-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
+      - name: Build abi3 wheel (CPython 3.11+)
         uses: PyO3/maturin-action@v1.50.0
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-          sccache: true
+          args: --release --out dist -i /opt/python/cp311-cp311/bin/python --features pyo3/extension-module,pyo3/abi3-py311
           manylinux: 2_28
           container: quay.io/pypa/manylinux_2_28_${{ matrix.target }}
+          docker-options: -e BOLIVAR_ICU_CACHE_DIR
+      - name: Build free-threaded wheel (CPython 3.14t)
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist -i /opt/python/cp314-cp314t/bin/python --features pyo3/extension-module
+          manylinux: 2_28
+          container: quay.io/pypa/manylinux_2_28_${{ matrix.target }}
+          docker-options: -e BOLIVAR_ICU_CACHE_DIR
       - name: Verify ICU is static
         run: sh scripts/verify-wheel-static-icu.sh dist
       - name: Upload wheels
@@ -93,31 +160,49 @@ jobs:
         with:
           name: wheels-linux-${{ matrix.target }}
           path: dist
+          compression-level: 0
+          retention-days: 3
 
   build-wheels-musllinux:
     name: Build wheels (musllinux-${{ matrix.target }})
-    needs: semantic-release
-    if: needs.semantic-release.outputs.new_release_published == 'true'
-    runs-on: ubuntu-24.04
+    needs: resolve
+    if: needs.resolve.outputs.proceed == 'true'
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        target: [x86_64, aarch64]
+        include:
+          - target: x86_64
+            runner: ubuntu-24.04
+          - target: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - uses: actions/checkout@v6.0.2
         with:
-          ref: v${{ needs.semantic-release.outputs.new_release_version }}
-      - name: Setup QEMU
-        if: matrix.target == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-      - name: Build wheels
+          ref: ${{ needs.resolve.outputs.tag }}
+      - name: Cache static ICU
+        uses: actions/cache@v4
+        with:
+          path: .icu-cache/*/*/install
+          key: icu-musllinux1_2-${{ matrix.target }}-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
+      - name: Build abi3 wheel (CPython 3.11+)
         uses: PyO3/maturin-action@v1.50.0
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --find-interpreter
-          sccache: true
+          args: --release --out dist -i /opt/python/cp311-cp311/bin/python --features pyo3/extension-module,pyo3/abi3-py311
           manylinux: musllinux_1_2
           container: quay.io/pypa/musllinux_1_2_${{ matrix.target }}
+          docker-options: -e BOLIVAR_ICU_CACHE_DIR
+      - name: Build free-threaded wheel (CPython 3.14t)
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist -i /opt/python/cp314-cp314t/bin/python --features pyo3/extension-module
+          manylinux: musllinux_1_2
+          container: quay.io/pypa/musllinux_1_2_${{ matrix.target }}
+          docker-options: -e BOLIVAR_ICU_CACHE_DIR
       - name: Verify ICU is static
         run: sh scripts/verify-wheel-static-icu.sh dist
       - name: Upload wheels
@@ -125,93 +210,159 @@ jobs:
         with:
           name: wheels-musllinux-${{ matrix.target }}
           path: dist
+          compression-level: 0
+          retention-days: 3
 
-  build-wheels-windows:
-    name: Build wheels (windows-${{ matrix.platform.target }})
-    needs: semantic-release
-    if: needs.semantic-release.outputs.new_release_published == 'true'
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - runner: windows-latest
-            target: x64
+  # Wheels and the cdylib share the Rust core and the vcpkg ICU build.
+  # The two artifacts must stay disjoint: publish-pypi feeds every `wheels-*`
+  # file to twine, publish-maven reads classifiers from `native-*` dir names.
+  build-windows:
+    name: Build windows-x64 (wheels + native lib)
+    needs: resolve
+    if: needs.resolve.outputs.proceed == 'true'
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v6.0.2
         with:
-          ref: v${{ needs.semantic-release.outputs.new_release_version }}
+          ref: ${{ needs.resolve.outputs.tag }}
+      # Separate steps: a multiline python-version returns only the last
+      # entry from python-path.
       - uses: actions/setup-python@v6.2.0
+        id: py311
         with:
-          python-version: '3.13'
-          architecture: ${{ matrix.platform.target == 'aarch64' && 'arm64' || matrix.platform.target }}
+          python-version: '3.11'
+      - uses: actions/setup-python@v6.2.0
+        id: py314t
+        with:
+          python-version: '3.14t'
+      - name: Setup Rust
+        run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.platform.target }}
+          key: windows-x64
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-icu-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}-${{ github.run_id }}
+          restore-keys: vcpkg-icu-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}-
       - name: Install ICU
         shell: pwsh
         run: |
           $baseline = (Get-Content "$env:GITHUB_WORKSPACE\vcpkg.json" | ConvertFrom-Json).'builtin-baseline'
           git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --depth 1 origin $baseline
-          $env:VCPKG_BINARY_SOURCES = "clear"
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$env:GITHUB_WORKSPACE\.vcpkg-cache,readwrite"
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static-md-release --host-triplet x64-windows-release --overlay-triplets "$env:GITHUB_WORKSPACE\triplets" --x-install-root "$env:VCPKG_INSTALLATION_ROOT\installed" --x-manifest-root "$env:GITHUB_WORKSPACE" --clean-after-build
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
           "VCPKGRS_TRIPLET=x64-windows-static-md-release" >> $env:GITHUB_ENV
-      - name: Build wheels
+      - name: Build abi3 wheel (CPython 3.11+)
         uses: PyO3/maturin-action@v1.50.0
         with:
-          target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
-          sccache: true
+          target: x64
+          args: --release --out dist -i ${{ steps.py311.outputs.python-path }} --features pyo3/extension-module,pyo3/abi3-py311
+      - name: Build free-threaded wheel (CPython 3.14t)
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          target: x64
+          args: --release --out dist -i ${{ steps.py314t.outputs.python-path }} --features pyo3/extension-module
       - name: Upload wheels
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: wheels-windows-${{ matrix.platform.target }}
+          name: wheels-windows-x64
           path: dist
+          compression-level: 0
+          retention-days: 3
+      - name: Build UniFFI cdylib
+        run: cargo build -p bolivar-uniffi --release --target x86_64-pc-windows-msvc --locked
+      - name: Upload native library
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: native-windows-x86-64
+          path: target/x86_64-pc-windows-msvc/release/bolivar_uniffi.dll
+          retention-days: 3
 
-  build-wheels-macos:
-    name: Build wheels (macos-${{ matrix.platform.target }})
-    needs: semantic-release
-    if: needs.semantic-release.outputs.new_release_published == 'true'
-    runs-on: ${{ matrix.platform.runner }}
+  build-macos:
+    name: Build macos-${{ matrix.target }} (wheels + native lib)
+    needs: resolve
+    if: needs.resolve.outputs.proceed == 'true'
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        platform:
+        include:
           - runner: macos-15-intel
             target: x86_64
-          - runner: macos-latest
+            rust_target: x86_64-apple-darwin
+            classifier: macos-x86-64
+          - runner: macos-15
             target: aarch64
+            rust_target: aarch64-apple-darwin
+            classifier: macos-aarch64
+    env:
+      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - uses: actions/checkout@v6.0.2
         with:
-          ref: v${{ needs.semantic-release.outputs.new_release_version }}
+          ref: ${{ needs.resolve.outputs.tag }}
+      - uses: actions/setup-python@v6.2.0
+        id: py311
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-python@v6.2.0
+        id: py314t
+        with:
+          python-version: '3.14t'
+      - name: Setup Rust
+        run: |
+          rustup show active-toolchain
+          rustup target add ${{ matrix.rust_target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.platform.target }}
-      - name: Build wheels
+          key: ${{ matrix.target }}
+      - name: Cache static ICU
+        uses: actions/cache@v4
+        with:
+          path: .icu-cache/*/*/install
+          key: icu-${{ matrix.runner }}-${{ matrix.target }}-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
+      - name: Build abi3 wheel (CPython 3.11+)
         uses: PyO3/maturin-action@v1.50.0
         with:
-          target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
-          sccache: true
+          target: ${{ matrix.target }}
+          args: --release --out dist -i ${{ steps.py311.outputs.python-path }} --features pyo3/extension-module,pyo3/abi3-py311
+      - name: Build free-threaded wheel (CPython 3.14t)
+        uses: PyO3/maturin-action@v1.50.0
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist -i ${{ steps.py314t.outputs.python-path }} --features pyo3/extension-module
       - name: Verify ICU is static
         run: sh scripts/verify-wheel-static-icu.sh dist
       - name: Upload wheels
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: wheels-macos-${{ matrix.platform.target }}
+          name: wheels-macos-${{ matrix.target }}
           path: dist
+          compression-level: 0
+          retention-days: 3
+      - name: Build UniFFI cdylib
+        run: cargo build -p bolivar-uniffi --release --target ${{ matrix.rust_target }} --locked
+      - name: Verify native lib ICU is static
+        run: sh scripts/verify-static-icu.sh target/${{ matrix.rust_target }}/release/libbolivar_uniffi.dylib
+      - name: Upload native library
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: native-${{ matrix.classifier }}
+          path: target/${{ matrix.rust_target }}/release/libbolivar_uniffi.dylib
+          retention-days: 3
 
   build-sdist:
     name: Build sdist
-    needs: semantic-release
-    if: needs.semantic-release.outputs.new_release_published == 'true'
+    needs: resolve
+    if: needs.resolve.outputs.proceed == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.2
         with:
-          ref: v${{ needs.semantic-release.outputs.new_release_version }}
+          ref: ${{ needs.resolve.outputs.tag }}
       - name: Build sdist
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -222,11 +373,15 @@ jobs:
         with:
           name: wheels-sdist
           path: dist
+          compression-level: 0
+          retention-days: 3
 
-  build-native-libs:
+  # Separate from the wheel jobs: their manylinux container has no pinned
+  # nightly toolchain, and a bare `cargo build` step does not run inside it.
+  build-native-libs-linux:
     name: Build native lib (${{ matrix.classifier }})
-    needs: semantic-release
-    if: needs.semantic-release.outputs.new_release_published == 'true'
+    needs: resolve
+    if: needs.resolve.outputs.proceed == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -234,29 +389,17 @@ jobs:
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             classifier: linux-x86-64
-            lib_name: libbolivar_uniffi.so
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             classifier: linux-aarch64
-            lib_name: libbolivar_uniffi.so
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            classifier: macos-x86-64
-            lib_name: libbolivar_uniffi.dylib
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            classifier: macos-aarch64
-            lib_name: libbolivar_uniffi.dylib
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            classifier: windows-x86-64
-            lib_name: bolivar_uniffi.dll
     runs-on: ${{ matrix.os }}
+    env:
+      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
         with:
-          ref: v${{ needs.semantic-release.outputs.new_release_version }}
+          ref: ${{ needs.resolve.outputs.tag }}
       - name: Setup Rust
         run: |
           rustup show active-toolchain
@@ -264,39 +407,72 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - name: Install ICU on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $baseline = (Get-Content "$env:GITHUB_WORKSPACE\vcpkg.json" | ConvertFrom-Json).'builtin-baseline'
-          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --depth 1 origin $baseline
-          $env:VCPKG_BINARY_SOURCES = "clear"
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static-md-release --host-triplet x64-windows-release --overlay-triplets "$env:GITHUB_WORKSPACE\triplets" --x-install-root "$env:VCPKG_INSTALLATION_ROOT\installed" --x-manifest-root "$env:GITHUB_WORKSPACE" --clean-after-build
-          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
-          "VCPKGRS_TRIPLET=x64-windows-static-md-release" >> $env:GITHUB_ENV
+      - name: Cache static ICU
+        uses: actions/cache@v4
+        with:
+          path: .icu-cache/*/*/install
+          key: icu-native-${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
       - name: Build UniFFI cdylib
         run: cargo build -p bolivar-uniffi --release --target ${{ matrix.target }} --locked
       - name: Verify ICU is static
-        if: runner.os != 'Windows'
-        run: sh scripts/verify-static-icu.sh target/${{ matrix.target }}/release/${{ matrix.lib_name }}
+        run: sh scripts/verify-static-icu.sh target/${{ matrix.target }}/release/libbolivar_uniffi.so
       - name: Upload native library
         uses: actions/upload-artifact@v6.0.0
         with:
           name: native-${{ matrix.classifier }}
-          path: target/${{ matrix.target }}/release/${{ matrix.lib_name }}
+          path: target/${{ matrix.target }}/release/libbolivar_uniffi.so
+          retention-days: 3
       - name: Build uniffi-bindgen
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo build -p bolivar-uniffi --bin uniffi-bindgen --release --target ${{ matrix.target }} --locked
+        run: cargo build -p bolivar-uniffi-bindgen --release --target ${{ matrix.target }} --locked
       - name: Upload uniffi-bindgen
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         uses: actions/upload-artifact@v6.0.0
         with:
           name: uniffi-bindgen-tool
           path: target/${{ matrix.target }}/release/uniffi-bindgen
+          retention-days: 3
+
+  # The three publish jobs must keep identical `needs:` lists. v1.9.0 reached
+  # crates.io and Maven but not PyPI because publish-maven was gated only on
+  # build-native-libs.
+  publish-crates:
+    name: Publish to crates.io
+    needs: [resolve, build-wheels-linux, build-wheels-musllinux, build-windows, build-macos, build-sdist, build-native-libs-linux]
+    if: needs.resolve.outputs.proceed == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      # Trusted Publishing tokens are scoped to the job that mints them, so
+      # the version job's token cannot be reused here.
+      id-token: write
+      contents: read
+    env:
+      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+      - name: Setup Rust
+        run: rustup show active-toolchain
+      # `cargo publish` runs a verification build, which builds ICU.
+      - name: Cache static ICU
+        uses: actions/cache@v4
+        with:
+          path: .icu-cache/*/*/install
+          key: icu-native-ubuntu-24.04-x86_64-unknown-linux-gnu-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
+      - name: Authenticate with crates.io
+        uses: rust-lang/crates-io-auth-action@v1.0.3
+        id: crates-auth
+      - name: Publish crates
+        run: ./scripts/publish-crates.sh
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [semantic-release, build-wheels-linux, build-wheels-musllinux, build-wheels-windows, build-wheels-macos, build-sdist]
+    needs: [resolve, build-wheels-linux, build-wheels-musllinux, build-windows, build-macos, build-sdist, build-native-libs-linux]
+    if: needs.resolve.outputs.proceed == 'true'
     runs-on: ubuntu-24.04
     permissions:
       id-token: write
@@ -320,17 +496,18 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          skip-existing: true
 
   publish-maven:
     name: Publish to Maven Central
-    needs: [semantic-release, build-native-libs]
-    if: needs.semantic-release.outputs.new_release_published == 'true'
+    needs: [resolve, build-wheels-linux, build-wheels-musllinux, build-windows, build-macos, build-sdist, build-native-libs-linux]
+    if: needs.resolve.outputs.proceed == 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
         with:
-          ref: v${{ needs.semantic-release.outputs.new_release_version }}
+          ref: ${{ needs.resolve.outputs.tag }}
       - name: Setup Java
         uses: actions/setup-java@v5.2.0
         with:

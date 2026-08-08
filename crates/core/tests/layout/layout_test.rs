@@ -1116,7 +1116,7 @@ fn test_pdf_with_empty_characters_horizontal() {
     use bolivar_core::extract::extract_pages_stream;
     use bolivar_core::layout::TextBoxType;
 
-    let pdf_data = include_bytes!("fixtures/contrib/issue-449-horizontal.pdf");
+    let pdf_data = include_bytes!("../fixtures/contrib/issue-449-horizontal.pdf");
     let pages: Vec<_> = extract_pages_stream(pdf_data, None)
         .expect("Failed to extract pages")
         .map(|r| r.map(|(_, p)| p))
@@ -1143,7 +1143,7 @@ fn test_pdf_with_empty_characters_vertical() {
     use bolivar_core::extract::{ExtractOptions, extract_pages_stream};
     use bolivar_core::layout::TextBoxType;
 
-    let pdf_data = include_bytes!("fixtures/contrib/issue-449-vertical.pdf");
+    let pdf_data = include_bytes!("../fixtures/contrib/issue-449-vertical.pdf");
 
     let laparams = LAParams {
         detect_vertical: true,

@@ -3,7 +3,7 @@ use bolivar_core::pdfpage::PDFPage;
 
 #[test]
 fn nonfree_175_content_streams_are_small() {
-    let pdf_bytes = include_bytes!("fixtures/nonfree/175.pdf");
+    let pdf_bytes = include_bytes!("../fixtures/nonfree/175.pdf");
     let doc = PDFDocument::new(pdf_bytes, "").expect("parse 175.pdf");
     let mut pages = PDFPage::create_pages(&doc);
 
