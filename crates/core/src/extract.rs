@@ -15,7 +15,7 @@
 //!
 //! Internal helpers (file-private):
 //! - `extract_text_to_fp_impl` — bytes path: validates header, opens doc, delegates
-//! - `extract_text_to_fp_from_doc_impl` — doc path: drives a `TextConverter` over pages
+//! - `extract_text_to_fp_from_doc_impl` — drives a `TextConverter` over pages
 //!
 //! `extract_text` and `extract_text_to_fp` both lower into `*_from_doc_impl`,
 //! so the actual rendering logic lives in exactly one place.
@@ -80,21 +80,10 @@ pub fn extract_text(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result<
 
 /// Extract text from an already-parsed PDFDocument.
 pub fn extract_text_with_document(doc: &PDFDocument, options: ExtractOptions) -> Result<String> {
-    // Use LAParams or create default
-    let laparams = options.laparams.clone().unwrap_or_default();
-
     // Create output buffer
     let mut output = Vec::new();
 
-    extract_text_to_fp_from_doc_impl(
-        doc,
-        &mut output,
-        options.page_numbers.as_deref(),
-        options.maxpages,
-        options.caching,
-        Some(&laparams),
-        options.rotation,
-    )?;
+    extract_text_to_fp_from_doc_impl(doc, &mut output, &options)?;
 
     String::from_utf8(output).map_err(|e| PdfError::DecodeError(e.to_string()))
 }
@@ -123,79 +112,48 @@ pub fn extract_text_to_fp<W: Write>(
 ) -> Result<()> {
     let options = options.unwrap_or_default();
 
-    let laparams = options.laparams.as_ref();
-
-    extract_text_to_fp_impl(
-        pdf_data,
-        writer,
-        &options.password,
-        options.page_numbers.as_deref(),
-        options.maxpages,
-        options.caching,
-        laparams,
-        options.rotation,
-    )
-}
-
-/// Inner implementation of extract_text_to_fp.
-#[allow(clippy::too_many_arguments)]
-fn extract_text_to_fp_impl<W: Write>(
-    pdf_data: &[u8],
-    writer: &mut W,
-    password: &str,
-    page_numbers: Option<&[usize]>,
-    maxpages: usize,
-    caching: bool,
-    laparams: Option<&LAParams>,
-    rotation: i64,
-) -> Result<()> {
     // Validate PDF header
     if pdf_data.len() < 8 || !pdf_data.starts_with(b"%PDF-") {
         return Err(PdfError::SyntaxError("Invalid PDF header".to_string()));
     }
 
     // Parse PDF document
-    let doc = PDFDocument::new_with_cache(pdf_data, password, cache_capacity(caching))?;
-    extract_text_to_fp_from_doc_impl(
-        &doc,
-        writer,
-        page_numbers,
-        maxpages,
-        caching,
-        laparams,
-        rotation,
-    )
+    let doc =
+        PDFDocument::new_with_cache(pdf_data, &options.password, cache_capacity(options.caching))?;
+    extract_text_to_fp_from_doc_impl(&doc, writer, &options)
 }
 
 fn extract_text_to_fp_from_doc_impl<W: Write>(
     doc: &PDFDocument,
     writer: &mut W,
-    page_numbers: Option<&[usize]>,
-    maxpages: usize,
-    caching: bool,
-    laparams: Option<&LAParams>,
-    rotation: i64,
+    options: &ExtractOptions,
 ) -> Result<()> {
     // Get LAParams (use default if not provided)
-    let default_laparams = LAParams::default();
-    let laparams = laparams.unwrap_or(&default_laparams).clone();
+    let laparams = options.laparams.clone().unwrap_or_default();
 
     // Create text converter
     let mut converter = TextConverter::new(writer, "utf-8", 1, Some(laparams.clone()), false);
 
-    let results = run_batch(doc, page_numbers, maxpages, |arena, page_idx, page, doc| {
-        let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-        let mut aggregator =
-            PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1, arena);
-        process_page(
-            page,
-            &mut aggregator,
-            &mut rsrcmgr,
-            rotation,
-            doc,
-            aggregator_result,
-        )
-    })?;
+    let results = run_batch(
+        doc,
+        options.page_numbers.as_deref(),
+        options.maxpages,
+        |arena, page_idx, page, doc| {
+            let mut rsrcmgr = PDFResourceManager::with_caching(options.caching);
+            let mut aggregator =
+                PDFPageAggregator::new(Some(laparams.clone()), page_idx as i32 + 1, arena);
+            let mut ltpage = process_page(
+                page,
+                &mut aggregator,
+                &mut rsrcmgr,
+                options.rotation,
+                doc,
+                aggregator_result,
+            )?;
+            ltpage.set_bidi(options.bidi);
+            Ok(ltpage)
+        },
+    )?;
 
     for (_, ltpage) in results {
         converter.receive_layout(ltpage);
@@ -239,6 +197,7 @@ pub fn extract_pages_with_images_with_document(
     let laparams = options.laparams.clone().unwrap_or_default();
     let caching = options.caching;
     let rotation = options.rotation;
+    let bidi = options.bidi;
     let output_dir = output_dir.to_string();
 
     let stream = run_stream(
@@ -256,14 +215,16 @@ pub fn extract_pages_with_images_with_document(
                 Some(writer),
                 arena,
             );
-            process_page(
+            let mut ltpage = process_page(
                 page,
                 &mut aggregator,
                 &mut rsrcmgr,
                 rotation,
                 doc,
                 aggregator_result,
-            )
+            )?;
+            ltpage.set_bidi(bidi);
+            Ok(ltpage)
         },
     )?;
 
@@ -285,6 +246,7 @@ pub fn extract_pages_stream_from_doc(
     let laparams = options.laparams.clone();
     let caching = options.caching;
     let rotation = options.rotation;
+    let bidi = options.bidi;
 
     run_stream(
         doc,
@@ -295,14 +257,16 @@ pub fn extract_pages_stream_from_doc(
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut aggregator =
                 PDFPageAggregator::new(laparams.clone(), page_idx as i32 + 1, arena);
-            process_page(
+            let mut ltpage = process_page(
                 page,
                 &mut aggregator,
                 &mut rsrcmgr,
                 rotation,
                 doc,
                 aggregator_result,
-            )
+            )?;
+            ltpage.set_bidi(bidi);
+            Ok(ltpage)
         },
     )
 }
@@ -354,12 +318,13 @@ pub fn extract_tables_stream_from_doc_with_geometries(
 pub fn extract_tables_metadata_stream_from_doc_with_geometries(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
-    settings: TableSettings,
+    mut settings: TableSettings,
     geometries: Vec<PageGeometry>,
 ) -> Result<Stream<Vec<TableMetadata>>> {
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
+    settings.text_settings.bidi |= options.bidi;
 
     let plan = ExecutionPlan::new(
         doc.page_index().len(),
@@ -411,12 +376,13 @@ pub fn extract_tables_metadata_stream_from_doc_with_geometries(
 pub fn extract_text_stream_from_doc_with_geometries(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
-    settings: TextSettings,
+    mut settings: TextSettings,
     geometries: Vec<PageGeometry>,
 ) -> Result<Stream<String>> {
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
+    settings.bidi |= options.bidi;
 
     let plan = ExecutionPlan::new(
         doc.page_index().len(),
@@ -466,12 +432,13 @@ pub fn extract_text_stream_from_doc_with_geometries(
 pub fn extract_words_stream_from_doc_with_geometries(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
-    settings: TextSettings,
+    mut settings: TextSettings,
     geometries: Vec<PageGeometry>,
 ) -> Result<Stream<Vec<WordObj>>> {
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
+    settings.bidi |= options.bidi;
 
     let plan = ExecutionPlan::new(
         doc.page_index().len(),
@@ -520,12 +487,13 @@ pub fn extract_words_stream_from_doc_with_geometries(
 fn extract_tables_stream_from_doc_with_geometries_internal(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
-    settings: TableSettings,
+    mut settings: TableSettings,
     geometries: Option<Arc<Vec<PageGeometry>>>,
 ) -> Result<Stream<PageTables>> {
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
+    settings.text_settings.bidi |= options.bidi;
 
     let plan = ExecutionPlan::new(
         doc.page_index().len(),

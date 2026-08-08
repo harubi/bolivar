@@ -15,7 +15,7 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, criterion_group, criterion_main};
 
-use bolivar_core::layout::{LAParams, LTChar, LTLayoutContainer};
+use bolivar_core::layout::{LAParams, LTChar, LTLayoutContainer, reconstruct_text_for_output};
 use bolivar_core::utils::Rect;
 
 use bench_criterion::{BenchCriterion, bench_criterion};
@@ -97,9 +97,26 @@ fn bench_group_textboxes_exact(c: &mut BenchCriterion) {
     group.finish();
 }
 
+fn bench_bidi_reconstruction(c: &mut BenchCriterion) {
+    let mut group = c.benchmark_group("bidi_reconstruction");
+    for (name, text) in [
+        ("ltr_fast_path", "Account number 1120280977"),
+        ("arabic", "1120280977 :ﻊﺟﺮﻤﻟﺍ ﻢﻗﺭ"),
+        (
+            "mixed",
+            "P1 Term 6467299202155588 07/02 14:47:05:ﺔﻘﺣﻼﻣ**23:11:18:ﺖﻗﻮﻟﺍ",
+        ),
+    ] {
+        group.bench_function(name, |b| {
+            b.iter(|| reconstruct_text_for_output(black_box(text)))
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     name = layout_benches;
     config = bench_criterion();
-    targets = bench_group_textboxes_exact
+    targets = bench_group_textboxes_exact, bench_bidi_reconstruction
 );
 criterion_main!(layout_benches);

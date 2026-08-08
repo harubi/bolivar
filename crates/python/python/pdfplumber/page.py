@@ -37,7 +37,7 @@ from .structure import PDFStructTree, StructTreeMissing
 from .table import T_table_settings, Table, TableFinder, TableSettings
 from .utils import decode_text, resolve_all, resolve_and_decode
 from .utils.exceptions import MalformedPDFException, PdfminerException
-from .utils.text import TextMap
+from .utils.text import TextMap, _normalize_rtl_output_text
 
 lt_pat: Pattern[str] = re.compile(r"^LT")
 
@@ -648,7 +648,9 @@ class Page(Container):
         )
 
     def extract_text(self, **kwargs: object) -> str:
-        return self.get_textmap(**tuplify_list_kwargs(kwargs)).as_string
+        bidi = bool(kwargs.pop("bidi", False))
+        text = self.get_textmap(**tuplify_list_kwargs(kwargs)).as_string
+        return _normalize_rtl_output_text(text, True) if bidi else text
 
     def extract_text_simple(self, **kwargs: object) -> str:
         return utils.extract_text_simple(

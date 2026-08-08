@@ -26,6 +26,7 @@ class DocumentJavaApiTest {
             .pages(1, 2)
             .maxPages(2)
             .caching(false)
+            .bidi(true)
             .layout(layout -> layout.wordMargin(0.2).detectVertical(true))
             .build();
 
@@ -33,8 +34,14 @@ class DocumentJavaApiTest {
     assertEquals(List.of(1, 2), options.pageNumbers());
     assertEquals(2, options.maxPages());
     assertFalse(options.caching());
+    assertTrue(options.bidi());
     assertEquals(0.2, options.layout().wordMargin());
     assertTrue(options.layout().detectVertical());
+    assertEquals(
+        DocumentOptions.class,
+        DocumentOptions.class
+            .getConstructor(String.class, List.class, Integer.class, boolean.class, LayoutOptions.class)
+            .getDeclaringClass());
 
     assertEquals(Document.class, Document.class.getMethod("open", Path.class).getReturnType());
     assertEquals(

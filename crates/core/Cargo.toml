@@ -41,6 +41,11 @@ rustversion.workspace = true
 
 [features]
 
+[build-dependencies]
+cc = "1.2"
+pkg-config = "0.3"
+vcpkg = "0.2"
+
 [target.'cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86")))'.dev-dependencies]
 criterion-perf-events = { workspace = true }
 perfcnt = { workspace = true }

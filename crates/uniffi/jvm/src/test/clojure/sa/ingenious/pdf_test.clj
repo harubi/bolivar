@@ -59,6 +59,7 @@
                   :pages [1 2]
                   :max-pages 2
                   :caching false
+                  :bidi true
                   :layout {:line-overlap 0.6
                            :char-margin 2.5
                            :line-margin 0.7
@@ -73,6 +74,7 @@
     (is (= [1 2] (vec (.pageNumbers options))))
     (is (= 2 (.maxPages options)))
     (is (false? (.caching options)))
+    (is (true? (.bidi options)))
     (is (= 0.6 (.lineOverlap layout)))
     (is (= 2.5 (.charMargin layout)))
     (is (= 0.7 (.lineMargin layout)))
@@ -169,7 +171,7 @@
                                  [1.0 0.0 0.0 1.0 20.0 30.0]
                                  (int 17) "Span" "DeviceRGB" "DeviceGray"
                                  [0.1 0.2 0.3] [0.4])
-        line (RawTextLine. bbox "horizontal" "A" (one-list character))
+        line (RawTextLine. bbox "horizontal" "A" "A" (one-list character))
         text-box (RawTextBox. bbox "lr-tb" "A" (one-list line))
         cell (RawTableCell. (int 0) (int 0) (int 1) (int 1) table-bbox "value")
         table (RawTable. table-bbox (int 1) (int 1) (one-list cell))
@@ -197,6 +199,7 @@
                                    :text "A"
                                    :lines [{:bbox {:x0 1.0 :y0 2.0 :x1 3.0 :y1 4.0}
                                             :orientation "horizontal"
+                                            :raw-text "A"
                                             :text "A"
                                             :characters [{:text "A"
                                                           :bbox {:x0 1.0 :y0 2.0 :x1 3.0 :y1 4.0}

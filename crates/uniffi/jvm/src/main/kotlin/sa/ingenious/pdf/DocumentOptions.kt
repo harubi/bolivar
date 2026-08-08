@@ -10,7 +10,16 @@ data class DocumentOptions(
     val maxPages: Int? = null,
     val caching: Boolean = true,
     val layout: LayoutOptions? = null,
+    val bidi: Boolean = false,
 ) {
+    constructor(
+        password: String?,
+        pageNumbers: List<Int>?,
+        maxPages: Int?,
+        caching: Boolean,
+        layout: LayoutOptions?,
+    ) : this(password, pageNumbers, maxPages, caching, layout, false)
+
     init {
         pageNumbers?.forEach { page ->
             require(page > 0) { "Page numbers are 1-based; expected > 0 but got $page" }
@@ -27,6 +36,7 @@ data class DocumentOptions(
         private var maxPages: Int? = null
         private var caching: Boolean = true
         private var layout: LayoutOptions? = null
+        private var bidi: Boolean = false
 
         fun password(value: String?) = apply { password = value }
 
@@ -39,6 +49,8 @@ data class DocumentOptions(
         fun caching(value: Boolean) = apply { caching = value }
 
         fun layout(value: LayoutOptions?) = apply { layout = value }
+
+        fun bidi(value: Boolean) = apply { bidi = value }
 
         fun layout(configure: Consumer<LayoutOptions.Builder>) =
             apply {
@@ -54,6 +66,7 @@ data class DocumentOptions(
                 maxPages = maxPages,
                 caching = caching,
                 layout = layout,
+                bidi = bidi,
             )
     }
 
@@ -63,6 +76,7 @@ data class DocumentOptions(
         private var pageNumbers: List<Int>? = null
         var maxPages: Int? = null
         var caching: Boolean = true
+        var bidi: Boolean = false
         private var layout: LayoutOptions? = null
 
         fun pages(vararg numbers: Int) {
@@ -92,6 +106,7 @@ data class DocumentOptions(
                 maxPages = maxPages,
                 caching = caching,
                 layout = layout,
+                bidi = bidi,
             )
     }
 
@@ -114,4 +129,5 @@ internal fun DocumentOptions.toNative(): NativeExtractOptions =
         maxPages = maxPages?.toPageNumberUInt(),
         caching = caching,
         layoutParams = layout?.toNative(),
+        bidi = bidi,
     )

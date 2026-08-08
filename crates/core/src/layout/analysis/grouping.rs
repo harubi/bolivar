@@ -414,6 +414,7 @@ pub fn group_objects_arena(laparams: &LAParams, arena: &mut LayoutArena) -> Vec<
                         word_margin: laparams.word_margin,
                         y0_tracker: -INF_F64,
                         elements: Vec::new(),
+                        bidi: false,
                     };
                     add_char_to_vertical_line_arena(
                         annos,
@@ -438,6 +439,7 @@ pub fn group_objects_arena(laparams: &LAParams, arena: &mut LayoutArena) -> Vec<
                         word_margin: laparams.word_margin,
                         x1_tracker: INF_F64,
                         elements: Vec::new(),
+                        bidi: false,
                     };
                     add_char_to_horizontal_line_arena(
                         annos,
@@ -462,6 +464,7 @@ pub fn group_objects_arena(laparams: &LAParams, arena: &mut LayoutArena) -> Vec<
                         word_margin: laparams.word_margin,
                         x1_tracker: INF_F64,
                         elements: Vec::new(),
+                        bidi: false,
                     };
                     add_char_to_horizontal_line_arena(
                         annos,
@@ -490,6 +493,7 @@ pub fn group_objects_arena(laparams: &LAParams, arena: &mut LayoutArena) -> Vec<
             word_margin: laparams.word_margin,
             x1_tracker: INF_F64,
             elements: Vec::new(),
+            bidi: false,
         };
         add_char_to_horizontal_line_arena(
             annos,

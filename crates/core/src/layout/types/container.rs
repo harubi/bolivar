@@ -77,6 +77,12 @@ impl LTFigure {
     pub fn iter(&self) -> impl Iterator<Item = &LTItem> {
         self.container.iter()
     }
+
+    pub(crate) fn set_bidi(&mut self, bidi: bool) {
+        for item in &mut self.container.items {
+            item.set_bidi(bidi);
+        }
+    }
 }
 
 impl_has_bbox_delegate!(LTFigure, container, method);
@@ -115,6 +121,13 @@ impl LTPage {
     /// Returns an iterator over contained items.
     pub fn iter(&self) -> impl Iterator<Item = &LTItem> {
         self.container.iter()
+    }
+
+    /// Enable or disable ICU bidi reconstruction for all text on this page.
+    pub fn set_bidi(&mut self, bidi: bool) {
+        for item in &mut self.container.items {
+            item.set_bidi(bidi);
+        }
     }
 
     /// Returns the text groups after analysis (if boxes_flow was enabled).

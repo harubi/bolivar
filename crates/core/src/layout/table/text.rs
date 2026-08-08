@@ -5,8 +5,12 @@
 
 use std::collections::HashMap;
 
+use itertools::Itertools;
+
 use crate::arena::ArenaLookup;
-use crate::layout::bidi::{reorder_text_for_output, reorder_visual_word_runs};
+use crate::layout::bidi::{
+    reconstruct_text_for_output, reorder_text_for_output, reorder_visual_word_runs,
+};
 
 use super::clustering::{bbox_from_chars, cluster_objects};
 use super::types::{CharId, CharObj, TextDir, TextSettings, WordObj};
@@ -23,7 +27,11 @@ fn maybe_reorder_bidi_default(text: String, settings: &TextSettings) -> String {
         && settings.line_dir == TextDir::Ttb
         && settings.char_dir == TextDir::Ltr
     {
-        return reorder_text_for_output(&text);
+        return if settings.bidi {
+            reconstruct_text_for_output(&text)
+        } else {
+            reorder_text_for_output(&text)
+        };
     }
     text
 }
@@ -69,6 +77,15 @@ pub fn merge_chars(
     settings: &TextSettings,
     arena: &dyn ArenaLookup,
 ) -> WordObj {
+    merge_chars_with_bidi(ordered, settings, arena, true)
+}
+
+fn merge_chars_with_bidi(
+    ordered: &[&CharObj],
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+    reconstruct_bidi: bool,
+) -> WordObj {
     let bbox = bbox_from_chars(ordered);
     let doctop_adj = ordered[0].doctop - ordered[0].top;
     let upright = ordered[0].upright;
@@ -78,7 +95,11 @@ pub fn merge_chars(
         .iter()
         .map(|c| expand_ligature(char_text(c, arena), settings.expand_ligatures))
         .collect::<String>();
-    let text = maybe_reorder_bidi_default(text, settings);
+    let text = if reconstruct_bidi {
+        maybe_reorder_bidi_default(text, settings)
+    } else {
+        text
+    };
 
     WordObj {
         text,
@@ -299,6 +320,7 @@ fn extract_word_map<'a>(
     chars: &'a [&'a CharObj],
     settings: &TextSettings,
     arena: &dyn ArenaLookup,
+    reconstruct_bidi: bool,
 ) -> Vec<(WordObj, Vec<&'a CharObj>)> {
     if chars.is_empty() {
         return Vec::new();
@@ -318,7 +340,7 @@ fn extract_word_map<'a>(
         };
         for (line_chars, direction) in line_groups {
             for word_chars in iter_chars_to_words(&line_chars, direction, settings, arena) {
-                let word = merge_chars(&word_chars, settings, arena);
+                let word = merge_chars_with_bidi(&word_chars, settings, arena, reconstruct_bidi);
                 words.push((word, word_chars));
             }
         }
@@ -350,7 +372,7 @@ fn extract_text_layout_refs(
     layout_bbox: &super::types::BBox,
     arena: &dyn ArenaLookup,
 ) -> String {
-    let word_map = extract_word_map(chars, settings, arena);
+    let word_map = extract_word_map(chars, settings, arena, !settings.bidi);
     if word_map.is_empty() {
         return String::new();
     }
@@ -541,7 +563,14 @@ fn extract_text_refs(
     if chars.is_empty() {
         return String::new();
     }
-    let words = extract_words_refs(chars, settings, arena);
+    let words = if settings.bidi {
+        extract_word_map(chars, settings, arena, false)
+            .into_iter()
+            .map(|(word, _)| word)
+            .collect::<Vec<_>>()
+    } else {
+        extract_words_refs(chars, settings, arena)
+    };
 
     let line_dir_render = settings.line_dir;
     let char_dir_render = settings.char_dir;
@@ -575,19 +604,17 @@ fn extract_text_refs(
                 .partial_cmp(&key_b)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        if char_dir_render == TextDir::Ltr {
-            line_sorted = reorder_visual_word_runs(line_sorted, |word| word.text.as_str());
+        if settings.bidi {
+            let line_str = line_sorted.iter().map(|word| word.text.as_str()).join(" ");
+            line_texts.push(maybe_reorder_bidi_default(line_str, settings));
+        } else {
+            if char_dir_render == TextDir::Ltr {
+                line_sorted = reorder_visual_word_runs(line_sorted, |word| word.text.as_str());
+            }
+            line_texts.push(line_sorted.iter().map(|word| word.text.as_str()).join(" "));
         }
-        let line_str = line_sorted
-            .iter()
-            .map(|w| w.text.clone())
-            .collect::<Vec<_>>()
-            .join(" ");
-        line_texts.push(line_str);
     }
 
-    // `merge_chars` already applies default bidi reordering at word level.
-    // Reordering the full line again here can invert pure-RTL words back.
     textmap_to_string(line_texts, line_dir_render, char_dir_render)
 }
 

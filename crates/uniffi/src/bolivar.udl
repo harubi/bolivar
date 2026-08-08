@@ -85,6 +85,7 @@ dictionary RawCharacter {
 dictionary RawTextLine {
     BoundingBox bbox;
     string orientation;
+    string raw_text;
     string text;
     sequence<RawCharacter> characters;
 };
@@ -200,6 +201,7 @@ dictionary ExtractOptions {
     u32? max_pages;
     boolean? caching;
     LayoutParams? layout_params;
+    boolean? bidi;
 };
 
 dictionary PageTableRows {

@@ -4,7 +4,10 @@
 
 use std::io::Write;
 
-use crate::layout::{LAParams, LTItem, LTPage, LTTextBox, LTTextLine, TextBoxType, TextLineType};
+use crate::layout::{
+    LAParams, LTItem, LTPage, LTTextBox, LTTextLine, TextBoxType, TextLineType,
+    normalize_arabic_presentation_forms,
+};
 
 /// Text Converter - outputs plain text.
 ///
@@ -23,6 +26,8 @@ pub struct TextConverter<W: Write> {
     laparams: Option<LAParams>,
     /// Whether to show page numbers
     showpageno: bool,
+    /// Whether to force ICU bidi reconstruction on received pages.
+    bidi: bool,
 }
 
 impl<W: Write> TextConverter<W> {
@@ -40,6 +45,7 @@ impl<W: Write> TextConverter<W> {
             pageno,
             laparams,
             showpageno,
+            bidi: false,
         }
     }
 
@@ -53,6 +59,11 @@ impl<W: Write> TextConverter<W> {
         self.showpageno
     }
 
+    /// Set whether to use ICU bidi reconstruction.
+    pub const fn set_bidi(&mut self, bidi: bool) {
+        self.bidi = bidi;
+    }
+
     /// Write text to output.
     pub fn write_text(&mut self, text: &str) {
         let _ = self.outfp.write_all(text.as_bytes());
@@ -64,7 +75,10 @@ impl<W: Write> TextConverter<W> {
     }
 
     /// Receive and render a layout page.
-    pub fn receive_layout(&mut self, ltpage: LTPage) {
+    pub fn receive_layout(&mut self, mut ltpage: LTPage) {
+        if self.bidi {
+            ltpage.set_bidi(true);
+        }
         if self.showpageno {
             let header = format!("Page {}\n", ltpage.pageid);
             self.write_text(&header);
@@ -101,10 +115,18 @@ impl<W: Write> TextConverter<W> {
                 self.write_text(&text);
             }
             LTItem::Char(c) => {
-                self.write_text(c.get_text());
+                if self.bidi {
+                    self.write_text(&normalize_arabic_presentation_forms(c.get_text()));
+                } else {
+                    self.write_text(c.get_text());
+                }
             }
             LTItem::Anno(a) => {
-                self.write_text(a.get_text());
+                if self.bidi {
+                    self.write_text(&normalize_arabic_presentation_forms(a.get_text()));
+                } else {
+                    self.write_text(a.get_text());
+                }
             }
             LTItem::Figure(fig) => {
                 for child in fig.iter() {

@@ -143,7 +143,8 @@ mod tests {
 
         Python::attach(|py| {
             let py_bytes = PyBytes::new(py, &pdf_data);
-            let text_bytes = extract_text(py, py_bytes.as_any(), "", None, 0, true, None).unwrap();
+            let text_bytes =
+                extract_text(py, py_bytes.as_any(), "", None, 0, true, None, false).unwrap();
             let text_path = extract_text_from_path(
                 py,
                 path.to_string_lossy().as_ref(),
@@ -152,6 +153,7 @@ mod tests {
                 0,
                 true,
                 None,
+                false,
             )
             .unwrap();
             assert_eq!(text_bytes, text_path);
@@ -176,6 +178,7 @@ mod tests {
                 true,
                 None,
                 0,
+                false,
             )
             .unwrap();
             assert_eq!(pages.len(), 2);

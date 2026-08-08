@@ -38,13 +38,14 @@ use crate::table_compat::compat_lists_to_chars_edges;
 /// Returns:
 ///     LTPage with layout analysis results
 #[pyfunction]
-#[pyo3(signature = (doc, page, laparams=None, rotation=0))]
+#[pyo3(signature = (doc, page, laparams=None, rotation=0, bidi=false))]
 pub fn process_page(
     py: Python<'_>,
     doc: &PyPDFDocument,
     page: &PyPDFPage,
     laparams: Option<&PyLAParams>,
     rotation: i64,
+    bidi: bool,
 ) -> PyResult<PyLTPage> {
     use bolivar_core::device::PDFPageAggregator;
     use bolivar_core::engine::{no_precheck, run_stream};
@@ -72,9 +73,10 @@ pub fn process_page(
                 )
             },
         )?;
-        let (_, page) = stream
+        let (_, mut page) = stream
             .next()
             .ok_or_else(|| PdfError::DecodeError("page index out of range".to_string()))??;
+        page.set_bidi(bidi);
         Ok(page)
     });
     let ltpage = result.map_err(|e| core_error_to_py(py, "Failed to process page", e))?;
@@ -90,14 +92,16 @@ pub fn process_page(
 /// Returns:
 ///     List of LTPage objects
 #[pyfunction]
-#[pyo3(signature = (doc, laparams=None))]
+#[pyo3(signature = (doc, laparams=None, bidi=false))]
 pub fn process_pages(
     py: Python<'_>,
     doc: &PyPDFDocument,
     laparams: Option<&PyLAParams>,
+    bidi: bool,
 ) -> PyResult<Vec<PyLTPage>> {
     let options = ExtractOptions {
         laparams: Some(laparams.map(|p| p.clone().into()).unwrap_or_default()),
+        bidi,
         ..ExtractOptions::default()
     };
 
@@ -188,7 +192,7 @@ pub fn repair_pdf(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>
 
 /// Extract text from PDF bytes.
 #[pyfunction]
-#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
+#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, bidi = false))]
 pub fn extract_text(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
@@ -197,8 +201,9 @@ pub fn extract_text(
     maxpages: usize,
     caching: bool,
     laparams: Option<&PyLAParams>,
+    bidi: bool,
 ) -> PyResult<String> {
-    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
+    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams, bidi);
     let doc = open_document_from_input(py, data, password, caching, true)?;
     let result = py.detach(|| core_extract_text_with_document(doc.as_ref(), options));
     result.map_err(|e| core_error_to_py(py, "Failed to extract text", e))
@@ -206,7 +211,7 @@ pub fn extract_text(
 
 /// Extract text from a PDF file path using memory-mapped I/O.
 #[pyfunction]
-#[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None))]
+#[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, bidi = false))]
 pub fn extract_text_from_path(
     py: Python<'_>,
     path: &str,
@@ -215,9 +220,10 @@ pub fn extract_text_from_path(
     maxpages: usize,
     caching: bool,
     laparams: Option<&PyLAParams>,
+    bidi: bool,
 ) -> PyResult<String> {
     let doc = open_document_from_path(path, password, caching, true)?;
-    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams);
+    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams, bidi);
 
     let result = py.detach(|| core_extract_text_with_document(doc.as_ref(), options));
     result.map_err(|e| core_error_to_py(py, "Failed to extract text", e))
@@ -225,7 +231,7 @@ pub fn extract_text_from_path(
 
 /// Extract pages (layout) from PDF bytes.
 #[pyfunction]
-#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, rotation = 0))]
+#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, rotation = 0, bidi = false))]
 pub fn extract_pages(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
@@ -235,6 +241,7 @@ pub fn extract_pages(
     caching: bool,
     laparams: Option<&PyLAParams>,
     rotation: i64,
+    bidi: bool,
 ) -> PyResult<Vec<PyLTPage>> {
     let options = build_extract_options_with_rotation(
         password,
@@ -243,6 +250,7 @@ pub fn extract_pages(
         caching,
         laparams,
         rotation,
+        bidi,
     );
     let doc = open_document_from_input(py, data, password, caching, true)?;
     let pages: Vec<LTPage> = py
@@ -257,7 +265,7 @@ pub fn extract_pages(
 
 /// Extract pages (layout) from PDF bytes while exporting images.
 #[pyfunction]
-#[pyo3(signature = (data, output_dir, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, rotation = 0))]
+#[pyo3(signature = (data, output_dir, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, rotation = 0, bidi = false))]
 pub fn extract_pages_with_images(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
@@ -268,6 +276,7 @@ pub fn extract_pages_with_images(
     caching: bool,
     laparams: Option<&PyLAParams>,
     rotation: i64,
+    bidi: bool,
 ) -> PyResult<Vec<PyLTPage>> {
     let options = build_extract_options_with_rotation(
         password,
@@ -276,6 +285,7 @@ pub fn extract_pages_with_images(
         caching,
         laparams,
         rotation,
+        bidi,
     );
     let doc = open_document_from_input(py, data, password, caching, true)?;
     let pages = py
@@ -292,7 +302,7 @@ pub fn extract_pages_with_images(
 
 /// Extract pages (layout) from a PDF file path using memory-mapped I/O.
 #[pyfunction]
-#[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, rotation = 0))]
+#[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, rotation = 0, bidi = false))]
 pub fn extract_pages_from_path(
     py: Python<'_>,
     path: &str,
@@ -302,6 +312,7 @@ pub fn extract_pages_from_path(
     caching: bool,
     laparams: Option<&PyLAParams>,
     rotation: i64,
+    bidi: bool,
 ) -> PyResult<Vec<PyLTPage>> {
     let doc = open_document_from_path(path, password, caching, true)?;
     let options = build_extract_options_with_rotation(
@@ -311,6 +322,7 @@ pub fn extract_pages_from_path(
         caching,
         laparams,
         rotation,
+        bidi,
     );
 
     let pages: Vec<LTPage> = py
@@ -325,7 +337,7 @@ pub fn extract_pages_from_path(
 
 /// Extract pages (layout) from a PDF file path while exporting images.
 #[pyfunction]
-#[pyo3(signature = (path, output_dir, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, rotation = 0))]
+#[pyo3(signature = (path, output_dir, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, rotation = 0, bidi = false))]
 pub fn extract_pages_with_images_from_path(
     py: Python<'_>,
     path: &str,
@@ -336,6 +348,7 @@ pub fn extract_pages_with_images_from_path(
     caching: bool,
     laparams: Option<&PyLAParams>,
     rotation: i64,
+    bidi: bool,
 ) -> PyResult<Vec<PyLTPage>> {
     let doc = open_document_from_path(path, password, caching, true)?;
     let options = build_extract_options_with_rotation(
@@ -345,6 +358,7 @@ pub fn extract_pages_with_images_from_path(
         caching,
         laparams,
         rotation,
+        bidi,
     );
 
     let pages = py

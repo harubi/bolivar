@@ -128,6 +128,7 @@ data class RawCharacter(
 data class RawTextLine(
     val bbox: BoundingBox,
     val orientation: String,
+    val rawText: String,
     val text: String,
     val characters: List<RawCharacter>,
 )
@@ -409,6 +410,7 @@ internal fun NativeRawTextLine.toPublic(): RawTextLine =
     RawTextLine(
         bbox = bbox.toPublic(),
         orientation = orientation,
+        rawText = rawText,
         text = text,
         characters = characters.map { it.toPublic() },
     )

@@ -3,7 +3,10 @@
 //! Exposes matrix math, Plane, formatting helpers, and unpad_aes.
 
 use bolivar_core::codec::unpad_aes as core_unpad_aes;
-use bolivar_core::layout::reorder_text_for_output as core_reorder_text_for_output;
+use bolivar_core::layout::{
+    reconstruct_text_for_output as core_reconstruct_text_for_output,
+    reorder_text_for_output as core_reorder_text_for_output,
+};
 use bolivar_core::utils::{
     HasBBox, Matrix, Plane as CorePlane, Point, Rect, apply_matrix_pt as core_apply_matrix_pt,
     apply_matrix_rect as core_apply_matrix_rect, format_int_alpha as core_format_int_alpha,
@@ -50,8 +53,13 @@ fn shorten_str(s: &str, size: usize) -> String {
 }
 
 #[pyfunction]
-fn reorder_text_for_output(text: &str) -> String {
-    core_reorder_text_for_output(text)
+#[pyo3(signature = (text, bidi = false))]
+fn reorder_text_for_output(text: &str, bidi: bool) -> String {
+    if bidi {
+        core_reconstruct_text_for_output(text)
+    } else {
+        core_reorder_text_for_output(text)
+    }
 }
 
 #[pyfunction]

@@ -14,6 +14,7 @@ class DocumentOptionsBuilderTest {
         assertEquals(null, options.maxPages)
         assertEquals(true, options.caching)
         assertEquals(null, options.layout)
+        assertEquals(false, options.bidi)
     }
 
     @Test
@@ -24,6 +25,7 @@ class DocumentOptionsBuilderTest {
                 pages(1, 3)
                 maxPages = 2
                 caching = false
+                bidi = true
                 layout {
                     lineOverlap = 0.5
                     charMargin = 2.0
@@ -39,6 +41,7 @@ class DocumentOptionsBuilderTest {
         assertEquals(listOf(1, 3), options.pageNumbers)
         assertEquals(2, options.maxPages)
         assertEquals(false, options.caching)
+        assertEquals(true, options.bidi)
 
         val layout = options.layout ?: error("layout options missing")
         assertEquals(0.5, layout.lineOverlap)

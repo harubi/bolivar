@@ -43,6 +43,17 @@ pub enum LTItem {
 }
 
 impl LTItem {
+    pub(crate) fn set_bidi(&mut self, bidi: bool) {
+        match self {
+            Self::TextLine(TextLineType::Horizontal(line)) => line.set_bidi(bidi),
+            Self::TextLine(TextLineType::Vertical(line)) => line.set_bidi(bidi),
+            Self::TextBox(TextBoxType::Horizontal(text_box)) => text_box.set_bidi(bidi),
+            Self::TextBox(TextBoxType::Vertical(text_box)) => text_box.set_bidi(bidi),
+            Self::Figure(figure) => figure.set_bidi(bidi),
+            Self::Page(page) => page.set_bidi(bidi),
+            _ => {}
+        }
+    }
     pub const fn is_char(&self) -> bool {
         matches!(self, Self::Char(_))
     }

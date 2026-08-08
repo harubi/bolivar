@@ -3,12 +3,14 @@
 //! Port of HTMLConverter and HOCRConverter from pdfminer.six converter.py
 
 use regex::Regex;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
 
 use crate::layout::{
-    LAParams, LTChar, LTItem, LTPage, LTTextBox, LTTextGroup, TextBoxType, TextGroupElement,
-    TextLineElement, TextLineType, reorder_text_for_output,
+    LAParams, LTChar, LTItem, LTPage, LTTextBox, LTTextGroup, ReconstructedLine, TextBoxType,
+    TextGroupElement, TextLineElement, TextLineType, normalize_arabic_presentation_forms,
+    reorder_text_for_output,
 };
 use crate::utils::{HasBBox, Rect, enc, make_compat_str};
 
@@ -50,6 +52,8 @@ pub struct HTMLConverter<W: Write> {
     /// Y offset for positioning
     #[allow(dead_code)]
     yoffset: f64,
+    /// Whether to force ICU bidi reconstruction on received pages.
+    bidi: bool,
 }
 
 impl<W: Write> HTMLConverter<W> {
@@ -100,6 +104,7 @@ impl<W: Write> HTMLConverter<W> {
             rect_colors: Self::default_rect_colors(),
             text_colors: Self::default_text_colors(),
             yoffset: 50.0,
+            bidi: false,
         };
         converter.write_header();
         converter
@@ -356,7 +361,10 @@ impl<W: Write> HTMLConverter<W> {
     /// Receive and render a layout page.
     ///
     /// Port of HTMLConverter.receive_layout from pdfminer.six
-    pub fn receive_layout(&mut self, ltpage: LTPage) {
+    pub fn receive_layout(&mut self, mut ltpage: LTPage) {
+        if self.bidi {
+            ltpage.set_bidi(true);
+        }
         self.yoffset += ltpage.y1();
         self.place_border("page", 1, &ltpage);
 
@@ -459,16 +467,25 @@ impl<W: Write> HTMLConverter<W> {
                 }
             }
             LTItem::Char(c) => {
+                let text = if self.bidi {
+                    Cow::Owned(normalize_arabic_presentation_forms(c.get_text()))
+                } else {
+                    Cow::Borrowed(c.get_text())
+                };
                 if self.layoutmode == "exact" {
                     self.place_border("char", 1, c);
-                    self.place_text("char", c.get_text(), c.x0(), c.y1(), c.size());
+                    self.place_text("char", &text, c.x0(), c.y1(), c.size());
                 } else {
                     let fontname = make_compat_str(c.fontname());
-                    self.put_text(c.get_text(), &fontname, c.size());
+                    self.put_text(&text, &fontname, c.size());
                 }
             }
             LTItem::Anno(a) => {
-                self.write_text(a.get_text());
+                if self.bidi {
+                    self.write_text(&normalize_arabic_presentation_forms(a.get_text()));
+                } else {
+                    self.write_text(a.get_text());
+                }
             }
             _ => {}
         }
@@ -477,6 +494,11 @@ impl<W: Write> HTMLConverter<W> {
     /// Close the converter.
     pub fn close(&mut self) {
         self.write_footer();
+    }
+
+    /// Set whether to use ICU bidi reconstruction.
+    pub const fn set_bidi(&mut self, bidi: bool) {
+        self.bidi = bidi;
     }
 }
 
@@ -519,6 +541,8 @@ pub struct HOCRConverter<W: Write> {
     working_font: String,
     /// Working font size for current word
     working_size: f64,
+    /// Whether to force ICU bidi reconstruction on received pages.
+    bidi: bool,
 }
 
 impl<W: Write> HOCRConverter<W> {
@@ -537,6 +561,7 @@ impl<W: Write> HOCRConverter<W> {
             working_bbox: (0.0, 0.0, 0.0, 0.0),
             working_font: String::new(),
             working_size: 0.0,
+            bidi: false,
         };
         converter.write_header();
         converter
@@ -625,10 +650,14 @@ impl<W: Write> HOCRConverter<W> {
             if self.working_font.contains("Bold") {
                 bold_and_italic_styles.push_str("font-weight: bold; ");
             }
-            let reordered_text = reorder_text_for_output(self.working_text.trim());
             // Escape font name and text content to prevent XSS
             let escaped_font = enc(&self.working_font);
-            let escaped_text = enc(&reordered_text);
+            let text = if self.bidi {
+                self.working_text.trim().to_owned()
+            } else {
+                reorder_text_for_output(self.working_text.trim())
+            };
+            let escaped_text = enc(&text);
             let output = format!(
                 "<span style='font:\"{}\"; font-size:{}; {}' class='ocrx_word' title='{}; x_font {}; x_fsize {}'>{}</span>",
                 escaped_font,
@@ -645,7 +674,10 @@ impl<W: Write> HOCRConverter<W> {
     }
 
     /// Receive and render a layout page.
-    pub fn receive_layout(&mut self, ltpage: LTPage) {
+    pub fn receive_layout(&mut self, mut ltpage: LTPage) {
+        if self.bidi {
+            ltpage.set_bidi(true);
+        }
         self.page_bbox = ltpage.bbox();
 
         // Write page div
@@ -692,13 +724,17 @@ impl<W: Write> HOCRConverter<W> {
                 // Render children
                 match tl {
                     TextLineType::Horizontal(h) => {
-                        for elem in h.iter() {
-                            self.render_textline_element(elem);
+                        if h.bidi() {
+                            self.render_textline_elements(h.iter(), &h.reconstructed());
+                        } else {
+                            self.render_source_textline_elements(h.iter());
                         }
                     }
                     TextLineType::Vertical(v) => {
-                        for elem in v.iter() {
-                            self.render_textline_element(elem);
+                        if v.bidi() {
+                            self.render_textline_elements(v.iter(), &v.reconstructed());
+                        } else {
+                            self.render_source_textline_elements(v.iter());
                         }
                     }
                 }
@@ -727,8 +763,10 @@ impl<W: Write> HOCRConverter<W> {
                                 self.bbox_repr(line_bbox)
                             );
                             self.write(&line_output);
-                            for elem in line.iter() {
-                                self.render_textline_element(elem);
+                            if line.bidi() {
+                                self.render_textline_elements(line.iter(), &line.reconstructed());
+                            } else {
+                                self.render_source_textline_elements(line.iter());
                             }
                             self.write("</span>\n");
                         }
@@ -741,8 +779,10 @@ impl<W: Write> HOCRConverter<W> {
                                 self.bbox_repr(line_bbox)
                             );
                             self.write(&line_output);
-                            for elem in line.iter() {
-                                self.render_textline_element(elem);
+                            if line.bidi() {
+                                self.render_textline_elements(line.iter(), &line.reconstructed());
+                            } else {
+                                self.render_source_textline_elements(line.iter());
                             }
                             self.write("</span>\n");
                         }
@@ -752,14 +792,23 @@ impl<W: Write> HOCRConverter<W> {
                 self.write("</div>\n");
             }
             LTItem::Char(c) => {
-                self.process_char(c);
+                if self.bidi {
+                    let text = normalize_arabic_presentation_forms(c.get_text());
+                    self.process_char(c, &text);
+                } else {
+                    self.process_char(c, c.get_text());
+                }
             }
             LTItem::Anno(a) => {
                 // Annotations (whitespace) - write accumulated word if any
                 if self.within_chars {
                     self.write_word();
                 }
-                self.write_text(a.get_text());
+                if self.bidi {
+                    self.write_text(&normalize_arabic_presentation_forms(a.get_text()));
+                } else {
+                    self.write_text(a.get_text());
+                }
             }
             LTItem::Figure(fig) => {
                 for child in fig.iter() {
@@ -770,35 +819,65 @@ impl<W: Write> HOCRConverter<W> {
         }
     }
 
-    /// Render a text line element (char or annotation).
-    fn render_textline_element(&mut self, elem: &TextLineElement) {
+    fn render_source_textline_elements<'a, I>(&mut self, elements: I)
+    where
+        I: IntoIterator<Item = &'a TextLineElement>,
+    {
+        for element in elements {
+            match element {
+                TextLineElement::Char(character) => {
+                    self.process_char(character, character.get_text());
+                }
+                TextLineElement::Anno(annotation) => {
+                    if self.within_chars {
+                        self.write_word();
+                    }
+                    self.write_text(annotation.get_text());
+                }
+            }
+        }
+    }
+
+    fn render_textline_elements<'a, I>(&mut self, elements: I, line: &ReconstructedLine)
+    where
+        I: IntoIterator<Item = &'a TextLineElement>,
+    {
+        let elements = elements.into_iter().collect::<Vec<_>>();
+        for span in &line.spans {
+            if let Some(element) = elements.get(span.source_index) {
+                self.render_textline_element(element, &span.text);
+            }
+        }
+    }
+
+    fn render_textline_element(&mut self, elem: &TextLineElement, text: &str) {
         match elem {
             TextLineElement::Char(c) => {
-                self.process_char(c);
+                self.process_char(c, text);
             }
-            TextLineElement::Anno(a) => {
+            TextLineElement::Anno(_) => {
                 // Annotation ends current word
                 if self.within_chars {
                     self.write_word();
                 }
-                self.write_text(a.get_text());
+                self.write_text(text);
             }
         }
     }
 
     /// Process a character, accumulating into words.
-    fn process_char(&mut self, c: &LTChar) {
+    fn process_char(&mut self, c: &LTChar, text: &str) {
         if !self.within_chars {
             // Start new word
             self.within_chars = true;
-            self.working_text = c.get_text().to_string();
+            self.working_text = text.to_owned();
             self.working_bbox = c.bbox();
             self.working_font = c.fontname().to_string();
             self.working_size = c.size();
-        } else if c.get_text().trim().is_empty() {
+        } else if text.trim().is_empty() {
             // Whitespace character ends word
             self.write_word();
-            self.write_text(c.get_text());
+            self.write_text(text);
         } else {
             // Check if font/size/baseline changed - start new word if so
             let baseline_changed = (self.working_bbox.1 - c.bbox().1).abs() > 0.001;
@@ -808,20 +887,23 @@ impl<W: Write> HOCRConverter<W> {
             if baseline_changed || font_changed || size_changed {
                 self.write_word();
                 self.within_chars = true;
-                self.working_text = c.get_text().to_string();
+                self.working_text = text.to_owned();
                 self.working_bbox = c.bbox();
                 self.working_font = c.fontname().to_string();
                 self.working_size = c.size();
             } else {
                 // Continue accumulating word
-                self.working_text.push_str(c.get_text());
-                // Extend bbox to include this character
-                self.working_bbox = (
-                    self.working_bbox.0,
-                    self.working_bbox.1,
-                    c.bbox().2,
-                    self.working_bbox.3,
-                );
+                self.working_text.push_str(text);
+                if self.bidi {
+                    self.working_bbox = (
+                        self.working_bbox.0.min(c.bbox().0),
+                        self.working_bbox.1.min(c.bbox().1),
+                        self.working_bbox.2.max(c.bbox().2),
+                        self.working_bbox.3.max(c.bbox().3),
+                    );
+                } else {
+                    self.working_bbox.2 = c.bbox().2;
+                }
             }
         }
     }
@@ -833,5 +915,10 @@ impl<W: Write> HOCRConverter<W> {
             self.write_word();
         }
         self.write_footer();
+    }
+
+    /// Set whether to use ICU bidi reconstruction.
+    pub const fn set_bidi(&mut self, bidi: bool) {
+        self.bidi = bidi;
     }
 }

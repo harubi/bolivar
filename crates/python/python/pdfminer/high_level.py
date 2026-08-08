@@ -157,6 +157,7 @@ def extract_text_to_fp(
     strip_control: bool = False,
     debug: bool = False,
     disable_caching: bool = False,
+    bidi: bool = False,
     **_kwargs: object,
 ) -> None:
     if debug:
@@ -183,6 +184,7 @@ def extract_text_to_fp(
                 codec=effective_codec if effective_codec is not None else "utf-8",
                 laparams=laparams,
                 imagewriter=imagewriter,
+                bidi=bidi,
             )
         else:
             device = TagExtractor(
@@ -213,6 +215,7 @@ def extract_text_to_fp(
             laparams=laparams,
             stripcontrol=strip_control,
             imagewriter=imagewriter,
+            bidi=bidi,
         )
     elif output_type == "html":
         device = HTMLConverter(
@@ -223,6 +226,7 @@ def extract_text_to_fp(
             layoutmode=layoutmode,
             laparams=laparams,
             imagewriter=imagewriter,
+            bidi=bidi,
         )
     elif output_type == "hocr":
         device = HOCRConverter(
@@ -232,6 +236,7 @@ def extract_text_to_fp(
             laparams=laparams,
             stripcontrol=strip_control,
             imagewriter=imagewriter,
+            bidi=bidi,
         )
     else:
         msg = f"Output type can be text, html, xml or tag but is {output_type}"
@@ -249,6 +254,7 @@ def extract_text_to_fp(
                 not disable_caching,
                 laparams,
                 rotation,
+                bidi,
             )
         else:
             pages = _extract_pages_with_images(
@@ -260,6 +266,7 @@ def extract_text_to_fp(
                 not disable_caching,
                 laparams,
                 rotation,
+                bidi,
             )
     else:
         if isinstance(resolved, str):
@@ -271,6 +278,7 @@ def extract_text_to_fp(
                 not disable_caching,
                 laparams,
                 rotation,
+                bidi,
             )
         else:
             pages = _extract_pages(
@@ -281,6 +289,7 @@ def extract_text_to_fp(
                 not disable_caching,
                 laparams,
                 rotation,
+                bidi,
             )
 
     for page in pages:
@@ -297,12 +306,13 @@ def extract_text(
     caching: bool = True,
     codec: str = "utf-8",
     laparams: LAParams | None = None,
+    bidi: bool = False,
 ) -> str:
     pages_list = _normalize_page_numbers(page_numbers)
     resolved = _resolve_input(pdf_file)
     if isinstance(resolved, str):
         return _extract_text_from_path(
-            resolved, password, pages_list, maxpages, caching, laparams
+            resolved, password, pages_list, maxpages, caching, laparams, bidi
         )
     return _extract_text(
         resolved,
@@ -311,6 +321,7 @@ def extract_text(
         maxpages,
         caching,
         laparams,
+        bidi,
     )
 
 
@@ -321,12 +332,13 @@ def extract_pages(
     maxpages: int = 0,
     caching: bool = True,
     laparams: LAParams | None = None,
+    bidi: bool = False,
 ) -> Generator[LTPage, None, None]:
     pages_list = _normalize_page_numbers(page_numbers)
     resolved = _resolve_input(pdf_file)
     if isinstance(resolved, str):
         pages = _extract_pages_from_path(
-            resolved, password, pages_list, maxpages, caching, laparams
+            resolved, password, pages_list, maxpages, caching, laparams, 0, bidi
         )
     else:
         pages = _extract_pages(
@@ -336,5 +348,7 @@ def extract_pages(
             maxpages,
             caching,
             laparams,
+            0,
+            bidi,
         )
     return (LTPage(page) for page in pages)
