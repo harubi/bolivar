@@ -152,6 +152,11 @@ impl LTTextLineHorizontal {
         self.elements.iter()
     }
 
+    /// Return the source elements in this text line.
+    pub fn elements(&self) -> &[TextLineElement] {
+        &self.elements
+    }
+
     /// Return logical text and its mapping to source layout elements.
     pub fn reconstructed(&self) -> ReconstructedLine {
         reconstruct_textline_elements(&self.elements, Axis::Horizontal)
@@ -287,6 +292,11 @@ impl LTTextLineVertical {
     /// Returns an iterator over elements in this text line.
     pub fn iter(&self) -> impl Iterator<Item = &TextLineElement> {
         self.elements.iter()
+    }
+
+    /// Return the source elements in this text line.
+    pub fn elements(&self) -> &[TextLineElement] {
+        &self.elements
     }
 
     /// Return logical text and its mapping to source layout elements.

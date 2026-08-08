@@ -1,12 +1,12 @@
 use bolivar_core::extract::ExtractOptions as CoreExtractOptions;
 use bolivar_core::extract::{
-    extract_pages_stream_from_doc, extract_tables_metadata_stream_from_doc_with_geometries,
+    extract_layout_tables_metadata_stream_from_doc_with_geometries, extract_pages_stream_from_doc,
+    extract_tables_metadata_stream_from_doc_with_geometries,
     extract_tables_stream_from_doc_with_geometries,
 };
 use bolivar_core::layout::LAParams as CoreLAParams;
 use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::table::{ExplicitLine, PageGeometry, TableSettings};
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::document::NativePdfDocument;
@@ -40,20 +40,6 @@ fn normalize_page_numbers(
 fn normalize_max_pages(max_pages: Option<u32>) -> Result<usize, BolivarError> {
     let max_pages = max_pages.unwrap_or(0);
     usize::try_from(max_pages).map_err(|_| BolivarError::InvalidArgument)
-}
-
-pub(crate) fn extract_password(options: &Option<ExtractOptions>) -> String {
-    options
-        .as_ref()
-        .and_then(|value| value.password.clone())
-        .unwrap_or_default()
-}
-
-pub(crate) fn extract_caching(options: &Option<ExtractOptions>) -> bool {
-    options
-        .as_ref()
-        .and_then(|value| value.caching)
-        .unwrap_or(true)
 }
 
 fn normalize_layout_params(
@@ -133,38 +119,27 @@ pub(crate) fn extract_raw_document_core(
         options.page_numbers.clone(),
         options.maxpages,
     );
-    let mut pdf_pages = BTreeMap::new();
     let mut geometries = Vec::with_capacity(selected_indices.len());
     for &page_index in &selected_indices {
         let page = doc
             .get_page_cached(page_index)
             .map_err(BolivarError::from)?;
         geometries.push(page_geometry_from_pdf_page(page.as_ref()));
-        pdf_pages.insert(page_index, page);
     }
 
-    let table_stream = extract_tables_metadata_stream_from_doc_with_geometries(
+    let stream = extract_layout_tables_metadata_stream_from_doc_with_geometries(
         Arc::clone(&doc),
-        options.clone(),
+        options,
         TableSettings::default(),
         geometries,
     )
     .map_err(BolivarError::from)?;
-    let mut tables_by_page = BTreeMap::new();
-    for item in table_stream {
-        let (page_index, tables) = item.map_err(BolivarError::from)?;
-        tables_by_page.insert(page_index, tables);
-    }
-
-    let page_stream =
-        extract_pages_stream_from_doc(Arc::clone(&doc), options).map_err(BolivarError::from)?;
     let mut pages = Vec::with_capacity(selected_indices.len());
-    for item in page_stream {
-        let (page_index, layout_page) = item.map_err(BolivarError::from)?;
-        let pdf_page = pdf_pages
-            .get(&page_index)
-            .ok_or(BolivarError::RuntimeError)?;
-        let tables = tables_by_page.remove(&page_index).unwrap_or_default();
+    for item in stream {
+        let (page_index, (layout_page, tables)) = item.map_err(BolivarError::from)?;
+        let pdf_page = doc
+            .get_page_cached(page_index)
+            .map_err(BolivarError::from)?;
         pages.push(raw_page_from_parts(
             page_index,
             pdf_page.as_ref(),
@@ -417,14 +392,16 @@ pub(crate) fn extract_tables_with_core(
 }
 
 pub(crate) fn open_pdf_document(
-    pdf_data: &[u8],
-    options: &Option<ExtractOptions>,
+    pdf_data: Vec<u8>,
+    options: &CoreExtractOptions,
 ) -> Result<Arc<PDFDocument>, BolivarError> {
-    let password = extract_password(options);
-    let caching = extract_caching(options);
-    PDFDocument::new_with_cache(pdf_data, &password, cache_capacity(caching))
-        .map(Arc::new)
-        .map_err(BolivarError::from)
+    PDFDocument::new_from_vec_with_cache(
+        pdf_data,
+        &options.password,
+        cache_capacity(options.caching),
+    )
+    .map(Arc::new)
+    .map_err(BolivarError::from)
 }
 
 pub fn quick_extract_text(
