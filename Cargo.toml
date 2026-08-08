@@ -15,6 +15,7 @@ categories = ["parser-implementations", "text-processing"]
 [workspace.dependencies]
 # Internal crates
 bolivar-core = { path = "crates/core", version = "1.8.0" }
+bolivar-icu = { path = "crates/icu", version = "1.8.0" }
 
 # Core dependencies
 aes = "0.8"

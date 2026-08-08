@@ -1,3 +1,5 @@
+#define U_STATIC_IMPLEMENTATION
+
 #include <stdint.h>
 #include <unicode/ubidi.h>
 #include <unicode/utypes.h>

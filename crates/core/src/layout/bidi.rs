@@ -4,8 +4,6 @@
 //! bidi operation. This module also keeps the output tied to source elements.
 
 use std::cell::RefCell;
-use std::ffi::c_void;
-use std::ptr::NonNull;
 
 use unicode_bidi::BidiInfo;
 use unicode_normalization::UnicodeNormalization;
@@ -15,20 +13,6 @@ use crate::utils::HasBBox;
 
 const ICU_LTR: u8 = 0;
 const ICU_RTL: u8 = 1;
-
-unsafe extern "C" {
-    fn bolivar_icu_bidi_open() -> *mut c_void;
-    fn bolivar_icu_bidi_close(bidi: *mut c_void);
-    fn bolivar_icu_bidi_inverse(
-        bidi: *mut c_void,
-        source: *const u16,
-        source_length: i32,
-        paragraph_level: u8,
-        destination: *mut u16,
-        destination_capacity: i32,
-        output_to_source: *mut i32,
-    ) -> i32;
-}
 
 /// The base direction selected for a reconstructed line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +53,7 @@ struct SourceScalar {
 }
 
 struct IcuBidi {
-    context: NonNull<c_void>,
+    context: bolivar_icu::Bidi,
     input: Vec<u16>,
     output: Vec<u16>,
     output_to_input: Vec<i32>,
@@ -78,7 +62,7 @@ struct IcuBidi {
 
 impl IcuBidi {
     fn new() -> Option<Self> {
-        let context = NonNull::new(unsafe { bolivar_icu_bidi_open() })?;
+        let context = bolivar_icu::Bidi::new()?;
         Some(Self {
             context,
             input: Vec::new(),
@@ -102,25 +86,18 @@ impl IcuBidi {
                 .extend(std::iter::repeat_n(scalar.source_index, units.len()));
         }
 
-        let length = i32::try_from(self.input.len()).ok()?;
         self.output.resize(self.input.len(), 0);
         self.output_to_input.resize(self.input.len(), -1);
         let paragraph_level = match direction {
             BaseDirection::Ltr => ICU_LTR,
             BaseDirection::Rtl => ICU_RTL,
         };
-        let output_length = unsafe {
-            bolivar_icu_bidi_inverse(
-                self.context.as_ptr(),
-                self.input.as_ptr(),
-                length,
-                paragraph_level,
-                self.output.as_mut_ptr(),
-                length,
-                self.output_to_input.as_mut_ptr(),
-            )
-        };
-        let output_length = usize::try_from(output_length).ok()?;
+        let output_length = self.context.inverse(
+            &self.input,
+            paragraph_level,
+            &mut self.output,
+            Some(&mut self.output_to_input),
+        )?;
         if output_length > self.output.len() {
             return None;
         }
@@ -135,32 +112,16 @@ impl IcuBidi {
     fn inverse_text(&mut self, text: &str, direction: BaseDirection) -> Option<String> {
         self.input.clear();
         self.input.extend(text.encode_utf16());
-        let length = i32::try_from(self.input.len()).ok()?;
         self.output.resize(self.input.len(), 0);
         let paragraph_level = match direction {
             BaseDirection::Ltr => ICU_LTR,
             BaseDirection::Rtl => ICU_RTL,
         };
-        let output_length = unsafe {
-            bolivar_icu_bidi_inverse(
-                self.context.as_ptr(),
-                self.input.as_ptr(),
-                length,
-                paragraph_level,
-                self.output.as_mut_ptr(),
-                length,
-                std::ptr::null_mut(),
-            )
-        };
-        let output_length = usize::try_from(output_length).ok()?;
+        let output_length =
+            self.context
+                .inverse(&self.input, paragraph_level, &mut self.output, None)?;
         let output = String::from_utf16(self.output.get(..output_length)?).ok()?;
         Some(normalize_arabic_presentation_forms(&output))
-    }
-}
-
-impl Drop for IcuBidi {
-    fn drop(&mut self) {
-        unsafe { bolivar_icu_bidi_close(self.context.as_ptr()) };
     }
 }
 
