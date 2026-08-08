@@ -10,23 +10,10 @@ if TYPE_CHECKING:
     from collections.abc import Container, Generator
 
     from bolivar._bolivar import PDFDocument as _NativePDFDocument
+    from bolivar._bolivar import PDFPage as _NativePDFPage
 
 
-log = logging.getLogger(__name__)
-
-
-class _RustPageLike(Protocol):
-    pageid: int
-    mediabox: tuple[float, float, float, float] | None
-    cropbox: tuple[float, float, float, float] | None
-    rotate: int
-    resources: dict[str, Any]
-    label: str | None
-    annots: list[Any]
-    bleedbox: tuple[float, float, float, float] | None
-    trimbox: tuple[float, float, float, float] | None
-    artbox: tuple[float, float, float, float] | None
-    attrs: dict[str, Any]
+log: logging.Logger = logging.getLogger(__name__)
 
 
 class _DocumentLike(Protocol):
@@ -39,7 +26,7 @@ class PDFPage:
     Provides pdfminer.six-compatible API for accessing page properties.
     """
 
-    _rust_page: _RustPageLike
+    _rust_page: _NativePDFPage
     doc: _DocumentLike
     _page_index: int | None
     pageid: int
@@ -58,7 +45,7 @@ class PDFPage:
 
     def __init__(
         self,
-        rust_page: _RustPageLike,
+        rust_page: _NativePDFPage,
         doc: _DocumentLike,
         page_index: int | None = None,
     ) -> None:

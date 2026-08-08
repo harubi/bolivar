@@ -4,7 +4,6 @@ from collections.abc import Sequence
 
 from bolivar._native_api import TagExtractor
 
-
 _Matrix = tuple[float, float, float, float, float, float]
 
 

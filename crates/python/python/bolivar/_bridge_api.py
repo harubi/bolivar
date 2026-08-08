@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from importlib import import_module
 from typing import TYPE_CHECKING
 
 from bolivar._export_manifest import BRIDGE_EXPORTS
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import ModuleType
 
     from bolivar._bolivar import (
-        _extract_tables_for_page_indexed as _extract_tables_for_page_indexed,
+        _extract_tables_for_compat_page as _extract_tables_for_compat_page,
     )
     from bolivar._bolivar import (
-        _extract_tables_for_compat_page as _extract_tables_for_compat_page,
+        _extract_tables_for_page_indexed as _extract_tables_for_page_indexed,
     )
     from bolivar._bolivar import (
         _extract_words_for_page_indexed as _extract_words_for_page_indexed,
@@ -23,9 +23,7 @@ if TYPE_CHECKING:
 
 _NATIVE_MODULE: ModuleType | None = None
 _BRIDGE_EXPORT_NAMES = frozenset(BRIDGE_EXPORTS)
-_MODULE_DUNDER_NAMES = frozenset(
-    name for name in globals() if name.startswith("__")
-)
+_MODULE_DUNDER_NAMES = frozenset(name for name in globals() if name.startswith("__"))
 
 
 def _load_bridge_api() -> ModuleType:

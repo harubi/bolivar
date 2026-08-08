@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 import io
+import logging
 import os
 import sys
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, Protocol, cast
 
 from bolivar import (
     extract_pages as _extract_pages,
@@ -82,7 +82,7 @@ def _is_binary_output(outfp: object) -> bool:
 
 
 class _TextIOBridge:
-    def __init__(self, outfp: AnyIO, codec: str) -> None:
+    def __init__(self, outfp: _TextWriter, codec: str) -> None:
         self._outfp = outfp
         self._codec = codec
 
@@ -98,24 +98,33 @@ class _TextIOBridge:
         return None
 
 
+class _TextWriter(Protocol):
+    def write(self, data: str) -> object: ...
+
+    def flush(self) -> object: ...
+
+
 def _prepare_converter_output(
     outfp: AnyIO,
     output_type: str,
     codec: str | None,
-) -> tuple[AnyIO, str | None]:
+) -> tuple[object, str | None]:
     binary_output = _is_binary_output(outfp)
 
     if output_type == "text":
         effective_codec = codec or "utf-8"
         if binary_output:
             return outfp, effective_codec
-        return _TextIOBridge(outfp, effective_codec), effective_codec
+        return (
+            _TextIOBridge(cast("_TextWriter", outfp), effective_codec),
+            effective_codec,
+        )
 
     if output_type == "xml":
         if codec is None:
             if binary_output:
                 raise PDFValueError("Codec is required for a binary I/O output")
-            return _TextIOBridge(outfp, "utf-8"), ""
+            return _TextIOBridge(cast("_TextWriter", outfp), "utf-8"), ""
         if not binary_output:
             raise PDFValueError("Codec is required for a binary I/O output")
         return outfp, codec
@@ -124,7 +133,7 @@ def _prepare_converter_output(
         if codec is None:
             if binary_output:
                 raise PDFValueError("Codec is required for a binary I/O output")
-            return _TextIOBridge(outfp, "utf-8"), ""
+            return _TextIOBridge(cast("_TextWriter", outfp), "utf-8"), ""
         if not binary_output:
             raise PDFValueError("Codec must not be specified for a text I/O output")
         return outfp, codec

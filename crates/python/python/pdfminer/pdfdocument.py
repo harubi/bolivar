@@ -8,13 +8,14 @@ from bolivar import PDFDocument as _RustPDFDocument
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
+    from typing import NoReturn
 
     from bolivar._bolivar import PDFDocument as _NativePDFDocument
 
 from .pdfexceptions import PDFException, PDFObjectNotFound
 
 
-def _raise_pdf_syntax_error(exc: Exception) -> None:
+def _raise_pdf_syntax_error(exc: Exception) -> NoReturn:
     from .pdfparser import PDFSyntaxError
 
     message = str(exc)
@@ -54,7 +55,6 @@ def _open_rust_document(
         )
     except Exception as exc:
         _raise_pdf_syntax_error(exc)
-        raise AssertionError("unreachable")
 
 
 class _ParserLike(Protocol):

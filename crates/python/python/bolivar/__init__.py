@@ -66,9 +66,7 @@ if TYPE_CHECKING:
 
 __all__ = list(TOP_LEVEL_EXPORTS)
 _LAZY_EXPORTS = frozenset(TOP_LEVEL_EXPORTS)
-_MODULE_DUNDER_NAMES = frozenset(
-    name for name in globals() if name.startswith("__")
-)
+_MODULE_DUNDER_NAMES = frozenset(name for name in globals() if name.startswith("__"))
 
 
 def __getattr__(name: str) -> object:
