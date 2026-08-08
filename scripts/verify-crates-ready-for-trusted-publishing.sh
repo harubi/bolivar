@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CRATES=("bolivar-core" "bolivar-cli")
+CRATES=("bolivar-icu" "bolivar-core" "bolivar-cli")
 MISSING=()
 
 check_crate_exists() {

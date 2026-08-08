@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "Publishing bolivar-icu to crates.io..."
+cargo publish -p bolivar-icu --allow-dirty --locked
+
 echo "Publishing bolivar-core to crates.io..."
 cargo publish -p bolivar-core --allow-dirty --locked
 

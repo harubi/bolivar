@@ -1,0 +1,17 @@
+[package]
+name = "bolivar-icu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Internal static ICU4C support for Bolivar"
+links = "bolivar_icu"
+
+[build-dependencies]
+cc = "1.2"
+flate2.workspace = true
+sha2.workspace = true
+tar = "0.4"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+vcpkg = "0.2"
