@@ -6,13 +6,13 @@ does not require eagerly resolving every symbol from the extension.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from importlib import import_module
 from typing import TYPE_CHECKING
 
 from bolivar._export_manifest import PUBLIC_EXPORTS
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from types import ModuleType
 
     from bolivar._bolivar import (
@@ -273,9 +273,7 @@ if TYPE_CHECKING:
 
 _NATIVE_MODULE: ModuleType | None = None
 _PUBLIC_EXPORT_NAMES = frozenset(PUBLIC_EXPORTS)
-_MODULE_DUNDER_NAMES = frozenset(
-    name for name in globals() if name.startswith("__")
-)
+_MODULE_DUNDER_NAMES = frozenset(name for name in globals() if name.startswith("__"))
 
 
 def _load_native_api() -> ModuleType:

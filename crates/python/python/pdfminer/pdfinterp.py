@@ -8,6 +8,8 @@ if TYPE_CHECKING:
     from bolivar._bolivar import PDFDocument as _NativePDFDocument
     from bolivar._bolivar import PDFPage as _NativePDFPage
 
+    from .pdfpage import PDFPage
+
 from bolivar import (
     process_page as _rust_process_page,
 )
@@ -28,15 +30,6 @@ _Matrix = tuple[float, float, float, float, float, float]
 
 # Rust-backed resource manager (drop-in compatible API).
 PDFResourceManager = _RustPDFResourceManager
-
-
-class _DocumentLike(Protocol):
-    _rust_doc: _NativePDFDocument
-
-
-class _PageLike(Protocol):
-    doc: _DocumentLike
-    _rust_page: _NativePDFPage
 
 
 class _DeviceLike(Protocol):
@@ -173,7 +166,7 @@ class PDFPageInterpreter:
             if color is not None:
                 state.ncolor = color
 
-    def process_page(self, page: _PageLike) -> None:
+    def process_page(self, page: PDFPage) -> None:
         """Process a PDF page and send results to device.
 
         Args:
@@ -237,7 +230,7 @@ class PDFPageInterpreter:
         _ = streams
 
     @staticmethod
-    def _page_ctm(page: _PageLike) -> _Matrix:
+    def _page_ctm(page: PDFPage) -> _Matrix:
         mediabox = getattr(page, "mediabox", None)
         if not isinstance(mediabox, (list, tuple)) or len(mediabox) != 4:
             return (1, 0, 0, 1, 0, 0)
