@@ -11,15 +11,13 @@ publish = false
 name = "bolivar_uniffi"
 crate-type = ["cdylib", "rlib"]
 
-[[bin]]
-name = "uniffi-bindgen"
-path = "uniffi-bindgen.rs"
-
 [dependencies]
 bolivar-core.workspace = true
 thiserror.workspace = true
 tokio = { version = "1.40", features = ["rt-multi-thread"] }
-uniffi = { version = "0.31.0", features = ["cli"] }
+# No `cli` feature: it pulls clap and the template engine into the cdylib.
+# The generator lives in crates/uniffi-bindgen.
+uniffi = { version = "0.31.0" }
 
 [build-dependencies]
 uniffi = { version = "0.31.0", features = ["build"] }

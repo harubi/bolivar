@@ -15,6 +15,7 @@ const ICU_ARCHIVE_URL: &str =
 
 fn main() {
     println!("cargo:rerun-if-changed=src/icu_bidi.c");
+    println!("cargo:rerun-if-env-changed=BOLIVAR_ICU_CACHE_DIR");
     println!("cargo:rerun-if-env-changed=DOCS_RS");
     println!("cargo:rerun-if-env-changed=VCPKG_ROOT");
     println!("cargo:rerun-if-env-changed=VCPKGRS_DYNAMIC");
@@ -80,18 +81,23 @@ fn link_unix_icu(prefix: &Path) {
 }
 
 fn cache_dir(output_dir: &Path, target: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let profile = env::var("PROFILE")?;
-    let profile_dir = output_dir
-        .ancestors()
-        .find(|path| path.file_name() == Some(OsStr::new(&profile)))
-        .ok_or("could not find the Cargo profile directory")?;
-    let target_dir = profile_dir
-        .parent()
-        .ok_or("could not find the Cargo target directory")?;
-    let cache_dir = target_dir
-        .join("bolivar-icu")
-        .join(target)
-        .join(ICU_VERSION);
+    // CI points this outside `target/`: rust-cache's save step deletes plain
+    // files there, stripping the built ICU archives before they are cached.
+    let base = match env::var_os("BOLIVAR_ICU_CACHE_DIR") {
+        Some(dir) => PathBuf::from(dir),
+        None => {
+            let profile = env::var("PROFILE")?;
+            let profile_dir = output_dir
+                .ancestors()
+                .find(|path| path.file_name() == Some(OsStr::new(&profile)))
+                .ok_or("could not find the Cargo profile directory")?;
+            profile_dir
+                .parent()
+                .ok_or("could not find the Cargo target directory")?
+                .join("bolivar-icu")
+        }
+    };
+    let cache_dir = base.join(target).join(ICU_VERSION);
     fs::create_dir_all(&cache_dir)?;
     Ok(cache_dir)
 }

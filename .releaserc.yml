@@ -64,10 +64,11 @@ plugins:
   - - "@semantic-release/changelog"
     - changelogFile: CHANGELOG.md
 
+  # No publishCmd: crates.io is published by the publish-crates job, which is
+  # gated on every build.
   - - "@semantic-release/exec"
     - verifyConditionsCmd: ./scripts/verify-crates-ready-for-trusted-publishing.sh
       prepareCmd: ./scripts/bump-version.sh ${nextRelease.version}
-      publishCmd: ./scripts/publish-crates.sh
       successCmd: |
         echo "new_release_published=true" >> $GITHUB_OUTPUT
         echo "new_release_version=${nextRelease.version}" >> $GITHUB_OUTPUT

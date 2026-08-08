@@ -475,3 +475,8 @@ node_modules/
 crates/uniffi/jvm/.gradle/
 crates/uniffi/jvm/.kotlin/
 crates/uniffi/jvm/build/
+
+# CI native-dependency caches. In-workspace so container builds see them
+# without an extra mount; must stay untracked for `cargo publish`.
+.icu-cache/
+.vcpkg-cache/

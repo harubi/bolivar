@@ -45,7 +45,7 @@ done
 [tasks.bench]
 description = "Run Rust benchmarks"
 command = "cargo"
-args = ["bench", "-p", "bolivar-core"]
+args = ["bench", "-p", "bolivar-bench"]
 
 [tasks.fmt]
 description = "Format Rust and Python"
@@ -83,7 +83,7 @@ case "$(uname -s)" in
 esac
 mkdir -p crates/uniffi/kotlin
 find crates/uniffi/kotlin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-cargo run --release -p bolivar-uniffi --bin uniffi-bindgen -- \
+cargo run --release -p bolivar-uniffi-bindgen -- \
   generate --library "$lib" --language kotlin --out-dir crates/uniffi/kotlin
 '''
 

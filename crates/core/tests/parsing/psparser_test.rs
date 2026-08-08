@@ -28,7 +28,7 @@ func/a/b{(c)do*}def
 /// Expected tokens from TESTDATA (position, token)
 /// Format matches pdfminer.six TOKENS list
 fn expected_tokens() -> Vec<(usize, PSToken)> {
-    use crate::Keyword as Kw; // Disambiguate from PSToken::Keyword variant
+    use bolivar_core::psparser::Keyword as Kw; // Disambiguate from PSToken::Keyword variant
     use PSToken::*;
     vec![
         (5, Keyword(Kw::Begin)),
@@ -217,7 +217,7 @@ fn test_issue_884_keyword_at_stream_end() {
 }
 
 /// BIGDATA - CMap content for buffer boundary test (Issue #1025)
-const BIGDATA: &[u8] = include_bytes!("fixtures/cmap_bigdata.bin");
+const BIGDATA: &[u8] = include_bytes!("../fixtures/cmap_bigdata.bin");
 
 /// Test 4: Regression test for buffer boundary crossing (Issue #1025)
 #[test]

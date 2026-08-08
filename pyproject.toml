@@ -5,14 +5,13 @@ build-backend = "maturin"
 [project]
 name = "bolivar"
 description = "Fast PDF content extraction, written in Rust with Python bindings"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "Ahmed Aloufi", email = "936636+harubi@users.noreply.github.com" }]
 readme = "README.md"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -74,7 +73,7 @@ exclude = [".venv/**", "target/**", "references/**"]
 
 [tool.ty.environment]
 root = [".", "crates/python/python"]
-python-version = "3.10"
+python-version = "3.11"
 
 [tool.ty.rules]
 all = "error"
@@ -83,7 +82,7 @@ all = "error"
 error-on-warning = true
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 src = ["crates/python/python"]
 
 [tool.ruff.lint]

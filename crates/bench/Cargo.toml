@@ -1,0 +1,52 @@
+[package]
+name = "bolivar-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Benchmarks for bolivar-core"
+publish = false
+
+# No test target, so `nextest run --workspace` never compiles criterion.
+[lib]
+test = false
+doctest = false
+bench = false
+
+[dependencies]
+bolivar-core.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+serde_json.workspace = true
+stats_alloc.workspace = true
+stats_alloc_helper.workspace = true
+
+[target.'cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "x86")))'.dev-dependencies]
+criterion-perf-events = { workspace = true }
+perfcnt = { workspace = true }
+
+[[bench]]
+name = "alloc_bench"
+harness = false
+
+[[bench]]
+name = "micro_plane_bench"
+harness = false
+
+[[bench]]
+name = "layout_bench"
+harness = false
+
+[[bench]]
+name = "table_bench"
+harness = false
+
+[[bench]]
+name = "e2e_bench"
+harness = false
+
+[[bench]]
+name = "png_predictor_bench"
+harness = false

@@ -1,0 +1,9 @@
+mod bench_fixtures;
+mod compat_facade_test;
+mod converter_test;
+mod dumppdf_test;
+mod high_level_test;
+mod integration_test;
+mod pdf2txt_test;
+mod pdfdevice_test;
+mod text_extract_test;

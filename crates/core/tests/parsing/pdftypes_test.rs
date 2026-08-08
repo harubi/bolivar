@@ -126,7 +126,7 @@ fn test_stream_attrs() {
 
 #[test]
 fn test_decode_stream_bytes() {
-    let pdf_bytes = include_bytes!("fixtures/contrib/issue-1062-filters.pdf");
+    let pdf_bytes = include_bytes!("../fixtures/contrib/issue-1062-filters.pdf");
     let doc = PDFDocument::new(pdf_bytes.as_slice(), "").expect("parse fixture");
     let mut decoded_any = false;
 

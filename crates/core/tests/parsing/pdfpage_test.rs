@@ -6,7 +6,7 @@ use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdfpage::PDFPage;
 
 // Embed test fixture at compile time (Miri-compatible)
-const PAGELABELS_PDF: &[u8] = include_bytes!("fixtures/contrib/pagelabels.pdf");
+const PAGELABELS_PDF: &[u8] = include_bytes!("../fixtures/contrib/pagelabels.pdf");
 
 /// Test that page labels are correctly assigned to each PDFPage.
 /// Port of: test_page_labels

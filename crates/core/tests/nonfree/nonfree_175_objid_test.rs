@@ -3,7 +3,7 @@ use bolivar_core::pdftypes::PDFObject;
 
 #[test]
 fn nonfree_175_object_offsets_match_expected_sizes() {
-    let pdf_bytes = include_bytes!("fixtures/nonfree/175.pdf");
+    let pdf_bytes = include_bytes!("../fixtures/nonfree/175.pdf");
     let doc = PDFDocument::new(pdf_bytes, "").expect("parse 175.pdf");
 
     let obj1 = doc.getobj(1).expect("obj 1");

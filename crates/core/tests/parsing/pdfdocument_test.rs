@@ -11,10 +11,10 @@ use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdfpage::PDFPage;
 
 // Embed test fixtures at compile time (Miri-compatible)
-const SIMPLE1_PDF: &[u8] = include_bytes!("fixtures/simple1.pdf");
-const ENCRYPTED_NO_ID_PDF: &[u8] = include_bytes!("fixtures/encryption/encrypted_doc_no_id.pdf");
-const PAGELABELS_PDF: &[u8] = include_bytes!("fixtures/contrib/pagelabels.pdf");
-const ANNOTATIONS_PDF: &[u8] = include_bytes!("fixtures/contrib/issue-1082-annotations.pdf");
+const SIMPLE1_PDF: &[u8] = include_bytes!("../fixtures/simple1.pdf");
+const ENCRYPTED_NO_ID_PDF: &[u8] = include_bytes!("../fixtures/encryption/encrypted_doc_no_id.pdf");
+const PAGELABELS_PDF: &[u8] = include_bytes!("../fixtures/contrib/pagelabels.pdf");
+const ANNOTATIONS_PDF: &[u8] = include_bytes!("../fixtures/contrib/issue-1082-annotations.pdf");
 const OBJSTM_DICT_SEGMENT: &[u8] = b"/First 60/Filter/FlateDecode/Length 382";
 
 fn image_structure_pdf() -> Option<Vec<u8>> {
@@ -224,11 +224,11 @@ fn test_getobj_objstm_object_offset_beyond_data_len_does_not_panic() {
 // === Encryption Integration Tests ===
 
 // Encrypted test fixtures
-const RC4_40_PDF: &[u8] = include_bytes!("fixtures/encryption/rc4-40.pdf");
-const RC4_128_PDF: &[u8] = include_bytes!("fixtures/encryption/rc4-128.pdf");
-const AES_128_PDF: &[u8] = include_bytes!("fixtures/encryption/aes-128.pdf");
-const AES_256_PDF: &[u8] = include_bytes!("fixtures/encryption/aes-256.pdf");
-const AES_256_R6_PDF: &[u8] = include_bytes!("fixtures/encryption/aes-256-r6.pdf");
+const RC4_40_PDF: &[u8] = include_bytes!("../fixtures/encryption/rc4-40.pdf");
+const RC4_128_PDF: &[u8] = include_bytes!("../fixtures/encryption/rc4-128.pdf");
+const AES_128_PDF: &[u8] = include_bytes!("../fixtures/encryption/aes-128.pdf");
+const AES_256_PDF: &[u8] = include_bytes!("../fixtures/encryption/aes-256.pdf");
+const AES_256_R6_PDF: &[u8] = include_bytes!("../fixtures/encryption/aes-256-r6.pdf");
 
 /// Test that is_encrypted returns false for unencrypted documents.
 #[test]

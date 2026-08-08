@@ -1,0 +1,10 @@
+mod aes_test;
+mod arcfour_test;
+mod ascii85_test;
+mod ccitt_test;
+mod image_streaming_test;
+mod image_test;
+mod inline_image_test;
+mod jbig2_test;
+mod lzw_test;
+mod runlength_test;
