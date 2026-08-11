@@ -9,6 +9,7 @@ use itertools::Itertools;
 
 use crate::arena::ArenaLookup;
 use crate::layout::bidi::{
+    contains_rtl_text, has_compact_mixed_token, is_ltr_prefixed_compact_mixed,
     reconstruct_text_for_output, reorder_text_for_output, reorder_visual_word_runs,
 };
 
@@ -27,13 +28,23 @@ fn maybe_reorder_bidi_default(text: String, settings: &TextSettings) -> String {
         && settings.line_dir == TextDir::Ttb
         && settings.char_dir == TextDir::Ltr
     {
-        return if settings.bidi {
+        return if settings.bidi && has_compact_mixed_token(&text) {
             reconstruct_text_for_output(&text)
         } else {
             reorder_text_for_output(&text)
         };
     }
     text
+}
+
+fn should_reconstruct_geometric_line(words: &[WordObj]) -> bool {
+    let Some((last, prefix)) = words.split_last() else {
+        return false;
+    };
+    // Geometry must show an LTR prefix followed by one compact mixed tail.
+    // Other layouts keep the stable table word order.
+    is_ltr_prefixed_compact_mixed(&last.text)
+        && prefix.iter().all(|word| !contains_rtl_text(&word.text))
 }
 
 /// Get the line cluster key for a word based on text direction.
@@ -606,7 +617,20 @@ fn extract_text_refs(
         });
         if settings.bidi {
             let line_str = line_sorted.iter().map(|word| word.text.as_str()).join(" ");
-            line_texts.push(maybe_reorder_bidi_default(line_str, settings));
+            if should_reconstruct_geometric_line(&line_sorted) {
+                line_texts.push(reconstruct_text_for_output(&line_str));
+            } else {
+                let legacy_order =
+                    reorder_visual_word_runs(line_sorted.iter().collect::<Vec<_>>(), |word| {
+                        word.text.as_str()
+                    });
+                line_texts.push(
+                    legacy_order
+                        .into_iter()
+                        .map(|word| reorder_text_for_output(&word.text))
+                        .join(" "),
+                );
+            }
         } else {
             if char_dir_render == TextDir::Ltr {
                 line_sorted = reorder_visual_word_runs(line_sorted, |word| word.text.as_str());

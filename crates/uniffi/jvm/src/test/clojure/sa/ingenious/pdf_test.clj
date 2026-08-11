@@ -227,19 +227,19 @@
 
 (deftest metadata-converts-to-canonical-clojure-data
   (let [metadata (RawDocumentMetadata.
-                  [(MetadataEntry. "Title" "Statement Of Account")
+                  [(MetadataEntry. "Title" "Example Document")
                    (MetadataEntry. "CustomField" "custom value")]
-                  "Statement Of Account" "Al Rajhi Bank" nil nil "Octagon" "iText"
+                  "Example Document" "Example Author" nil nil "Octagon" "iText"
                   "D:20260704114317+03'00'" "2026-07-04T11:43:17+03:00"
                   nil nil
                   (PdfVersion. "1.4" "1.7" "1.7")
                   (long 1225686) (int 91) false
                   (PdfPermissions. true true true)
                   false true true false "acroform" true true "<x:xmpmeta/>")]
-    (is (= {:document-info {"Title" "Statement Of Account"
+    (is (= {:document-info {"Title" "Example Document"
                             "CustomField" "custom value"}
-            :title "Statement Of Account"
-            :author "Al Rajhi Bank"
+            :title "Example Document"
+            :author "Example Author"
             :subject nil
             :keywords nil
             :creator "Octagon"
