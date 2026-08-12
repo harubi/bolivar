@@ -1,3 +1,9 @@
+## [1.9.2](https://github.com/harubi/bolivar/compare/v1.9.1...v1.9.2) (2026-08-12)
+
+### Bug Fixes
+
+* **layout:** preserve ltr identifiers in bidi text reconstruction ([#25](https://github.com/harubi/bolivar/issues/25)) ([92d3165](https://github.com/harubi/bolivar/commit/92d31654f86ffd7d6be8d63eb0de97c7e40994c3))
+
 ## [1.9.1](https://github.com/harubi/bolivar/compare/v1.9.0...v1.9.1) (2026-08-08)
 
 ### Continuous Integration
