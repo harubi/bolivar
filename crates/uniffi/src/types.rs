@@ -868,7 +868,7 @@ mod tests {
     #[test]
     fn layout_line_text_uses_icu_mapping_when_enabled() {
         let mut line = LTTextLineHorizontal::new(0.1);
-        let visual = ["ﺏ", "ﺎ", "ﺴ", "ﺤ", "ﻟ", "ﺍ", " ", "ﻒ", "ﺸ", "ﻛ"];
+        let visual = ["ﺔ", "ﻴ", "ﺑ", "ﺮ", "ﻌ", "ﻟ", "ﺍ"];
         for (idx, glyph) in visual.into_iter().enumerate() {
             line.add_element(TextLineElement::Char(Box::new(LTChar::new(
                 (idx as f64, 0.0, idx as f64 + 1.0, 1.0),
@@ -884,18 +884,18 @@ mod tests {
 
         let raw_line = raw_text_line_from_horizontal(&line);
         let layout_line = layout_line_from_horizontal(&line);
-        assert_eq!(layout_line.text, "كشف الحساب\n");
+        assert_eq!(layout_line.text, "العربية\n");
         assert_eq!(
             layout_line
                 .chars
                 .iter()
                 .map(|character| character.text.as_str())
                 .collect::<String>(),
-            "كشف الحساب"
+            "العربية"
         );
-        assert_eq!(raw_line.raw_text, "ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ\n");
-        assert_eq!(raw_line.text, "كشف الحساب\n");
-        assert_eq!(raw_line.characters[0].text, "ﺏ");
+        assert_eq!(raw_line.raw_text, "ﺔﻴﺑﺮﻌﻟﺍ\n");
+        assert_eq!(raw_line.text, "العربية\n");
+        assert_eq!(raw_line.characters[0].text, "ﺔ");
     }
 
     #[test]

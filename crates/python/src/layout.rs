@@ -2333,7 +2333,7 @@ mod tests {
 
     #[test]
     fn python_textline_preserves_legacy_default_and_maps_icu_output() {
-        let visual = "P1 Term 6467299202155588 07/02 14:47:05:ﺔﻈﺣﻼﻣ**23:11:18:ﺖﻗﻮﻟﺍ";
+        let visual = "Task Ref42 12:34:\u{fe94}\u{fec8}\u{fea3}\u{fefc}\u{fee3}**56:78:\u{fe96}\u{fed7}\u{feee}\u{fedf}\u{fe8d}";
         let mut line = LTTextLineHorizontal::new(0.1);
         for (index, character) in visual.chars().enumerate() {
             line.add_element(TextLineElement::Char(Box::new(LTChar::new(
@@ -2354,7 +2354,7 @@ mod tests {
 
         line.set_bidi(true);
         let reconstructed = PyLTTextLineHorizontal::from_core(&line);
-        let expected = "P1 Term 6467299202155588 07/02 الوقت:23:11:18**ملاحظة:14:47:05";
+        let expected = "Task Ref42 12:34:الوقت:56:78**ملاحظة";
         assert_eq!(reconstructed.get_text(), expected);
         assert_eq!(
             reconstructed

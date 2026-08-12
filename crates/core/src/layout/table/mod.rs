@@ -142,6 +142,20 @@ mod table_extraction_tests {
             .collect()
     }
 
+    fn extract_bidi_modes(arena: &mut PageArena, visual: &str) -> (String, String) {
+        let chars = chars_from_visual_line(arena, visual);
+        let legacy = extract_text(&chars, &TextSettings::default(), arena);
+        let bidi = extract_text(
+            &chars,
+            &TextSettings {
+                bidi: true,
+                ..TextSettings::default()
+            },
+            arena,
+        );
+        (legacy, bidi)
+    }
+
     #[test]
     fn table_extraction_non_consecutive() {
         let edges = vec![
@@ -558,8 +572,8 @@ mod table_extraction_tests {
         let mut arena = PageArena::new();
         arena.reset();
 
-        let visual = "1120280977 :ﻊﺟﺮﻤﻟﺍ ﻢﻗﺭ";
-        let expected = "رقم المرجع: 1120280977";
+        let visual = "123456 :\u{fe94}\u{fef4}\u{fe91}\u{feae}\u{fecc}\u{fedf}\u{fe8d}";
+        let expected = "العربية: 123456";
         let chars = chars_from_visual_line(&mut arena, visual);
 
         let settings = TextSettings::default();
@@ -572,8 +586,8 @@ mod table_extraction_tests {
         let mut arena = PageArena::new();
         arena.reset();
 
-        let visual = "ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ";
-        let expected = "كشف الحساب";
+        let visual = "\u{fe94}\u{fef4}\u{fe91}\u{feae}\u{fecc}\u{fedf}\u{fe8d} \u{fe94}\u{fee0}\u{fee4}\u{fea0}\u{fedf}\u{fe8d}";
+        let expected = "الجملة العربية";
         let chars = chars_from_visual_line(&mut arena, visual);
 
         let settings = TextSettings::default();
@@ -638,20 +652,53 @@ mod table_extraction_tests {
     }
 
     #[test]
-    fn table_extraction_reconstructs_compact_al_rajhi_fields() {
+    fn table_extraction_reconstructs_compact_mixed_fields() {
         let mut arena = PageArena::new();
         arena.reset();
 
-        let visual = "P1 Term 6467299202155588 07/02 14:47:05:ﺔﻈﺣﻼﻣ**23:11:18:ﺖﻗﻮﻟﺍ";
-        let expected = "P1 Term 6467299202155588 07/02 الوقت:23:11:18**ملاحظة:14:47:05";
-        let chars = chars_from_visual_line(&mut arena, visual);
+        let visual = "Task Ref42 12:34:\u{fe94}\u{fec8}\u{fea3}\u{fefc}\u{fee3}**56:78:\u{fe96}\u{fed7}\u{feee}\u{fedf}\u{fe8d}";
+        let expected = "Task Ref42 12:34:الوقت:56:78**ملاحظة";
+        let (_, bidi) = extract_bidi_modes(&mut arena, visual);
 
-        let settings = TextSettings {
-            bidi: true,
-            ..TextSettings::default()
-        };
-        let text = extract_text(&chars, &settings, &arena);
-        assert_eq!(text, expected);
+        assert_eq!(bidi, expected);
+    }
+
+    #[test]
+    fn table_bidi_keeps_ambiguous_bilingual_order() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let (legacy, bidi) = extract_bidi_modes(
+            &mut arena,
+            "English \u{fe94}\u{fef4}\u{fe91}\u{feae}\u{fecc}\u{fedf}\u{fe8d}",
+        );
+
+        assert_eq!(legacy, "العربية English");
+        assert_eq!(bidi, legacy);
+    }
+
+    #[test]
+    fn table_bidi_keeps_separate_numeric_words_in_place() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let (legacy, bidi) = extract_bidi_modes(
+            &mut arena,
+            "100.25 42.00 \u{fe94}\u{fef4}\u{fe91}\u{feae}\u{fecc}\u{fedf}\u{fe8d} .1 : \u{fe94}\u{fee0}\u{fee4}\u{fea0}\u{fedf}\u{fe8d} .TXT : \u{feba}\u{fee8}\u{fedf}\u{fe8d} .CODE",
+        );
+
+        assert_eq!(bidi, legacy);
+    }
+
+    #[test]
+    fn table_bidi_keeps_rtl_prefixed_compact_run_in_place() {
+        let mut arena = PageArena::new();
+        arena.reset();
+
+        let (legacy, bidi) =
+            extract_bidi_modes(&mut arena, "Alpha #Beta 10:41 في 2024-11-01 علىPM");
+
+        assert_eq!(bidi, legacy);
     }
 
     #[test]

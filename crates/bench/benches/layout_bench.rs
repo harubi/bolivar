@@ -100,11 +100,14 @@ fn bench_group_textboxes_exact(c: &mut BenchCriterion) {
 fn bench_bidi_reconstruction(c: &mut BenchCriterion) {
     let mut group = c.benchmark_group("bidi_reconstruction");
     for (name, text) in [
-        ("ltr_fast_path", "Account number 1120280977"),
-        ("arabic", "1120280977 :ﻊﺟﺮﻤﻟﺍ ﻢﻗﺭ"),
+        ("ltr_fast_path", "Reference code 123456"),
+        (
+            "arabic",
+            "123456 :\u{fe94}\u{fef4}\u{fe91}\u{feae}\u{fecc}\u{fedf}\u{fe8d}",
+        ),
         (
             "mixed",
-            "P1 Term 6467299202155588 07/02 14:47:05:ﺔﻘﺣﻼﻣ**23:11:18:ﺖﻗﻮﻟﺍ",
+            "Task Ref42 12:34:\u{fe94}\u{fec8}\u{fea3}\u{fefc}\u{fee3}**56:78:\u{fe96}\u{fed7}\u{feee}\u{fedf}\u{fe8d}",
         ),
     ] {
         group.bench_function(name, |b| {

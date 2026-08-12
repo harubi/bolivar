@@ -24,12 +24,12 @@ def _chars_from_visual_line(text: str) -> list[dict]:
 
 
 def test_extract_text_normalizes_presentation_forms_and_rtl_order():
-    chars = _chars_from_visual_line("ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ")
-    assert pdfplumber.utils.extract_text(chars) == "كشف الحساب"
+    chars = _chars_from_visual_line("ﺔﻴﺑﺮﻌﻟﺍ ﺔﻠﻤﺠﻟﺍ")
+    assert pdfplumber.utils.extract_text(chars) == "الجملة العربية"
 
 
 def test_page_extract_text_keeps_legacy_default_and_opts_into_bidi():
-    visual_text = "ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ"
+    visual_text = "ﺔﻴﺑﺮﻌﻟﺍ ﺔﻠﻤﺠﻟﺍ"
 
     class FakePage:
         def get_textmap(self, **kwargs):
@@ -37,12 +37,12 @@ def test_page_extract_text_keeps_legacy_default_and_opts_into_bidi():
 
     fake_page = FakePage()
     assert Page.extract_text(fake_page) == visual_text
-    assert Page.extract_text(fake_page, bidi=True) == "كشف الحساب"
+    assert Page.extract_text(fake_page, bidi=True) == "الجملة العربية"
 
 
 def test_extract_text_keeps_ltr_segments_in_mixed_rtl_line():
-    chars = _chars_from_visual_line("Account Statement ﺏﺎﺴﺤﻟﺍ ﻒﺸﻛ")
+    chars = _chars_from_visual_line("English text ﺔﻴﺑﺮﻌﻟﺍ")
     text = pdfplumber.utils.extract_text(chars)
-    assert "Account Statement" in text
-    assert "tnemetatS tnuoccA" not in text
-    assert "كشف الحساب" in text
+    assert "English text" in text
+    assert "txet hsilgnE" not in text
+    assert "العربية" in text

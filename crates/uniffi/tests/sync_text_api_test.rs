@@ -189,7 +189,7 @@ fn build_metadata_pdf() -> Vec<u8> {
     );
     push_obj(
         &mut out,
-        "8 0 obj\n<< /Title (Statement Of Account) /Author (Al Rajhi Bank) /Creator (Octagon 5.0) /Producer (iText) /CreationDate (D:20260704114317+03'00') /CustomField (custom value) >>\nendobj\n".to_string(),
+        "8 0 obj\n<< /Title (Example Document) /Author (Example Author) /Creator (Octagon 5.0) /Producer (iText) /CreationDate (D:20260704114317+03'00') /CustomField (custom value) >>\nendobj\n".to_string(),
         &mut offsets,
     );
     push_obj(
@@ -345,14 +345,14 @@ fn native_document_metadata_preserves_info_and_derives_pdf_flags() {
 
     assert_eq!(
         info.get("Title").map(String::as_str),
-        Some("Statement Of Account")
+        Some("Example Document")
     );
     assert_eq!(
         info.get("CustomField").map(String::as_str),
         Some("custom value")
     );
-    assert_eq!(metadata.title.as_deref(), Some("Statement Of Account"));
-    assert_eq!(metadata.author.as_deref(), Some("Al Rajhi Bank"));
+    assert_eq!(metadata.title.as_deref(), Some("Example Document"));
+    assert_eq!(metadata.author.as_deref(), Some("Example Author"));
     assert_eq!(
         metadata.creation_date_raw.as_deref(),
         Some("D:20260704114317+03'00'")
