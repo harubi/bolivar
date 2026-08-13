@@ -28,8 +28,8 @@ func/a/b{(c)do*}def
 /// Expected tokens from TESTDATA (position, token)
 /// Format matches pdfminer.six TOKENS list
 fn expected_tokens() -> Vec<(usize, PSToken)> {
-    use bolivar_core::psparser::Keyword as Kw; // Disambiguate from PSToken::Keyword variant
     use PSToken::*;
+    use bolivar_core::psparser::Keyword as Kw; // Disambiguate from PSToken::Keyword variant
     vec![
         (5, Keyword(Kw::Begin)),
         (11, Keyword(Kw::End)),
