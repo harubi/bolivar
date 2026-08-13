@@ -1001,6 +1001,7 @@ impl Default for PDFResourceManager {
 // ============================================================================
 
 use super::types::{PDFStackT, PDFStackValue, PDFTextSeq, PDFTextSeqItem, PathSegment};
+use crate::cancellation::CancellationToken;
 use crate::device::PDFDevice;
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
 use crate::utils::{MATRIX_IDENTITY, Matrix, mult_matrix};
@@ -1046,12 +1047,23 @@ pub struct PDFPageInterpreter<'a, D: PDFDevice> {
     pub(crate) xobj_stack: Vec<PDFName>,
     /// Document reference for resolving XObject resources
     pub(crate) doc: Option<&'a PDFDocument>,
+    /// Cooperative cancellation for this page and nested content streams.
+    pub(crate) cancellation: CancellationToken,
 }
 
 #[allow(non_snake_case)]
 impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Create a new PDFPageInterpreter.
     pub fn new(rsrcmgr: &'a mut PDFResourceManager, device: &'a mut D) -> Self {
+        Self::new_with_cancellation(rsrcmgr, device, CancellationToken::new())
+    }
+
+    /// Create an interpreter that stops at content-token boundaries.
+    pub fn new_with_cancellation(
+        rsrcmgr: &'a mut PDFResourceManager,
+        device: &'a mut D,
+        cancellation: CancellationToken,
+    ) -> Self {
         Self {
             rsrcmgr,
             device,
@@ -1067,6 +1079,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             inline_image_id: 0,
             xobj_stack: Vec::new(),
             doc: None,
+            cancellation,
         }
     }
 
@@ -1140,6 +1153,18 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         // Process each font
         if let Some(fonts) = fonts {
             for (fontid, spec_obj) in fonts.iter() {
+                let font_objid = match spec_obj {
+                    PDFObject::Ref(reference) => Some(reference.objid),
+                    _ => None,
+                };
+                if self.rsrcmgr.caching_enabled()
+                    && let (Some(doc), Some(objid)) = (doc, font_objid)
+                    && let Some(font) = doc.get_cached_font(objid, fontid)
+                {
+                    self.fontmap.insert(fontid.clone(), font);
+                    continue;
+                }
+
                 let spec = match spec_obj {
                     PDFObject::Dict(d) => d.clone(),
                     PDFObject::Ref(r) => {
@@ -1231,16 +1256,20 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 let ttf_data = Self::extract_fontfile2(&final_spec, doc);
 
                 // Create font with ToUnicode data and TrueType font data
-                let font = crate::pdffont::PDFCIDFont::new_with_ttf_and_cid2unicode(
+                let font = Arc::new(crate::pdffont::PDFCIDFont::new_with_ttf_and_cid2unicode(
                     &final_spec,
                     tounicode_data.as_deref(),
                     ttf_data.as_deref(),
                     subtype == "Type0",
                     Some(fontid.to_string()),
                     cached_encoding,
-                );
-                self.fontmap
-                    .insert(fontid.to_string().into(), std::sync::Arc::new(font));
+                ));
+                if self.rsrcmgr.caching_enabled()
+                    && let (Some(doc), Some(objid)) = (doc, font_objid)
+                {
+                    doc.cache_font(objid, fontid.clone(), Arc::clone(&font));
+                }
+                self.fontmap.insert(fontid.clone(), font);
             }
         }
 
@@ -1300,16 +1329,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         let dfonts_resolved = match dfonts {
             PDFObject::Array(arr) => arr.clone(),
             PDFObject::Ref(r) => {
-                if let Some(doc) = doc {
-                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
-                        if let PDFObject::Array(arr) = resolved.as_ref() {
-                            arr.clone()
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        return None;
-                    }
+                let resolved = doc?.resolve_shared(&PDFObject::Ref(r.clone())).ok()?;
+                if let PDFObject::Array(arr) = resolved.as_ref() {
+                    arr.clone()
                 } else {
                     return None;
                 }
@@ -1434,16 +1456,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         let fd_dict = match font_descriptor {
             PDFObject::Dict(d) => d.clone(),
             PDFObject::Ref(r) => {
-                if let Some(doc) = doc {
-                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
-                        if let PDFObject::Dict(d) = resolved.as_ref() {
-                            d.clone()
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        return None;
-                    }
+                let resolved = doc?.resolve_shared(&PDFObject::Ref(r.clone())).ok()?;
+                if let PDFObject::Dict(d) = resolved.as_ref() {
+                    d.clone()
                 } else {
                     return None;
                 }
@@ -1507,6 +1522,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     ///
     /// Port of PDFPageInterpreter.process_page from pdfminer.six
     pub fn process_page(&mut self, page: &PDFPage, doc: Option<&'a PDFDocument>) -> Result<()> {
+        self.cancellation.check()?;
         self.doc = doc;
         let mediabox = page.mediabox.unwrap_or([0.0, 0.0, 612.0, 792.0]);
         let (x0, y0, x1, y1) = (mediabox[0], mediabox[1], mediabox[2], mediabox[3]);
@@ -1528,24 +1544,28 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         // Begin page on device
         let bbox = (x0, y0, x1, y1);
         self.device.begin_page(page.pageid, bbox, ctm);
+        let result = (|| {
+            self.cancellation.check()?;
 
-        // Initialize resources (builds fontmap)
-        self.init_resources(&page.resources, doc);
+            // Initialize resources (builds fontmap)
+            self.init_resources(&page.resources, doc);
 
-        // Initialize state and execute content streams
-        self.init_state(ctm);
-        let streams = if page.contents.is_empty() {
-            doc.map(|doc| PDFPage::parse_contents(&page.attrs, doc))
-                .transpose()?
-                .unwrap_or_default()
-        } else {
-            page.contents.clone()
-        };
-        self.execute(&streams);
+            // Initialize state and execute content streams
+            self.init_state(ctm);
+            let streams = if page.contents.is_empty() {
+                doc.map(|doc| PDFPage::parse_contents(&page.attrs, doc))
+                    .transpose()?
+                    .unwrap_or_default()
+            } else {
+                page.contents.clone()
+            };
+            self.cancellation.check()?;
+            self.execute_owned(streams);
+            self.cancellation.check()
+        })();
 
-        // End page on device
         self.device.end_page(page.pageid);
-        Ok(())
+        result
     }
 
     /// Execute content streams.
@@ -1554,14 +1574,21 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     ///
     /// Port of PDFPageInterpreter.execute from pdfminer.six
     pub fn execute(&mut self, streams: &[Vec<u8>]) {
-        if streams.is_empty() {
+        self.execute_owned(streams.to_vec());
+    }
+
+    pub(crate) fn execute_owned(&mut self, streams: Vec<Vec<u8>>) {
+        if streams.is_empty() || self.cancellation.is_cancelled() || self.device.is_complete() {
             return;
         }
 
-        let parser = PDFContentParser::new(streams.to_vec());
+        let parser = PDFContentParser::new(streams);
         let mut operand_stack: Vec<PSToken> = Vec::new();
 
         for token in parser {
+            if self.cancellation.is_cancelled() {
+                return;
+            }
             match token {
                 ContentToken::Operand(op) => {
                     operand_stack.push(op);
@@ -1632,6 +1659,10 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     self.device.end_figure(&name);
                     operand_stack.clear();
                 }
+            }
+
+            if self.device.is_complete() {
+                return;
             }
         }
     }
@@ -2015,13 +2046,11 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     self.do_quote(s);
                 }
             }
-            Keyword::DoubleQuote => {
-                if args.len() >= 3 {
-                    let s = Self::pop_string(args).unwrap_or_default();
-                    let ac = Self::pop_number(args).unwrap_or(0.0);
-                    let aw = Self::pop_number(args).unwrap_or(0.0);
-                    self.do_doublequote(aw, ac, s);
-                }
+            Keyword::DoubleQuote if args.len() >= 3 => {
+                let s = Self::pop_string(args).unwrap_or_default();
+                let ac = Self::pop_number(args).unwrap_or(0.0);
+                let aw = Self::pop_number(args).unwrap_or(0.0);
+                self.do_doublequote(aw, ac, s);
             }
 
             // Unknown operator - ignore

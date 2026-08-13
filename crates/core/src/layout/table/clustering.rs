@@ -74,7 +74,7 @@ pub fn cluster_objects<T: Clone, F: Fn(&T) -> f64>(
                 )
             })
             .collect();
-        tuples.sort_by(|a, b| a.1.cmp(&b.1));
+        tuples.sort_by_key(|tuple| tuple.1);
         tuples
     };
 

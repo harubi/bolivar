@@ -9,21 +9,23 @@ pip install bolivar
 ```
 
 ```kotlin
-implementation("sa.ingenious:bolivar:1.2.0")
+implementation("sa.ingenious:bolivar:<version>")
 ```
 
 ```clojure
-sa.ingenious/bolivar {:mvn/version "1.2.0"}
+sa.ingenious/bolivar {:mvn/version "<version>"}
 ```
 
 ```toml
 [dependencies]
-bolivar-core = "1.2"
+bolivar-core = "<version>"
 ```
 
 ## Extract text
 
 Pull all text from a PDF in one call. The pdfplumber interface opens the file and iterates pages; the pdfminer interface returns the full text directly. JVM and Rust APIs follow the same pattern with their respective conventions.
+
+Path APIs memory-map the source file. Do not change or replace the file until the operation ends and all documents or cursors that use it are released.
 
 ```python
 import pdfplumber
@@ -82,7 +84,9 @@ fn main() -> bolivar_core::Result<()> {
 
 ## Extract tables
 
-Detect and extract tabular data from each page. Bolivar returns structured tables with row and column counts, bounding boxes, and cell text so you can inspect or export them without manual parsing.
+Detect and extract tabular data from each page. JVM table APIs return a closeable, single-pass cursor. Close the cursor to stop work early and release its native state.
+
+Each open cursor has a fixed 50-page window. Those pages include active work and completed results that wait for an earlier page. Several open cursors have separate bounded windows. Close signals cooperative cancellation; active page work stops at its next checkpoint.
 
 ```python
 import pdfplumber
@@ -98,8 +102,9 @@ import sa.ingenious.pdf.Document;
 import sa.ingenious.pdf.DocumentOptions;
 
 var options = DocumentOptions.builder().pages(1, 2).build();
-try (Document doc = Document.open("doc.pdf", options)) {
-    for (var table : doc.extractTables()) {
+try (Document doc = Document.open("doc.pdf", options);
+     var tables = doc.tables()) {
+    for (var table : tables) {
         System.out.println(table.rowCount() + "x" + table.columnCount());
     }
 }
@@ -112,8 +117,10 @@ val doc = openDocument("doc.pdf") {
     pages(1, 2)
 }
 doc.use {
-    for (table in it.extractTables()) {
-        println("${table.rowCount}x${table.columnCount}")
+    it.tables().use { tables ->
+        for (table in tables) {
+            println("${table.rowCount}x${table.columnCount}")
+        }
     }
 }
 ```
@@ -121,8 +128,9 @@ doc.use {
 ```clojure
 (require '[sa.ingenious.pdf :as pdf])
 
-(with-open [doc (pdf/open "doc.pdf" {:pages [1 2]})]
-  (doseq [table (pdf/tables doc)]
+(with-open [doc (pdf/open "doc.pdf" {:pages [1 2]})
+            tables (pdf/tables doc)]
+  (doseq [table tables]
     (println (:row-count table) "x" (:column-count table))))
 ```
 

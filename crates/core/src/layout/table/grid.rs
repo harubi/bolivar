@@ -4,7 +4,6 @@
 //! groups connected cells into tables.
 
 use std::collections::{HashMap, VecDeque};
-use std::simd::prelude::*;
 
 use super::intersections::{EdgeStore, IntersectionIdx};
 use super::text::{extract_text_from_char_ids, extract_text_from_char_ids_layout};
@@ -12,6 +11,8 @@ use super::types::{
     BBox, BBoxKey, CharId, CharObj, KeyF64, KeyPoint, TextSettings, bbox_key, key_f64, key_point,
 };
 use crate::arena::ArenaLookup;
+use crate::cancellation::CancellationToken;
+use crate::error::Result;
 
 /// Convert intersections to table cells.
 pub fn intersections_to_cells(
@@ -357,6 +358,18 @@ impl Table {
         text_settings: &TextSettings,
         arena: &dyn ArenaLookup,
     ) -> Vec<Vec<Option<String>>> {
+        self.extract_soa_with_cancellation(chars, text_settings, arena, &CancellationToken::new())
+            .expect("a new cancellation token cannot be cancelled")
+    }
+
+    pub(crate) fn extract_soa_with_cancellation(
+        &self,
+        chars: &[CharObj],
+        text_settings: &TextSettings,
+        arena: &dyn ArenaLookup,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<Vec<Option<String>>>> {
+        cancellation.check()?;
         let rows = self.rows();
 
         struct CellInfo {
@@ -366,6 +379,7 @@ impl Table {
         let mut cell_infos: Vec<CellInfo> = Vec::new();
         let mut cell_id_grid: Vec<Vec<Option<usize>>> = Vec::with_capacity(rows.len());
         for row in &rows {
+            cancellation.check()?;
             let mut row_ids: Vec<Option<usize>> = Vec::with_capacity(row.cells.len());
             for cell in &row.cells {
                 if let Some(bbox) = cell {
@@ -433,6 +447,9 @@ impl Table {
 
         let mut chars_with_idx: Vec<(usize, f64, f64)> = Vec::with_capacity(chars.len());
         for (idx, ch) in chars.iter().enumerate() {
+            if idx % 256 == 0 {
+                cancellation.check()?;
+            }
             let v_mid = (ch.top + ch.bottom) / 2.0;
             let h_mid = (ch.x0 + ch.x1) / 2.0;
             chars_with_idx.push((idx, v_mid, h_mid));
@@ -450,7 +467,10 @@ impl Table {
         let mut active_bottom: Vec<f64> = Vec::new();
         let mut active_pos: Vec<Option<usize>> = vec![None; cell_infos.len()];
         let mut event_idx = 0usize;
-        for (char_idx, v_mid, h_mid) in chars_with_idx {
+        for (processed, (char_idx, v_mid, h_mid)) in chars_with_idx.into_iter().enumerate() {
+            if processed % 256 == 0 {
+                cancellation.check()?;
+            }
             while event_idx < events.len() {
                 let event = &events[event_idx];
                 if event.y > v_mid {
@@ -486,75 +506,25 @@ impl Table {
                 event_idx += 1;
             }
 
-            let mut matches = 0usize;
-            let mut i = 0usize;
-            while i + 4 <= active.len() {
-                let mask = char_in_bboxes_simd4(
-                    h_mid,
-                    v_mid,
-                    [
-                        active_x0[i],
-                        active_x0[i + 1],
-                        active_x0[i + 2],
-                        active_x0[i + 3],
-                    ],
-                    [
-                        active_x1[i],
-                        active_x1[i + 1],
-                        active_x1[i + 2],
-                        active_x1[i + 3],
-                    ],
-                    [
-                        active_top[i],
-                        active_top[i + 1],
-                        active_top[i + 2],
-                        active_top[i + 3],
-                    ],
-                    [
-                        active_bottom[i],
-                        active_bottom[i + 1],
-                        active_bottom[i + 2],
-                        active_bottom[i + 3],
-                    ],
-                );
-                if mask[0] {
-                    let cell_id = active[i];
+            for (pos, &cell_id) in active.iter().enumerate() {
+                if h_mid >= active_x0[pos]
+                    && h_mid < active_x1[pos]
+                    && v_mid >= active_top[pos]
+                    && v_mid < active_bottom[pos]
+                {
                     cell_char_indices[cell_id].push(CharId(char_idx));
-                    matches += 1;
-                }
-                if mask[1] {
-                    let cell_id = active[i + 1];
-                    cell_char_indices[cell_id].push(CharId(char_idx));
-                    matches += 1;
-                }
-                if mask[2] {
-                    let cell_id = active[i + 2];
-                    cell_char_indices[cell_id].push(CharId(char_idx));
-                    matches += 1;
-                }
-                if mask[3] {
-                    let cell_id = active[i + 3];
-                    cell_char_indices[cell_id].push(CharId(char_idx));
-                    matches += 1;
-                }
-                i += 4;
-            }
-            for &cell_id in &active[i..] {
-                let bbox = &cell_infos[cell_id].bbox;
-                if char_in_bbox_mid(h_mid, v_mid, bbox) {
-                    cell_char_indices[cell_id].push(CharId(char_idx));
-                    matches += 1;
                 }
             }
-            let _ = matches;
         }
 
+        cancellation.check()?;
         for indices in cell_char_indices.iter_mut() {
             indices.sort();
         }
 
         let mut table_arr = Vec::with_capacity(rows.len());
         for row_ids in cell_id_grid {
+            cancellation.check()?;
             let mut row_out: Vec<Option<String>> = Vec::with_capacity(row_ids.len());
             for cell_id in row_ids {
                 if let Some(cell_id) = cell_id {
@@ -583,7 +553,8 @@ impl Table {
             table_arr.push(row_out);
         }
 
-        table_arr
+        cancellation.check()?;
+        Ok(table_arr)
     }
 }
 
@@ -613,31 +584,4 @@ impl CellGroup {
             bottom,
         }
     }
-}
-
-#[inline]
-pub(crate) fn char_in_bboxes_simd4(
-    h_mid: f64,
-    v_mid: f64,
-    x0s: [f64; 4],
-    x1s: [f64; 4],
-    tops: [f64; 4],
-    bottoms: [f64; 4],
-) -> [bool; 4] {
-    let hmid = Simd::<f64, 4>::splat(h_mid);
-    let vmid = Simd::<f64, 4>::splat(v_mid);
-    let x0v = Simd::<f64, 4>::from_array(x0s);
-    let x1v = Simd::<f64, 4>::from_array(x1s);
-    let topv = Simd::<f64, 4>::from_array(tops);
-    let botv = Simd::<f64, 4>::from_array(bottoms);
-
-    let x_ok = hmid.simd_ge(x0v) & hmid.simd_lt(x1v);
-    let y_ok = vmid.simd_ge(topv) & vmid.simd_lt(botv);
-    (x_ok & y_ok).to_array()
-}
-
-/// Check if a character's center is inside a bounding box.
-#[inline]
-fn char_in_bbox_mid(h_mid: f64, v_mid: f64, bbox: &BBox) -> bool {
-    h_mid >= bbox.x0 && h_mid < bbox.x1 && v_mid >= bbox.top && v_mid < bbox.bottom
 }

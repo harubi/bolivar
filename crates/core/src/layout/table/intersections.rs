@@ -5,7 +5,6 @@
 //! the foundation for detecting table cell boundaries.
 
 use std::collections::HashMap;
-use std::simd::prelude::*;
 
 use super::types::{EdgeObj, HEdgeId, KeyPoint, Orientation, VEdgeId, key_point};
 
@@ -30,29 +29,6 @@ impl EdgeStore {
 pub struct IntersectionIdx {
     pub v: Vec<VEdgeId>,
     pub h: Vec<HEdgeId>,
-}
-
-#[inline]
-pub(crate) fn match_v_edges_simd4(
-    tops: [f64; 4],
-    bottoms: [f64; 4],
-    x0s: [f64; 4],
-    h_top: f64,
-    x_min: f64,
-    x_max: f64,
-    y_tol: f64,
-) -> [bool; 4] {
-    let topv = Simd::<f64, 4>::from_array(tops);
-    let botv = Simd::<f64, 4>::from_array(bottoms);
-    let x0v = Simd::<f64, 4>::from_array(x0s);
-    let htop = Simd::<f64, 4>::splat(h_top);
-    let ytol = Simd::<f64, 4>::splat(y_tol);
-    let xmin = Simd::<f64, 4>::splat(x_min);
-    let xmax = Simd::<f64, 4>::splat(x_max);
-
-    let y_ok = topv.simd_le(htop + ytol) & botv.simd_ge(htop - ytol);
-    let x_ok = x0v.simd_ge(xmin) & x0v.simd_le(xmax);
-    (y_ok & x_ok).to_array()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -428,18 +404,13 @@ pub fn edges_to_intersections(
                 for bucket in &active[start..=end] {
                     for &block_idx in &bucket.active_blocks {
                         let block = &bucket.blocks[block_idx];
-                        let mask = match_v_edges_simd4(
-                            block.tops,
-                            block.bottoms,
-                            block.x0s,
-                            h.top,
-                            x_min,
-                            x_max,
-                            y_tol,
-                        );
                         let mut mask_bits = 0u8;
-                        for (lane, hit) in mask.iter().enumerate() {
-                            if *hit {
+                        for lane in 0..4 {
+                            if block.tops[lane] <= h.top + y_tol
+                                && block.bottoms[lane] >= h.top - y_tol
+                                && block.x0s[lane] >= x_min
+                                && block.x0s[lane] <= x_max
+                            {
                                 mask_bits |= 1u8 << lane;
                             }
                         }

@@ -5,6 +5,9 @@ use thiserror::Error;
 /// Primary error type for PDF parsing operations.
 #[derive(Error, Debug)]
 pub enum PdfError {
+    #[error("operation cancelled")]
+    Cancelled,
+
     #[error("invalid token at position {pos}: {msg}")]
     TokenError { pos: usize, msg: String },
 
@@ -46,6 +49,9 @@ pub enum PdfError {
 
     #[error("decode error: {0}")]
     DecodeError(String),
+
+    #[error("runtime error: {0}")]
+    RuntimeError(String),
 
     #[error("{0}")]
     NotImplemented(String),

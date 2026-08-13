@@ -3,6 +3,7 @@
 //! Use `LTChar::builder()` to construct characters with optional fields.
 
 use crate::utils::{MATRIX_IDENTITY, Matrix, Rect};
+use smol_str::SmolStr;
 
 use super::component::LTComponent;
 
@@ -15,18 +16,18 @@ pub type Color = Option<Vec<f64>>;
 /// inferred from the relationship between real characters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LTAnno {
-    text: String,
+    text: SmolStr,
 }
 
 impl LTAnno {
     pub fn new(text: &str) -> Self {
         Self {
-            text: text.to_string(),
+            text: SmolStr::new(text),
         }
     }
 
     pub fn get_text(&self) -> &str {
-        &self.text
+        self.text.as_str()
     }
 }
 
@@ -43,16 +44,16 @@ impl LTAnno {
 #[derive(Debug, Clone)]
 pub struct LTCharBuilder {
     bbox: Rect,
-    text: String,
-    fontname: String,
+    text: SmolStr,
+    fontname: SmolStr,
     size: f64,
     upright: bool,
     adv: f64,
     matrix: Matrix,
     mcid: Option<i32>,
-    tag: Option<String>,
-    ncs: Option<String>,
-    scs: Option<String>,
+    tag: Option<SmolStr>,
+    ncs: Option<SmolStr>,
+    scs: Option<SmolStr>,
     non_stroking_color: Color,
     stroking_color: Color,
 }
@@ -63,8 +64,8 @@ impl LTCharBuilder {
     pub fn new(bbox: Rect, text: &str, fontname: &str, size: f64) -> Self {
         Self {
             bbox,
-            text: text.to_string(),
-            fontname: fontname.to_string(),
+            text: SmolStr::new(text),
+            fontname: SmolStr::new(fontname),
             size,
             upright: true,
             adv: 0.0,
@@ -104,19 +105,19 @@ impl LTCharBuilder {
 
     /// Sets the Marked Content tag (e.g., "P", "Span", "H1").
     pub fn tag(mut self, tag: Option<String>) -> Self {
-        self.tag = tag;
+        self.tag = tag.map(SmolStr::from);
         self
     }
 
     /// Sets the non-stroking colorspace name (e.g., "DeviceRGB").
     pub fn ncs(mut self, ncs: Option<String>) -> Self {
-        self.ncs = ncs;
+        self.ncs = ncs.map(SmolStr::from);
         self
     }
 
     /// Sets the stroking colorspace name (e.g., "DeviceRGB").
     pub fn scs(mut self, scs: Option<String>) -> Self {
-        self.scs = scs;
+        self.scs = scs.map(SmolStr::from);
         self
     }
 
@@ -156,8 +157,8 @@ impl LTCharBuilder {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LTChar {
     component: LTComponent,
-    text: String,
-    fontname: String,
+    text: SmolStr,
+    fontname: SmolStr,
     size: f64,
     upright: bool,
     adv: f64,
@@ -166,11 +167,11 @@ pub struct LTChar {
     /// Marked Content ID for tagged PDF accessibility
     mcid: Option<i32>,
     /// Marked Content tag (e.g., "P", "Span", "H1") for tagged PDF
-    tag: Option<String>,
+    tag: Option<SmolStr>,
     /// Non-stroking colorspace name (e.g., "DeviceRGB")
-    ncs: Option<String>,
+    ncs: Option<SmolStr>,
     /// Stroking colorspace name (e.g., "DeviceRGB")
-    scs: Option<String>,
+    scs: Option<SmolStr>,
     /// Non-stroking (fill) color
     non_stroking_color: Color,
     /// Stroking color
@@ -178,6 +179,39 @@ pub struct LTChar {
 }
 
 impl LTChar {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_arena_parts(
+        bbox: Rect,
+        text: &str,
+        fontname: &str,
+        size: f64,
+        upright: bool,
+        adv: f64,
+        matrix: Matrix,
+        mcid: Option<i32>,
+        tag: Option<&str>,
+        ncs: Option<&str>,
+        scs: Option<&str>,
+        non_stroking_color: Color,
+        stroking_color: Color,
+    ) -> Self {
+        Self {
+            component: LTComponent::new(bbox),
+            text: SmolStr::new(text),
+            fontname: SmolStr::new(fontname),
+            size,
+            upright,
+            adv,
+            matrix,
+            mcid,
+            tag: tag.map(SmolStr::new),
+            ncs: ncs.map(SmolStr::new),
+            scs: scs.map(SmolStr::new),
+            non_stroking_color,
+            stroking_color,
+        }
+    }
+
     /// Creates a new builder for constructing LTChar instances.
     ///
     /// # Example
@@ -285,11 +319,11 @@ impl LTChar {
     }
 
     pub fn get_text(&self) -> &str {
-        &self.text
+        self.text.as_str()
     }
 
     pub fn fontname(&self) -> &str {
-        &self.fontname
+        self.fontname.as_str()
     }
 
     pub const fn size(&self) -> f64 {
@@ -313,23 +347,23 @@ impl LTChar {
     }
 
     pub fn tag(&self) -> Option<String> {
-        self.tag.clone()
+        self.tag.as_deref().map(str::to_owned)
     }
 
     pub fn ncs(&self) -> Option<String> {
-        self.ncs.clone()
+        self.ncs.as_deref().map(str::to_owned)
     }
 
     pub fn set_ncs(&mut self, ncs: Option<String>) {
-        self.ncs = ncs;
+        self.ncs = ncs.map(SmolStr::from);
     }
 
     pub fn scs(&self) -> Option<String> {
-        self.scs.clone()
+        self.scs.as_deref().map(str::to_owned)
     }
 
     pub fn set_scs(&mut self, scs: Option<String>) {
-        self.scs = scs;
+        self.scs = scs.map(SmolStr::from);
     }
 
     pub const fn non_stroking_color(&self) -> &Color {

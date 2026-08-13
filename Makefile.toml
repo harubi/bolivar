@@ -27,6 +27,11 @@ command = "uv"
 args = ["run", "--group", "test", "pytest", "tests/", "-v"]
 dependencies = ["build-py"]
 
+[tasks.test-release]
+description = "Validate Semantic Release state"
+command = "npm"
+args = ["run", "test:release"]
+
 [tasks.test-parity]
 description = "Run upstream pdfminer.six and pdfplumber parity suites"
 script = '''
@@ -89,7 +94,7 @@ cargo run --release -p bolivar-uniffi-bindgen -- \
 
 [tasks.ci]
 description = "Lint plus all tests"
-dependencies = ["lint", "test", "test-py"]
+dependencies = ["lint", "test", "test-py", "test-release"]
 
 [tasks.clean]
 description = "Remove all build artifacts"

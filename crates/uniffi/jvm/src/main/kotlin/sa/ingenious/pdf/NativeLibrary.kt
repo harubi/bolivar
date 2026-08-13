@@ -2,11 +2,15 @@ package sa.ingenious.pdf
 
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.Properties
+import sa.ingenious.ffi.bolivarVersion
+import sa.ingenious.ffi.uniffiEnsureInitialized
 
 object NativeLibrary {
     const val COMPONENT_NAME: String = "bolivar"
     const val LIB_NAME: String = "bolivar_uniffi"
     const val LIB_OVERRIDE_PROPERTY: String = "uniffi.component.$COMPONENT_NAME.libraryOverride"
+    private const val VERSION_RESOURCE: String = "/bolivar-version.properties"
 
     @Volatile
     private var loadedPath: String? = null
@@ -43,6 +47,7 @@ object NativeLibrary {
 
             val override = System.getProperty(LIB_OVERRIDE_PROPERTY)
             if (!override.isNullOrBlank()) {
+                verifyNativeVersion()
                 loadedPath = override
                 return override
             }
@@ -61,6 +66,7 @@ object NativeLibrary {
                 val absolutePath = temp.toAbsolutePath().toString()
                 System.load(absolutePath)
                 configureLibraryOverride(absolutePath)
+                verifyNativeVersion()
                 loadedPath = absolutePath
                 return absolutePath
             }
@@ -68,6 +74,31 @@ object NativeLibrary {
     }
 
     internal fun loadFromClasspath(): String = load()
+
+    internal fun requireMatchingVersion(
+        expected: String,
+        actual: String,
+    ) {
+        check(actual == expected) {
+            "Bolivar version mismatch: JVM $expected, native $actual"
+        }
+    }
+
+    private fun verifyNativeVersion() {
+        uniffiEnsureInitialized()
+        requireMatchingVersion(expectedVersion(), bolivarVersion())
+    }
+
+    private fun expectedVersion(): String {
+        val properties = Properties()
+        val stream =
+            NativeLibrary::class.java.getResourceAsStream(VERSION_RESOURCE)
+                ?: error("Missing Bolivar version resource $VERSION_RESOURCE")
+        stream.use(properties::load)
+        return properties.getProperty("version")
+            ?.takeIf(String::isNotBlank)
+            ?: error("Missing Bolivar JVM version")
+    }
 
     private fun fileNameParts(fileName: String): Pair<String, String> {
         val dot = fileName.lastIndexOf('.')

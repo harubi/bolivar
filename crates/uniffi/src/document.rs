@@ -5,16 +5,16 @@ use bolivar_core::extract::{
 use bolivar_core::pdfdocument::PDFDocument;
 use std::sync::Arc;
 
+use crate::cursor::{NativePageTableRowsCursor, NativeTableCursor};
 use crate::error::BolivarError;
 use crate::extract::{
     core_extract_options, extract_layout_pages_core, extract_raw_document_core,
-    extract_raw_page_core, extract_table_rows_with_core, extract_tables_core,
-    extract_tables_with_core, open_pdf_document, read_pdf_bytes,
+    extract_raw_page_core, open_pdf_document, validate_input_path,
 };
 use crate::metadata::metadata_from_document;
 use crate::types::{
-    ExtractOptions, LayoutPage, PageSummary, PageTableRows, RawDocument, RawDocumentMetadata,
-    RawPage, Table, TableOptions, summary_from_ltpage,
+    ExtractOptions, LayoutPage, PageSummary, RawDocument, RawDocumentMetadata, RawPage,
+    TableOptions, cache_capacity, summary_from_ltpage,
 };
 
 pub struct NativePdfDocument {
@@ -29,9 +29,20 @@ impl std::fmt::Debug for NativePdfDocument {
 }
 
 impl NativePdfDocument {
+    /// Open a memory-mapped path. The source must stay stable until this document and its cursors close.
     pub fn from_path(path: String, options: Option<ExtractOptions>) -> Result<Self, BolivarError> {
-        let pdf_data = read_pdf_bytes(path)?;
-        Self::from_bytes(pdf_data, options)
+        validate_input_path(&path)?;
+        let mut options = core_extract_options(options)?;
+        let doc = PDFDocument::new_from_path_with_cache_and_fallback(
+            path,
+            &options.password,
+            cache_capacity(options.caching),
+            true,
+        )
+        .map(Arc::new)
+        .map_err(BolivarError::from)?;
+        options.password = String::new();
+        Ok(Self { doc, options })
     }
 
     pub fn from_bytes(
@@ -86,24 +97,17 @@ impl NativePdfDocument {
         Ok(metadata_from_document(self.doc.as_ref()))
     }
 
-    pub fn extract_tables(&self) -> Result<Vec<Table>, BolivarError> {
-        let options = self.core_options();
-        extract_tables_core(Arc::clone(&self.doc), options)
-    }
-
-    pub fn extract_tables_with(
+    pub fn tables(
         &self,
         table_options: Option<TableOptions>,
-    ) -> Result<Vec<Table>, BolivarError> {
-        let options = self.core_options();
-        extract_tables_with_core(Arc::clone(&self.doc), options, table_options)
+    ) -> Result<Arc<NativeTableCursor>, BolivarError> {
+        NativeTableCursor::open(Arc::clone(&self.doc), self.core_options(), table_options)
     }
 
-    pub fn extract_table_rows_with(
+    pub fn table_rows(
         &self,
         table_options: Option<TableOptions>,
-    ) -> Result<Vec<PageTableRows>, BolivarError> {
-        let options = self.core_options();
-        extract_table_rows_with_core(Arc::clone(&self.doc), options, table_options)
+    ) -> Result<Arc<NativePageTableRowsCursor>, BolivarError> {
+        NativePageTableRowsCursor::open(Arc::clone(&self.doc), self.core_options(), table_options)
     }
 }

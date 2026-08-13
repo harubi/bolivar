@@ -5,7 +5,7 @@ use bolivar_core::pdftypes::{PDFDict, PDFObject};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PySequence, PySequenceMethods};
 
-fn obj_to_pdf(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<PDFObject> {
+fn obj_to_pdf(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<PDFObject> {
     if obj.is_none() {
         return Some(PDFObject::Null);
     }
@@ -28,7 +28,7 @@ fn obj_to_pdf(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<PDFObject> {
         let mut map = PDFDict::default();
         for (k, v) in dict.iter() {
             let key: String = k.extract().ok()?;
-            let value = obj_to_pdf(py, &v)?;
+            let value = obj_to_pdf(_py, &v)?;
             map.insert(key.into(), value);
         }
         return Some(PDFObject::Dict(map));
@@ -37,11 +37,11 @@ fn obj_to_pdf(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<PDFObject> {
         if obj.cast::<PyBytes>().is_ok() {
             return None;
         }
-        let len = seq.len().ok()? as usize;
+        let len = seq.len().ok()?;
         let mut items = Vec::with_capacity(len);
         for idx in 0..len {
             let item = seq.get_item(idx).ok()?;
-            let value = obj_to_pdf(py, &item)?;
+            let value = obj_to_pdf(_py, &item)?;
             items.push(value);
         }
         return Some(PDFObject::Array(items));

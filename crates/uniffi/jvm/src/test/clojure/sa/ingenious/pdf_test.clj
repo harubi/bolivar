@@ -2,7 +2,8 @@
   (:require [clojure.test :refer [deftest is run-tests testing]]
             [sa.ingenious.pdf :as pdf])
   (:import [clojure.lang ExceptionInfo]
-           [java.util Arrays]
+           [java.lang AutoCloseable]
+           [java.util Arrays Iterator]
            [sa.ingenious.pdf BoundingBox DocumentOptions LayoutChar LayoutLine LayoutOptions
             LayoutPage LayoutTextBox MetadataEntry PageSummary PageTableRows PdfPermissions
             PdfVersion RawCharacter RawDocument RawDocumentMetadata RawPage RawPageBoxes RawTable
@@ -163,6 +164,27 @@
     (is (= {:page-number 3
             :tables      [[["a" nil] [nil "b"]]]}
            (#'pdf/page-table-rows->map page)))))
+
+(deftest mapped-cursor-is-lazy-and-closeable
+  (let [values (atom [1])
+        next-calls (atom 0)
+        closed (atom false)
+        source (reify
+                 Iterator
+                 (hasNext [_] (boolean (seq @values)))
+                 (next [_]
+                   (swap! next-calls inc)
+                   (let [value (first @values)]
+                     (swap! values subvec 1)
+                     value))
+
+                 AutoCloseable
+                 (close [_] (reset! closed true)))]
+    (with-open [cursor (#'pdf/mapped-cursor source inc)]
+      (is (zero? @next-calls))
+      (is (= [2] (vec cursor)))
+      (is (= 1 @next-calls)))
+    (is @closed)))
 
 (deftest raw-document-converts-to-lossless-clojure-data
   (let [bbox (BoundingBox. 1.0 2.0 3.0 4.0)

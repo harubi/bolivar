@@ -422,7 +422,11 @@ fn native_document_extract_tables_rich_metadata_and_filters() {
     let fixture_bytes = std::fs::read(&fixture_path).expect("read table fixture");
 
     let all_doc = NativePdfDocument::from_bytes(fixture_bytes.clone(), None).expect("all doc");
-    let all_tables = all_doc.extract_tables().expect("all tables");
+    let all_cursor = all_doc.tables(None).expect("all tables cursor");
+    let mut all_tables = Vec::new();
+    while let Some(table) = all_cursor.next().expect("next table") {
+        all_tables.push(table);
+    }
 
     assert!(!all_tables.is_empty());
     let table = &all_tables[0];
@@ -448,11 +452,41 @@ fn native_document_extract_tables_rich_metadata_and_filters() {
         Some(options_with_page_range(vec![1], Some(1))),
     )
     .expect("filtered doc");
-    let filtered_tables = filtered_doc.extract_tables().expect("filtered tables");
+    let filtered_cursor = filtered_doc.tables(None).expect("filtered tables cursor");
+    let mut filtered_tables = Vec::new();
+    while let Some(table) = filtered_cursor.next().expect("next filtered table") {
+        filtered_tables.push(table);
+    }
     for filtered in &filtered_tables {
         assert_eq!(filtered.page_number, 1);
     }
     assert!(filtered_tables.len() <= all_tables.len());
+}
+
+#[test]
+fn native_table_cursor_owns_the_document_and_reports_cancellation() {
+    let pdf = build_minimal_pdf_with_pages(2);
+    let cursor = {
+        let document = NativePdfDocument::from_bytes(pdf, None).expect("document");
+        document.tables(None).expect("table cursor")
+    };
+
+    cursor.cancel();
+    let error = cursor.next().expect_err("cancelled cursor");
+    assert!(matches!(error, BolivarError::Cancelled));
+    assert!(cursor.next().expect("terminal cursor").is_none());
+}
+
+#[test]
+fn native_page_table_rows_cursor_yields_one_page_at_a_time() {
+    let pdf = build_minimal_pdf_with_pages(2);
+    let document = NativePdfDocument::from_bytes(pdf, None).expect("document");
+    let cursor = document.table_rows(None).expect("rows cursor");
+
+    let first = cursor.next().expect("first page").expect("page one");
+    let second = cursor.next().expect("second page").expect("page two");
+    assert_eq!((first.page_number, second.page_number), (1, 2));
+    assert!(cursor.next().expect("end of cursor").is_none());
 }
 
 #[test]

@@ -1,3 +1,4 @@
+use bolivar_core::engine::{PageTables, Stream};
 use bolivar_core::extract::ExtractOptions as CoreExtractOptions;
 use bolivar_core::extract::{
     extract_layout_tables_metadata_stream_from_doc_with_geometries, extract_pages_stream_from_doc,
@@ -6,15 +7,15 @@ use bolivar_core::extract::{
 };
 use bolivar_core::layout::LAParams as CoreLAParams;
 use bolivar_core::pdfdocument::PDFDocument;
-use bolivar_core::table::{ExplicitLine, PageGeometry, TableSettings};
+use bolivar_core::table::{ExplicitLine, PageGeometry, TableMetadata, TableSettings};
 use std::sync::Arc;
 
 use crate::document::NativePdfDocument;
-use crate::error::{BolivarError, map_io_error_kind};
+use crate::error::BolivarError;
 use crate::types::{
-    BoundingBox, ExtractOptions, LayoutPage, LayoutParams, PageTableRows, RawDocument, Table,
-    TableOptions, cache_capacity, layout_page_from_ltpage, page_geometry_from_pdf_page,
-    page_number, raw_page_from_parts, table_from_core, usize_to_u32,
+    BoundingBox, ExtractOptions, LayoutPage, LayoutParams, RawDocument, TableOptions,
+    cache_capacity, layout_page_from_ltpage, page_geometry_from_pdf_page, raw_page_from_parts,
+    usize_to_u32,
 };
 
 fn normalize_page_numbers(
@@ -85,16 +86,11 @@ pub(crate) fn core_extract_options(
     })
 }
 
-fn validate_input_path(path: &str) -> Result<(), BolivarError> {
+pub(crate) fn validate_input_path(path: &str) -> Result<(), BolivarError> {
     if path.trim().is_empty() || path.contains('\0') || path.contains("://") {
         return Err(BolivarError::InvalidPath);
     }
     Ok(())
-}
-
-pub(crate) fn read_pdf_bytes(path: String) -> Result<Vec<u8>, BolivarError> {
-    validate_input_path(&path)?;
-    std::fs::read(path).map_err(|err| map_io_error_kind(err.kind()))
 }
 
 pub(crate) fn extract_layout_pages_core(
@@ -273,13 +269,6 @@ fn cropped_geometry(geometry: PageGeometry, crop: &BoundingBox) -> PageGeometry 
     }
 }
 
-pub(crate) fn extract_tables_core(
-    doc: Arc<PDFDocument>,
-    options: CoreExtractOptions,
-) -> Result<Vec<Table>, BolivarError> {
-    extract_tables_with_core(doc, options, None)
-}
-
 fn resolved_geometries(
     doc: &Arc<PDFDocument>,
     selected_indices: &[usize],
@@ -336,59 +325,50 @@ fn prepared_extraction(
     Ok((options, settings, selected_indices, geometries))
 }
 
-pub(crate) fn extract_table_rows_with_core(
-    doc: Arc<PDFDocument>,
-    options: CoreExtractOptions,
-    table_options: Option<TableOptions>,
-) -> Result<Vec<PageTableRows>, BolivarError> {
-    let (options, settings, selected_indices, geometries) =
-        prepared_extraction(&doc, options, table_options)?;
-
-    let stream = extract_tables_stream_from_doc_with_geometries(
-        Arc::clone(&doc),
-        options,
-        settings,
-        geometries,
-    )
-    .map_err(BolivarError::from)?;
-
-    let mut pages = Vec::new();
-    for (i, item) in stream.enumerate() {
-        let (_page_idx, tables) = item.map_err(BolivarError::from)?;
-        pages.push(PageTableRows {
-            page_number: page_number((selected_indices[i] + 1) as i32),
-            tables,
-        });
-    }
-    Ok(pages)
+pub(crate) struct TablePageContext {
+    pub page_index: usize,
+    pub page_number: u32,
+    pub geometry: PageGeometry,
 }
 
-pub(crate) fn extract_tables_with_core(
+fn table_page_contexts(
+    selected_indices: Vec<usize>,
+    geometries: &[PageGeometry],
+) -> Vec<TablePageContext> {
+    selected_indices
+        .into_iter()
+        .zip(geometries.iter().cloned())
+        .map(|(page_index, geometry)| TablePageContext {
+            page_index,
+            page_number: usize_to_u32(page_index.saturating_add(1)),
+            geometry,
+        })
+        .collect()
+}
+
+pub(crate) fn prepare_table_rows_cursor(
     doc: Arc<PDFDocument>,
     options: CoreExtractOptions,
     table_options: Option<TableOptions>,
-) -> Result<Vec<Table>, BolivarError> {
+) -> Result<Stream<PageTables>, BolivarError> {
+    let (options, settings, _, geometries) = prepared_extraction(&doc, options, table_options)?;
+    extract_tables_stream_from_doc_with_geometries(doc, options, settings, geometries)
+        .map_err(BolivarError::from)
+}
+
+pub(crate) fn prepare_table_cursor(
+    doc: Arc<PDFDocument>,
+    options: CoreExtractOptions,
+    table_options: Option<TableOptions>,
+) -> Result<(Stream<Vec<TableMetadata>>, Vec<TablePageContext>), BolivarError> {
     let (options, settings, selected_indices, geometries) =
         prepared_extraction(&doc, options, table_options)?;
+    let contexts = table_page_contexts(selected_indices, &geometries);
 
-    let stream = extract_tables_metadata_stream_from_doc_with_geometries(
-        Arc::clone(&doc),
-        options,
-        settings,
-        geometries.clone(),
-    )
-    .map_err(BolivarError::from)?;
-
-    let mut tables = Vec::new();
-    for (i, item) in stream.enumerate() {
-        let (_page_idx, page_tables) = item.map_err(BolivarError::from)?;
-        let geometry = &geometries[i];
-        let page_num = page_number((selected_indices[i] + 1) as i32);
-        for meta in page_tables {
-            tables.push(table_from_core(page_num, meta, geometry));
-        }
-    }
-    Ok(tables)
+    let stream =
+        extract_tables_metadata_stream_from_doc_with_geometries(doc, options, settings, geometries)
+            .map_err(BolivarError::from)?;
+    Ok((stream, contexts))
 }
 
 pub(crate) fn open_pdf_document(

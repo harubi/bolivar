@@ -13,4 +13,4 @@ path = "uniffi-bindgen.rs"
 
 [dependencies]
 # Must match crates/uniffi exactly: `generate --library` rejects a mismatch.
-uniffi = { version = "0.31.0", features = ["cli"] }
+uniffi = { version = "0.32.0", features = ["cli"] }

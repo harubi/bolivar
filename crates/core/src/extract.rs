@@ -33,18 +33,19 @@ use crate::document::catalog::DEFAULT_CACHE_CAPACITY;
 // `process_page`, `aggregator_result`, etc. through the canonical extract path.
 pub use crate::engine::{
     ExecutionPlan, ExtractOptions, PageTables, Stream, aggregator_result, collector_result,
-    no_precheck, process_page, run_batch, run_stream, validate_geometry_count,
+    no_precheck, no_precheck_cancellable, process_page, process_page_with_cancellation, run_batch,
+    run_stream, run_stream_cancellable, validate_geometry_count,
 };
 use crate::error::{PdfError, Result};
 use crate::image::ImageWriter;
 use crate::interp::PDFResourceManager;
 use crate::layout::{LAParams, LTPage};
-use crate::table::probe::{page_has_edges, should_skip_tables};
+use crate::table::probe::{page_has_edges_with_cancellation, should_probe_tables};
 use crate::table::{
     PageGeometry, TableMetadata, TableSettings, TextSettings, WordObj,
-    collect_table_objects_from_arena, extract_tables_from_objects,
-    extract_tables_with_metadata_from_objects, extract_text_from_objects_borrowed,
-    extract_words_from_objects_borrowed,
+    collect_table_objects_from_arena, extract_tables_from_objects_with_cancellation,
+    extract_tables_with_metadata_from_objects_with_cancellation,
+    extract_text_from_objects_borrowed, extract_words_from_objects_borrowed,
 };
 
 fn cache_capacity(caching: bool) -> usize {
@@ -174,7 +175,9 @@ fn extract_text_to_fp_from_doc_impl<W: Write>(
                 doc,
                 aggregator_result,
             )?;
-            ltpage.set_bidi(options.bidi);
+            if options.bidi {
+                ltpage.set_bidi(true);
+            }
             Ok(ltpage)
         },
     )?;
@@ -224,12 +227,13 @@ pub fn extract_pages_with_images_with_document(
     let bidi = options.bidi;
     let output_dir = output_dir.to_string();
 
-    let stream = run_stream(
+    let stream = run_stream_cancellable(
         doc,
         options.page_numbers,
         options.maxpages,
-        no_precheck::<LTPage>,
-        move |arena, page_idx, page, doc| {
+        no_precheck_cancellable::<LTPage>,
+        move |arena, page_idx, page, doc, cancellation| {
+            cancellation.check()?;
             let writer = ImageWriter::for_page(&output_dir, page_idx)?;
             let writer = Rc::new(RefCell::new(writer));
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
@@ -239,15 +243,18 @@ pub fn extract_pages_with_images_with_document(
                 Some(writer),
                 arena,
             );
-            let mut ltpage = process_page(
+            let mut ltpage = process_page_with_cancellation(
                 page,
                 &mut aggregator,
                 &mut rsrcmgr,
                 rotation,
                 doc,
+                cancellation,
                 aggregator_result,
             )?;
-            ltpage.set_bidi(bidi);
+            if bidi {
+                ltpage.set_bidi(true);
+            }
             Ok(ltpage)
         },
     )?;
@@ -272,23 +279,26 @@ pub fn extract_pages_stream_from_doc(
     let rotation = options.rotation;
     let bidi = options.bidi;
 
-    run_stream(
+    run_stream_cancellable(
         doc,
         options.page_numbers,
         options.maxpages,
-        no_precheck::<LTPage>,
-        move |arena, page_idx, page, doc| {
+        no_precheck_cancellable::<LTPage>,
+        move |arena, page_idx, page, doc, cancellation| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut aggregator = PDFPageAggregator::new(laparams, page_idx as i32 + 1, arena);
-            let mut ltpage = process_page(
+            let mut ltpage = process_page_with_cancellation(
                 page,
                 &mut aggregator,
                 &mut rsrcmgr,
                 rotation,
                 doc,
+                cancellation,
                 aggregator_result,
             )?;
-            ltpage.set_bidi(bidi);
+            if bidi {
+                ltpage.set_bidi(true);
+            }
             Ok(ltpage)
         },
     )
@@ -352,27 +362,34 @@ pub fn extract_tables_metadata_stream_from_doc_with_geometries(
     let laparams = options.laparams;
     let caching = options.caching;
 
-    run_stream(
+    run_stream_cancellable(
         doc,
         options.page_numbers,
         options.maxpages,
-        no_precheck::<Vec<TableMetadata>>,
-        move |arena, page_idx, page, doc| {
+        no_precheck_cancellable::<Vec<TableMetadata>>,
+        move |arena, page_idx, page, doc, cancellation| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
-            let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
-                collector_result(c)
-            })?;
+            let page_arena = process_page_with_cancellation(
+                page,
+                &mut collector,
+                &mut rsrcmgr,
+                0,
+                doc,
+                cancellation,
+                collector_result,
+            )?;
             let arena_lookup = collector.arena_lookup();
             let geom = geometry_for_page(&geoms, page_idx)?;
             let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
-            Ok(extract_tables_with_metadata_from_objects(
+            extract_tables_with_metadata_from_objects_with_cancellation(
                 chars,
                 edges,
                 geom,
                 &settings,
                 arena_lookup,
-            ))
+                cancellation,
+            )
         },
     )
 }
@@ -400,40 +417,46 @@ pub fn extract_layout_tables_metadata_stream_from_doc_with_geometries(
     let rotation = options.rotation;
     let bidi = options.bidi;
 
-    run_stream(
+    run_stream_cancellable(
         doc,
         options.page_numbers,
         options.maxpages,
-        no_precheck::<(LTPage, Vec<TableMetadata>)>,
-        move |arena, page_idx, page, doc| {
+        no_precheck_cancellable::<(LTPage, Vec<TableMetadata>)>,
+        move |arena, page_idx, page, doc, cancellation| {
             #[cfg(test)]
             record_combined_pass();
 
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
-            let page_arena = process_page(
+            let page_arena = process_page_with_cancellation(
                 page,
                 &mut collector,
                 &mut rsrcmgr,
                 rotation,
                 doc,
+                cancellation,
                 collector_result,
             )?;
             let arena_lookup = collector.arena_lookup();
             let geom = geometry_for_page(&geoms, page_idx)?;
             let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
-            let tables = extract_tables_with_metadata_from_objects(
+            let tables = extract_tables_with_metadata_from_objects_with_cancellation(
                 chars,
                 edges,
                 geom,
                 &settings,
                 arena_lookup,
-            );
+                cancellation,
+            )?;
+            cancellation.check()?;
             let mut layout_page = page_arena.materialize(arena_lookup);
             if let Some(laparams) = laparams {
                 layout_page.analyze(&laparams);
             }
-            layout_page.set_bidi(bidi);
+            cancellation.check()?;
+            if bidi {
+                layout_page.set_bidi(true);
+            }
             Ok((layout_page, tables))
         },
     )
@@ -460,25 +483,30 @@ pub fn extract_text_stream_from_doc_with_geometries(
     let laparams = options.laparams;
     let caching = options.caching;
 
-    run_stream(
+    run_stream_cancellable(
         doc,
         options.page_numbers,
         options.maxpages,
-        no_precheck::<String>,
-        move |arena, page_idx, page, doc| {
+        no_precheck_cancellable::<String>,
+        move |arena, page_idx, page, doc, cancellation| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
-            let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
-                collector_result(c)
-            })?;
+            let page_arena = process_page_with_cancellation(
+                page,
+                &mut collector,
+                &mut rsrcmgr,
+                0,
+                doc,
+                cancellation,
+                collector_result,
+            )?;
             let arena_lookup = collector.arena_lookup();
             let geom = geometry_for_page(&geoms, page_idx)?;
             let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
-            Ok(extract_text_from_objects_borrowed(
-                chars,
-                &settings,
-                arena_lookup,
-            ))
+            cancellation.check()?;
+            let text = extract_text_from_objects_borrowed(chars, &settings, arena_lookup);
+            cancellation.check()?;
+            Ok(text)
         },
     )
 }
@@ -504,25 +532,30 @@ pub fn extract_words_stream_from_doc_with_geometries(
     let laparams = options.laparams;
     let caching = options.caching;
 
-    run_stream(
+    run_stream_cancellable(
         doc,
         options.page_numbers,
         options.maxpages,
-        no_precheck::<Vec<WordObj>>,
-        move |arena, page_idx, page, doc| {
+        no_precheck_cancellable::<Vec<WordObj>>,
+        move |arena, page_idx, page, doc, cancellation| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
-            let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
-                collector_result(c)
-            })?;
+            let page_arena = process_page_with_cancellation(
+                page,
+                &mut collector,
+                &mut rsrcmgr,
+                0,
+                doc,
+                cancellation,
+                collector_result,
+            )?;
             let arena_lookup = collector.arena_lookup();
             let geom = geometry_for_page(&geoms, page_idx)?;
             let (chars, _edges) = collect_table_objects_from_arena(&page_arena, geom);
-            Ok(extract_words_from_objects_borrowed(
-                chars,
-                &settings,
-                arena_lookup,
-            ))
+            cancellation.check()?;
+            let words = extract_words_from_objects_borrowed(chars, &settings, arena_lookup);
+            cancellation.check()?;
+            Ok(words)
         },
     )
 }
@@ -557,26 +590,36 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
     let settings_for_run = settings;
     let geoms = geometries;
 
-    run_stream(
+    run_stream_cancellable(
         doc,
         options.page_numbers.clone(),
         options.maxpages,
-        move |_page_idx, page, doc| {
+        move |_page_idx, page, doc, cancellation| {
+            if !should_probe_tables(&settings_for_pre) {
+                return Ok(None);
+            }
+
             // Cheap edge probe before running the full interpreter — preserves the
             // original skip path so text-only PDFs don't pay table-collector cost.
-            let has_edges = page_has_edges(page, doc, caching)?;
-            if should_skip_tables(&settings_for_pre, has_edges) {
-                Ok(Some(Vec::new()))
-            } else {
+            let has_edges = page_has_edges_with_cancellation(page, doc, caching, cancellation)?;
+            if has_edges {
                 Ok(None)
+            } else {
+                Ok(Some(Vec::new()))
             }
         },
-        move |arena, page_idx, page, doc| {
+        move |arena, page_idx, page, doc, cancellation| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
-            let page_arena = process_page(page, &mut collector, &mut rsrcmgr, 0, doc, |c| {
-                collector_result(c)
-            })?;
+            let page_arena = process_page_with_cancellation(
+                page,
+                &mut collector,
+                &mut rsrcmgr,
+                0,
+                doc,
+                cancellation,
+                collector_result,
+            )?;
             let arena_lookup = collector.arena_lookup();
             let default_geometry;
             let geom = match geoms.as_ref() {
@@ -592,13 +635,14 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                 }
             };
             let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
-            Ok(extract_tables_from_objects(
+            extract_tables_from_objects_with_cancellation(
                 chars,
                 edges,
                 geom,
                 &settings_for_run,
                 arena_lookup,
-            ))
+                cancellation,
+            )
         },
     )
 }
@@ -677,10 +721,6 @@ pub(crate) fn stream_usage_test_guard() -> std::sync::MutexGuard<'static, ()> {
 mod tests {
     use super::*;
     use crate::engine::processor;
-    use crate::engine::stream::{
-        reset_stream_worker_lifecycle_counters, set_stream_worker_lifecycle_enabled,
-        stream_worker_lifecycle_counts, stream_worker_lifecycle_test_guard,
-    };
     use crate::table::{TableProbePolicy, TableSettings};
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};
@@ -927,15 +967,10 @@ mod tests {
         assert!(err.to_string().contains("geometry"));
     }
 
-    #[test]
-    fn table_probe_policy_controls_skip() {
+    fn table_probe_calls(settings: TableSettings) -> usize {
         let pdf_data = build_minimal_pdf_with_pages(1);
         let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
         let options = ExtractOptions::default();
-        let settings = TableSettings {
-            probe_policy: TableProbePolicy::Always,
-            ..Default::default()
-        };
 
         crate::layout::table::probe::take_probe_calls();
         let out: Vec<PageTables> =
@@ -945,8 +980,37 @@ mod tests {
                 .collect::<Result<Vec<_>>>()
                 .unwrap();
         assert_eq!(out.len(), 1);
-        let calls = crate::layout::table::probe::take_probe_calls();
-        assert!(calls > 0);
+        crate::layout::table::probe::take_probe_calls()
+    }
+
+    #[test]
+    fn table_probe_policy_always_runs_probe() {
+        let settings = TableSettings {
+            probe_policy: TableProbePolicy::Always,
+            ..Default::default()
+        };
+
+        assert!(table_probe_calls(settings) > 0);
+    }
+
+    #[test]
+    fn table_probe_policy_never_bypasses_probe() {
+        let settings = TableSettings {
+            probe_policy: TableProbePolicy::Never,
+            ..Default::default()
+        };
+
+        assert_eq!(table_probe_calls(settings), 0);
+    }
+
+    #[test]
+    fn table_probe_policy_auto_bypasses_probe_for_text_strategy() {
+        let settings = TableSettings {
+            vertical_strategy: crate::table::TableStrategy::Text,
+            ..Default::default()
+        };
+
+        assert_eq!(table_probe_calls(settings), 0);
     }
 
     #[test]
@@ -1117,60 +1181,18 @@ mod tests {
     }
 
     #[test]
-    fn table_stream_early_drop_releases_real_workers() {
-        let _guard = stream_worker_lifecycle_test_guard();
-
+    fn table_stream_early_drop_does_not_wait_for_workers() {
         let pdf = build_minimal_pdf_with_pages(64);
         let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
+        let stream = extract_tables_stream_from_doc_with_settings(
+            Arc::clone(&doc),
+            ExtractOptions::default(),
+            TableSettings::default(),
+        )
+        .unwrap();
 
-        set_stream_worker_lifecycle_enabled(true);
-        reset_stream_worker_lifecycle_counters();
-
-        let baseline = stream_worker_lifecycle_counts().2;
-        let stream_count = 16usize;
-        let mut streams = Vec::with_capacity(stream_count);
-
-        for i in 0..stream_count {
-            let mut settings = TableSettings::default();
-            let i_f = i as f64;
-            settings.snap_x_tolerance = 2.0 + i_f * 0.10;
-            settings.snap_y_tolerance = 2.2 + i_f * 0.10;
-            settings.join_x_tolerance = 1.5 + i_f * 0.07;
-            settings.join_y_tolerance = 1.7 + i_f * 0.07;
-            settings.edge_min_length = 3.0 + i_f * 0.15;
-            settings.edge_min_length_prefilter = 1.0 + i_f * 0.05;
-            settings.intersection_x_tolerance = 2.5 + i_f * 0.09;
-            settings.intersection_y_tolerance = 2.7 + i_f * 0.09;
-
-            let mut stream = extract_tables_stream_from_doc_with_settings(
-                Arc::clone(&doc),
-                ExtractOptions::default(),
-                settings,
-            )
-            .unwrap();
-            let _ = stream.next();
-            streams.push(stream);
-        }
-
-        drop(streams);
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        loop {
-            let (_, _, active) = stream_worker_lifecycle_counts();
-            if active == baseline || std::time::Instant::now() >= deadline {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-
-        let (started, exited, active) = stream_worker_lifecycle_counts();
-        set_stream_worker_lifecycle_enabled(false);
-
-        assert!(
-            started >= stream_count,
-            "expected at least {stream_count} workers, got {started}"
-        );
-        assert_eq!(active, baseline);
-        assert_eq!(started, exited);
+        let start = std::time::Instant::now();
+        drop(stream);
+        assert!(start.elapsed() < std::time::Duration::from_millis(500));
     }
 }

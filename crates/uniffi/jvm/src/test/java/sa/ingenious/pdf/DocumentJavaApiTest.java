@@ -54,6 +54,13 @@ class DocumentJavaApiTest {
     assertEquals(RawDocument.class, Document.class.getMethod("extractRawDocument").getReturnType());
     assertEquals(RawPage.class, Document.class.getMethod("extractRawPage", int.class).getReturnType());
     assertEquals(RawDocumentMetadata.class, Document.class.getMethod("metadata").getReturnType());
+    assertEquals(TableCursor.class, Document.class.getMethod("tables").getReturnType());
+    assertEquals(
+        TableCursor.class,
+        Document.class.getMethod("tables", TableOptions.class).getReturnType());
+    assertEquals(
+        PageTableRowsCursor.class,
+        Document.class.getMethod("tableRows", TableOptions.class).getReturnType());
     assertEquals(String.class, Document.class.getMethod("version").getReturnType());
   }
 
@@ -131,6 +138,10 @@ class DocumentJavaApiTest {
     assertThrows(ClassNotFoundException.class, () -> Class.forName("sa.ingenious.bolivar"));
     assertThrows(ClassNotFoundException.class, () -> Class.forName("sa.ingenious.PdfDocument"));
     assertThrows(ClassNotFoundException.class, () -> Class.forName("sa.ingenious.BolivarClojureInterop"));
+    assertThrows(NoSuchMethodException.class, () -> Document.class.getMethod("extractTables"));
+    assertThrows(
+        NoSuchMethodException.class,
+        () -> Document.class.getMethod("extractTableRows", TableOptions.class));
   }
 
   private static void assertNoPublicLeak(Class<?> type) {

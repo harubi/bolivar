@@ -4,6 +4,8 @@
 //! words, and text from PDF pages.
 
 use crate::arena::{ArenaLookup, PageArena};
+use crate::cancellation::CancellationToken;
+use crate::error::Result;
 use crate::layout::types::LTChar;
 use crate::utils::{HasBBox, Rect};
 
@@ -269,7 +271,11 @@ impl<'a> TableFinder<'a> {
         }
     }
 
-    fn get_edges(&self) -> Vec<EdgeObj> {
+    fn get_edges_with_cancellation(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<EdgeObj>> {
+        cancellation.check()?;
         let settings = &self.settings;
 
         let v_strat = settings.vertical_strategy;
@@ -278,11 +284,13 @@ impl<'a> TableFinder<'a> {
         let mut words: Vec<WordObj> = Vec::new();
         if v_strat.uses_text() || h_strat.uses_text() {
             words = extract_words(&self.chars, &settings.text_settings, self.arena);
+            cancellation.check()?;
         }
 
         // explicit vertical lines
         let mut v_explicit: Vec<EdgeObj> = Vec::new();
         for desc in &settings.explicit_vertical_lines {
+            cancellation.check()?;
             match desc {
                 ExplicitLine::Coord(x) => v_explicit.push(EdgeObj {
                     x0: *x,
@@ -346,6 +354,7 @@ impl<'a> TableFinder<'a> {
         // explicit horizontal lines
         let mut h_explicit: Vec<EdgeObj> = Vec::new();
         for desc in &settings.explicit_horizontal_lines {
+            cancellation.check()?;
             match desc {
                 ExplicitLine::Coord(y) => h_explicit.push(EdgeObj {
                     x0: self.page_bbox.x0,
@@ -409,6 +418,7 @@ impl<'a> TableFinder<'a> {
         let mut edges = v;
         edges.extend(h);
 
+        cancellation.check()?;
         let edges = merge_edges(
             edges,
             settings.snap_x_tolerance,
@@ -417,22 +427,36 @@ impl<'a> TableFinder<'a> {
             settings.join_y_tolerance,
         );
 
-        filter_edges(edges, None, None, settings.edge_min_length)
+        cancellation.check()?;
+        Ok(filter_edges(edges, None, None, settings.edge_min_length))
     }
 
     fn find_tables(&self) -> Vec<Table> {
-        let edges = self.get_edges();
+        self.find_tables_with_cancellation(&CancellationToken::new())
+            .expect("a new cancellation token cannot be cancelled")
+    }
+
+    fn find_tables_with_cancellation(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<Table>> {
+        let edges = self.get_edges_with_cancellation(cancellation)?;
+        cancellation.check()?;
         let (store, intersections) = edges_to_intersections(
             &edges,
             self.settings.intersection_x_tolerance,
             self.settings.intersection_y_tolerance,
         );
+        cancellation.check()?;
         let cells = intersections_to_cells(&store, &intersections);
+        cancellation.check()?;
         let tables = cells_to_tables(cells);
-        tables
-            .into_iter()
-            .map(|cell_group| Table { cells: cell_group })
-            .collect()
+        let mut found = Vec::with_capacity(tables.len());
+        for cell_group in tables {
+            cancellation.check()?;
+            found.push(Table { cells: cell_group });
+        }
+        Ok(found)
     }
 }
 
@@ -467,19 +491,40 @@ fn span_for_axis(axis_starts: &[f64], start_idx: usize, end_value: f64) -> usize
     span.max(1)
 }
 
+#[cfg(test)]
 fn table_to_metadata(
     table: &Table,
     chars: &[CharObj],
     text_settings: &TextSettings,
     arena: &dyn ArenaLookup,
 ) -> TableMetadata {
+    table_to_metadata_with_cancellation(
+        table,
+        chars,
+        text_settings,
+        arena,
+        &CancellationToken::new(),
+    )
+    .expect("a new cancellation token cannot be cancelled")
+}
+
+fn table_to_metadata_with_cancellation(
+    table: &Table,
+    chars: &[CharObj],
+    text_settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+    cancellation: &CancellationToken,
+) -> Result<TableMetadata> {
+    cancellation.check()?;
     let rows = table.rows();
     let row_count = rows.len();
     let column_count = rows.first().map(|row| row.cells.len()).unwrap_or(0);
-    let text_grid = table.extract(chars, text_settings, arena);
+    let text_grid =
+        table.extract_soa_with_cancellation(chars, text_settings, arena, cancellation)?;
 
     let mut row_starts: Vec<f64> = Vec::with_capacity(row_count);
     for (row_idx, row) in rows.iter().enumerate() {
+        cancellation.check()?;
         let top = row
             .cells
             .iter()
@@ -492,6 +537,7 @@ fn table_to_metadata(
 
     let mut column_starts: Vec<f64> = Vec::with_capacity(column_count);
     for col_idx in 0..column_count {
+        cancellation.check()?;
         let mut start = None;
         for row in &rows {
             if let Some(Some(bbox)) = row.cells.get(col_idx) {
@@ -504,6 +550,7 @@ fn table_to_metadata(
 
     let mut cells = Vec::new();
     for (row_idx, row) in rows.iter().enumerate() {
+        cancellation.check()?;
         for (col_idx, maybe_bbox) in row.cells.iter().enumerate() {
             let Some(bbox) = maybe_bbox else {
                 continue;
@@ -524,12 +571,27 @@ fn table_to_metadata(
         }
     }
 
-    TableMetadata {
+    Ok(TableMetadata {
         bbox: table.bbox(),
         row_count,
         column_count,
         cells,
+    })
+}
+
+fn retain_tables_in_geometry(tables: &mut Vec<Table>, geom: &PageGeometry) {
+    if !geom.force_crop {
+        return;
     }
+
+    let (x0, top, x1, bottom) = geom.page_bbox;
+    let crop = BBox {
+        x0,
+        top,
+        x1,
+        bottom,
+    };
+    tables.retain(|table| bbox_overlap_strict(table.bbox(), crop));
 }
 
 /// Extract all tables from a page as nested vectors of cell text.
@@ -542,15 +604,7 @@ pub fn extract_tables_from_ltpage(
     arena.reset();
     let finder = TableFinder::new(page, geom, settings, &mut arena);
     let mut tables = finder.find_tables();
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
-    }
+    retain_tables_in_geometry(&mut tables, geom);
     tables
         .iter()
         .map(|t| t.extract(&finder.chars, &settings.text_settings, finder.arena))
@@ -565,22 +619,41 @@ pub fn extract_tables_from_objects(
     settings: &TableSettings,
     arena: &impl ArenaLookup,
 ) -> Vec<Vec<Vec<Option<String>>>> {
+    extract_tables_from_objects_with_cancellation(
+        chars,
+        edges,
+        geom,
+        settings,
+        arena,
+        &CancellationToken::new(),
+    )
+    .expect("a new cancellation token cannot be cancelled")
+}
+
+pub(crate) fn extract_tables_from_objects_with_cancellation(
+    chars: Vec<CharObj>,
+    edges: Vec<EdgeObj>,
+    geom: &PageGeometry,
+    settings: &TableSettings,
+    arena: &impl ArenaLookup,
+    cancellation: &CancellationToken,
+) -> Result<Vec<Vec<Vec<Option<String>>>>> {
+    cancellation.check()?;
     let arena: &dyn ArenaLookup = arena;
     let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
-    let mut tables = finder.find_tables();
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
+    let mut tables = finder.find_tables_with_cancellation(cancellation)?;
+    retain_tables_in_geometry(&mut tables, geom);
+    let mut extracted = Vec::with_capacity(tables.len());
+    for table in &tables {
+        cancellation.check()?;
+        extracted.push(table.extract_soa_with_cancellation(
+            &finder.chars,
+            &settings.text_settings,
+            finder.arena,
+            cancellation,
+        )?);
     }
-    tables
-        .iter()
-        .map(|t| t.extract(&finder.chars, &settings.text_settings, finder.arena))
-        .collect()
+    Ok(extracted)
 }
 
 /// Extract all tables from precomputed characters/edges with per-cell metadata.
@@ -591,22 +664,43 @@ pub fn extract_tables_with_metadata_from_objects(
     settings: &TableSettings,
     arena: &impl ArenaLookup,
 ) -> Vec<TableMetadata> {
+    extract_tables_with_metadata_from_objects_with_cancellation(
+        chars,
+        edges,
+        geom,
+        settings,
+        arena,
+        &CancellationToken::new(),
+    )
+    .expect("a new cancellation token cannot be cancelled")
+}
+
+pub(crate) fn extract_tables_with_metadata_from_objects_with_cancellation(
+    chars: Vec<CharObj>,
+    edges: Vec<EdgeObj>,
+    geom: &PageGeometry,
+    settings: &TableSettings,
+    arena: &impl ArenaLookup,
+    cancellation: &CancellationToken,
+) -> Result<Vec<TableMetadata>> {
+    cancellation.check()?;
     let arena: &dyn ArenaLookup = arena;
     let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
-    let mut tables = finder.find_tables();
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
+    let mut tables = finder.find_tables_with_cancellation(cancellation)?;
+    retain_tables_in_geometry(&mut tables, geom);
+    let mut metadata = Vec::with_capacity(tables.len());
+    for table in &tables {
+        cancellation.check()?;
+        metadata.push(table_to_metadata_with_cancellation(
+            table,
+            &finder.chars,
+            &settings.text_settings,
+            finder.arena,
+            cancellation,
+        )?);
     }
-    tables
-        .iter()
-        .map(|t| table_to_metadata(t, &finder.chars, &settings.text_settings, finder.arena))
-        .collect()
+    cancellation.check()?;
+    Ok(metadata)
 }
 
 /// Extract the largest table from a page.
@@ -619,15 +713,7 @@ pub fn extract_table_from_ltpage(
     arena.reset();
     let finder = TableFinder::new(page, geom, settings, &mut arena);
     let mut tables = finder.find_tables();
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
-    }
+    retain_tables_in_geometry(&mut tables, geom);
     if tables.is_empty() {
         return None;
     }
@@ -678,15 +764,7 @@ pub fn extract_table_from_objects(
     let arena: &dyn ArenaLookup = arena;
     let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
     let mut tables = finder.find_tables();
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
-    }
+    retain_tables_in_geometry(&mut tables, geom);
     if tables.is_empty() {
         return None;
     }

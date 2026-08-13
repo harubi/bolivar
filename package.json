@@ -1,13 +1,18 @@
 {
   "private": true,
   "name": "bolivar-release",
-  "version": "0.0.0",
+  "scripts": {
+    "test:release": "node scripts/validate-release.mjs"
+  },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/commit-analyzer": "^13.0.1",
     "@semantic-release/exec": "^7.1.0",
     "@semantic-release/git": "^10.0.1",
     "@semantic-release/github": "^12.0.5",
     "conventional-changelog-conventionalcommits": "^9.1.0",
-    "semantic-release": "^25.0.3"
+    "semantic-release": "^25.0.3",
+    "semver": "^7.8.5",
+    "yaml": "^2.9.0"
   }
 }

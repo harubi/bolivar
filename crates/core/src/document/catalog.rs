@@ -15,22 +15,23 @@ use crate::codec::{
     ascii85decode, asciihexdecode, ccittfaxdecode, lzwdecode_with_earlychange, rldecode,
 };
 use crate::error::{PdfError, Result};
+use crate::font::PDFCIDFont;
 use crate::font::encoding::{DiffEntry, EncodingDB};
-use crate::model::objects::{PDFDict, PDFObject, PDFStream};
+use crate::model::objects::{PDFDict, PDFName, PDFObject, PDFStream};
 use crate::parser::pdf_parser::PDFParser;
-use crate::simd::U8_LANES;
 use bytes::Bytes;
 use indexmap::IndexMap;
 use memmap2::Mmap;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::simd::prelude::*;
+use std::fs::File;
+use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-const PNG_SIMD_LANES: usize = U8_LANES;
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024;
 pub const DEFAULT_PAGE_CACHE_CAPACITY: usize = 64;
+const DEFAULT_FONT_CACHE_CAPACITY: usize = 256;
 
 const fn is_dct_decode(name: &str) -> bool {
     name.eq_ignore_ascii_case("DCTDecode") || name.eq_ignore_ascii_case("DCT")
@@ -65,6 +66,13 @@ fn ccitt_params(params: Option<&PDFDict>) -> CcittParams {
     }
 }
 
+fn mmap_path(path: &Path) -> Result<Mmap> {
+    let source = File::open(path)?;
+
+    // Safety: the caller keeps the mapped source stable while the document is open.
+    Ok(unsafe { Mmap::map(&source)? })
+}
+
 struct ObjectCache {
     capacity: usize,
     map: IndexMap<u32, Arc<PDFObject>>,
@@ -73,6 +81,54 @@ struct ObjectCache {
 struct PageCache {
     capacity: usize,
     map: IndexMap<usize, Arc<super::page::PDFPage>>,
+}
+
+#[derive(Clone, Hash, Eq, PartialEq)]
+struct FontCacheKey {
+    objid: u32,
+    resource_name: PDFName,
+}
+
+struct FontCache {
+    capacity: usize,
+    map: FxHashMap<FontCacheKey, Arc<PDFCIDFont>>,
+}
+
+impl FontCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            map: FxHashMap::default(),
+        }
+    }
+
+    fn get(&self, objid: u32, resource_name: &PDFName) -> Option<Arc<PDFCIDFont>> {
+        self.map
+            .get(&FontCacheKey {
+                objid,
+                resource_name: resource_name.clone(),
+            })
+            .map(Arc::clone)
+    }
+
+    fn insert(&mut self, objid: u32, resource_name: PDFName, font: Arc<PDFCIDFont>) {
+        if self.capacity == 0 {
+            return;
+        }
+
+        let key = FontCacheKey {
+            objid,
+            resource_name,
+        };
+        if !self.map.contains_key(&key)
+            && self.map.len() >= self.capacity
+            && let Some(victim) = self.map.keys().next().cloned()
+        {
+            // Approximate eviction keeps cache hits under a shared read lock.
+            self.map.remove(&victim);
+        }
+        self.map.insert(key, font);
+    }
 }
 
 impl PageCache {
@@ -218,6 +274,7 @@ pub struct PDFDocument {
     info: Vec<PDFDict>,
     cache: Mutex<ObjectCache>,
     page_cache: Mutex<PageCache>,
+    font_cache: RwLock<FontCache>,
     font_encoding_cache: Mutex<FxHashMap<u32, Arc<FxHashMap<u8, String>>>>,
     objstm_index: RwLock<Option<FxHashMap<u32, (u32, usize)>>>,
     security_handler: Option<Box<dyn PDFSecurityHandler + Send + Sync>>,
@@ -238,6 +295,9 @@ impl PDFDocument {
             info: Vec::new(),
             cache: Mutex::new(ObjectCache::new(cache_capacity)),
             page_cache: Mutex::new(PageCache::new(DEFAULT_PAGE_CACHE_CAPACITY)),
+            font_cache: RwLock::new(FontCache::new(
+                cache_capacity.min(DEFAULT_FONT_CACHE_CAPACITY),
+            )),
             font_encoding_cache: Mutex::new(FxHashMap::default()),
             objstm_index: RwLock::new(None),
             security_handler: None,
@@ -299,6 +359,29 @@ impl PDFDocument {
     ) -> Result<Self> {
         Self::new_with_cache_inner(
             PdfBytes::Shared(Bytes::from_owner(mmap)),
+            password,
+            cache_capacity,
+            allow_xref_fallback,
+        )
+    }
+
+    /// Create a document by memory-mapping a path.
+    pub fn new_from_path(path: impl AsRef<Path>, password: &str) -> Result<Self> {
+        Self::new_from_path_with_cache_and_fallback(path, password, DEFAULT_CACHE_CAPACITY, true)
+    }
+
+    /// Create a memory-mapped document with cache and fallback settings.
+    ///
+    /// The source file must not change while the document is in use.
+    pub fn new_from_path_with_cache_and_fallback(
+        path: impl AsRef<Path>,
+        password: &str,
+        cache_capacity: usize,
+        allow_xref_fallback: bool,
+    ) -> Result<Self> {
+        let mmap = mmap_path(path.as_ref())?;
+        Self::new_from_mmap_with_cache_and_fallback(
+            mmap,
             password,
             cache_capacity,
             allow_xref_fallback,
@@ -433,6 +516,23 @@ impl PDFDocument {
         Some(shared)
     }
 
+    pub(crate) fn get_cached_font(
+        &self,
+        objid: u32,
+        resource_name: &PDFName,
+    ) -> Option<Arc<PDFCIDFont>> {
+        self.font_cache
+            .read()
+            .ok()
+            .and_then(|cache| cache.get(objid, resource_name))
+    }
+
+    pub(crate) fn cache_font(&self, objid: u32, resource_name: PDFName, font: Arc<PDFCIDFont>) {
+        if let Ok(mut cache) = self.font_cache.write() {
+            cache.insert(objid, resource_name, font);
+        }
+    }
+
     /// Returns the cached page index for O(1) page lookup.
     pub(crate) fn page_index(&self) -> &PageIndex {
         self.page_index.get_or_init(|| PageIndex::new(self))
@@ -512,7 +612,7 @@ impl PDFDocument {
         Ok(())
     }
 
-    fn find_startxref_simd(data: &[u8]) -> Option<usize> {
+    fn find_last_startxref_marker(data: &[u8]) -> Option<usize> {
         let needle = b"startxref";
         if data.len() < needle.len() {
             return None;
@@ -544,7 +644,7 @@ impl PDFDocument {
         if data.len() < search.len() {
             return Err(crate::error::PdfError::SyntaxError("PDF too small".into()));
         }
-        let Some(i) = Self::find_startxref_simd(data) else {
+        let Some(i) = Self::find_last_startxref_marker(data) else {
             return Err(PdfError::NoValidXRef);
         };
 
@@ -1212,11 +1312,9 @@ impl PDFDocument {
         columns: usize,
         colors: usize,
         bits_per_component: usize,
-        use_simd: bool,
-        mut simd_used: Option<&mut bool>,
     ) -> Result<Vec<u8>> {
-        let row_bytes = colors * columns * bits_per_component / 8;
-        let bpp = std::cmp::max(1, colors * bits_per_component / 8); // bytes per pixel
+        let row_bytes = (colors * columns * bits_per_component).div_ceil(8);
+        let bpp = (colors * bits_per_component).div_ceil(8).max(1); // bytes per pixel
         let row_size = row_bytes + 1; // +1 for filter byte
 
         let mut result = Vec::with_capacity(data.len());
@@ -1245,32 +1343,8 @@ impl PDFDocument {
                 }
                 2 => {
                     // Up - each byte depends on byte above
-                    if use_simd && row_bytes >= PNG_SIMD_LANES {
-                        if let Some(flag) = simd_used.as_mut() {
-                            **flag = true;
-                        }
-                        type V = Simd<u8, { PNG_SIMD_LANES }>;
-                        let (prefix, middle, suffix) = row_data.as_simd::<{ PNG_SIMD_LANES }>();
-                        let mut offset = 0;
-                        for &b in prefix {
-                            current_row[offset] = b.wrapping_add(prev_row[offset]);
-                            offset += 1;
-                        }
-                        for chunk in middle {
-                            let prev = V::from_slice(&prev_row[offset..offset + PNG_SIMD_LANES]);
-                            let sum = *chunk + prev;
-                            let lanes = sum.to_array();
-                            current_row[offset..offset + PNG_SIMD_LANES].copy_from_slice(&lanes);
-                            offset += PNG_SIMD_LANES;
-                        }
-                        for &b in suffix {
-                            current_row[offset] = b.wrapping_add(prev_row[offset]);
-                            offset += 1;
-                        }
-                    } else {
-                        for i in 0..row_bytes {
-                            current_row[i] = row_data[i].wrapping_add(prev_row[i]);
-                        }
+                    for i in 0..row_bytes {
+                        current_row[i] = row_data[i].wrapping_add(prev_row[i]);
                     }
                 }
                 3 => {
@@ -1314,27 +1388,7 @@ impl PDFDocument {
         colors: usize,
         bits_per_component: usize,
     ) -> Result<Vec<u8>> {
-        Self::apply_png_predictor_impl(data, columns, colors, bits_per_component, true, None)
-    }
-
-    #[cfg(test)]
-    fn apply_png_predictor_with_mode_and_trace(
-        data: &[u8],
-        columns: usize,
-        colors: usize,
-        bits_per_component: usize,
-        use_simd: bool,
-    ) -> Result<(Vec<u8>, bool)> {
-        let mut simd_used = false;
-        let out = Self::apply_png_predictor_impl(
-            data,
-            columns,
-            colors,
-            bits_per_component,
-            use_simd,
-            Some(&mut simd_used),
-        )?;
-        Ok((out, simd_used))
+        Self::apply_png_predictor_impl(data, columns, colors, bits_per_component)
     }
 
     /// Paeth predictor function used in PNG filtering.
@@ -1948,7 +2002,7 @@ impl PDFDocument {
         Ok(obj)
     }
 
-    fn find_endstream_simd(data: &[u8]) -> Option<usize> {
+    fn find_endstream(data: &[u8]) -> Option<usize> {
         let needle = b"endstream";
         if data.len() < needle.len() {
             return None;
@@ -1965,10 +2019,6 @@ impl PDFDocument {
             }
         }
         None
-    }
-
-    fn find_endstream(data: &[u8]) -> Option<usize> {
-        Self::find_endstream_simd(data)
     }
 
     /// Get document catalog.
@@ -2580,6 +2630,17 @@ mod tests {
     }
 
     #[test]
+    fn test_pdfdocument_from_path_uses_shared_mapped_bytes() {
+        let path = "tests/fixtures/simple1.pdf";
+        let source = std::fs::read(path).unwrap();
+
+        let document = PDFDocument::new_from_path(path, "").unwrap();
+        assert_eq!(document.bytes(), source);
+        assert!(document.page_index().len() > 0);
+        assert!(matches!(document.data, PdfBytes::Shared(_)));
+    }
+
+    #[test]
     fn test_stream_rawdata_is_slice_of_document_bytes() {
         use bytes::Bytes;
 
@@ -2683,6 +2744,25 @@ mod tests {
     }
 
     #[test]
+    fn font_cache_reuses_entry_and_honors_capacity() {
+        let pdf = build_minimal_pdf_with_pages(1);
+        let doc = PDFDocument::new_with_cache(pdf, "", 1).unwrap();
+        let first_name: PDFName = "F1".into();
+        let second_name: PDFName = "F2".into();
+        let first = Arc::new(PDFCIDFont::new(&PDFDict::default(), None));
+        let second = Arc::new(PDFCIDFont::new(&PDFDict::default(), None));
+
+        doc.cache_font(10, first_name.clone(), Arc::clone(&first));
+        let cached = doc.get_cached_font(10, &first_name).unwrap();
+        assert!(Arc::ptr_eq(&first, &cached));
+
+        doc.cache_font(11, second_name.clone(), Arc::clone(&second));
+        assert!(doc.get_cached_font(10, &first_name).is_none());
+        let cached = doc.get_cached_font(11, &second_name).unwrap();
+        assert!(Arc::ptr_eq(&second, &cached));
+    }
+
+    #[test]
     fn test_page_mediaboxes_does_not_create_pages() {
         let pdf = build_minimal_pdf_with_pages(3);
         let doc = PDFDocument::new(pdf, "").unwrap();
@@ -2713,48 +2793,38 @@ mod tests {
     }
 
     #[test]
-    fn find_endstream_simd_trims_whitespace() {
+    fn find_endstream_trims_whitespace() {
         let data = b"abc  \nendstream";
-        let end = PDFDocument::find_endstream_simd(data).unwrap();
+        let end = PDFDocument::find_endstream(data).unwrap();
         assert_eq!(&data[..end], b"abc");
     }
 
     #[test]
-    fn find_startxref_simd_matches_scalar() {
+    fn find_startxref_marker_is_found() {
         let data = b"trailer\nstartxref\n123\n%%EOF";
-        let pos = PDFDocument::find_startxref_simd(data).unwrap();
+        let pos = PDFDocument::find_last_startxref_marker(data).unwrap();
         assert_eq!(&data[pos..pos + 9], b"startxref");
     }
 
     #[test]
     fn find_startxref_returns_last_occurrence() {
         let data = b"startxref\n1\nstartxref\n2\n%%EOF";
-        let pos = PDFDocument::find_startxref_simd(data).unwrap();
+        let pos = PDFDocument::find_last_startxref_marker(data).unwrap();
         assert_eq!(&data[pos..pos + 9], b"startxref");
         assert_eq!(&data[pos + 9..pos + 11], b"\n2");
     }
 
     #[test]
-    fn png_predictor_up_simd_matches_scalar_and_uses_simd_path() {
-        let row_bytes = PNG_SIMD_LANES + 7;
-        let rows = 4usize;
-        let mut data = Vec::with_capacity(rows * (row_bytes + 1));
-        for row in 0..rows {
-            data.push(2);
-            for col in 0..row_bytes {
-                data.push(((row * 31 + col * 17 + 11) & 0xff) as u8);
-            }
-        }
+    fn png_predictor_up_decodes_rows() {
+        let data = [2, 1, 2, 3, 2, 4, 5, 6];
+        let decoded = PDFDocument::apply_png_predictor(&data, 3, 1, 8).unwrap();
+        assert_eq!(decoded, [1, 2, 3, 5, 7, 9]);
+    }
 
-        let (scalar, scalar_used_simd) =
-            PDFDocument::apply_png_predictor_with_mode_and_trace(&data, row_bytes, 1, 8, false)
-                .unwrap();
-        let (simd, simd_used_simd) =
-            PDFDocument::apply_png_predictor_with_mode_and_trace(&data, row_bytes, 1, 8, true)
-                .unwrap();
-
-        assert!(!scalar_used_simd);
-        assert!(simd_used_simd);
-        assert_eq!(scalar, simd);
+    #[test]
+    fn png_predictor_rounds_subbyte_rows_up() {
+        let data = [0, 0b1010_1010, 0b1000_0000];
+        let decoded = PDFDocument::apply_png_predictor(&data, 9, 1, 1).unwrap();
+        assert_eq!(decoded, data[1..]);
     }
 }

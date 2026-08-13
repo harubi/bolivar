@@ -11,8 +11,6 @@ sed -i "s/\(bolivar-core = { path = \"crates\/core\", version = \)\".*\"/\1\"$VE
 # bolivar-icu workspace dep (path + version)
 sed -i "s/\(bolivar-icu = { path = \"crates\/icu\", version = \)\".*\"/\1\"$VERSION\"/" Cargo.toml
 
-sed -i "s/^version = \".*\"/version = \"$VERSION\"/" crates/uniffi/jvm/build.gradle.kts
-
 # Regenerate Cargo.lock. Not `cargo check`: that runs build scripts, which
 # made this job compile ICU from source on every release.
 cargo update --workspace --quiet

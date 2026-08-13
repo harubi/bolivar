@@ -200,7 +200,7 @@ pub(crate) fn psliteral_name(obj: &Bound<'_, PyAny>) -> Option<String> {
 }
 
 /// Convert a Python object to a PDFObject.
-pub fn py_to_pdf_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFObject> {
+pub fn py_to_pdf_object(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFObject> {
     if obj.is_none() {
         return Ok(PDFObject::Null);
     }
@@ -229,7 +229,7 @@ pub fn py_to_pdf_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFO
         let mut map = PDFDict::default();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;
-            let value = py_to_pdf_object(py, &v)?;
+            let value = py_to_pdf_object(_py, &v)?;
             map.insert(key.into(), value);
         }
         return Ok(PDFObject::Dict(map));
@@ -239,10 +239,10 @@ pub fn py_to_pdf_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<PDFO
             return Err(PyTypeError::new_err("bytes are not a sequence"));
         }
         let mut items = Vec::new();
-        let len = seq.len()? as usize;
+        let len = seq.len()?;
         for idx in 0..len {
             let item = seq.get_item(idx)?;
-            let value = py_to_pdf_object(py, &item)?;
+            let value = py_to_pdf_object(_py, &item)?;
             items.push(value);
         }
         return Ok(PDFObject::Array(items));
@@ -256,10 +256,10 @@ pub fn py_to_pdf_object_resolving_refs(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
 ) -> PyResult<PDFObject> {
-    if obj.hasattr("resolve")? {
-        if let Ok(resolved) = obj.call_method0("resolve") {
-            return py_to_pdf_object(py, &resolved);
-        }
+    if obj.hasattr("resolve")?
+        && let Ok(resolved) = obj.call_method0("resolve")
+    {
+        return py_to_pdf_object(py, &resolved);
     }
     py_to_pdf_object(py, obj)
 }

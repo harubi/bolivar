@@ -279,15 +279,12 @@ impl<'a> PDFLayoutAnalyzer<'a> {
     pub fn end_page_arena(&mut self) -> Option<ArenaPage<'a>> {
         assert!(self.stack.is_empty(), "stack not empty");
         let container = self.cur_item.take()?;
-        let mut page = ArenaPage {
+        let page = ArenaPage {
             pageid: self.pageno,
             bbox: container.bbox,
             rotate: 0.0,
-            items: BumpVec::new_in(self.arena.bump()),
+            items: container.items,
         };
-        for item in container.items {
-            page.add(item);
-        }
         self.pageno += 1;
         Some(page)
     }
@@ -429,8 +426,10 @@ impl<'a> PDFLayoutAnalyzer<'a> {
         let dashing_style = gstate.dash.clone();
 
         // Get colors from graphic state
-        let scolor = self.arena.intern_color(&gstate.scolor.to_vec());
-        let ncolor = self.arena.intern_color(&gstate.ncolor.to_vec());
+        let scolor_components = gstate.scolor.components();
+        let ncolor_components = gstate.ncolor.components();
+        let scolor = self.arena.intern_color(scolor_components.as_slice());
+        let ncolor = self.arena.intern_color(ncolor_components.as_slice());
 
         // Create appropriate layout object
         let mut item = match shape.as_str() {
@@ -651,8 +650,10 @@ impl<'a> PDFLayoutAnalyzer<'a> {
         let fontname = font.fontname().unwrap_or("unknown");
         let text_key = self.arena.intern(&text);
         let fontname_key = self.arena.intern(fontname);
-        let ncolor = self.arena.intern_color(&graphicstate.ncolor.to_vec());
-        let scolor = self.arena.intern_color(&graphicstate.scolor.to_vec());
+        let ncolor_components = graphicstate.ncolor.components();
+        let scolor_components = graphicstate.scolor.components();
+        let ncolor = self.arena.intern_color(ncolor_components.as_slice());
+        let scolor = self.arena.intern_color(scolor_components.as_slice());
         let tag = self.current_tag_key();
         let ncs_name = Some(self.arena.intern(&graphicstate.ncs.name));
         let scs_name = Some(self.arena.intern(&graphicstate.scs.name));

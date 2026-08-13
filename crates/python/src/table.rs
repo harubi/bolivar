@@ -62,7 +62,7 @@ pub fn process_page(
             no_precheck::<LTPage>,
             move |arena, page_idx, page, doc| {
                 let mut rsrcmgr = PDFResourceManager::with_caching(true);
-                let mut aggregator = PDFPageAggregator::new(la.clone(), page_idx as i32 + 1, arena);
+                let mut aggregator = PDFPageAggregator::new(la, page_idx as i32 + 1, arena);
                 core_process_page(
                     page,
                     &mut aggregator,
@@ -209,7 +209,9 @@ pub fn extract_text(
     result.map_err(|e| core_error_to_py(py, "Failed to extract text", e))
 }
 
-/// Extract text from a PDF file path using memory-mapped I/O.
+/// Extract text from a memory-mapped PDF file path.
+///
+/// Do not change or replace the source file during this call.
 #[pyfunction]
 #[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, bidi = false))]
 pub fn extract_text_from_path(
@@ -300,7 +302,9 @@ pub fn extract_pages_with_images(
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
-/// Extract pages (layout) from a PDF file path using memory-mapped I/O.
+/// Extract pages (layout) from a memory-mapped PDF file path.
+///
+/// Do not change or replace the source file during this call.
 #[pyfunction]
 #[pyo3(signature = (path, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, rotation = 0, bidi = false))]
 pub fn extract_pages_from_path(

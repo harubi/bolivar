@@ -14,7 +14,7 @@ use pyo3::types::{PyDict, PySequence};
 /// Layout analysis parameters.
 ///
 /// Controls how characters are grouped into lines, words, and text boxes.
-#[pyclass(name = "LAParams")]
+#[pyclass(name = "LAParams", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct PyLAParams {
     #[pyo3(get, set)]
@@ -529,10 +529,10 @@ pub fn parse_bbox(obj: &Bound<'_, PyAny>, label: &str) -> PyResult<(f64, f64, f6
     if let Ok(val) = obj.extract::<(f64, f64, f64, f64)>() {
         return Ok(val);
     }
-    if let Ok(vals) = obj.extract::<Vec<f64>>() {
-        if vals.len() == 4 {
-            return Ok((vals[0], vals[1], vals[2], vals[3]));
-        }
+    if let Ok(vals) = obj.extract::<Vec<f64>>()
+        && vals.len() == 4
+    {
+        return Ok((vals[0], vals[1], vals[2], vals[3]));
     }
     Err(PyValueError::new_err(format!(
         "{label} must be a 4-tuple/list of floats"

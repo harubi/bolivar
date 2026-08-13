@@ -48,6 +48,17 @@ include = [
     "crates/icu/LICENSE-ICU",
 ]
 
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "rust-toolchain.toml" },
+    { file = "crates/**/Cargo.toml" },
+    { file = "crates/**/*.rs" },
+    { file = "crates/icu/src/**/*" },
+]
+
 [dependency-groups]
 bench = [
     "pytest>=9.0.2",

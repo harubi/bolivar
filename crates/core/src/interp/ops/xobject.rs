@@ -50,6 +50,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     ///
     /// PDF operator: `Do`
     pub fn do_Do(&mut self, xobjid: PDFName) {
+        if self.cancellation.is_cancelled() {
+            return;
+        }
         if std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1") {
             eprintln!("Do XObject: {}", xobjid);
         }
@@ -95,6 +98,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             let Some(data) = data else {
                 return;
             };
+            if self.cancellation.is_cancelled() {
+                return;
+            }
             if std::env::var("BOLIVAR_DEBUG_XOBJ").ok().as_deref() == Some("1") {
                 eprintln!("Do Form XObject: {} data len {}", xobjid, data.len());
             }
@@ -125,9 +131,12 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         streams: Vec<Vec<u8>>,
         ctm: Matrix,
     ) {
+        if self.cancellation.is_cancelled() {
+            return;
+        }
         self.init_resources(&resources, self.doc);
         self.init_state(ctm);
-        self.execute(&streams);
+        self.execute_owned(streams);
     }
 
     /// Snapshot the current interpreter state.

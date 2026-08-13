@@ -17,7 +17,6 @@ use bolivar_core::table::{
     ExplicitLine, TableProbePolicy, TableSettings, TableStrategy, TextDir, TextSettings,
 };
 use clap::{ArgAction, Parser, ValueEnum};
-use memmap2::Mmap;
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
@@ -632,16 +631,11 @@ fn process_file<W: Write>(
     args: &Args,
     output_type: OutputType,
 ) -> Result<()> {
-    // Read PDF file via mmap
-    let file = File::open(path)?;
-    let mmap = unsafe { Mmap::map(&file) }
-        .map_err(|e| PdfError::Io(io::Error::other(format!("Failed to mmap PDF: {e}"))))?;
-
     // Build options
     let options = build_extract_options(args)?;
 
-    // Create PDFDocument from mmap
-    let doc = Arc::new(PDFDocument::new_from_mmap(mmap, &options.password)?);
+    // Keep the source stable while the memory map is in use.
+    let doc = Arc::new(PDFDocument::new_from_path(path, &options.password)?);
 
     // Handle table extraction mode
     if args.extract_tables {

@@ -192,10 +192,10 @@ fn points_from_obj(obj: &Bound<'_, PyAny>) -> Vec<(f64, f64)> {
                 Ok(value) => value,
                 Err(_) => continue,
             };
-            if j == 0 {
-                if seg_item.extract::<String>().is_ok() || seg_item.cast::<PyBytes>().is_ok() {
-                    continue;
-                }
+            if j == 0
+                && (seg_item.extract::<String>().is_ok() || seg_item.cast::<PyBytes>().is_ok())
+            {
+                continue;
             }
             if let Ok(pt) = seg_item.extract::<(f64, f64)>() {
                 out.push(pt);
@@ -233,10 +233,10 @@ fn append_chars_from_list(
     let len = seq.len().unwrap_or(0);
     for i in 0..len {
         let item = seq.get_item(i)?;
-        if let Ok(dict) = item.cast::<PyDict>() {
-            if let Some(obj) = char_from_dict(arena, &dict, initial_doctop) {
-                out.push(obj);
-            }
+        if let Ok(dict) = item.cast::<PyDict>()
+            && let Some(obj) = char_from_dict(arena, dict, initial_doctop)
+        {
+            out.push(obj);
         }
     }
     Ok(())
@@ -249,10 +249,10 @@ fn append_line_edges(list: &Bound<'_, PyAny>, out: &mut Vec<EdgeObj>) -> PyResul
     let len = seq.len().unwrap_or(0);
     for i in 0..len {
         let item = seq.get_item(i)?;
-        if let Ok(dict) = item.cast::<PyDict>() {
-            if let Some(edge) = line_edge_from_dict(&dict) {
-                out.push(edge);
-            }
+        if let Ok(dict) = item.cast::<PyDict>()
+            && let Some(edge) = line_edge_from_dict(dict)
+        {
+            out.push(edge);
         }
     }
     Ok(())
@@ -265,10 +265,10 @@ fn append_rect_edges(list: &Bound<'_, PyAny>, out: &mut Vec<EdgeObj>) -> PyResul
     let len = seq.len().unwrap_or(0);
     for i in 0..len {
         let item = seq.get_item(i)?;
-        if let Ok(dict) = item.cast::<PyDict>() {
-            if let Some(edges) = rect_edges_from_dict(&dict) {
-                out.extend(edges);
-            }
+        if let Ok(dict) = item.cast::<PyDict>()
+            && let Some(edges) = rect_edges_from_dict(dict)
+        {
+            out.extend(edges);
         }
     }
     Ok(())
@@ -281,10 +281,10 @@ fn append_curve_edges(list: &Bound<'_, PyAny>, out: &mut Vec<EdgeObj>) -> PyResu
     let len = seq.len().unwrap_or(0);
     for i in 0..len {
         let item = seq.get_item(i)?;
-        if let Ok(dict) = item.cast::<PyDict>() {
-            if let Some(edges) = curve_edges_from_dict(&dict) {
-                out.extend(edges);
-            }
+        if let Ok(dict) = item.cast::<PyDict>()
+            && let Some(edges) = curve_edges_from_dict(dict)
+        {
+            out.extend(edges);
         }
     }
     Ok(())

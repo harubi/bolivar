@@ -1,17 +1,38 @@
-use std::collections::HashMap;
-
 use bumpalo::Bump;
 use lasso::{Rodeo, Spur};
+use rustc_hash::FxHashMap;
+use smol_str::SmolStr;
 
 use super::types::{ArenaChar, ColorId};
 
+type InternCache = FxHashMap<SmolStr, Spur>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ColorKey(Box<[u64]>);
+struct ColorKey {
+    inline: [u64; 4],
+    extra: Box<[u64]>,
+    len: usize,
+}
 
 impl ColorKey {
     fn from_slice(color: &[f64]) -> Self {
-        let bits: Vec<u64> = color.iter().map(|c| c.to_bits()).collect();
-        Self(bits.into_boxed_slice())
+        let mut inline = [0; 4];
+        for (slot, component) in inline.iter_mut().zip(color) {
+            *slot = component.to_bits();
+        }
+        let extra = if color.len() > inline.len() {
+            color[inline.len()..]
+                .iter()
+                .map(|component| component.to_bits())
+                .collect()
+        } else {
+            Box::default()
+        };
+        Self {
+            inline,
+            extra,
+            len: color.len(),
+        }
     }
 }
 
@@ -19,15 +40,17 @@ impl ColorKey {
 pub struct PageArena {
     bump: Bump,
     interner: Rodeo,
+    intern_cache: InternCache,
     colors: Vec<Box<[f64]>>,
-    color_index: HashMap<ColorKey, ColorId>,
+    color_index: FxHashMap<ColorKey, ColorId>,
 }
 
 pub struct ArenaContext<'a> {
     bump: &'a Bump,
     interner: &'a mut Rodeo,
+    intern_cache: &'a mut InternCache,
     colors: &'a mut Vec<Box<[f64]>>,
-    color_index: &'a mut HashMap<ColorKey, ColorId>,
+    color_index: &'a mut FxHashMap<ColorKey, ColorId>,
 }
 
 pub trait ArenaLookup {
@@ -44,13 +67,14 @@ impl PageArena {
         Self {
             bump: Bump::new(),
             interner: Rodeo::default(),
+            intern_cache: InternCache::default(),
             colors: Vec::new(),
-            color_index: HashMap::new(),
+            color_index: FxHashMap::default(),
         }
     }
 
     pub fn intern(&mut self, s: &str) -> Spur {
-        self.interner.get_or_intern(s)
+        intern_string(&mut self.interner, &mut self.intern_cache, s)
     }
 
     pub fn resolve(&self, key: Spur) -> &str {
@@ -69,6 +93,7 @@ impl PageArena {
         ArenaContext {
             bump: &self.bump,
             interner: &mut self.interner,
+            intern_cache: &mut self.intern_cache,
             colors: &mut self.colors,
             color_index: &mut self.color_index,
         }
@@ -96,6 +121,7 @@ impl PageArena {
     pub fn reset(&mut self) {
         self.bump.reset();
         self.interner = Rodeo::default();
+        self.intern_cache.clear();
         self.colors.clear();
         self.color_index.clear();
     }
@@ -113,7 +139,7 @@ impl<'a> ArenaContext<'a> {
     }
 
     pub fn intern(&mut self, s: &str) -> Spur {
-        self.interner.get_or_intern(s)
+        intern_string(self.interner, self.intern_cache, s)
     }
 
     pub fn resolve(&self, key: Spur) -> &str {
@@ -134,6 +160,14 @@ impl<'a> ArenaContext<'a> {
     pub fn color(&self, id: ColorId) -> &[f64] {
         &self.colors[id.index()]
     }
+}
+
+fn intern_string(interner: &mut Rodeo, cache: &mut InternCache, value: &str) -> Spur {
+    cache.get(value).copied().unwrap_or_else(|| {
+        let key = interner.get_or_intern(value);
+        cache.insert(SmolStr::new(value), key);
+        key
+    })
 }
 
 impl ArenaLookup for PageArena {
@@ -165,5 +199,21 @@ impl ArenaBump for PageArena {
 impl<'a> ArenaBump for ArenaContext<'a> {
     fn bump(&self) -> &Bump {
         self.bump()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_interning_handles_inline_and_long_values() {
+        let mut arena = PageArena::new();
+        let inline = arena.intern_color(&[1.0, 2.0, 3.0, 4.0]);
+        let long = arena.intern_color(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+
+        assert_ne!(inline, long);
+        assert_eq!(long, arena.intern_color(&[1.0, 2.0, 3.0, 4.0, 5.0]));
+        assert_eq!(arena.color(long), &[1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 }

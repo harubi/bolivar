@@ -126,7 +126,7 @@ impl PyPlane {
 
     fn extend(&mut self, objs: &Bound<'_, PyAny>) -> PyResult<()> {
         let seq = objs.cast::<PySequence>()?;
-        let len = seq.len()? as usize;
+        let len = seq.len()?;
         let mut items = Vec::with_capacity(len);
         for idx in 0..len {
             let obj = seq.get_item(idx)?;
@@ -204,10 +204,10 @@ fn plane_item_from_py(obj: &Bound<'_, PyAny>) -> PyResult<PyPlaneItem> {
 }
 
 fn extract_bbox(obj: &Bound<'_, PyAny>) -> PyResult<Rect> {
-    if let Ok(bbox_obj) = obj.getattr("bbox") {
-        if let Ok(bbox) = bbox_obj.extract::<Rect>() {
-            return Ok(bbox);
-        }
+    if let Ok(bbox_obj) = obj.getattr("bbox")
+        && let Ok(bbox) = bbox_obj.extract::<Rect>()
+    {
+        return Ok(bbox);
     }
     let x0: f64 = obj.getattr("x0")?.extract()?;
     let y0: f64 = obj.getattr("y0")?.extract()?;

@@ -40,7 +40,7 @@ fn conversion_count() -> usize {
 }
 
 /// Layout page - result of processing a PDF page.
-#[pyclass(name = "LTPage", dict)]
+#[pyclass(name = "LTPage", dict, from_py_object)]
 pub struct PyLTPage {
     /// Page identifier (1-based page number)
     #[pyo3(get)]
@@ -106,12 +106,12 @@ impl PyLTPage {
     }
 
     fn __len__(&self) -> usize {
-        if let Ok(items) = self.items.lock() {
-            if let Some(items) = items.as_ref() {
-                let len = items.len();
-                self.items_len.store(len, Ordering::Relaxed);
-                return len;
-            }
+        if let Ok(items) = self.items.lock()
+            && let Some(items) = items.as_ref()
+        {
+            let len = items.len();
+            self.items_len.store(len, Ordering::Relaxed);
+            return len;
         }
         let cached = self.items_len.load(Ordering::Relaxed);
         if cached != UNKNOWN_LEN {
@@ -144,10 +144,10 @@ impl Clone for PyLTPage {
 
 impl PyLTPage {
     fn materialize_items(&self) -> Vec<PyLTItem> {
-        if let Ok(items) = self.items.lock() {
-            if let Some(items) = items.as_ref() {
-                return items.clone();
-            }
+        if let Ok(items) = self.items.lock()
+            && let Some(items) = items.as_ref()
+        {
+            return items.clone();
         }
         let cached_len = self.items_len.load(Ordering::Relaxed);
         let mut built = if cached_len == UNKNOWN_LEN {
@@ -525,7 +525,7 @@ fn parse_original_path(
 }
 
 /// Layout character - a single character with position and font info.
-#[pyclass(name = "LTChar", dict)]
+#[pyclass(name = "LTChar", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTChar {
     /// Bounding box as (x0, y0, x1, y1)
@@ -739,7 +739,7 @@ impl PyLTChar {
 }
 
 /// Layout text line - horizontal.
-#[pyclass(name = "LTTextLineHorizontal", dict)]
+#[pyclass(name = "LTTextLineHorizontal", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTTextLineHorizontal {
     pub bbox: (f64, f64, f64, f64),
@@ -813,7 +813,7 @@ impl PyLTTextLineHorizontal {
 }
 
 /// Layout text line - vertical.
-#[pyclass(name = "LTTextLineVertical", dict)]
+#[pyclass(name = "LTTextLineVertical", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTTextLineVertical {
     pub bbox: (f64, f64, f64, f64),
@@ -887,7 +887,7 @@ impl PyLTTextLineVertical {
 }
 
 /// Layout text box - horizontal.
-#[pyclass(name = "LTTextBoxHorizontal", dict)]
+#[pyclass(name = "LTTextBoxHorizontal", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTTextBoxHorizontal {
     pub bbox: (f64, f64, f64, f64),
@@ -969,7 +969,7 @@ impl PyLTTextBoxHorizontal {
 }
 
 /// Layout text box - vertical.
-#[pyclass(name = "LTTextBoxVertical", dict)]
+#[pyclass(name = "LTTextBoxVertical", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTTextBoxVertical {
     pub bbox: (f64, f64, f64, f64),
@@ -1051,7 +1051,7 @@ impl PyLTTextBoxVertical {
 }
 
 /// Layout image.
-#[pyclass(name = "LTImage", dict)]
+#[pyclass(name = "LTImage", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTImage {
     pub bbox: (f64, f64, f64, f64),
@@ -1119,7 +1119,7 @@ impl PyLTImage {
 }
 
 /// Layout figure (Form XObject).
-#[pyclass(name = "LTFigure", dict)]
+#[pyclass(name = "LTFigure", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTFigure {
     pub bbox: (f64, f64, f64, f64),
@@ -1195,7 +1195,7 @@ impl PyLTFigure {
 }
 
 /// Layout rectangle - a rectangle in the PDF.
-#[pyclass(name = "LTRect", dict)]
+#[pyclass(name = "LTRect", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTRect {
     /// Bounding box as (x0, y0, x1, y1)
@@ -1337,7 +1337,7 @@ impl PyLTRect {
 }
 
 /// Layout line - a straight line in the PDF.
-#[pyclass(name = "LTLine", dict)]
+#[pyclass(name = "LTLine", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTLine {
     /// Bounding box as (x0, y0, x1, y1)
@@ -1499,7 +1499,7 @@ impl PyLTLine {
 }
 
 /// Python wrapper for LTCurve
-#[pyclass(name = "LTCurve", dict)]
+#[pyclass(name = "LTCurve", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTCurve {
     /// Bounding box as (x0, y0, x1, y1)
@@ -1649,7 +1649,7 @@ impl PyLTCurve {
 }
 
 /// Python wrapper for LTAnno (virtual annotation like spaces/newlines)
-#[pyclass(name = "LTAnno", dict)]
+#[pyclass(name = "LTAnno", dict, from_py_object)]
 #[derive(Clone)]
 pub struct PyLTAnno {
     /// The text content (space, newline, etc.)
@@ -2256,11 +2256,11 @@ pub fn py_ltpage_to_core(page: &PyLTPage) -> bolivar_core::layout::LTPage {
     }
 
     let mut core_page = bolivar_core::layout::LTPage::new(page.pageid, page.bbox, page.rotate);
-    if let Ok(items) = page.items.lock() {
-        if let Some(items) = items.as_ref() {
-            for item in items {
-                core_page.add(py_ltitem_to_core(item));
-            }
+    if let Ok(items) = page.items.lock()
+        && let Some(items) = items.as_ref()
+    {
+        for item in items {
+            core_page.add(py_ltitem_to_core(item));
         }
     }
     core_page
@@ -2304,6 +2304,28 @@ pub fn ltitem_to_py(item: &bolivar_core::layout::LTItem) -> PyLTItem {
         LTItem::Figure(fig) => PyLTItem::Figure(PyLTFigure::from_core(fig)),
         LTItem::Page(page) => PyLTItem::Page(ltpage_to_py((**page).clone())),
     }
+}
+
+/// Register the layout module classes with the Python module.
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyLTPage>()?;
+    m.add_class::<PyLTChar>()?;
+    m.add_class::<PyLTTextLineHorizontal>()?;
+    m.add_class::<PyLTTextLineVertical>()?;
+    m.add_class::<PyLTTextBoxHorizontal>()?;
+    m.add_class::<PyLTTextBoxVertical>()?;
+    m.add_class::<PyLTImage>()?;
+    m.add_class::<PyLTFigure>()?;
+    m.add_class::<PyLTRect>()?;
+    m.add_class::<PyLTLine>()?;
+    m.add_class::<PyLTCurve>()?;
+    m.add_class::<PyLTAnno>()?;
+    m.add_class::<PyTextConverter>()?;
+    m.add_class::<PyHTMLConverter>()?;
+    m.add_class::<PyXMLConverter>()?;
+    m.add_class::<PyHOCRConverter>()?;
+    m.add_class::<PyTagExtractor>()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2368,26 +2390,4 @@ mod tests {
             expected
         );
     }
-}
-
-/// Register the layout module classes with the Python module.
-pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyLTPage>()?;
-    m.add_class::<PyLTChar>()?;
-    m.add_class::<PyLTTextLineHorizontal>()?;
-    m.add_class::<PyLTTextLineVertical>()?;
-    m.add_class::<PyLTTextBoxHorizontal>()?;
-    m.add_class::<PyLTTextBoxVertical>()?;
-    m.add_class::<PyLTImage>()?;
-    m.add_class::<PyLTFigure>()?;
-    m.add_class::<PyLTRect>()?;
-    m.add_class::<PyLTLine>()?;
-    m.add_class::<PyLTCurve>()?;
-    m.add_class::<PyLTAnno>()?;
-    m.add_class::<PyTextConverter>()?;
-    m.add_class::<PyHTMLConverter>()?;
-    m.add_class::<PyXMLConverter>()?;
-    m.add_class::<PyHOCRConverter>()?;
-    m.add_class::<PyTagExtractor>()?;
-    Ok(())
 }

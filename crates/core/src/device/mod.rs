@@ -43,6 +43,11 @@ pub trait PDFDevice {
     /// Close the device and release resources.
     fn close(&mut self) {}
 
+    /// Return true when the device has collected all data that it needs.
+    fn is_complete(&self) -> bool {
+        false
+    }
+
     /// Begin a marked content tag.
     fn begin_tag(&mut self, _tag: &PSLiteral, _props: Option<&PDFStackT>) {}
 

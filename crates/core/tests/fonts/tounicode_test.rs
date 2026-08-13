@@ -39,7 +39,7 @@ fn test_tounicode_maps_simple_font_cid_67() {
 
     // Collect all HelveticaNeueLTPro-Lt ToUnicode candidates (order is non-deterministic).
     let mut candidates: Vec<(String, Vec<u8>)> = Vec::new();
-    for (_name, spec_obj) in fonts.iter() {
+    for spec_obj in fonts.values() {
         let spec = resolve_dict(&doc, spec_obj).expect("failed to resolve font spec");
         let basefont = spec
             .get("BaseFont")

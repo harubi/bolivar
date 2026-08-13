@@ -35,7 +35,30 @@ impl Default for Color {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ColorComponents {
+    values: [f64; 4],
+    len: usize,
+}
+
+impl ColorComponents {
+    pub(crate) fn as_slice(&self) -> &[f64] {
+        &self.values[..self.len]
+    }
+}
+
 impl Color {
+    pub(crate) fn components(&self) -> ColorComponents {
+        let (values, len) = match self {
+            Self::Gray(gray) => ([*gray, 0.0, 0.0, 0.0], 1),
+            Self::Rgb(red, green, blue) => ([*red, *green, *blue, 0.0], 3),
+            Self::Cmyk(cyan, magenta, yellow, black) => ([*cyan, *magenta, *yellow, *black], 4),
+            Self::PatternColored(_) => ([0.0; 4], 0),
+            Self::PatternUncolored(base, _) => return base.components(),
+        };
+        ColorComponents { values, len }
+    }
+
     /// Convert to a Vec<f64> for layout types.
     ///
     /// For pattern colors:
@@ -66,6 +89,26 @@ impl Color {
     /// Check if this color is a pattern color.
     pub const fn is_pattern(&self) -> bool {
         matches!(self, Self::PatternColored(_) | Self::PatternUncolored(_, _))
+    }
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::Color;
+
+    #[test]
+    fn borrowed_components_match_owned_conversion() {
+        let colors = [
+            Color::Gray(0.5),
+            Color::Rgb(0.1, 0.2, 0.3),
+            Color::Cmyk(0.1, 0.2, 0.3, 0.4),
+            Color::PatternColored("P1".into()),
+            Color::PatternUncolored(Box::new(Color::Rgb(0.2, 0.4, 0.6)), "P2".into()),
+        ];
+
+        for color in colors {
+            assert_eq!(color.components().as_slice(), color.to_vec());
+        }
     }
 }
 
