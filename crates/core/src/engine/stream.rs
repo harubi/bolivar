@@ -3,8 +3,8 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Once};
 
 use crate::arena::PageArena;
 use crate::cancellation::CancellationToken;
@@ -107,12 +107,13 @@ fn panic_message(payload: &(dyn Any + Send)) -> &str {
 pub struct CancellationHandle {
     token: CancellationToken,
     wake: Arc<dyn Fn() + Send + Sync>,
+    wake_once: Arc<Once>,
 }
 
 impl CancellationHandle {
     pub fn cancel(&self) {
         self.token.cancel();
-        (self.wake)();
+        self.wake_once.call_once(|| (self.wake)());
     }
 
     #[must_use]
@@ -147,6 +148,7 @@ impl<R: Send + 'static> Stream<R> {
             wake: Arc::new(move || {
                 let _ = sender.send(StreamMessage::Wake);
             }),
+            wake_once: Arc::new(Once::new()),
         };
         let order = Arc::clone(&scheduler.order);
         let initial_slots = scheduler.engine.worker_count().min(order.len());
@@ -539,6 +541,28 @@ mod tests {
             .recv_timeout(Duration::from_secs(2))
             .expect("cancelled result");
         assert!(matches!(result, Err(PdfError::Cancelled)));
+    }
+
+    #[test]
+    fn repeated_cancellation_sends_one_wake() {
+        let (sender, receiver) = channel::<StreamMessage<()>>();
+        let cancellation = CancellationHandle {
+            token: CancellationToken::new(),
+            wake: Arc::new(move || {
+                let _ = sender.send(StreamMessage::Wake);
+            }),
+            wake_once: Arc::new(Once::new()),
+        };
+
+        cancellation.cancel();
+        cancellation.cancel();
+
+        assert!(cancellation.is_cancelled());
+        assert!(matches!(receiver.try_recv(), Ok(StreamMessage::Wake)));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
     }
 
     #[test]
