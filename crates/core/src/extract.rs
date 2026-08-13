@@ -175,7 +175,9 @@ fn extract_text_to_fp_from_doc_impl<W: Write>(
                 doc,
                 aggregator_result,
             )?;
-            ltpage.set_bidi(options.bidi);
+            if options.bidi {
+                ltpage.set_bidi(true);
+            }
             Ok(ltpage)
         },
     )?;
@@ -250,7 +252,9 @@ pub fn extract_pages_with_images_with_document(
                 cancellation,
                 aggregator_result,
             )?;
-            ltpage.set_bidi(bidi);
+            if bidi {
+                ltpage.set_bidi(true);
+            }
             Ok(ltpage)
         },
     )?;
@@ -292,7 +296,9 @@ pub fn extract_pages_stream_from_doc(
                 cancellation,
                 aggregator_result,
             )?;
-            ltpage.set_bidi(bidi);
+            if bidi {
+                ltpage.set_bidi(true);
+            }
             Ok(ltpage)
         },
     )
@@ -448,7 +454,9 @@ pub fn extract_layout_tables_metadata_stream_from_doc_with_geometries(
                 layout_page.analyze(&laparams);
             }
             cancellation.check()?;
-            layout_page.set_bidi(bidi);
+            if bidi {
+                layout_page.set_bidi(true);
+            }
             Ok((layout_page, tables))
         },
     )
