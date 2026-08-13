@@ -1,3 +1,19 @@
+## [2.0.0](https://github.com/harubi/bolivar/compare/v1.9.3...v2.0.0) (2026-08-13)
+
+### ⚠ BREAKING CHANGES
+
+* **jvm:** expose flat table rows
+* **jvm:** stream page summaries
+
+### Features
+
+* **jvm:** expose flat table rows ([687d1c2](https://github.com/harubi/bolivar/commit/687d1c298c8c8a5dfc660596cb953626333e15c0))
+* **jvm:** stream page summaries ([96a1f72](https://github.com/harubi/bolivar/commit/96a1f722e73dcbd0684a1b9d33caae2784c21972))
+
+### Performance Improvements
+
+* **layout:** read compact page text ([7a6cc14](https://github.com/harubi/bolivar/commit/7a6cc14358c491263f9c82a4af2bf4004f34aa07))
+
 ## [1.9.3](https://github.com/harubi/bolivar/compare/v1.9.2...v1.9.3) (2026-08-13)
 
 ### Performance Improvements

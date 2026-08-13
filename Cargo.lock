@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-bench"
-version = "1.9.3"
+version = "2.0.0"
 dependencies = [
  "bolivar-core",
  "criterion 0.8.2",
@@ -252,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-cli"
-version = "1.9.3"
+version = "2.0.0"
 dependencies = [
  "bolivar-core",
  "clap",
@@ -263,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-core"
-version = "1.9.3"
+version = "2.0.0"
 dependencies = [
  "aes",
  "bolivar-icu",
@@ -303,7 +303,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-icu"
-version = "1.9.3"
+version = "2.0.0"
 dependencies = [
  "cc",
  "flate2",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-python"
-version = "1.9.3"
+version = "2.0.0"
 dependencies = [
  "bolivar-core",
  "bytes",
@@ -329,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-uniffi"
-version = "1.9.3"
+version = "2.0.0"
 dependencies = [
  "bolivar-core",
  "pollster",
@@ -339,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "bolivar-uniffi-bindgen"
-version = "1.9.3"
+version = "2.0.0"
 dependencies = [
  "uniffi",
 ]
