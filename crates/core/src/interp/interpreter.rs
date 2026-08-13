@@ -1329,16 +1329,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         let dfonts_resolved = match dfonts {
             PDFObject::Array(arr) => arr.clone(),
             PDFObject::Ref(r) => {
-                if let Some(doc) = doc {
-                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
-                        if let PDFObject::Array(arr) = resolved.as_ref() {
-                            arr.clone()
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        return None;
-                    }
+                let resolved = doc?.resolve_shared(&PDFObject::Ref(r.clone())).ok()?;
+                if let PDFObject::Array(arr) = resolved.as_ref() {
+                    arr.clone()
                 } else {
                     return None;
                 }
@@ -1463,16 +1456,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         let fd_dict = match font_descriptor {
             PDFObject::Dict(d) => d.clone(),
             PDFObject::Ref(r) => {
-                if let Some(doc) = doc {
-                    if let Ok(resolved) = doc.resolve_shared(&PDFObject::Ref(r.clone())) {
-                        if let PDFObject::Dict(d) = resolved.as_ref() {
-                            d.clone()
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        return None;
-                    }
+                let resolved = doc?.resolve_shared(&PDFObject::Ref(r.clone())).ok()?;
+                if let PDFObject::Dict(d) = resolved.as_ref() {
+                    d.clone()
                 } else {
                     return None;
                 }
@@ -2060,13 +2046,11 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     self.do_quote(s);
                 }
             }
-            Keyword::DoubleQuote => {
-                if args.len() >= 3 {
-                    let s = Self::pop_string(args).unwrap_or_default();
-                    let ac = Self::pop_number(args).unwrap_or(0.0);
-                    let aw = Self::pop_number(args).unwrap_or(0.0);
-                    self.do_doublequote(aw, ac, s);
-                }
+            Keyword::DoubleQuote if args.len() >= 3 => {
+                let s = Self::pop_string(args).unwrap_or_default();
+                let ac = Self::pop_number(args).unwrap_or(0.0);
+                let aw = Self::pop_number(args).unwrap_or(0.0);
+                self.do_doublequote(aw, ac, s);
             }
 
             // Unknown operator - ignore

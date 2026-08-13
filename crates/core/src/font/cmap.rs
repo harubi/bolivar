@@ -33,8 +33,10 @@ impl IdentityCMap {
 impl CMapBase for IdentityCMap {
     fn decode<'a>(&'a self, code: &'a [u8]) -> Box<dyn Iterator<Item = u32> + 'a> {
         Box::new(
-            code.chunks_exact(2)
-                .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]) as u32),
+            code.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|chunk| u16::from_be_bytes(*chunk) as u32),
         )
     }
 

@@ -241,11 +241,7 @@ fn group_textboxes_frontier_impl(elements: Vec<TextGroupElement>) -> Vec<LTTextG
     done.reserve_exact(reserve_extra);
 
     // 6. Main loop
-    loop {
-        let Some(entry) = best_heap.pop() else {
-            break;
-        };
-
+    while let Some(entry) = best_heap.pop() {
         match entry {
             BestEntry::Frontier(entry) => {
                 let mut params = FrontierBestParams {
