@@ -5,7 +5,7 @@ import kotlin.test.assertEquals
 
 class PageTableRowsTest {
     @Test
-    fun reconstructsTablesFromFlatBuffers() {
+    fun exposesFlatBuffers() {
         val page =
             PageTableRows(
                 pageNumber = 3,
@@ -14,17 +14,13 @@ class PageTableRowsTest {
                 tableOffsets = intArrayOf(0, 2, 3),
             )
 
-        assertEquals(
-            listOf(
-                listOf(listOf("a", null), emptyList()),
-                listOf(listOf(null, "b")),
-            ),
-            page.toTables(),
-        )
+        assertEquals(listOf("a", null, null, "b"), page.cells)
+        assertEquals(listOf(0, 2, 2, 4), page.rowOffsets.toList())
+        assertEquals(listOf(0, 2, 3), page.tableOffsets.toList())
     }
 
     @Test
-    fun preservesEmptyTablesAndRows() {
+    fun preservesEmptyTableAndRowOffsets() {
         val page =
             PageTableRows(
                 pageNumber = 1,
@@ -33,6 +29,8 @@ class PageTableRowsTest {
                 tableOffsets = intArrayOf(0, 0, 1),
             )
 
-        assertEquals(listOf(emptyList(), listOf(emptyList())), page.toTables())
+        assertEquals(emptyList(), page.cells)
+        assertEquals(listOf(0, 0), page.rowOffsets.toList())
+        assertEquals(listOf(0, 0, 1), page.tableOffsets.toList())
     }
 }
