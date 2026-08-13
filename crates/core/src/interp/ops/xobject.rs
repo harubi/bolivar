@@ -136,7 +136,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         }
         self.init_resources(&resources, self.doc);
         self.init_state(ctm);
-        self.execute(&streams);
+        self.execute_owned(streams);
     }
 
     /// Snapshot the current interpreter state.

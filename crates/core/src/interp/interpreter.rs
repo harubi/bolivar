@@ -1558,7 +1558,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 page.contents.clone()
             };
             self.cancellation.check()?;
-            self.execute(&streams);
+            self.execute_owned(streams);
             self.cancellation.check()
         })();
 
@@ -1572,11 +1572,15 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     ///
     /// Port of PDFPageInterpreter.execute from pdfminer.six
     pub fn execute(&mut self, streams: &[Vec<u8>]) {
+        self.execute_owned(streams.to_vec());
+    }
+
+    pub(crate) fn execute_owned(&mut self, streams: Vec<Vec<u8>>) {
         if streams.is_empty() || self.cancellation.is_cancelled() {
             return;
         }
 
-        let parser = PDFContentParser::new(streams.to_vec());
+        let parser = PDFContentParser::new(streams);
         let mut operand_stack: Vec<PSToken> = Vec::new();
 
         for token in parser {
