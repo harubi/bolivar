@@ -1153,6 +1153,18 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         // Process each font
         if let Some(fonts) = fonts {
             for (fontid, spec_obj) in fonts.iter() {
+                let font_objid = match spec_obj {
+                    PDFObject::Ref(reference) => Some(reference.objid),
+                    _ => None,
+                };
+                if self.rsrcmgr.caching_enabled()
+                    && let (Some(doc), Some(objid)) = (doc, font_objid)
+                    && let Some(font) = doc.get_cached_font(objid, fontid)
+                {
+                    self.fontmap.insert(fontid.clone(), font);
+                    continue;
+                }
+
                 let spec = match spec_obj {
                     PDFObject::Dict(d) => d.clone(),
                     PDFObject::Ref(r) => {
@@ -1244,16 +1256,20 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                 let ttf_data = Self::extract_fontfile2(&final_spec, doc);
 
                 // Create font with ToUnicode data and TrueType font data
-                let font = crate::pdffont::PDFCIDFont::new_with_ttf_and_cid2unicode(
+                let font = Arc::new(crate::pdffont::PDFCIDFont::new_with_ttf_and_cid2unicode(
                     &final_spec,
                     tounicode_data.as_deref(),
                     ttf_data.as_deref(),
                     subtype == "Type0",
                     Some(fontid.to_string()),
                     cached_encoding,
-                );
-                self.fontmap
-                    .insert(fontid.to_string().into(), std::sync::Arc::new(font));
+                ));
+                if self.rsrcmgr.caching_enabled()
+                    && let (Some(doc), Some(objid)) = (doc, font_objid)
+                {
+                    doc.cache_font(objid, fontid.clone(), Arc::clone(&font));
+                }
+                self.fontmap.insert(fontid.clone(), font);
             }
         }
 

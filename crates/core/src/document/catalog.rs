@@ -15,8 +15,9 @@ use crate::codec::{
     ascii85decode, asciihexdecode, ccittfaxdecode, lzwdecode_with_earlychange, rldecode,
 };
 use crate::error::{PdfError, Result};
+use crate::font::PDFCIDFont;
 use crate::font::encoding::{DiffEntry, EncodingDB};
-use crate::model::objects::{PDFDict, PDFObject, PDFStream};
+use crate::model::objects::{PDFDict, PDFName, PDFObject, PDFStream};
 use crate::parser::pdf_parser::PDFParser;
 use crate::simd::U8_LANES;
 use bytes::Bytes;
@@ -33,6 +34,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 const PNG_SIMD_LANES: usize = U8_LANES;
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024;
 pub const DEFAULT_PAGE_CACHE_CAPACITY: usize = 64;
+const DEFAULT_FONT_CACHE_CAPACITY: usize = 256;
 
 const fn is_dct_decode(name: &str) -> bool {
     name.eq_ignore_ascii_case("DCTDecode") || name.eq_ignore_ascii_case("DCT")
@@ -82,6 +84,54 @@ struct ObjectCache {
 struct PageCache {
     capacity: usize,
     map: IndexMap<usize, Arc<super::page::PDFPage>>,
+}
+
+#[derive(Clone, Hash, Eq, PartialEq)]
+struct FontCacheKey {
+    objid: u32,
+    resource_name: PDFName,
+}
+
+struct FontCache {
+    capacity: usize,
+    map: FxHashMap<FontCacheKey, Arc<PDFCIDFont>>,
+}
+
+impl FontCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            map: FxHashMap::default(),
+        }
+    }
+
+    fn get(&self, objid: u32, resource_name: &PDFName) -> Option<Arc<PDFCIDFont>> {
+        self.map
+            .get(&FontCacheKey {
+                objid,
+                resource_name: resource_name.clone(),
+            })
+            .map(Arc::clone)
+    }
+
+    fn insert(&mut self, objid: u32, resource_name: PDFName, font: Arc<PDFCIDFont>) {
+        if self.capacity == 0 {
+            return;
+        }
+
+        let key = FontCacheKey {
+            objid,
+            resource_name,
+        };
+        if !self.map.contains_key(&key)
+            && self.map.len() >= self.capacity
+            && let Some(victim) = self.map.keys().next().cloned()
+        {
+            // Approximate eviction keeps cache hits under a shared read lock.
+            self.map.remove(&victim);
+        }
+        self.map.insert(key, font);
+    }
 }
 
 impl PageCache {
@@ -227,6 +277,7 @@ pub struct PDFDocument {
     info: Vec<PDFDict>,
     cache: Mutex<ObjectCache>,
     page_cache: Mutex<PageCache>,
+    font_cache: RwLock<FontCache>,
     font_encoding_cache: Mutex<FxHashMap<u32, Arc<FxHashMap<u8, String>>>>,
     objstm_index: RwLock<Option<FxHashMap<u32, (u32, usize)>>>,
     security_handler: Option<Box<dyn PDFSecurityHandler + Send + Sync>>,
@@ -247,6 +298,9 @@ impl PDFDocument {
             info: Vec::new(),
             cache: Mutex::new(ObjectCache::new(cache_capacity)),
             page_cache: Mutex::new(PageCache::new(DEFAULT_PAGE_CACHE_CAPACITY)),
+            font_cache: RwLock::new(FontCache::new(
+                cache_capacity.min(DEFAULT_FONT_CACHE_CAPACITY),
+            )),
             font_encoding_cache: Mutex::new(FxHashMap::default()),
             objstm_index: RwLock::new(None),
             security_handler: None,
@@ -463,6 +517,23 @@ impl PDFDocument {
         }
 
         Some(shared)
+    }
+
+    pub(crate) fn get_cached_font(
+        &self,
+        objid: u32,
+        resource_name: &PDFName,
+    ) -> Option<Arc<PDFCIDFont>> {
+        self.font_cache
+            .read()
+            .ok()
+            .and_then(|cache| cache.get(objid, resource_name))
+    }
+
+    pub(crate) fn cache_font(&self, objid: u32, resource_name: PDFName, font: Arc<PDFCIDFont>) {
+        if let Ok(mut cache) = self.font_cache.write() {
+            cache.insert(objid, resource_name, font);
+        }
     }
 
     /// Returns the cached page index for O(1) page lookup.
@@ -2723,6 +2794,25 @@ mod tests {
         let b = doc.get_or_build_font_encoding(42, &encoding).unwrap();
 
         assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn font_cache_reuses_entry_and_honors_capacity() {
+        let pdf = build_minimal_pdf_with_pages(1);
+        let doc = PDFDocument::new_with_cache(pdf, "", 1).unwrap();
+        let first_name: PDFName = "F1".into();
+        let second_name: PDFName = "F2".into();
+        let first = Arc::new(PDFCIDFont::new(&PDFDict::default(), None));
+        let second = Arc::new(PDFCIDFont::new(&PDFDict::default(), None));
+
+        doc.cache_font(10, first_name.clone(), Arc::clone(&first));
+        let cached = doc.get_cached_font(10, &first_name).unwrap();
+        assert!(Arc::ptr_eq(&first, &cached));
+
+        doc.cache_font(11, second_name.clone(), Arc::clone(&second));
+        assert!(doc.get_cached_font(10, &first_name).is_none());
+        let cached = doc.get_cached_font(11, &second_name).unwrap();
+        assert!(Arc::ptr_eq(&second, &cached));
     }
 
     #[test]
