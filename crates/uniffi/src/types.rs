@@ -255,11 +255,45 @@ impl Default for ExtractOptions {
 
 /// Raw table rows for one page, exactly as the pdfplumber-compatible rows
 /// pipeline emits them (None = empty cell). This is the same core path the
-/// Python binding's `_extract_tables_stream` uses.
+/// Python binding's `_extract_tables_stream` uses. Row offsets index cells;
+/// table offsets index rows. Both offset arrays include the final end offset.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PageTableRows {
     pub page_number: u32,
-    pub tables: Vec<Vec<Vec<Option<String>>>>,
+    pub cells: Vec<Option<String>>,
+    pub row_offsets: Vec<u32>,
+    pub table_offsets: Vec<u32>,
+}
+
+impl PageTableRows {
+    pub(crate) fn from_tables(page_number: u32, tables: Vec<Vec<Vec<Option<String>>>>) -> Self {
+        let row_count: usize = tables.iter().map(Vec::len).sum();
+        let cell_count: usize = tables
+            .iter()
+            .flat_map(|table| table.iter())
+            .map(Vec::len)
+            .sum();
+        let mut cells = Vec::with_capacity(cell_count);
+        let mut row_offsets = Vec::with_capacity(row_count + 1);
+        let mut table_offsets = Vec::with_capacity(tables.len() + 1);
+        row_offsets.push(0);
+        table_offsets.push(0);
+
+        for table in tables {
+            for row in table {
+                cells.extend(row);
+                row_offsets.push(usize_to_u32(cells.len()));
+            }
+            table_offsets.push(usize_to_u32(row_offsets.len() - 1));
+        }
+
+        Self {
+            page_number,
+            cells,
+            row_offsets,
+            table_offsets,
+        }
+    }
 }
 
 /// Table extraction tuning mirroring the pdfplumber-compatible settings the
@@ -798,6 +832,34 @@ mod tests {
     use super::*;
     use bolivar_core::layout::LTChar;
     use bolivar_core::pdftypes::PDFDict;
+
+    #[test]
+    fn page_table_rows_flattens_tables_with_empty_cells() {
+        let page = PageTableRows::from_tables(
+            3,
+            vec![
+                vec![vec![Some("a".to_owned()), None], Vec::new()],
+                vec![vec![None, Some("b".to_owned())]],
+            ],
+        );
+
+        assert_eq!(page.page_number, 3);
+        assert_eq!(
+            page.cells,
+            vec![Some("a".to_owned()), None, None, Some("b".to_owned())]
+        );
+        assert_eq!(page.row_offsets, vec![0, 2, 2, 4]);
+        assert_eq!(page.table_offsets, vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn page_table_rows_preserves_empty_tables_and_rows() {
+        let page = PageTableRows::from_tables(1, vec![Vec::new(), vec![Vec::new()]]);
+
+        assert!(page.cells.is_empty());
+        assert_eq!(page.row_offsets, vec![0, 0]);
+        assert_eq!(page.table_offsets, vec![0, 0, 1]);
+    }
 
     #[test]
     fn page_geometry_uses_cropbox_and_mediabox_from_pdf_page() {

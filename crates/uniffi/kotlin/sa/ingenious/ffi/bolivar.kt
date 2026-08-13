@@ -2870,7 +2870,9 @@ public object FfiConverterTypePageSummary : FfiConverterRustBuffer<PageSummary> 
 
 data class PageTableRows(
     val `pageNumber`: kotlin.UInt,
-    val `tables`: List<List<List<kotlin.String?>>>,
+    val `cells`: List<kotlin.String?>,
+    val `rowOffsets`: List<kotlin.UInt>,
+    val `tableOffsets`: List<kotlin.UInt>,
 ) {
     companion object
 }
@@ -2882,13 +2884,17 @@ public object FfiConverterTypePageTableRows : FfiConverterRustBuffer<PageTableRo
     override fun read(buf: ByteBuffer): PageTableRows =
         PageTableRows(
             FfiConverterUInt.read(buf),
-            FfiConverterSequenceSequenceSequenceOptionalString.read(buf),
+            FfiConverterSequenceOptionalString.read(buf),
+            FfiConverterSequenceUInt.read(buf),
+            FfiConverterSequenceUInt.read(buf),
         )
 
     override fun allocationSize(value: PageTableRows) =
         (
             FfiConverterUInt.allocationSize(value.`pageNumber`) +
-                FfiConverterSequenceSequenceSequenceOptionalString.allocationSize(value.`tables`)
+                FfiConverterSequenceOptionalString.allocationSize(value.`cells`) +
+                FfiConverterSequenceUInt.allocationSize(value.`rowOffsets`) +
+                FfiConverterSequenceUInt.allocationSize(value.`tableOffsets`)
         )
 
     override fun write(
@@ -2896,7 +2902,9 @@ public object FfiConverterTypePageTableRows : FfiConverterRustBuffer<PageTableRo
         buf: ByteBuffer,
     ) {
         FfiConverterUInt.write(value.`pageNumber`, buf)
-        FfiConverterSequenceSequenceSequenceOptionalString.write(value.`tables`, buf)
+        FfiConverterSequenceOptionalString.write(value.`cells`, buf)
+        FfiConverterSequenceUInt.write(value.`rowOffsets`, buf)
+        FfiConverterSequenceUInt.write(value.`tableOffsets`, buf)
     }
 }
 
@@ -4705,62 +4713,6 @@ public object FfiConverterSequenceOptionalString : FfiConverterRustBuffer<List<k
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterOptionalString.write(it, buf)
-        }
-    }
-}
-
-/**
- * @suppress
- */
-public object FfiConverterSequenceSequenceOptionalString : FfiConverterRustBuffer<List<List<kotlin.String?>>> {
-    override fun read(buf: ByteBuffer): List<List<kotlin.String?>> {
-        val len = buf.getInt()
-        return List<List<kotlin.String?>>(len) {
-            FfiConverterSequenceOptionalString.read(buf)
-        }
-    }
-
-    override fun allocationSize(value: List<List<kotlin.String?>>): ULong {
-        val sizeForLength = 4UL
-        val sizeForItems = value.map { FfiConverterSequenceOptionalString.allocationSize(it) }.sum()
-        return sizeForLength + sizeForItems
-    }
-
-    override fun write(
-        value: List<List<kotlin.String?>>,
-        buf: ByteBuffer,
-    ) {
-        buf.putInt(value.size)
-        value.iterator().forEach {
-            FfiConverterSequenceOptionalString.write(it, buf)
-        }
-    }
-}
-
-/**
- * @suppress
- */
-public object FfiConverterSequenceSequenceSequenceOptionalString : FfiConverterRustBuffer<List<List<List<kotlin.String?>>>> {
-    override fun read(buf: ByteBuffer): List<List<List<kotlin.String?>>> {
-        val len = buf.getInt()
-        return List<List<List<kotlin.String?>>>(len) {
-            FfiConverterSequenceSequenceOptionalString.read(buf)
-        }
-    }
-
-    override fun allocationSize(value: List<List<List<kotlin.String?>>>): ULong {
-        val sizeForLength = 4UL
-        val sizeForItems = value.map { FfiConverterSequenceSequenceOptionalString.allocationSize(it) }.sum()
-        return sizeForLength + sizeForItems
-    }
-
-    override fun write(
-        value: List<List<List<kotlin.String?>>>,
-        buf: ByteBuffer,
-    ) {
-        buf.putInt(value.size)
-        value.iterator().forEach {
-            FfiConverterSequenceSequenceOptionalString.write(it, buf)
         }
     }
 }

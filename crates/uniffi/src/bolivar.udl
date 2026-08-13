@@ -206,7 +206,9 @@ dictionary ExtractOptions {
 
 dictionary PageTableRows {
     u32 page_number;
-    sequence<sequence<sequence<string?>>> tables;
+    sequence<string?> cells;
+    sequence<u32> row_offsets;
+    sequence<u32> table_offsets;
 };
 
 dictionary TableOptions {

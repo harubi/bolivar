@@ -123,10 +123,10 @@ impl PageTableRowsCursorState {
             return Ok(None);
         };
         match stream.next() {
-            Some(Ok((page_index, tables))) => Ok(Some(PageTableRows {
-                page_number: usize_to_u32(page_index.saturating_add(1)),
+            Some(Ok((page_index, tables))) => Ok(Some(PageTableRows::from_tables(
+                usize_to_u32(page_index.saturating_add(1)),
                 tables,
-            })),
+            ))),
             Some(Err(error)) => self.fail(BolivarError::from(error)),
             None => {
                 self.stream.take();
