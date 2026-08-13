@@ -1,3 +1,14 @@
+## [1.9.3](https://github.com/harubi/bolivar/compare/v1.9.2...v1.9.3) (2026-08-13)
+
+### Performance Improvements
+
+* **jvm:** flatten table rows ([0b172ce](https://github.com/harubi/bolivar/commit/0b172ce7cac6e81365af55705fe7aa8efe707379))
+* **layout:** store pages in compact arrays ([b11686d](https://github.com/harubi/bolivar/commit/b11686dd7f88d9aa02dd4646a539e13b662eb292))
+
+### Build System
+
+* **jvm:** refresh native library ([75779d5](https://github.com/harubi/bolivar/commit/75779d516132db300f7a26ed30cde2a0cfcd3644))
+
 ## [1.9.2](https://github.com/harubi/bolivar/compare/v1.9.1...v1.9.2) (2026-08-12)
 
 ### Bug Fixes
