@@ -46,7 +46,3 @@ harness = false
 [[bench]]
 name = "e2e_bench"
 harness = false
-
-[[bench]]
-name = "png_predictor_bench"
-harness = false
