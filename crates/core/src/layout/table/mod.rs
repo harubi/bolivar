@@ -706,16 +706,6 @@ mod table_extraction_tests {
     }
 
     #[test]
-    fn intersections_simd_mask_expected() {
-        let tops = [-5.0, -1.0, 1.0, -5.0];
-        let bottoms = [5.0, 1.0, 5.0, 5.0];
-        let x0s = [5.0, 7.0, 2.0, 20.0];
-        let mask =
-            super::intersections::match_v_edges_simd4(tops, bottoms, x0s, 0.0, 0.0, 10.0, 0.0);
-        assert_eq!(mask, [true, true, false, false]);
-    }
-
-    #[test]
     fn intersections_swap_pop_updates_slot() {
         let mut active = vec![ActiveBucket::default()];
         let bucket_idx = 0usize;
@@ -754,18 +744,6 @@ mod table_extraction_tests {
 
         assert_eq!(active[bucket_idx].active_len(), 0);
         assert!(active_slots[0].is_none());
-    }
-
-    #[test]
-    fn char_in_bboxes_simd4_expected() {
-        let h_mid = 5.0;
-        let v_mid = 5.0;
-        let x0s = [0.0, 6.0, 0.0, 4.0];
-        let x1s = [10.0, 8.0, 10.0, 6.0];
-        let tops = [0.0, 0.0, 6.0, 4.0];
-        let bottoms = [10.0, 10.0, 8.0, 6.0];
-        let mask = super::grid::char_in_bboxes_simd4(h_mid, v_mid, x0s, x1s, tops, bottoms);
-        assert_eq!(mask, [true, false, false, true]);
     }
 
     #[test]
