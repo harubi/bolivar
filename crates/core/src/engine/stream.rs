@@ -4,7 +4,7 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Once};
+use std::sync::{Arc, Mutex, Once};
 
 use crate::arena::PageArena;
 use crate::cancellation::CancellationToken;
@@ -14,6 +14,8 @@ use crate::error::{PdfError, Result};
 use super::plan::ExecutionPlan;
 use super::runtime::{Engine, shared_engine};
 
+pub const DEFAULT_STREAM_WINDOW_CAPACITY: usize = 50;
+
 type Precheck<R> =
     dyn Fn(usize, &PDFPage, &PDFDocument, &CancellationToken) -> Result<Option<R>> + Send + Sync;
 type PageWork<R> = dyn Fn(&mut PageArena, usize, &PDFPage, &PDFDocument, &CancellationToken) -> Result<R>
@@ -21,12 +23,14 @@ type PageWork<R> = dyn Fn(&mut PageArena, usize, &PDFPage, &PDFDocument, &Cancel
     + Sync;
 
 enum StreamMessage<R> {
-    Completed {
-        position: usize,
-        result: Result<R>,
-        arena: Box<PageArena>,
-    },
+    Completed { position: usize, result: Result<R> },
     Wake,
+}
+
+struct SchedulerState {
+    next_work_position: usize,
+    schedule_limit: usize,
+    active_workers: usize,
 }
 
 struct Scheduler<R> {
@@ -37,16 +41,75 @@ struct Scheduler<R> {
     page_work: Arc<PageWork<R>>,
     sender: Sender<StreamMessage<R>>,
     cancellation: CancellationToken,
+    window_capacity: usize,
+    state: Mutex<SchedulerState>,
 }
 
 impl<R: Send + 'static> Scheduler<R> {
-    fn schedule(self: &Arc<Self>, position: usize, arena: Box<PageArena>) {
-        let scheduler = Arc::clone(self);
-        self.engine
-            .spawn(move || scheduler.run_page(position, arena));
+    fn start_workers(self: &Arc<Self>) {
+        let worker_count = {
+            let mut state = self.state.lock().expect("stream scheduler state");
+            let available_work = state
+                .schedule_limit
+                .saturating_sub(state.next_work_position);
+            let worker_count = self
+                .engine
+                .worker_count()
+                .saturating_sub(state.active_workers)
+                .min(available_work);
+            state.active_workers += worker_count;
+            worker_count
+        };
+
+        for _ in 0..worker_count {
+            let scheduler = Arc::clone(self);
+            self.engine.spawn(move || scheduler.run_worker());
+        }
     }
 
-    fn run_page(&self, position: usize, mut arena: Box<PageArena>) {
+    fn advance_window(self: &Arc<Self>, next_position: usize) {
+        {
+            let mut state = self.state.lock().expect("stream scheduler state");
+            state.schedule_limit = next_position
+                .saturating_add(self.window_capacity)
+                .min(self.order.len());
+        }
+        self.start_workers();
+    }
+
+    fn claim_position(&self) -> Option<usize> {
+        if self.cancellation.is_cancelled() {
+            return None;
+        }
+        let mut state = self.state.lock().expect("stream scheduler state");
+        if state.next_work_position >= state.schedule_limit {
+            return None;
+        }
+        let position = state.next_work_position;
+        state.next_work_position += 1;
+        Some(position)
+    }
+
+    fn worker_finished(&self) {
+        let mut state = self.state.lock().expect("stream scheduler state");
+        state.active_workers = state
+            .active_workers
+            .checked_sub(1)
+            .expect("active stream worker");
+    }
+
+    fn run_worker(self: Arc<Self>) {
+        let mut arena = PageArena::new();
+        while let Some(position) = self.claim_position() {
+            self.run_page(position, &mut arena);
+        }
+        self.worker_finished();
+        if !self.cancellation.is_cancelled() {
+            self.start_workers();
+        }
+    }
+
+    fn run_page(&self, position: usize, arena: &mut PageArena) {
         let work = catch_unwind(AssertUnwindSafe(|| -> Result<R> {
             self.cancellation.check()?;
             let page_index = self.order[position];
@@ -64,7 +127,7 @@ impl<R: Send + 'static> Scheduler<R> {
                     self.cancellation.check()?;
                     arena.reset();
                     (self.page_work)(
-                        &mut arena,
+                        arena,
                         page_index,
                         page.as_ref(),
                         self.document.as_ref(),
@@ -83,11 +146,9 @@ impl<R: Send + 'static> Scheduler<R> {
         };
 
         if !self.cancellation.is_cancelled() {
-            let _ = self.sender.send(StreamMessage::Completed {
-                position,
-                result,
-                arena,
-            });
+            let _ = self
+                .sender
+                .send(StreamMessage::Completed { position, result });
         }
     }
 }
@@ -122,11 +183,6 @@ impl CancellationHandle {
     }
 }
 
-struct CompletedPage<R> {
-    result: Result<R>,
-    arena: Box<PageArena>,
-}
-
 /// An ordered stream with a fixed number of page slots.
 pub struct Stream<R: Send + 'static> {
     receiver: Receiver<StreamMessage<R>>,
@@ -134,9 +190,7 @@ pub struct Stream<R: Send + 'static> {
     cancellation: CancellationHandle,
     order: Arc<[usize]>,
     next_position: usize,
-    next_schedule_position: usize,
-    completed: BTreeMap<usize, CompletedPage<R>>,
-    pending_arena: Option<Box<PageArena>>,
+    completed: BTreeMap<usize, Result<R>>,
     failed: bool,
 }
 
@@ -151,10 +205,7 @@ impl<R: Send + 'static> Stream<R> {
             wake_once: Arc::new(Once::new()),
         };
         let order = Arc::clone(&scheduler.order);
-        let initial_slots = scheduler.engine.worker_count().min(order.len());
-        for position in 0..initial_slots {
-            scheduler.schedule(position, Box::default());
-        }
+        scheduler.start_workers();
 
         Self {
             receiver,
@@ -162,9 +213,7 @@ impl<R: Send + 'static> Stream<R> {
             cancellation,
             order,
             next_position: 0,
-            next_schedule_position: initial_slots,
             completed: BTreeMap::new(),
-            pending_arena: None,
             failed: false,
         }
     }
@@ -178,21 +227,9 @@ impl<R: Send + 'static> Stream<R> {
         self.cancellation.cancel();
     }
 
-    fn replenish_slot(&mut self) {
-        let Some(arena) = self.pending_arena.take() else {
-            return;
-        };
-        if !self.cancellation.is_cancelled() && self.next_schedule_position < self.order.len() {
-            let position = self.next_schedule_position;
-            self.next_schedule_position += 1;
-            self.scheduler.schedule(position, arena);
-        }
-    }
-
     fn fail(&mut self, error: PdfError) -> Option<Result<(usize, R)>> {
         self.failed = true;
         self.cancellation.cancel();
-        self.pending_arena.take();
         self.completed.clear();
         Some(Err(error))
     }
@@ -205,7 +242,6 @@ impl<R: Send + 'static> Iterator for Stream<R> {
         if self.failed {
             return None;
         }
-        self.replenish_slot();
         if self.next_position >= self.order.len() {
             return None;
         }
@@ -215,32 +251,26 @@ impl<R: Send + 'static> Iterator for Stream<R> {
                 return self.fail(PdfError::Cancelled);
             }
 
-            if let Some(completed) = self.completed.remove(&self.next_position) {
+            if let Some(result) = self.completed.remove(&self.next_position) {
                 let page_index = self.order[self.next_position];
                 self.next_position += 1;
-                self.pending_arena = Some(completed.arena);
-                return match completed.result {
-                    Ok(result) => Some(Ok((page_index, result))),
+                return match result {
+                    Ok(result) => {
+                        self.scheduler.advance_window(self.next_position);
+                        Some(Ok((page_index, result)))
+                    }
                     Err(error) => self.fail(error),
                 };
             }
 
             match self.receiver.recv() {
-                Ok(StreamMessage::Completed {
-                    position,
-                    result,
-                    arena,
-                }) => {
+                Ok(StreamMessage::Completed { position, result }) => {
                     if position < self.next_position || position >= self.order.len() {
                         return self.fail(PdfError::RuntimeError(format!(
                             "stream received invalid result position {position}"
                         )));
                     }
-                    if self
-                        .completed
-                        .insert(position, CompletedPage { result, arena })
-                        .is_some()
-                    {
+                    if self.completed.insert(position, result).is_some() {
                         return self.fail(PdfError::RuntimeError(format!(
                             "stream received duplicate result position {position}"
                         )));
@@ -287,6 +317,7 @@ where
         document,
         page_numbers,
         maxpages,
+        DEFAULT_STREAM_WINDOW_CAPACITY,
         precheck,
         page_work,
     )
@@ -297,6 +328,7 @@ pub(crate) fn run_stream_on_engine<R, P, F>(
     document: Arc<PDFDocument>,
     page_numbers: Option<Vec<usize>>,
     maxpages: usize,
+    window_capacity: usize,
     precheck: P,
     page_work: F,
 ) -> Result<Stream<R>>
@@ -317,8 +349,10 @@ where
         maxpages,
     );
     let order: Arc<[usize]> = plan.order.into();
-    // Page slots bound the queue. An unbounded channel keeps a completed
-    // worker from blocking the shared pool when its cursor is not read.
+    let window_capacity = window_capacity.max(1);
+    let schedule_limit = window_capacity.min(order.len());
+    // The sliding window bounds the queue. An unbounded channel keeps a
+    // completed worker from blocking the shared pool when its cursor is idle.
     let (sender, receiver) = channel();
     let scheduler = Arc::new(Scheduler {
         engine,
@@ -328,6 +362,12 @@ where
         page_work: Arc::new(page_work),
         sender,
         cancellation: CancellationToken::new(),
+        window_capacity,
+        state: Mutex::new(SchedulerState {
+            next_work_position: 0,
+            schedule_limit,
+            active_workers: 0,
+        }),
     });
     Ok(Stream::new(scheduler, receiver))
 }
@@ -406,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn local_engine_preserves_order_and_uses_one_slot_per_worker() {
+    fn local_engine_preserves_order_and_limits_active_work() {
         let engine = Engine::new(2).expect("engine");
         let active = Arc::new(AtomicUsize::new(0));
         let max_active = Arc::new(AtomicUsize::new(0));
@@ -418,6 +458,7 @@ mod tests {
             test_document(),
             None,
             0,
+            2,
             no_precheck_cancellable::<usize>,
             {
                 let active = Arc::clone(&active);
@@ -457,9 +498,8 @@ mod tests {
             stream.next().expect("first result").expect("first page"),
             (0, 0)
         );
-        assert_eq!(started.load(Ordering::SeqCst), 2);
-        assert_eq!(stream.next_schedule_position, 2);
-        assert!(stream.completed.len() <= 1);
+        assert!(started.load(Ordering::SeqCst) >= 2);
+        assert!(stream.completed.len() <= 2);
 
         let mut pages = vec![0];
         pages.extend(stream.map(|result| result.expect("page result").0));
@@ -475,6 +515,7 @@ mod tests {
             Arc::clone(&engine),
             test_document(),
             None,
+            1,
             1,
             no_precheck_cancellable::<usize>,
             move |_arena, page_index, _page, _document, _cancellation| {
@@ -492,6 +533,7 @@ mod tests {
             test_document(),
             None,
             1,
+            1,
             no_precheck_cancellable::<usize>,
             |_arena, page_index, _page, _document, _cancellation| Ok(page_index),
         )
@@ -506,6 +548,37 @@ mod tests {
     }
 
     #[test]
+    fn unread_stream_stops_at_window_capacity() {
+        let engine = Engine::new(4).expect("engine");
+        let (started_sender, started_receiver) = std::sync::mpsc::channel();
+        let _stream = run_stream_on_engine(
+            engine,
+            test_document(),
+            None,
+            0,
+            2,
+            no_precheck_cancellable::<usize>,
+            move |_arena, page_index, _page, _document, _cancellation| {
+                started_sender.send(page_index).expect("start signal");
+                Ok(page_index)
+            },
+        )
+        .expect("stream");
+
+        started_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first window page");
+        started_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("second window page");
+        assert!(
+            started_receiver
+                .recv_timeout(Duration::from_millis(50))
+                .is_err()
+        );
+    }
+
+    #[test]
     fn cancellation_wakes_an_active_boundary_call() {
         let engine = Engine::new(1).expect("engine");
         let (started_sender, started_receiver) = std::sync::mpsc::channel();
@@ -513,6 +586,7 @@ mod tests {
             engine,
             test_document(),
             None,
+            1,
             1,
             no_precheck_cancellable::<usize>,
             move |_arena, page_index, _page, _document, cancellation| {
@@ -573,6 +647,7 @@ mod tests {
             test_document(),
             None,
             1,
+            1,
             no_precheck_cancellable::<usize>,
             |_arena, _page_index, _page, _document, _cancellation| -> Result<usize> {
                 panic!("test worker panic")
@@ -593,6 +668,7 @@ mod tests {
             test_document(),
             None,
             1,
+            1,
             no_precheck_cancellable::<usize>,
             |_arena, page_index, _page, _document, _cancellation| Ok(page_index),
         )
@@ -610,6 +686,7 @@ mod tests {
             test_document(),
             None,
             0,
+            2,
             no_precheck_cancellable::<usize>,
             {
                 let started = Arc::clone(&started);
