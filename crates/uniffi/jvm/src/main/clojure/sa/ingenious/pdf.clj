@@ -469,7 +469,9 @@
 
 (defn- page-table-rows->map [^PageTableRows page]
   {:page-number (.pageNumber page)
-   :tables (mapv (fn [table] (mapv vec table)) (.toTables page))})
+   :cells (.cells page)
+   :row-offsets (.rowOffsets page)
+   :table-offsets (.tableOffsets page)})
 
 (defn table-rows
   "Extract raw table rows per page (nil = empty cell), exactly as the

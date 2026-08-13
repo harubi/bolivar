@@ -34,17 +34,7 @@ data class PageTableRows(
     val cells: List<String?>,
     val rowOffsets: IntArray,
     val tableOffsets: IntArray,
-) {
-    fun toTables(): List<List<List<String?>>> =
-        List(tableOffsets.size - 1) { tableIndex ->
-            val firstRow = tableOffsets[tableIndex]
-            val rowCount = tableOffsets[tableIndex + 1] - firstRow
-            List(rowCount) { rowOffset ->
-                val rowIndex = firstRow + rowOffset
-                cells.subList(rowOffsets[rowIndex], rowOffsets[rowIndex + 1])
-            }
-        }
-}
+)
 
 @JvmRecord
 data class BoundingBox(

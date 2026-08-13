@@ -160,13 +160,14 @@
          (#'pdf/->table-options {:crop [1 2 3]})))))
 
 (deftest page-table-rows-convert-to-idiomatic-clojure-data
-  (let [page (PageTableRows. 3
-                             ["a" nil nil "b"]
-                             (int-array [0 2 4])
-                             (int-array [0 2]))]
-    (is (= {:page-number 3
-            :tables      [[["a" nil] [nil "b"]]]}
-           (#'pdf/page-table-rows->map page)))))
+  (let [row-offsets (int-array [0 2 4])
+        table-offsets (int-array [0 2])
+        page (PageTableRows. 3 ["a" nil nil "b"] row-offsets table-offsets)
+        result (#'pdf/page-table-rows->map page)]
+    (is (= 3 (:page-number result)))
+    (is (= ["a" nil nil "b"] (:cells result)))
+    (is (identical? row-offsets (:row-offsets result)))
+    (is (identical? table-offsets (:table-offsets result)))))
 
 (deftest mapped-cursor-is-lazy-and-closeable
   (let [values (atom [1])
