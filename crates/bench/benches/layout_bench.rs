@@ -15,7 +15,10 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, criterion_group, criterion_main};
 
-use bolivar_core::layout::{LAParams, LTChar, LTLayoutContainer, reconstruct_text_for_output};
+use bolivar_core::layout::{
+    LAParams, LTLayoutContainer, LTTextBoxHorizontal, LTTextLineHorizontal, TextBoxType,
+    reconstruct_text_for_output,
+};
 use bolivar_core::utils::Rect;
 
 use bench_criterion::{BenchCriterion, bench_criterion};
@@ -38,36 +41,21 @@ fn generate_text_boxes(
     let laparams = LAParams::default();
     let container = LTLayoutContainer::new(PAGE_BBOX);
     let mut rng = XorShift64::new(seed);
-
-    let mut chars = Vec::with_capacity(count * 12);
+    let mut boxes = Vec::with_capacity(count);
     for i in 0..count {
-        let col = (i % 3) as f64;
-        let row = (i / 3) as f64;
-        let base_x = 36.0 + col * 180.0 + rng.gen_f64(0.0, 4.0);
-        let base_y = 720.0 - row * 24.0 - rng.gen_f64(0.0, 4.0);
-        let line_h = 9.0 + (i % 3) as f64;
-        let char_w = 5.0 + (i % 4) as f64;
+        let column = (i % 4) as f64;
+        let row = (i / 4) as f64;
+        let x0 = 24.0 + column * 145.0 + rng.gen_f64(0.0, 3.0);
+        let y0 = 760.0 - row * 9.0 - rng.gen_f64(0.0, 2.0);
+        let width = 48.0 + rng.gen_f64(0.0, 60.0);
+        let height = 7.0 + rng.gen_f64(0.0, 3.0);
 
-        for line in 0..2 {
-            let y0 = base_y - (line as f64 + 1.0) * (line_h + 2.0);
-            let y1 = y0 + line_h;
-            for ch in 0..8 {
-                let x0 = base_x + (ch as f64) * char_w;
-                let x1 = x0 + char_w;
-                chars.push(LTChar::new(
-                    (x0, y0, x1, y1),
-                    "a",
-                    "Helvetica",
-                    line_h,
-                    true,
-                    char_w,
-                ));
-            }
-        }
+        let mut line = LTTextLineHorizontal::new(0.1);
+        line.set_bbox((x0, y0, x0 + width, y0 + height));
+        let mut text_box = LTTextBoxHorizontal::new();
+        text_box.add(line);
+        boxes.push(TextBoxType::Horizontal(text_box));
     }
-
-    let lines = container.group_objects(&laparams, &chars);
-    let boxes = container.group_textlines(&laparams, lines);
     (container, laparams, boxes)
 }
 
@@ -75,9 +63,9 @@ fn bench_group_textboxes_exact(c: &mut BenchCriterion) {
     let tier = bench_tier();
     let seed = bench_seed();
     let sizes: &[usize] = if tier == BenchTier::Quick {
-        &[120, 240]
+        &[128, 338]
     } else {
-        &[120, 240, 480]
+        &[128, 338, 512, 768]
     };
 
     let mut group = c.benchmark_group("layout_group_textboxes_exact");
