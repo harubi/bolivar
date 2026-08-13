@@ -57,7 +57,7 @@ fn expected_tokens() -> Vec<(usize, PSToken)> {
         (191, String(b"".to_vec())),         // <>
         (194, String(b" ".to_vec())),        // <20> = space
         (199, String(b"@@ ".to_vec())),      // <404020> with spaces
-        (211, String(b"\xab\xcd\x00\x12\x34\x05".to_vec())), // hex with odd digit
+        (211, String(b"\xab\xcd\x00\x12\x34\x50".to_vec())), // hex with odd digit
         (226, Keyword(Kw::Unknown(b"func".to_vec()))),
         (230, Literal("a".into())),
         (232, Literal("b".into())),
@@ -142,7 +142,7 @@ fn expected_objects() -> Vec<(usize, PSToken)> {
         (191, String(b"".to_vec())),
         (194, String(b" ".to_vec())),
         (199, String(b"@@ ".to_vec())),
-        (211, String(b"\xab\xcd\x00\x12\x34\x05".to_vec())),
+        (211, String(b"\xab\xcd\x00\x12\x34\x50".to_vec())),
         (230, Literal("a".into())),
         (232, Literal("b".into())),
         // Proc {(c)do*} becomes Array([String(b"c")])

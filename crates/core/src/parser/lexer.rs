@@ -1605,7 +1605,7 @@ fn decode_hex_string(data: &[u8], start: usize) -> Result<(Vec<u8>, usize)> {
     }
 
     if let Some(nibble) = pending {
-        result.push(nibble);
+        result.push(nibble << 4);
     }
 
     Ok((result, pos))
@@ -1845,6 +1845,14 @@ mod tests {
         let data = b"<48656c6c6f 20776f726c64>";
         let (decoded, pos) = decode_hex_string(data, 0).unwrap();
         assert_eq!(decoded, b"Hello world");
+        assert_eq!(pos, data.len());
+    }
+
+    #[test]
+    fn decode_hex_string_pads_odd_nibble_on_right() {
+        let data = b"<A>";
+        let (decoded, pos) = decode_hex_string(data, 0).unwrap();
+        assert_eq!(decoded, [0xA0]);
         assert_eq!(pos, data.len());
     }
 }

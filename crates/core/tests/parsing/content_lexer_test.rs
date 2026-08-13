@@ -51,7 +51,7 @@ fn test_content_lexer_hex_string_odd_digits() {
     assert_eq!(
         tokens,
         vec![
-            PSToken::String(vec![0x4f, 0x03]),
+            PSToken::String(vec![0x4f, 0x30]),
             PSToken::Keyword(Keyword::Tj)
         ]
     );
