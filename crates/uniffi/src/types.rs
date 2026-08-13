@@ -778,50 +778,10 @@ pub(crate) fn cache_capacity(caching: bool) -> usize {
     if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
 }
 
-fn append_summary_text(item: &LTItem, text: &mut String, first_box: &mut bool) {
-    match item {
-        LTItem::TextBox(text_box) => {
-            if !*first_box {
-                text.push('\n');
-            }
-            *first_box = false;
-            match text_box {
-                TextBoxType::Horizontal(text_box) => {
-                    for line in text_box.iter() {
-                        text.push_str(&line.get_text());
-                    }
-                }
-                TextBoxType::Vertical(text_box) => {
-                    for line in text_box.iter() {
-                        text.push_str(&line.get_text());
-                    }
-                }
-            }
-        }
-        LTItem::Figure(figure) => {
-            for child in figure.iter() {
-                append_summary_text(child, text, first_box);
-            }
-        }
-        LTItem::Page(page) => {
-            for child in page.iter() {
-                append_summary_text(child, text, first_box);
-            }
-        }
-        _ => {}
-    }
-}
-
 pub(crate) fn summary_from_ltpage(page: &LTPage) -> PageSummary {
-    let mut text = String::new();
-    let mut first_box = true;
-    for item in page.iter() {
-        append_summary_text(item, &mut text, &mut first_box);
-    }
-
     PageSummary {
         page_number: page_number(page.pageid),
-        text,
+        text: page.get_text(),
         bbox: bbox_from_rect(page.bbox()),
         rotate: page.rotate,
     }

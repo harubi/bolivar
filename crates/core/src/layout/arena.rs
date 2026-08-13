@@ -1,3 +1,6 @@
+use crate::layout::bidi::{
+    contains_rtl_text, reconstruct_textline_raw_text, reorder_text_for_output,
+};
 use crate::layout::types::{
     LTAnno, LTChar, LTComponent, LTItem, LTTextBox, LTTextBoxHorizontal, LTTextBoxVertical,
     LTTextGroup, LTTextLineHorizontal, LTTextLineVertical, TextBoxType, TextGroupElement,
@@ -475,6 +478,75 @@ impl LayoutArena {
         }
     }
 
+    fn element_text(&self, element: ArenaElem) -> &str {
+        match element {
+            ArenaElem::Char(id) => self.chars[id.0].get_text(),
+            ArenaElem::Anno(id) => self.annos[id.0].get_text(),
+        }
+    }
+
+    fn line_text(&self, id: LineId) -> String {
+        let (elements, bidi, source_is_logical) = match &self.lines[id.0] {
+            ArenaTextLine::Horizontal(line) => (
+                line.elements.as_slice(),
+                line.bidi,
+                self.horizontal_source_is_logical(&line.elements),
+            ),
+            ArenaTextLine::Vertical(line) => (line.elements.as_slice(), line.bidi, true),
+        };
+        let capacity = elements
+            .iter()
+            .map(|element| self.element_text(*element).len())
+            .sum();
+        let mut raw_text = String::with_capacity(capacity);
+        for element in elements {
+            raw_text.push_str(self.element_text(*element));
+        }
+
+        if bidi {
+            reconstruct_textline_raw_text(raw_text, source_is_logical)
+        } else {
+            reorder_text_for_output(&raw_text)
+        }
+    }
+
+    fn horizontal_source_is_logical(&self, elements: &[ArenaElem]) -> bool {
+        let mut previous_x = None;
+        let mut increasing = 0;
+        let mut decreasing = 0;
+        for element in elements {
+            let ArenaElem::Char(id) = element else {
+                continue;
+            };
+            let character = &self.chars[id.0];
+            if !contains_rtl_text(character.get_text()) {
+                continue;
+            }
+
+            let bbox = character.bbox();
+            let x = (bbox.0 + bbox.2) * 0.5;
+            if let Some(previous_x) = previous_x {
+                let difference: f64 = x - previous_x;
+                if difference > 0.01 {
+                    increasing += 1;
+                } else if difference < -0.01 {
+                    decreasing += 1;
+                }
+            }
+            previous_x = Some(x);
+        }
+        decreasing > increasing
+    }
+
+    fn append_box_text(&self, id: BoxId, output: &mut String) {
+        let line_ids = match &self.boxes[id.0] {
+            ArenaTextBox::Horizontal(line_ids) | ArenaTextBox::Vertical(line_ids) => line_ids,
+        };
+        for line_id in line_ids {
+            output.push_str(&self.line_text(*line_id));
+        }
+    }
+
     pub fn line_bbox(&self, id: LineId) -> Rect {
         self.lines[id.0].component().bbox()
     }
@@ -627,6 +699,20 @@ impl CompactPageLayout {
                 .map(|id| LTItem::TextLine(self.arena.materialize_line(*id))),
         );
         items
+    }
+
+    pub(crate) fn append_text_boxes(&self, output: &mut String, first_box: &mut bool) {
+        for id in &self.box_order {
+            if !*first_box {
+                output.push('\n');
+            }
+            *first_box = false;
+            self.arena.append_box_text(*id, output);
+        }
+    }
+
+    pub(crate) fn other_items(&self) -> &[LTItem] {
+        &self.other_items
     }
 
     pub(crate) fn materialize_groups(&self) -> Vec<LTTextGroup> {

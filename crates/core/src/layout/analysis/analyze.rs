@@ -275,6 +275,8 @@ mod compact_page_tests {
         page.analyze(&LAParams::default());
 
         assert_eq!(page.compact_storage_counts(), Some((2, 1, 1)));
+        assert_eq!(page.get_text(), "AB\n");
+        assert!(!page.compact_items_are_materialized());
         assert_eq!(page.iter().count(), 1);
         assert_eq!(page.groups().map(Vec::len), Some(1));
     }
