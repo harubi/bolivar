@@ -716,6 +716,7 @@ type PageBegin = (u32, (f64, f64, f64, f64), Matrix);
 struct MockDevice {
     ctm: Option<Matrix>,
     paths_painted: Vec<(bool, bool, bool, Vec<PathSegment>)>,
+    stop_after_first_path: bool,
     pages_begun: Vec<PageBegin>,
     pages_ended: Vec<u32>,
     /// Tracks begin_tag calls: (tag_name, has_props)
@@ -731,6 +732,10 @@ impl PDFDevice for MockDevice {
 
     fn ctm(&self) -> Option<Matrix> {
         self.ctm
+    }
+
+    fn is_complete(&self) -> bool {
+        self.stop_after_first_path && !self.paths_painted.is_empty()
     }
 
     fn begin_page(&mut self, pageid: u32, mediabox: (f64, f64, f64, f64), ctm: Matrix) {
@@ -761,6 +766,23 @@ impl PDFDevice for MockDevice {
     fn end_tag(&mut self) {
         self.tags_ended += 1;
     }
+}
+
+#[test]
+fn test_interpreter_stops_when_device_is_complete() {
+    let mut rsrcmgr = PDFResourceManager::new();
+    let mut device = MockDevice {
+        stop_after_first_path: true,
+        ..Default::default()
+    };
+
+    {
+        let mut interp = PDFPageInterpreter::new(&mut rsrcmgr, &mut device);
+        interp.init_state(MATRIX_IDENTITY);
+        interp.execute(&[b"0 0 m 10 10 l S 20 20 m 30 30 l S".to_vec()]);
+    }
+
+    assert_eq!(device.paths_painted.len(), 1);
 }
 
 // ============================================================================

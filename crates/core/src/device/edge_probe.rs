@@ -40,6 +40,10 @@ impl PDFDevice for PDFEdgeProbe {
         self.ctm
     }
 
+    fn is_complete(&self) -> bool {
+        self.has_edges
+    }
+
     fn paint_path(
         &mut self,
         _graphicstate: &PDFGraphicState,

@@ -1576,7 +1576,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     }
 
     pub(crate) fn execute_owned(&mut self, streams: Vec<Vec<u8>>) {
-        if streams.is_empty() || self.cancellation.is_cancelled() {
+        if streams.is_empty() || self.cancellation.is_cancelled() || self.device.is_complete() {
             return;
         }
 
@@ -1657,6 +1657,10 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
                     self.device.end_figure(&name);
                     operand_stack.clear();
                 }
+            }
+
+            if self.device.is_complete() {
+                return;
             }
         }
     }
