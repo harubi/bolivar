@@ -53,21 +53,23 @@ impl LTLayoutContainer {
     /// 4. Optionally groups text boxes hierarchically (if boxes_flow is set)
     /// 5. Assigns reading order indices to text boxes
     pub fn analyze(&mut self, laparams: &LAParams) {
-        let mut otherobjs: Vec<LTItem> = Vec::new();
-        let mut arena = LayoutArena::new();
+        let mut source_items = std::mem::take(&mut self.items);
+        let char_count = source_items.iter().filter(|item| item.is_char()).count();
+        if char_count == 0 {
+            self.items = source_items;
+            return;
+        }
 
-        for item in std::mem::take(&mut self.items) {
+        let mut otherobjs = Vec::with_capacity(source_items.len() - char_count);
+        let mut arena = LayoutArena::with_char_capacity(char_count);
+
+        for item in source_items.drain(..) {
             match item {
                 LTItem::Char(ch) => {
                     arena.push_char(ch);
                 }
                 other => otherobjs.push(other),
             }
-        }
-
-        if arena.chars.is_empty() {
-            self.items = otherobjs;
-            return;
         }
 
         let line_ids = group_objects_arena(laparams, &mut arena);
@@ -77,8 +79,7 @@ impl LTLayoutContainer {
             .partition(|id| arena.line_is_empty(*id));
 
         let box_ids = group_textlines_arena(laparams, &mut arena, &non_empty_ids);
-        let mut textboxes = arena.materialize_boxes(&box_ids);
-        let empties = arena.materialize_lines(&empty_ids);
+        let (mut textboxes, empties) = arena.into_materialized(&box_ids, &empty_ids);
 
         if laparams.boxes_flow.is_none() {
             // Analyze each textbox (sorts internal lines)
@@ -112,6 +113,7 @@ impl LTLayoutContainer {
             });
         } else {
             // Hierarchical grouping (exact pdfminer-compatible)
+            let textbox_count = textboxes.len();
             let mut groups = group_textboxes_exact_owned(laparams, textboxes);
 
             // Analyze and assign indices (analyze recursively sorts elements within groups)
@@ -122,7 +124,10 @@ impl LTLayoutContainer {
             }
 
             // Extract textboxes with assigned indices from the groups
-            textboxes = groups.iter().flat_map(|g| g.collect_textboxes()).collect();
+            textboxes = Vec::with_capacity(textbox_count);
+            for group in &groups {
+                group.append_textboxes(&mut textboxes);
+            }
 
             self.groups = Some(groups);
 
@@ -141,16 +146,11 @@ impl LTLayoutContainer {
         }
 
         // Rebuild items list: textboxes + other objects + empty lines
-        self.items.clear();
-        for tb in textboxes {
-            self.items.push(LTItem::TextBox(tb));
-        }
-        for other in otherobjs {
-            self.items.push(other);
-        }
-        for empty in empties {
-            self.items.push(LTItem::TextLine(empty));
-        }
+        source_items.reserve(textboxes.len() + otherobjs.len() + empties.len());
+        source_items.extend(textboxes.into_iter().map(LTItem::TextBox));
+        source_items.extend(otherobjs);
+        source_items.extend(empties.into_iter().map(LTItem::TextLine));
+        self.items = source_items;
     }
 }
 

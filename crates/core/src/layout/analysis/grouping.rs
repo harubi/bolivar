@@ -451,7 +451,7 @@ pub fn group_textlines(laparams: &LAParams, lines: Vec<TextLineType>) -> Vec<Tex
     let mut arena = LayoutArena::new();
     let line_ids = arena.extend_lines_from_textlines(lines);
     let box_ids = group_textlines_arena(laparams, &mut arena, &line_ids);
-    arena.materialize_boxes(&box_ids)
+    arena.into_materialized(&box_ids, &[]).0
 }
 
 /// Arena-backed grouping of text lines into text boxes.

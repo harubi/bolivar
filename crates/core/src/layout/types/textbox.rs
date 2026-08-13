@@ -1,6 +1,7 @@
 //! Text box types and text groups.
 
 use std::hash::Hash;
+use std::sync::Arc;
 
 use crate::utils::{HasBBox, INF_F64, Rect};
 
@@ -30,15 +31,19 @@ pub trait LTTextBox {
 #[derive(Debug, Clone)]
 pub struct LTTextBoxHorizontal {
     component: LTComponent,
-    lines: Vec<LTTextLineHorizontal>,
+    lines: Arc<Vec<LTTextLineHorizontal>>,
     index: i32,
 }
 
 impl LTTextBoxHorizontal {
     pub fn new() -> Self {
+        Self::with_capacity(0)
+    }
+
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
             component: LTComponent::new((INF_F64, INF_F64, -INF_F64, -INF_F64)),
-            lines: Vec::new(),
+            lines: Arc::new(Vec::with_capacity(capacity)),
             index: -1,
         }
     }
@@ -50,7 +55,7 @@ impl LTTextBoxHorizontal {
         self.component.y0 = self.component.y0.min(bbox.1);
         self.component.x1 = self.component.x1.max(bbox.2);
         self.component.y1 = self.component.y1.max(bbox.3);
-        self.lines.push(line);
+        Arc::make_mut(&mut self.lines).push(line);
     }
 
     pub const fn bbox(&self) -> Rect {
@@ -63,7 +68,7 @@ impl LTTextBoxHorizontal {
     }
 
     pub(crate) fn set_bidi(&mut self, bidi: bool) {
-        for line in &mut self.lines {
+        for line in Arc::make_mut(&mut self.lines) {
             line.set_bidi(bidi);
         }
     }
@@ -73,7 +78,7 @@ impl LTTextBoxHorizontal {
     pub fn analyze(&mut self) {
         // Sort lines by descending y1 (top-to-bottom reading order)
         // Note: lines are already analyzed (newlines added) during group_objects()
-        self.lines.sort_by(|a, b| {
+        Arc::make_mut(&mut self.lines).sort_by(|a, b| {
             let y1_a = a.y1();
             let y1_b = b.y1();
             // Descending order: higher y1 comes first
@@ -123,15 +128,19 @@ impl_has_bbox_delegate!(LTTextBoxHorizontal, component);
 #[derive(Debug, Clone)]
 pub struct LTTextBoxVertical {
     component: LTComponent,
-    lines: Vec<LTTextLineVertical>,
+    lines: Arc<Vec<LTTextLineVertical>>,
     index: i32,
 }
 
 impl LTTextBoxVertical {
     pub fn new() -> Self {
+        Self::with_capacity(0)
+    }
+
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
             component: LTComponent::new((INF_F64, INF_F64, -INF_F64, -INF_F64)),
-            lines: Vec::new(),
+            lines: Arc::new(Vec::with_capacity(capacity)),
             index: -1,
         }
     }
@@ -143,7 +152,7 @@ impl LTTextBoxVertical {
         self.component.y0 = self.component.y0.min(bbox.1);
         self.component.x1 = self.component.x1.max(bbox.2);
         self.component.y1 = self.component.y1.max(bbox.3);
-        self.lines.push(line);
+        Arc::make_mut(&mut self.lines).push(line);
     }
 
     pub const fn bbox(&self) -> Rect {
@@ -156,7 +165,7 @@ impl LTTextBoxVertical {
     }
 
     pub(crate) fn set_bidi(&mut self, bidi: bool) {
-        for line in &mut self.lines {
+        for line in Arc::make_mut(&mut self.lines) {
             line.set_bidi(bidi);
         }
     }
@@ -166,7 +175,7 @@ impl LTTextBoxVertical {
     pub fn analyze(&mut self) {
         // Sort lines by descending x1 (right-to-left reading order for vertical text)
         // Note: lines are already analyzed (newlines added) during group_objects()
-        self.lines.sort_by(|a, b| {
+        Arc::make_mut(&mut self.lines).sort_by(|a, b| {
             let x1_a = a.x1();
             let x1_b = b.x1();
             // Descending order: higher x1 comes first
@@ -369,13 +378,17 @@ impl LTTextGroup {
     /// Recursively collects all textboxes from this group and nested groups.
     pub fn collect_textboxes(&self) -> Vec<TextBoxType> {
         let mut result = Vec::new();
+        self.append_textboxes(&mut result);
+        result
+    }
+
+    pub(crate) fn append_textboxes(&self, result: &mut Vec<TextBoxType>) {
         for elem in &self.elements {
             match elem {
                 TextGroupElement::Box(tb) => result.push(tb.clone()),
-                TextGroupElement::Group(g) => result.extend(g.collect_textboxes()),
+                TextGroupElement::Group(g) => g.append_textboxes(result),
             }
         }
-        result
     }
 
     /// Recursively analyzes and sorts elements within this group and nested groups.
@@ -537,5 +550,38 @@ impl IndexAssigner {
 impl Default for IndexAssigner {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::types::{LTChar, TextLineElement};
+
+    fn horizontal_line(text: &str, x0: f64) -> LTTextLineHorizontal {
+        let mut line = LTTextLineHorizontal::new(0.1);
+        line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+            (x0, 0.0, x0 + 1.0, 1.0),
+            text,
+            "F1",
+            10.0,
+            true,
+            1.0,
+        ))));
+        line
+    }
+
+    #[test]
+    fn cloned_text_box_mutates_independently() {
+        let mut original = LTTextBoxHorizontal::new();
+        original.add(horizontal_line("a", 0.0));
+        let mut cloned = original.clone();
+
+        assert!(Arc::ptr_eq(&original.lines, &cloned.lines));
+        cloned.add(horizontal_line("b", 2.0));
+
+        assert!(!Arc::ptr_eq(&original.lines, &cloned.lines));
+        assert_eq!(original.iter().count(), 1);
+        assert_eq!(cloned.iter().count(), 2);
     }
 }
