@@ -25,6 +25,25 @@ env:
   RUSTFLAGS: "-Zthreads=8"
 
 jobs:
+  release-validation:
+    name: Release validation
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Setup Rust
+        run: rustup show active-toolchain
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.2.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install release tools
+        run: npm ci
+      - name: Validate release
+        run: npm run test:release
+
   rust-tests:
     name: Rust tests
     runs-on: ubuntu-24.04

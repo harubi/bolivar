@@ -6,6 +6,7 @@ Bolivar is a Rust port of `pdfminer.six` and `pdfplumber` with Python (PyO3) and
 
 - **Rust** — `rustup` installs the pinned toolchain from `rust-toolchain.toml` on first `cargo` call.
 - **`uv`** — Python package manager: <https://docs.astral.sh/uv/>.
+- **Node.js 22.14 or newer and npm** — Semantic Release validation.
 - **`cargo-make`** — `cargo install cargo-make`.
 - **`cargo-nextest`** — `cargo install cargo-nextest --locked`.
 - **`cargo-watch`** (optional, for file-watch loops) — `cargo install cargo-watch`.
@@ -17,6 +18,7 @@ git clone --recurse-submodules <repo-url>
 cd bolivar
 # Already cloned? Run:
 git submodule update --init --depth 1
+npm ci
 
 cargo make build      # Rust workspace
 cargo make build-py   # Python extension
@@ -32,6 +34,7 @@ cargo make build         Build the Rust workspace
 cargo make build-py      Build the Python extension (maturin develop)
 cargo make test          Rust tests (nextest)
 cargo make test-py       Python tests (depends on build-py)
+cargo make test-release  Semantic Release state
 cargo make test-parity   Upstream pdfminer.six and pdfplumber suites
 cargo make bench         Rust benchmarks
 cargo make fmt           Format Rust and Python
