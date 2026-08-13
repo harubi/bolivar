@@ -25,6 +25,8 @@ use memmap2::Mmap;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::path::Path;
 use std::simd::prelude::*;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
@@ -63,6 +65,13 @@ fn ccitt_params(params: Option<&PDFDict>) -> CcittParams {
             .and_then(|value| value.as_bool().ok())
             .unwrap_or(false),
     }
+}
+
+fn mmap_path(path: &Path) -> Result<Mmap> {
+    let source = File::open(path)?;
+
+    // Safety: the caller keeps the mapped source stable while the document is open.
+    Ok(unsafe { Mmap::map(&source)? })
 }
 
 struct ObjectCache {
@@ -299,6 +308,29 @@ impl PDFDocument {
     ) -> Result<Self> {
         Self::new_with_cache_inner(
             PdfBytes::Shared(Bytes::from_owner(mmap)),
+            password,
+            cache_capacity,
+            allow_xref_fallback,
+        )
+    }
+
+    /// Create a document by memory-mapping a path.
+    pub fn new_from_path(path: impl AsRef<Path>, password: &str) -> Result<Self> {
+        Self::new_from_path_with_cache_and_fallback(path, password, DEFAULT_CACHE_CAPACITY, true)
+    }
+
+    /// Create a memory-mapped document with cache and fallback settings.
+    ///
+    /// The source file must not change while the document is in use.
+    pub fn new_from_path_with_cache_and_fallback(
+        path: impl AsRef<Path>,
+        password: &str,
+        cache_capacity: usize,
+        allow_xref_fallback: bool,
+    ) -> Result<Self> {
+        let mmap = mmap_path(path.as_ref())?;
+        Self::new_from_mmap_with_cache_and_fallback(
+            mmap,
             password,
             cache_capacity,
             allow_xref_fallback,
@@ -2577,6 +2609,17 @@ mod tests {
             PdfBytes::Shared(_) => {}
             _ => panic!("expected PdfBytes::Shared for mmap input"),
         }
+    }
+
+    #[test]
+    fn test_pdfdocument_from_path_uses_shared_mapped_bytes() {
+        let path = "tests/fixtures/simple1.pdf";
+        let source = std::fs::read(path).unwrap();
+
+        let document = PDFDocument::new_from_path(path, "").unwrap();
+        assert_eq!(document.bytes(), source);
+        assert!(document.page_index().len() > 0);
+        assert!(matches!(document.data, PdfBytes::Shared(_)));
     }
 
     #[test]

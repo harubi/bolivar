@@ -10,13 +10,11 @@ use bolivar_core::parser::{
 use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
 use bolivar_core::pdftypes::{PDFDict, PDFObject, PDFStream};
 use bytes::Bytes;
-use memmap2::Mmap;
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PySequence, PyTuple, PyType};
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::slice;
 use std::sync::{Arc, Mutex};
 
@@ -100,18 +98,13 @@ pub(crate) fn open_document_from_path(
     caching: bool,
     fallback: bool,
 ) -> PyResult<Arc<PDFDocument>> {
-    let file = File::open(path)
-        .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
-    // Safety: the file handle remains open for the duration of the map.
-    let mmap = unsafe { Mmap::map(&file) }
-        .map_err(|e| PyValueError::new_err(format!("Failed to mmap PDF: {}", e)))?;
-    let doc = PDFDocument::new_from_mmap_with_cache_and_fallback(
-        mmap,
+    let doc = PDFDocument::new_from_path_with_cache_and_fallback(
+        path,
         password,
         cache_capacity(caching),
         fallback,
     )
-    .map_err(|e| PyValueError::new_err(format!("Failed to parse PDF: {}", e)))?;
+    .map_err(|e| PyValueError::new_err(format!("Failed to open PDF: {}", e)))?;
     Ok(Arc::new(doc))
 }
 
@@ -654,7 +647,9 @@ impl PyPDFDocument {
         })
     }
 
-    /// Create a new PDFDocument from a file path using memory-mapped I/O.
+    /// Create a PDFDocument from a memory-mapped file path.
+    ///
+    /// Do not change or replace the source file while this object exists.
     ///
     /// Args:
     ///     path: Path to PDF file

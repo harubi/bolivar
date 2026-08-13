@@ -9,7 +9,6 @@ use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::pdfpage::PDFPage;
 use bolivar_core::pdftypes::{PDFDict, PDFObject};
 use clap::{ArgAction, ArgGroup, Parser};
-use memmap2::Mmap;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
@@ -667,10 +666,7 @@ fn main() -> core::result::Result<(), Box<dyn core::error::Error>> {
             std::process::exit(1);
         }
 
-        // Read PDF
-        let file = File::open(path)?;
-        let mmap = unsafe { Mmap::map(&file) }?;
-        let doc = PDFDocument::new_from_mmap(mmap, &args.password)?;
+        let doc = PDFDocument::new_from_path(path, &args.password)?;
 
         if args.extract_toc {
             dumpoutline(&mut output, &doc)?;
