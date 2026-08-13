@@ -1,6 +1,7 @@
 use crate::layout::types::{
-    LTAnno, LTChar, LTComponent, LTTextBoxHorizontal, LTTextBoxVertical, LTTextLineHorizontal,
-    LTTextLineVertical, TextBoxType, TextLineElement, TextLineType,
+    LTAnno, LTChar, LTComponent, LTItem, LTTextBox, LTTextBoxHorizontal, LTTextBoxVertical,
+    LTTextGroup, LTTextLineHorizontal, LTTextLineVertical, TextBoxType, TextGroupElement,
+    TextLineElement, TextLineType,
 };
 use crate::utils::Rect;
 
@@ -12,6 +13,8 @@ pub struct AnnoId(pub usize);
 pub struct LineId(pub usize);
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct BoxId(pub usize);
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+struct GroupId(usize);
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ArenaElem {
@@ -72,18 +75,28 @@ pub enum ArenaTextLine {
     Vertical(ArenaTextLineVertical),
 }
 
+impl ArenaTextLine {
+    fn component(&self) -> &LTComponent {
+        match self {
+            Self::Horizontal(line) => &line.component,
+            Self::Vertical(line) => &line.component,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ArenaTextBox {
     Horizontal(Vec<LineId>),
     Vertical(Vec<LineId>),
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct LayoutArena {
     pub(crate) chars: Vec<LTChar>,
     pub(crate) annos: Vec<LTAnno>,
     pub(crate) lines: Vec<ArenaTextLine>,
     pub(crate) boxes: Vec<ArenaTextBox>,
+    box_indices: Vec<i32>,
 }
 
 impl LayoutArena {
@@ -203,6 +216,7 @@ impl LayoutArena {
     pub fn push_box(&mut self, b: ArenaTextBox) -> BoxId {
         let id = BoxId(self.boxes.len());
         self.boxes.push(b);
+        self.box_indices.push(-1);
         id
     }
 
@@ -224,6 +238,7 @@ impl LayoutArena {
             annos,
             lines,
             boxes,
+            box_indices,
         } = self;
         let mut chars: Vec<_> = chars.into_iter().map(Some).collect();
         let mut annos: Vec<_> = annos.into_iter().map(Some).collect();
@@ -234,7 +249,7 @@ impl LayoutArena {
 
         let materialized_boxes = box_ids
             .iter()
-            .map(|id| Self::materialize_owned_box(&boxes[id.0], &mut lines))
+            .map(|id| Self::materialize_owned_box(&boxes[id.0], box_indices[id.0], &mut lines))
             .collect();
         let materialized_lines = line_ids
             .iter()
@@ -300,6 +315,7 @@ impl LayoutArena {
                         tb.add(line);
                     }
                 }
+                tb.set_index(self.box_indices[id.0]);
                 TextBoxType::Horizontal(tb)
             }
             ArenaTextBox::Vertical(lines) => {
@@ -309,6 +325,7 @@ impl LayoutArena {
                         tb.add(line);
                     }
                 }
+                tb.set_index(self.box_indices[id.0]);
                 TextBoxType::Vertical(tb)
             }
         }
@@ -357,6 +374,7 @@ impl LayoutArena {
 
     fn materialize_owned_box(
         text_box: &ArenaTextBox,
+        index: i32,
         lines: &mut [Option<TextLineType>],
     ) -> TextBoxType {
         match text_box {
@@ -369,6 +387,7 @@ impl LayoutArena {
                         text_box.add(line);
                     }
                 }
+                text_box.set_index(index);
                 TextBoxType::Horizontal(text_box)
             }
             ArenaTextBox::Vertical(line_ids) => {
@@ -380,30 +399,92 @@ impl LayoutArena {
                         text_box.add(line);
                     }
                 }
+                text_box.set_index(index);
                 TextBoxType::Vertical(text_box)
             }
         }
     }
 
-    pub fn line_bbox(&self, id: LineId) -> Rect {
-        match &self.lines[id.0] {
-            ArenaTextLine::Horizontal(h) => h.component.bbox(),
-            ArenaTextLine::Vertical(v) => v.component.bbox(),
+    pub(crate) fn analyze_box(&mut self, id: BoxId) {
+        let lines = &self.lines;
+        match &mut self.boxes[id.0] {
+            ArenaTextBox::Horizontal(line_ids) => line_ids.sort_by(|left, right| {
+                let left_y1 = lines[left.0].component().y1;
+                let right_y1 = lines[right.0].component().y1;
+                right_y1
+                    .partial_cmp(&left_y1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+            ArenaTextBox::Vertical(line_ids) => line_ids.sort_by(|left, right| {
+                let left_x1 = lines[left.0].component().x1;
+                let right_x1 = lines[right.0].component().x1;
+                right_x1
+                    .partial_cmp(&left_x1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
         }
+    }
+
+    pub(crate) fn box_bbox(&self, id: BoxId) -> Rect {
+        let line_ids = match &self.boxes[id.0] {
+            ArenaTextBox::Horizontal(line_ids) | ArenaTextBox::Vertical(line_ids) => line_ids,
+        };
+        line_ids.iter().fold(
+            (
+                crate::utils::INF_F64,
+                crate::utils::INF_F64,
+                -crate::utils::INF_F64,
+                -crate::utils::INF_F64,
+            ),
+            |bbox, line_id| {
+                let line = self.line_bbox(*line_id);
+                (
+                    bbox.0.min(line.0),
+                    bbox.1.min(line.1),
+                    bbox.2.max(line.2),
+                    bbox.3.max(line.3),
+                )
+            },
+        )
+    }
+
+    pub(crate) fn box_is_vertical(&self, id: BoxId) -> bool {
+        matches!(self.boxes[id.0], ArenaTextBox::Vertical(_))
+    }
+
+    pub(crate) fn box_proxy(&self, id: BoxId) -> TextBoxType {
+        let bbox = self.box_bbox(id);
+        let source_index = i32::try_from(id.0).expect("compact text box ID must fit in i32");
+        if self.box_is_vertical(id) {
+            TextBoxType::Vertical(LTTextBoxVertical::proxy(bbox, source_index))
+        } else {
+            TextBoxType::Horizontal(LTTextBoxHorizontal::proxy(bbox, source_index))
+        }
+    }
+
+    pub(crate) fn set_box_index(&mut self, id: BoxId, index: i32) {
+        self.box_indices[id.0] = index;
+    }
+
+    pub(crate) fn set_bidi(&mut self, bidi: bool) {
+        for line in &mut self.lines {
+            match line {
+                ArenaTextLine::Horizontal(line) => line.bidi = bidi,
+                ArenaTextLine::Vertical(line) => line.bidi = bidi,
+            }
+        }
+    }
+
+    pub fn line_bbox(&self, id: LineId) -> Rect {
+        self.lines[id.0].component().bbox()
     }
 
     pub fn line_width(&self, id: LineId) -> f64 {
-        match &self.lines[id.0] {
-            ArenaTextLine::Horizontal(h) => h.component.width(),
-            ArenaTextLine::Vertical(v) => v.component.width(),
-        }
+        self.lines[id.0].component().width()
     }
 
     pub fn line_height(&self, id: LineId) -> f64 {
-        match &self.lines[id.0] {
-            ArenaTextLine::Horizontal(h) => h.component.height(),
-            ArenaTextLine::Vertical(v) => v.component.height(),
-        }
+        self.lines[id.0].component().height()
     }
 
     pub fn line_is_vertical(&self, id: LineId) -> bool {
@@ -448,6 +529,148 @@ impl LayoutArena {
                 v.component.is_empty() || (has_any && !has_non_ws)
             }
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum CompactGroupElement {
+    Box(BoxId),
+    Group(GroupId),
+}
+
+#[derive(Debug, Clone)]
+struct CompactGroup {
+    elements: Vec<CompactGroupElement>,
+    vertical: bool,
+}
+
+/// Final page layout stored as contiguous arrays connected by stable IDs.
+#[derive(Debug, Clone)]
+pub(crate) struct CompactPageLayout {
+    arena: LayoutArena,
+    box_order: Vec<BoxId>,
+    empty_lines: Vec<LineId>,
+    other_items: Vec<LTItem>,
+    groups: Vec<CompactGroup>,
+    root_groups: Option<Vec<GroupId>>,
+}
+
+impl CompactPageLayout {
+    pub(crate) fn new(
+        arena: LayoutArena,
+        box_order: Vec<BoxId>,
+        empty_lines: Vec<LineId>,
+        other_items: Vec<LTItem>,
+        source_groups: Option<&[LTTextGroup]>,
+    ) -> Self {
+        let mut groups = Vec::new();
+        let root_groups = source_groups.map(|source_groups| {
+            source_groups
+                .iter()
+                .map(|group| Self::store_group(group, &box_order, &mut groups))
+                .collect()
+        });
+        Self {
+            arena,
+            box_order,
+            empty_lines,
+            other_items,
+            groups,
+            root_groups,
+        }
+    }
+
+    fn store_group(
+        group: &LTTextGroup,
+        box_order: &[BoxId],
+        groups: &mut Vec<CompactGroup>,
+    ) -> GroupId {
+        let elements = group
+            .elements()
+            .iter()
+            .map(|element| match element {
+                TextGroupElement::Box(text_box) => {
+                    let index = usize::try_from(text_box.index())
+                        .expect("compact text box index must be non-negative");
+                    CompactGroupElement::Box(
+                        *box_order
+                            .get(index)
+                            .expect("compact text box index must be valid"),
+                    )
+                }
+                TextGroupElement::Group(child) => {
+                    CompactGroupElement::Group(Self::store_group(child, box_order, groups))
+                }
+            })
+            .collect();
+        let id = GroupId(groups.len());
+        groups.push(CompactGroup {
+            elements,
+            vertical: group.is_vertical(),
+        });
+        id
+    }
+
+    pub(crate) fn materialize_items(&self) -> Vec<LTItem> {
+        let mut items = Vec::with_capacity(
+            self.box_order.len() + self.other_items.len() + self.empty_lines.len(),
+        );
+        items.extend(
+            self.box_order
+                .iter()
+                .map(|id| LTItem::TextBox(self.arena.materialize_box(*id))),
+        );
+        items.extend(self.other_items.iter().cloned());
+        items.extend(
+            self.empty_lines
+                .iter()
+                .map(|id| LTItem::TextLine(self.arena.materialize_line(*id))),
+        );
+        items
+    }
+
+    pub(crate) fn materialize_groups(&self) -> Vec<LTTextGroup> {
+        let Some(root_groups) = &self.root_groups else {
+            return Vec::new();
+        };
+        root_groups
+            .iter()
+            .map(|id| self.materialize_group(*id))
+            .collect()
+    }
+
+    fn materialize_group(&self, id: GroupId) -> LTTextGroup {
+        let group = &self.groups[id.0];
+        let elements = group
+            .elements
+            .iter()
+            .map(|element| match element {
+                CompactGroupElement::Box(id) => {
+                    TextGroupElement::Box(self.arena.materialize_box(*id))
+                }
+                CompactGroupElement::Group(id) => {
+                    TextGroupElement::Group(Box::new(self.materialize_group(*id)))
+                }
+            })
+            .collect();
+        LTTextGroup::new(elements, group.vertical)
+    }
+
+    pub(crate) const fn has_groups(&self) -> bool {
+        self.root_groups.is_some()
+    }
+
+    pub(crate) fn set_bidi(&mut self, bidi: bool) {
+        self.arena.set_bidi(bidi);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn storage_counts(&self) -> (usize, usize, usize) {
+        (
+            self.arena.chars.len(),
+            self.arena.lines.len(),
+            self.arena.boxes.len(),
+        )
     }
 }
 

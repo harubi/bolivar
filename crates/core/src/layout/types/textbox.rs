@@ -48,6 +48,14 @@ impl LTTextBoxHorizontal {
         }
     }
 
+    pub(crate) fn proxy(bbox: Rect, source_index: i32) -> Self {
+        Self {
+            component: LTComponent::new(bbox),
+            lines: Arc::new(Vec::new()),
+            index: source_index,
+        }
+    }
+
     pub fn add(&mut self, line: LTTextLineHorizontal) {
         // Expand bounding box
         let bbox = line.bbox();
@@ -142,6 +150,14 @@ impl LTTextBoxVertical {
             component: LTComponent::new((INF_F64, INF_F64, -INF_F64, -INF_F64)),
             lines: Arc::new(Vec::with_capacity(capacity)),
             index: -1,
+        }
+    }
+
+    pub(crate) fn proxy(bbox: Rect, source_index: i32) -> Self {
+        Self {
+            component: LTComponent::new(bbox),
+            lines: Arc::new(Vec::new()),
+            index: source_index,
         }
     }
 
@@ -241,6 +257,20 @@ impl TextBoxType {
         match self {
             Self::Horizontal(_) => Axis::Horizontal,
             Self::Vertical(_) => Axis::Vertical,
+        }
+    }
+
+    pub(crate) fn index(&self) -> i32 {
+        match self {
+            Self::Horizontal(text_box) => text_box.index(),
+            Self::Vertical(text_box) => text_box.index(),
+        }
+    }
+
+    pub(crate) fn set_index(&mut self, index: i32) {
+        match self {
+            Self::Horizontal(text_box) => text_box.set_index(index),
+            Self::Vertical(text_box) => text_box.set_index(index),
         }
     }
 }
@@ -529,18 +559,23 @@ impl IndexAssigner {
 
     /// Recursively assigns indices to text boxes in the group.
     pub fn run(&mut self, group: &mut LTTextGroup) {
+        self.run_with_assignment(group, &mut |_, _| {});
+    }
+
+    pub(crate) fn run_with_assignment(
+        &mut self,
+        group: &mut LTTextGroup,
+        visit: &mut impl FnMut(i32, i32),
+    ) {
         for elem in &mut group.elements {
             match elem {
-                TextGroupElement::Box(TextBoxType::Horizontal(b)) => {
-                    b.set_index(self.index);
-                    self.index += 1;
-                }
-                TextGroupElement::Box(TextBoxType::Vertical(b)) => {
-                    b.set_index(self.index);
+                TextGroupElement::Box(text_box) => {
+                    visit(text_box.index(), self.index);
+                    text_box.set_index(self.index);
                     self.index += 1;
                 }
                 TextGroupElement::Group(g) => {
-                    self.run(g);
+                    self.run_with_assignment(g, visit);
                 }
             }
         }

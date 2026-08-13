@@ -1,5 +1,8 @@
 //! Container types: LTLayoutContainer, LTFigure, LTPage.
 
+use std::sync::OnceLock;
+
+use crate::layout::arena::CompactPageLayout;
 use crate::utils::{Matrix, Rect, apply_matrix_rect};
 
 use super::component::LTComponent;
@@ -95,9 +98,12 @@ impl_has_bbox_delegate!(LTFigure, container, method);
 ///
 /// Like any other LTLayoutContainer, an LTPage can be iterated to obtain child
 /// objects like LTTextBox, LTFigure, LTImage, LTRect, LTCurve and LTLine.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LTPage {
     pub(crate) container: LTLayoutContainer,
+    pub(crate) compact_layout: Option<CompactPageLayout>,
+    item_cache: OnceLock<Vec<LTItem>>,
+    group_cache: OnceLock<Vec<LTTextGroup>>,
     /// Page identifier (usually 1-based page number)
     pub pageid: i32,
     /// Page rotation in degrees
@@ -108,6 +114,9 @@ impl LTPage {
     pub fn new(pageid: i32, bbox: Rect, rotate: f64) -> Self {
         Self {
             container: LTLayoutContainer::new(bbox),
+            compact_layout: None,
+            item_cache: OnceLock::new(),
+            group_cache: OnceLock::new(),
             pageid,
             rotate,
         }
@@ -119,28 +128,91 @@ impl LTPage {
 
     /// Adds an item to the page.
     pub fn add(&mut self, item: LTItem) {
+        self.materialize_compact_layout();
         self.container.add(item);
     }
 
     pub(crate) fn reserve_items(&mut self, additional: usize) {
+        self.materialize_compact_layout();
         self.container.items.reserve(additional);
     }
 
     /// Returns an iterator over contained items.
-    pub fn iter(&self) -> impl Iterator<Item = &LTItem> {
-        self.container.iter()
+    pub fn iter(&self) -> std::slice::Iter<'_, LTItem> {
+        if let Some(layout) = &self.compact_layout {
+            self.item_cache
+                .get_or_init(|| layout.materialize_items())
+                .iter()
+        } else {
+            self.container.items.iter()
+        }
     }
 
     /// Enable or disable ICU bidi reconstruction for all text on this page.
     pub fn set_bidi(&mut self, bidi: bool) {
-        for item in &mut self.container.items {
-            item.set_bidi(bidi);
+        if let Some(layout) = &mut self.compact_layout {
+            layout.set_bidi(bidi);
+            self.item_cache.take();
+            self.group_cache.take();
+        } else {
+            for item in &mut self.container.items {
+                item.set_bidi(bidi);
+            }
         }
     }
 
     /// Returns the text groups after analysis (if boxes_flow was enabled).
-    pub const fn groups(&self) -> Option<&Vec<LTTextGroup>> {
-        self.container.groups.as_ref()
+    pub fn groups(&self) -> Option<&Vec<LTTextGroup>> {
+        if let Some(layout) = &self.compact_layout {
+            layout
+                .has_groups()
+                .then(|| self.group_cache.get_or_init(|| layout.materialize_groups()))
+        } else {
+            self.container.groups.as_ref()
+        }
+    }
+
+    pub(crate) fn install_compact_layout(&mut self, layout: CompactPageLayout) {
+        self.container.items.clear();
+        self.container.groups = None;
+        self.compact_layout = Some(layout);
+        self.item_cache.take();
+        self.group_cache.take();
+    }
+
+    fn materialize_compact_layout(&mut self) {
+        let Some(layout) = self.compact_layout.take() else {
+            return;
+        };
+        self.container.items = self
+            .item_cache
+            .take()
+            .unwrap_or_else(|| layout.materialize_items());
+        self.container.groups = layout.has_groups().then(|| {
+            self.group_cache
+                .take()
+                .unwrap_or_else(|| layout.materialize_groups())
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compact_storage_counts(&self) -> Option<(usize, usize, usize)> {
+        self.compact_layout
+            .as_ref()
+            .map(CompactPageLayout::storage_counts)
+    }
+}
+
+impl Clone for LTPage {
+    fn clone(&self) -> Self {
+        Self {
+            container: self.container.clone(),
+            compact_layout: self.compact_layout.clone(),
+            item_cache: OnceLock::new(),
+            group_cache: OnceLock::new(),
+            pageid: self.pageid,
+            rotate: self.rotate,
+        }
     }
 }
 
