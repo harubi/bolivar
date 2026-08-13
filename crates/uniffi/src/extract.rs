@@ -325,7 +325,6 @@ fn prepared_extraction(
     Ok((options, settings, selected_indices, geometries))
 }
 
-#[derive(Clone)]
 pub(crate) struct TablePageContext {
     pub page_index: usize,
     pub page_number: u32,

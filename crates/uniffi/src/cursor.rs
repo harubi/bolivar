@@ -15,21 +15,15 @@ struct TableCursorState {
     contexts: IntoIter<TablePageContext>,
     current_tables: IntoIter<TableMetadata>,
     current_context: Option<TablePageContext>,
-    terminal: bool,
 }
 
 impl TableCursorState {
     fn fail(&mut self, error: BolivarError) -> Result<Option<Table>, BolivarError> {
-        self.terminal = true;
         self.stream.take();
         Err(error)
     }
 
     fn next(&mut self) -> Result<Option<Table>, BolivarError> {
-        if self.terminal {
-            return Ok(None);
-        }
-
         loop {
             if let Some(table) = self.current_tables.next() {
                 let Some(context) = self.current_context.as_ref() else {
@@ -42,11 +36,10 @@ impl TableCursorState {
                 )));
             }
 
-            let next_page = match self.stream.as_mut() {
-                Some(stream) => stream.next(),
-                None => return self.fail(BolivarError::RuntimeError),
+            let Some(stream) = self.stream.as_mut() else {
+                return Ok(None);
             };
-            match next_page {
+            match stream.next() {
                 Some(Ok((page_index, tables))) => {
                     let Some(context) = self.contexts.next() else {
                         return self.fail(BolivarError::RuntimeError);
@@ -62,7 +55,6 @@ impl TableCursorState {
                     if self.contexts.next().is_some() {
                         return self.fail(BolivarError::RuntimeError);
                     }
-                    self.terminal = true;
                     self.stream.take();
                     return Ok(None);
                 }
@@ -100,7 +92,6 @@ impl NativeTableCursor {
                 contexts: contexts.into_iter(),
                 current_tables: Vec::new().into_iter(),
                 current_context: None,
-                terminal: false,
             }),
         }))
     }
@@ -119,33 +110,25 @@ impl NativeTableCursor {
 
 struct PageTableRowsCursorState {
     stream: Option<Stream<PageTables>>,
-    terminal: bool,
 }
 
 impl PageTableRowsCursorState {
     fn fail(&mut self, error: BolivarError) -> Result<Option<PageTableRows>, BolivarError> {
-        self.terminal = true;
         self.stream.take();
         Err(error)
     }
 
     fn next(&mut self) -> Result<Option<PageTableRows>, BolivarError> {
-        if self.terminal {
+        let Some(stream) = self.stream.as_mut() else {
             return Ok(None);
-        }
-
-        let next_page = match self.stream.as_mut() {
-            Some(stream) => stream.next(),
-            None => return self.fail(BolivarError::RuntimeError),
         };
-        match next_page {
+        match stream.next() {
             Some(Ok((page_index, tables))) => Ok(Some(PageTableRows {
                 page_number: usize_to_u32(page_index.saturating_add(1)),
                 tables,
             })),
             Some(Err(error)) => self.fail(BolivarError::from(error)),
             None => {
-                self.terminal = true;
                 self.stream.take();
                 Ok(None)
             }
@@ -179,7 +162,6 @@ impl NativePageTableRowsCursor {
             cancellation,
             state: Mutex::new(PageTableRowsCursorState {
                 stream: Some(stream),
-                terminal: false,
             }),
         }))
     }

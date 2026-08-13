@@ -457,13 +457,11 @@
   their -x-/-y- variants, :explicit-vertical-lines/:explicit-horizontal-lines,
   and page crops :crop/:first-page-crop as [x0 y0 x1 y1]."
   ([^Document doc]
-   (mapped-cursor (wrap-jvm-errors #(.tables doc)) table->map))
+   (tables doc nil))
   ([^Document doc opts]
-   (if (nil? opts)
-     (tables doc)
-     (mapped-cursor
-      (wrap-jvm-errors #(.tables doc (->table-options opts)))
-      table->map))))
+   (mapped-cursor
+    (wrap-jvm-errors #(.tables doc (->table-options opts)))
+    table->map)))
 
 (defn- page-table-rows->map [^PageTableRows page]
   {:page-number (.pageNumber page)
