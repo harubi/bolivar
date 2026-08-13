@@ -7,7 +7,38 @@ use crate::utils::{Matrix, Rect, apply_matrix_rect};
 
 use super::component::LTComponent;
 use super::item::LTItem;
-use super::textbox::LTTextGroup;
+use super::textbox::{LTTextGroup, TextBoxType};
+use super::textline::LTTextLine;
+
+fn append_item_text(item: &LTItem, output: &mut String, first_box: &mut bool) {
+    match item {
+        LTItem::TextBox(text_box) => {
+            if !*first_box {
+                output.push('\n');
+            }
+            *first_box = false;
+            match text_box {
+                TextBoxType::Horizontal(text_box) => {
+                    for line in text_box.iter() {
+                        output.push_str(&line.get_text());
+                    }
+                }
+                TextBoxType::Vertical(text_box) => {
+                    for line in text_box.iter() {
+                        output.push_str(&line.get_text());
+                    }
+                }
+            }
+        }
+        LTItem::Figure(figure) => {
+            for child in figure.iter() {
+                append_item_text(child, output, first_box);
+            }
+        }
+        LTItem::Page(page) => page.append_text(output, first_box),
+        _ => {}
+    }
+}
 
 /// Layout container that performs layout analysis on contained objects.
 #[derive(Debug, Clone)]
@@ -148,6 +179,27 @@ impl LTPage {
         }
     }
 
+    /// Returns page text without materializing compact layout objects.
+    pub fn get_text(&self) -> String {
+        let mut output = String::new();
+        let mut first_box = true;
+        self.append_text(&mut output, &mut first_box);
+        output
+    }
+
+    fn append_text(&self, output: &mut String, first_box: &mut bool) {
+        if let Some(layout) = &self.compact_layout {
+            layout.append_text_boxes(output, first_box);
+            for item in layout.other_items() {
+                append_item_text(item, output, first_box);
+            }
+        } else {
+            for item in &self.container.items {
+                append_item_text(item, output, first_box);
+            }
+        }
+    }
+
     /// Enable or disable ICU bidi reconstruction for all text on this page.
     pub fn set_bidi(&mut self, bidi: bool) {
         if let Some(layout) = &mut self.compact_layout {
@@ -200,6 +252,11 @@ impl LTPage {
         self.compact_layout
             .as_ref()
             .map(CompactPageLayout::storage_counts)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compact_items_are_materialized(&self) -> bool {
+        self.item_cache.get().is_some()
     }
 }
 

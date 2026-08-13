@@ -716,10 +716,14 @@ pub(crate) fn reconstruct_textline_text(elements: &[TextLineElement], axis: Axis
             TextLineElement::Anno(annotation) => annotation.get_text(),
         })
         .collect::<String>();
+    reconstruct_textline_raw_text(raw_text, source_is_logical(elements, axis))
+}
+
+pub(crate) fn reconstruct_textline_raw_text(raw_text: String, source_is_logical: bool) -> String {
     if !contains_rtl_script(&raw_text) {
         return raw_text;
     }
-    if source_is_logical(elements, axis) {
+    if source_is_logical {
         return normalize_arabic_presentation_forms(&raw_text);
     }
     reconstruct_text_per_line(&raw_text)
