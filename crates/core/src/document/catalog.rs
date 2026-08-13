@@ -612,7 +612,7 @@ impl PDFDocument {
         Ok(())
     }
 
-    fn find_startxref_simd(data: &[u8]) -> Option<usize> {
+    fn find_last_startxref_marker(data: &[u8]) -> Option<usize> {
         let needle = b"startxref";
         if data.len() < needle.len() {
             return None;
@@ -644,7 +644,7 @@ impl PDFDocument {
         if data.len() < search.len() {
             return Err(crate::error::PdfError::SyntaxError("PDF too small".into()));
         }
-        let Some(i) = Self::find_startxref_simd(data) else {
+        let Some(i) = Self::find_last_startxref_marker(data) else {
             return Err(PdfError::NoValidXRef);
         };
 
@@ -2002,7 +2002,7 @@ impl PDFDocument {
         Ok(obj)
     }
 
-    fn find_endstream_simd(data: &[u8]) -> Option<usize> {
+    fn find_endstream(data: &[u8]) -> Option<usize> {
         let needle = b"endstream";
         if data.len() < needle.len() {
             return None;
@@ -2019,10 +2019,6 @@ impl PDFDocument {
             }
         }
         None
-    }
-
-    fn find_endstream(data: &[u8]) -> Option<usize> {
-        Self::find_endstream_simd(data)
     }
 
     /// Get document catalog.
@@ -2797,23 +2793,23 @@ mod tests {
     }
 
     #[test]
-    fn find_endstream_simd_trims_whitespace() {
+    fn find_endstream_trims_whitespace() {
         let data = b"abc  \nendstream";
-        let end = PDFDocument::find_endstream_simd(data).unwrap();
+        let end = PDFDocument::find_endstream(data).unwrap();
         assert_eq!(&data[..end], b"abc");
     }
 
     #[test]
-    fn find_startxref_simd_matches_scalar() {
+    fn find_startxref_marker_is_found() {
         let data = b"trailer\nstartxref\n123\n%%EOF";
-        let pos = PDFDocument::find_startxref_simd(data).unwrap();
+        let pos = PDFDocument::find_last_startxref_marker(data).unwrap();
         assert_eq!(&data[pos..pos + 9], b"startxref");
     }
 
     #[test]
     fn find_startxref_returns_last_occurrence() {
         let data = b"startxref\n1\nstartxref\n2\n%%EOF";
-        let pos = PDFDocument::find_startxref_simd(data).unwrap();
+        let pos = PDFDocument::find_last_startxref_marker(data).unwrap();
         assert_eq!(&data[pos..pos + 9], b"startxref");
         assert_eq!(&data[pos + 9..pos + 11], b"\n2");
     }
