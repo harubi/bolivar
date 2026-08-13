@@ -73,6 +73,10 @@ impl LTFigure {
         self.container.add(item);
     }
 
+    pub(crate) fn reserve_items(&mut self, additional: usize) {
+        self.container.items.reserve(additional);
+    }
+
     /// Returns an iterator over contained items.
     pub fn iter(&self) -> impl Iterator<Item = &LTItem> {
         self.container.iter()
@@ -116,6 +120,10 @@ impl LTPage {
     /// Adds an item to the page.
     pub fn add(&mut self, item: LTItem) {
         self.container.add(item);
+    }
+
+    pub(crate) fn reserve_items(&mut self, additional: usize) {
+        self.container.items.reserve(additional);
     }
 
     /// Returns an iterator over contained items.

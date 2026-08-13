@@ -39,11 +39,13 @@ impl ArenaChar {
     pub fn materialize(&self, arena: &impl ArenaLookup) -> LTChar {
         let text = arena.resolve(self.text);
         let fontname = arena.resolve(self.fontname);
-        let tag = self.tag.map(|t| arena.resolve(t).to_string());
+        let tag = self.tag.map(|key| arena.resolve(key));
+        let ncs = self.ncs_name.map(|key| arena.resolve(key));
+        let scs = self.scs_name.map(|key| arena.resolve(key));
         let ncolor = Some(arena.color(self.ncolor).to_vec());
         let scolor = Some(arena.color(self.scolor).to_vec());
 
-        let mut ltchar = LTChar::with_colors_matrix(
+        LTChar::from_arena_parts(
             self.bbox,
             text,
             fontname,
@@ -53,18 +55,11 @@ impl ArenaChar {
             self.matrix,
             self.mcid,
             tag,
+            ncs,
+            scs,
             ncolor,
             scolor,
-        );
-
-        if let Some(ncs) = self.ncs_name {
-            ltchar.set_ncs(Some(arena.resolve(ncs).to_string()));
-        }
-        if let Some(scs) = self.scs_name {
-            ltchar.set_scs(Some(arena.resolve(scs).to_string()));
-        }
-
-        ltchar
+        )
     }
 }
 
@@ -101,7 +96,9 @@ impl<'a> ArenaPage<'a> {
     }
 
     pub fn materialize(self, arena: &impl ArenaLookup) -> LTPage {
+        let item_count = self.items.len();
         let mut page = LTPage::new(self.pageid, self.bbox, self.rotate);
+        page.reserve_items(item_count);
         for item in self.items {
             page.add(materialize_item(item, arena));
         }
@@ -172,8 +169,10 @@ impl<'a> ArenaFigure<'a> {
     }
 
     pub fn materialize(self, arena: &impl ArenaLookup) -> LTFigure {
+        let item_count = self.items.len();
         let name = arena.resolve(self.name).to_string();
         let mut fig = LTFigure::new(&name, self.bbox, self.matrix);
+        fig.reserve_items(item_count);
         for item in self.items {
             fig.add(materialize_item(item, arena));
         }

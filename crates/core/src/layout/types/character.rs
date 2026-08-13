@@ -179,6 +179,39 @@ pub struct LTChar {
 }
 
 impl LTChar {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_arena_parts(
+        bbox: Rect,
+        text: &str,
+        fontname: &str,
+        size: f64,
+        upright: bool,
+        adv: f64,
+        matrix: Matrix,
+        mcid: Option<i32>,
+        tag: Option<&str>,
+        ncs: Option<&str>,
+        scs: Option<&str>,
+        non_stroking_color: Color,
+        stroking_color: Color,
+    ) -> Self {
+        Self {
+            component: LTComponent::new(bbox),
+            text: SmolStr::new(text),
+            fontname: SmolStr::new(fontname),
+            size,
+            upright,
+            adv,
+            matrix,
+            mcid,
+            tag: tag.map(SmolStr::new),
+            ncs: ncs.map(SmolStr::new),
+            scs: scs.map(SmolStr::new),
+            non_stroking_color,
+            stroking_color,
+        }
+    }
+
     /// Creates a new builder for constructing LTChar instances.
     ///
     /// # Example

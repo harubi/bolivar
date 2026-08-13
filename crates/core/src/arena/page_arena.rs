@@ -8,12 +8,31 @@ use super::types::{ArenaChar, ColorId};
 type InternCache = FxHashMap<SmolStr, Spur>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ColorKey(Box<[u64]>);
+struct ColorKey {
+    inline: [u64; 4],
+    extra: Box<[u64]>,
+    len: usize,
+}
 
 impl ColorKey {
     fn from_slice(color: &[f64]) -> Self {
-        let bits: Vec<u64> = color.iter().map(|c| c.to_bits()).collect();
-        Self(bits.into_boxed_slice())
+        let mut inline = [0; 4];
+        for (slot, component) in inline.iter_mut().zip(color) {
+            *slot = component.to_bits();
+        }
+        let extra = if color.len() > inline.len() {
+            color[inline.len()..]
+                .iter()
+                .map(|component| component.to_bits())
+                .collect()
+        } else {
+            Box::default()
+        };
+        Self {
+            inline,
+            extra,
+            len: color.len(),
+        }
     }
 }
 
@@ -180,5 +199,21 @@ impl ArenaBump for PageArena {
 impl<'a> ArenaBump for ArenaContext<'a> {
     fn bump(&self) -> &Bump {
         self.bump()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_interning_handles_inline_and_long_values() {
+        let mut arena = PageArena::new();
+        let inline = arena.intern_color(&[1.0, 2.0, 3.0, 4.0]);
+        let long = arena.intern_color(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+
+        assert_ne!(inline, long);
+        assert_eq!(long, arena.intern_color(&[1.0, 2.0, 3.0, 4.0, 5.0]));
+        assert_eq!(arena.color(long), &[1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 }

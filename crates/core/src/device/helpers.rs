@@ -67,8 +67,10 @@ pub(super) fn render_char_without_font(
 
     let mcid = analyzer.current_mcid();
     let tag = analyzer.current_tag_key();
-    let ncolor = analyzer.arena.intern_color(&graphicstate.ncolor.to_vec());
-    let scolor = analyzer.arena.intern_color(&graphicstate.scolor.to_vec());
+    let ncolor_components = graphicstate.ncolor.components();
+    let scolor_components = graphicstate.scolor.components();
+    let ncolor = analyzer.arena.intern_color(ncolor_components.as_slice());
+    let scolor = analyzer.arena.intern_color(scolor_components.as_slice());
     let fontname = fallback_fontname.unwrap_or("unknown");
     let text_key = analyzer.arena.intern(&text);
     let fontname_key = analyzer.arena.intern(fontname);
