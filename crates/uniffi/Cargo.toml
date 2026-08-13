@@ -16,10 +16,10 @@ bolivar-core.workspace = true
 thiserror.workspace = true
 # No `cli` feature: it pulls clap and the template engine into the cdylib.
 # The generator lives in crates/uniffi-bindgen.
-uniffi = { version = "0.31.0" }
+uniffi = "0.32.0"
 
 [build-dependencies]
-uniffi = { version = "0.31.0", features = ["build"] }
+uniffi = { version = "0.32.0", features = ["build"] }
 
 [dev-dependencies]
-pollster = "0.4"
+pollster = "1.0"

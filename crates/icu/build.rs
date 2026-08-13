@@ -1,7 +1,8 @@
 use std::env;
 use std::ffi::OsStr;
+use std::fmt::Write as _;
 use std::fs::{self, File};
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -187,8 +188,20 @@ fn download(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 fn sha256(path: &Path) -> io::Result<String> {
     let mut input = BufReader::new(File::open(path)?);
     let mut digest = Sha256::new();
-    io::copy(&mut input, &mut digest)?;
-    Ok(format!("{:x}", digest.finalize()))
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = input.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+
+    let mut encoded = String::with_capacity(64);
+    for byte in digest.finalize() {
+        write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    Ok(encoded)
 }
 
 fn prepend_flag(command: &mut Command, name: &str, flag: &str) {

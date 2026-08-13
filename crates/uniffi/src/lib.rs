@@ -1,5 +1,8 @@
 //! uniffi-exported bolivar surface for JVM/Swift/Clojure bindings.
 
+// UniFFI emits its metadata as a generated constant array.
+#![allow(clippy::large_const_arrays)]
+
 mod cursor;
 mod document;
 mod error;

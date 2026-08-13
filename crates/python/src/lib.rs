@@ -3,6 +3,9 @@
 //! This crate provides PyO3 bindings to expose bolivar's PDF parsing
 //! functionality to Python, with a pdfminer.six-compatible API.
 
+// Public PyO3 signatures and tuple shapes mirror the compatible Python APIs.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 mod casting;
 mod codec;
 mod convert;

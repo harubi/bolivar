@@ -473,16 +473,16 @@ impl PyEncodingDB {
         diff: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let mut entries = Vec::new();
-        if let Some(diff) = diff {
-            if let Ok(seq) = diff.cast::<PySequence>() {
-                let len = seq.len()?;
-                for idx in 0..len {
-                    let item = seq.get_item(idx)?;
-                    if let Ok(code) = item.extract::<u8>() {
-                        entries.push(DiffEntry::Code(code));
-                    } else if let Some(name) = psliteral_name(&item) {
-                        entries.push(DiffEntry::Name(name.into()));
-                    }
+        if let Some(diff) = diff
+            && let Ok(seq) = diff.cast::<PySequence>()
+        {
+            let len = seq.len()?;
+            for idx in 0..len {
+                let item = seq.get_item(idx)?;
+                if let Ok(code) = item.extract::<u8>() {
+                    entries.push(DiffEntry::Code(code));
+                } else if let Some(name) = psliteral_name(&item) {
+                    entries.push(DiffEntry::Name(name.into()));
                 }
             }
         }

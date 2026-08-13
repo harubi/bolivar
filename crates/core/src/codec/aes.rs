@@ -2,7 +2,7 @@
 //!
 //! Port of pdfminer.six utils.unpad_aes
 
-use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
 
 type Aes128CbcDec = Decryptor<aes::Aes128>;
@@ -22,15 +22,15 @@ pub fn aes_cbc_decrypt(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
     let mut buf = data.to_vec();
     match key.len() {
         16 => {
-            let cipher = Aes128CbcDec::new(key.into(), iv.into());
+            let cipher = Aes128CbcDec::new_from_slices(key, iv).unwrap();
             cipher
-                .decrypt_padded_mut::<aes::cipher::block_padding::NoPadding>(&mut buf)
+                .decrypt_padded::<aes::cipher::block_padding::NoPadding>(&mut buf)
                 .unwrap();
         }
         32 => {
-            let cipher = Aes256CbcDec::new(key.into(), iv.into());
+            let cipher = Aes256CbcDec::new_from_slices(key, iv).unwrap();
             cipher
-                .decrypt_padded_mut::<aes::cipher::block_padding::NoPadding>(&mut buf)
+                .decrypt_padded::<aes::cipher::block_padding::NoPadding>(&mut buf)
                 .unwrap();
         }
         _ => panic!("AES key must be 16 or 32 bytes"),
@@ -50,9 +50,9 @@ pub fn aes_cbc_encrypt(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
     assert!(key.len() == 16, "AES-128 key must be 16 bytes");
     assert!(iv.len() == 16, "AES IV must be 16 bytes");
     let mut buf = data.to_vec();
-    let cipher = Aes128CbcEnc::new(key.into(), iv.into());
+    let cipher = Aes128CbcEnc::new_from_slices(key, iv).unwrap();
     cipher
-        .encrypt_padded_mut::<aes::cipher::block_padding::NoPadding>(&mut buf, data.len())
+        .encrypt_padded::<aes::cipher::block_padding::NoPadding>(&mut buf, data.len())
         .unwrap();
     buf
 }

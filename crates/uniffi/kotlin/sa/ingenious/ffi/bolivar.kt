@@ -116,6 +116,58 @@ internal open class ForeignBytes : Structure() {
         Structure.ByValue
 }
 
+// Converter for `&[u8]` / `[ByRef] bytes` arguments.
+//
+// Only `lower` is valid — zero-copy byte buffers only flow foreign -> Rust,
+// and only in argument position. `lift`, `read`, `write`, and
+// `allocationSize` have no sound implementation here and all panic at
+// runtime. The `FfiConverter` interface is implemented so that the
+// compiler enforces the full method set (rather than relying on eyeball).
+//
+// The provided `ByteBuffer` MUST be direct — only direct buffers have a
+// stable native address that JNA can expose via `getDirectBufferPointer`.
+// The returned `ForeignBytes.ByValue` is only valid for the duration of
+// the FFI call; the Rust side treats it as a borrow.
+internal object FfiConverterByRefBytes : FfiConverter<java.nio.ByteBuffer, ForeignBytes.ByValue> {
+    override fun lower(value: java.nio.ByteBuffer): ForeignBytes.ByValue {
+        require(value.isDirect) { "UniFFI zero-copy &[u8] requires a direct ByteBuffer. Use ByteBuffer.allocateDirect()." }
+        val remaining = value.remaining()
+        val fb = ForeignBytes.ByValue()
+        fb.len = remaining
+        // Zero-length direct buffers: skip getDirectBufferPointer (platform-variable behavior)
+        // and pass null. The Rust side treats (null, 0) as &[].
+        fb.data =
+            if (remaining == 0) {
+                null
+            } else {
+                com.sun.jna.Native
+                    .getDirectBufferPointer(value)
+            }
+        return fb
+    }
+
+    override fun lift(value: ForeignBytes.ByValue): java.nio.ByteBuffer =
+        error("ByRef bytes cannot be lifted: zero-copy &[u8] only flows foreign->Rust")
+
+    override fun read(buf: java.nio.ByteBuffer): java.nio.ByteBuffer =
+        error(
+            "ByRef bytes cannot be read from a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.",
+        )
+
+    override fun write(
+        value: java.nio.ByteBuffer,
+        buf: java.nio.ByteBuffer,
+    ): Unit =
+        error(
+            "ByRef bytes cannot be written to a buffer: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.",
+        )
+
+    override fun allocationSize(value: java.nio.ByteBuffer): ULong =
+        error(
+            "ByRef bytes have no RustBuffer allocation size: zero-copy &[u8] is only supported in argument position, not nested in records/options/etc.",
+        )
+}
+
 /**
  * The FfiConverter interface handles converter types to and from the FFI
  *
@@ -742,39 +794,39 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckApiChecksums(this)
     }
 
-    external fun uniffi_bolivar_uniffi_checksum_func_bolivar_version(): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_bolivar_version(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_func_quick_extract_text(): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_quick_extract_text(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_func_quick_extract_text_from_bytes(): Short
+    external fun uniffi_bolivar_uniffi_checksum_func_quick_extract_text_from_bytes(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativepagetablerowscursor_cancel(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepagetablerowscursor_cancel(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativepagetablerowscursor_next(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepagetablerowscursor_next(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_layout_pages(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_layout_pages(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_page_summaries(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_page_summaries(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_document(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_document(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_page(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_page(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_text(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_text(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_metadata(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_metadata(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_table_rows(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_table_rows(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_tables(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_tables(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativetablecursor_cancel(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativetablecursor_cancel(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_method_nativetablecursor_next(): Short
+    external fun uniffi_bolivar_uniffi_checksum_method_nativetablecursor_next(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_constructor_nativepdfdocument_from_bytes(): Short
+    external fun uniffi_bolivar_uniffi_checksum_constructor_nativepdfdocument_from_bytes(): Int
 
-    external fun uniffi_bolivar_uniffi_checksum_constructor_nativepdfdocument_from_path(): Short
+    external fun uniffi_bolivar_uniffi_checksum_constructor_nativepdfdocument_from_path(): Int
 
     external fun ffi_bolivar_uniffi_uniffi_contract_version(): Int
 }
@@ -942,7 +994,7 @@ internal object UniffiLib {
     external fun ffi_bolivar_uniffi_rust_future_complete_u8(
         `handle`: Long,
         uniffi_out_err: UniffiRustCallStatus,
-    ): Byte
+    ): Int
 
     external fun ffi_bolivar_uniffi_rust_future_poll_i8(
         `handle`: Long,
@@ -972,7 +1024,7 @@ internal object UniffiLib {
     external fun ffi_bolivar_uniffi_rust_future_complete_u16(
         `handle`: Long,
         uniffi_out_err: UniffiRustCallStatus,
-    ): Short
+    ): Int
 
     external fun ffi_bolivar_uniffi_rust_future_poll_i16(
         `handle`: Long,
@@ -1122,55 +1174,55 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if (lib.uniffi_bolivar_uniffi_checksum_func_bolivar_version() != 51568.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_func_bolivar_version() != 51568) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_func_quick_extract_text() != 23574.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_func_quick_extract_text() != 38194) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_func_quick_extract_text_from_bytes() != 63330.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_func_quick_extract_text_from_bytes() != 50944) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepagetablerowscursor_cancel() != 11378.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepagetablerowscursor_cancel() != 11378) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepagetablerowscursor_next() != 51183.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepagetablerowscursor_next() != 30949) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_layout_pages() != 28799.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_layout_pages() != 54481) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_page_summaries() != 9331.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_page_summaries() != 41008) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_document() != 53067.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_document() != 53067) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_page() != 21090.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_raw_page() != 21090) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_text() != 44718.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_extract_text() != 44718) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_metadata() != 36498.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_metadata() != 36498) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_table_rows() != 19941.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_table_rows() != 38309) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_tables() != 54123.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativepdfdocument_tables() != 5013) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativetablecursor_cancel() != 2981.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativetablecursor_cancel() != 2981) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_method_nativetablecursor_next() != 41688.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_method_nativetablecursor_next() != 17372) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_constructor_nativepdfdocument_from_bytes() != 1608.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_constructor_nativepdfdocument_from_bytes() != 4521) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_bolivar_uniffi_checksum_constructor_nativepdfdocument_from_path() != 40894.toShort()) {
+    if (lib.uniffi_bolivar_uniffi_checksum_constructor_nativepdfdocument_from_path() != 32930) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1682,6 +1734,11 @@ open class NativePageTableRowsCursor :
     private val wasDestroyed = AtomicBoolean(false)
     private val callCounter = AtomicLong(1)
 
+    /**
+     * Whether the current object has been destroyed and its reference is gone in the Rust side.
+     */
+    val uniffiIsDestroyed: Boolean get() = wasDestroyed.get()
+
     override fun destroy() {
         // Only allow a single call to this method.
         // TODO: maybe we should log a warning if called more than once?
@@ -1943,6 +2000,11 @@ open class NativePdfDocument :
 
     private val wasDestroyed = AtomicBoolean(false)
     private val callCounter = AtomicLong(1)
+
+    /**
+     * Whether the current object has been destroyed and its reference is gone in the Rust side.
+     */
+    val uniffiIsDestroyed: Boolean get() = wasDestroyed.get()
 
     override fun destroy() {
         // Only allow a single call to this method.
@@ -2304,6 +2366,11 @@ open class NativeTableCursor :
 
     private val wasDestroyed = AtomicBoolean(false)
     private val callCounter = AtomicLong(1)
+
+    /**
+     * Whether the current object has been destroyed and its reference is gone in the Rust side.
+     */
+    val uniffiIsDestroyed: Boolean get() = wasDestroyed.get()
 
     override fun destroy() {
         // Only allow a single call to this method.

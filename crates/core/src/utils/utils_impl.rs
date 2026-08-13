@@ -346,7 +346,7 @@ impl<T: HasBBox> Plane<T> {
             }
         }
 
-        for node in self.dynamic_tree.locate_in_envelope_intersecting(&env) {
+        for node in self.dynamic_tree.locate_in_envelope_intersecting(env) {
             if !self.alive.get(node.id).copied().unwrap_or(false) {
                 continue;
             }
@@ -424,7 +424,7 @@ impl<T: HasBBox> Plane<T> {
 
         if matches!(
             self.dynamic_tree
-                .locate_in_envelope_intersecting_int(&env, |node| {
+                .locate_in_envelope_intersecting_int(env, |node| {
                     if !self.alive.get(node.id).copied().unwrap_or(false) {
                         return ControlFlow::Continue(());
                     }
@@ -463,7 +463,7 @@ impl<T: HasBBox> Plane<T> {
             }
         }
 
-        for node in self.dynamic_tree.nearest_neighbor_iter(&[cx, cy]) {
+        for node in self.dynamic_tree.nearest_neighbor_iter([cx, cy]) {
             if !self.alive.get(node.id).copied().unwrap_or(false) {
                 continue;
             }

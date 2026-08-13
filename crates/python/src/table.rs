@@ -62,7 +62,7 @@ pub fn process_page(
             no_precheck::<LTPage>,
             move |arena, page_idx, page, doc| {
                 let mut rsrcmgr = PDFResourceManager::with_caching(true);
-                let mut aggregator = PDFPageAggregator::new(la.clone(), page_idx as i32 + 1, arena);
+                let mut aggregator = PDFPageAggregator::new(la, page_idx as i32 + 1, arena);
                 core_process_page(
                     page,
                     &mut aggregator,
