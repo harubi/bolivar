@@ -6,8 +6,17 @@ plugins {
     id("com.vanniktech.maven.publish") version "0.36.0"
 }
 
+val cargoWorkspaceVersion =
+    file("../../../Cargo.toml")
+        .readText()
+        .substringAfter("[workspace.package]")
+        .lineSequence()
+        .first { it.startsWith("version = ") }
+        .substringAfter('"')
+        .substringBefore('"')
+
 group = "sa.ingenious"
-version = "1.9.2"  // bumped by scripts/bump-version.sh
+version = cargoWorkspaceVersion
 
 repositories {
     mavenCentral()
@@ -50,8 +59,18 @@ tasks.register<Copy>("copyNativeLibs") {
 
 tasks.named<Jar>("jar") {
     dependsOn("copyNativeLibs")
+    manifest {
+        attributes["Implementation-Version"] = project.version
+    }
     from(nativeLibsDir) {
         into("natives")
+    }
+}
+
+tasks.processResources {
+    inputs.property("bolivarVersion", project.version.toString())
+    filesMatching("bolivar-version.properties") {
+        expand("version" to project.version.toString())
     }
 }
 
