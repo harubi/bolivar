@@ -168,13 +168,24 @@ fn panic_message(payload: &(dyn Any + Send)) -> &str {
 pub struct CancellationHandle {
     token: CancellationToken,
     wake: Arc<dyn Fn() + Send + Sync>,
-    wake_once: Arc<Once>,
 }
 
 impl CancellationHandle {
+    fn new<R: Send + 'static>(token: CancellationToken, sender: Sender<StreamMessage<R>>) -> Self {
+        let wake_once = Once::new();
+        Self {
+            token,
+            wake: Arc::new(move || {
+                wake_once.call_once(|| {
+                    let _ = sender.send(StreamMessage::Wake);
+                });
+            }),
+        }
+    }
+
     pub fn cancel(&self) {
         self.token.cancel();
-        self.wake_once.call_once(|| (self.wake)());
+        (self.wake)();
     }
 
     #[must_use]
@@ -188,7 +199,6 @@ pub struct Stream<R: Send + 'static> {
     receiver: Receiver<StreamMessage<R>>,
     scheduler: Arc<Scheduler<R>>,
     cancellation: CancellationHandle,
-    order: Arc<[usize]>,
     next_position: usize,
     completed: BTreeMap<usize, Result<R>>,
     failed: bool,
@@ -196,22 +206,14 @@ pub struct Stream<R: Send + 'static> {
 
 impl<R: Send + 'static> Stream<R> {
     fn new(scheduler: Arc<Scheduler<R>>, receiver: Receiver<StreamMessage<R>>) -> Self {
-        let sender = scheduler.sender.clone();
-        let cancellation = CancellationHandle {
-            token: scheduler.cancellation.clone(),
-            wake: Arc::new(move || {
-                let _ = sender.send(StreamMessage::Wake);
-            }),
-            wake_once: Arc::new(Once::new()),
-        };
-        let order = Arc::clone(&scheduler.order);
+        let cancellation =
+            CancellationHandle::new(scheduler.cancellation.clone(), scheduler.sender.clone());
         scheduler.start_workers();
 
         Self {
             receiver,
             scheduler,
             cancellation,
-            order,
             next_position: 0,
             completed: BTreeMap::new(),
             failed: false,
@@ -242,7 +244,7 @@ impl<R: Send + 'static> Iterator for Stream<R> {
         if self.failed {
             return None;
         }
-        if self.next_position >= self.order.len() {
+        if self.next_position >= self.scheduler.order.len() {
             return None;
         }
 
@@ -252,7 +254,7 @@ impl<R: Send + 'static> Iterator for Stream<R> {
             }
 
             if let Some(result) = self.completed.remove(&self.next_position) {
-                let page_index = self.order[self.next_position];
+                let page_index = self.scheduler.order[self.next_position];
                 self.next_position += 1;
                 return match result {
                     Ok(result) => {
@@ -265,7 +267,7 @@ impl<R: Send + 'static> Iterator for Stream<R> {
 
             match self.receiver.recv() {
                 Ok(StreamMessage::Completed { position, result }) => {
-                    if position < self.next_position || position >= self.order.len() {
+                    if position < self.next_position || position >= self.scheduler.order.len() {
                         return self.fail(PdfError::RuntimeError(format!(
                             "stream received invalid result position {position}"
                         )));
@@ -620,13 +622,7 @@ mod tests {
     #[test]
     fn repeated_cancellation_sends_one_wake() {
         let (sender, receiver) = channel::<StreamMessage<()>>();
-        let cancellation = CancellationHandle {
-            token: CancellationToken::new(),
-            wake: Arc::new(move || {
-                let _ = sender.send(StreamMessage::Wake);
-            }),
-            wake_once: Arc::new(Once::new()),
-        };
+        let cancellation = CancellationHandle::new(CancellationToken::new(), sender);
 
         cancellation.cancel();
         cancellation.cancel();
