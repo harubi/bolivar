@@ -1,6 +1,7 @@
 //! Per-page processing and standard finisher helpers.
 
 use crate::arena::types::ArenaPage;
+use crate::cancellation::CancellationToken;
 use crate::device::{PDFDevice, PDFPageAggregator, PDFTableCollector};
 use crate::document::{PDFDocument, PDFPage};
 use crate::error::{PdfError, Result};
@@ -83,7 +84,32 @@ pub fn process_page<D, R>(
 where
     D: PDFDevice,
 {
+    process_page_with_cancellation(
+        page,
+        device,
+        rsrcmgr,
+        rotation,
+        doc,
+        &CancellationToken::new(),
+        finish,
+    )
+}
+
+/// Run a page through the interpreter with cooperative cancellation.
+pub fn process_page_with_cancellation<D, R>(
+    page: &PDFPage,
+    device: &mut D,
+    rsrcmgr: &mut PDFResourceManager,
+    rotation: i64,
+    doc: &PDFDocument,
+    cancellation: &CancellationToken,
+    finish: impl FnOnce(&mut D) -> Result<R>,
+) -> Result<R>
+where
+    D: PDFDevice,
+{
     record_thread();
+    cancellation.check()?;
 
     let rotated_page;
     let page = if rotation.rem_euclid(360) == 0 {
@@ -93,7 +119,9 @@ where
         &rotated_page
     };
 
-    let mut interpreter = PDFPageInterpreter::new(rsrcmgr, device);
+    let mut interpreter =
+        PDFPageInterpreter::new_with_cancellation(rsrcmgr, device, cancellation.clone());
     interpreter.process_page(page, Some(doc))?;
+    cancellation.check()?;
     finish(device)
 }

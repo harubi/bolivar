@@ -1001,6 +1001,7 @@ impl Default for PDFResourceManager {
 // ============================================================================
 
 use super::types::{PDFStackT, PDFStackValue, PDFTextSeq, PDFTextSeqItem, PathSegment};
+use crate::cancellation::CancellationToken;
 use crate::device::PDFDevice;
 use crate::pdfstate::{PDFGraphicState, PDFTextState};
 use crate::utils::{MATRIX_IDENTITY, Matrix, mult_matrix};
@@ -1046,12 +1047,23 @@ pub struct PDFPageInterpreter<'a, D: PDFDevice> {
     pub(crate) xobj_stack: Vec<PDFName>,
     /// Document reference for resolving XObject resources
     pub(crate) doc: Option<&'a PDFDocument>,
+    /// Cooperative cancellation for this page and nested content streams.
+    pub(crate) cancellation: CancellationToken,
 }
 
 #[allow(non_snake_case)]
 impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Create a new PDFPageInterpreter.
     pub fn new(rsrcmgr: &'a mut PDFResourceManager, device: &'a mut D) -> Self {
+        Self::new_with_cancellation(rsrcmgr, device, CancellationToken::new())
+    }
+
+    /// Create an interpreter that stops at content-token boundaries.
+    pub fn new_with_cancellation(
+        rsrcmgr: &'a mut PDFResourceManager,
+        device: &'a mut D,
+        cancellation: CancellationToken,
+    ) -> Self {
         Self {
             rsrcmgr,
             device,
@@ -1067,6 +1079,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
             inline_image_id: 0,
             xobj_stack: Vec::new(),
             doc: None,
+            cancellation,
         }
     }
 
@@ -1507,6 +1520,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     ///
     /// Port of PDFPageInterpreter.process_page from pdfminer.six
     pub fn process_page(&mut self, page: &PDFPage, doc: Option<&'a PDFDocument>) -> Result<()> {
+        self.cancellation.check()?;
         self.doc = doc;
         let mediabox = page.mediabox.unwrap_or([0.0, 0.0, 612.0, 792.0]);
         let (x0, y0, x1, y1) = (mediabox[0], mediabox[1], mediabox[2], mediabox[3]);
@@ -1528,24 +1542,28 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         // Begin page on device
         let bbox = (x0, y0, x1, y1);
         self.device.begin_page(page.pageid, bbox, ctm);
+        let result = (|| {
+            self.cancellation.check()?;
 
-        // Initialize resources (builds fontmap)
-        self.init_resources(&page.resources, doc);
+            // Initialize resources (builds fontmap)
+            self.init_resources(&page.resources, doc);
 
-        // Initialize state and execute content streams
-        self.init_state(ctm);
-        let streams = if page.contents.is_empty() {
-            doc.map(|doc| PDFPage::parse_contents(&page.attrs, doc))
-                .transpose()?
-                .unwrap_or_default()
-        } else {
-            page.contents.clone()
-        };
-        self.execute(&streams);
+            // Initialize state and execute content streams
+            self.init_state(ctm);
+            let streams = if page.contents.is_empty() {
+                doc.map(|doc| PDFPage::parse_contents(&page.attrs, doc))
+                    .transpose()?
+                    .unwrap_or_default()
+            } else {
+                page.contents.clone()
+            };
+            self.cancellation.check()?;
+            self.execute(&streams);
+            self.cancellation.check()
+        })();
 
-        // End page on device
         self.device.end_page(page.pageid);
-        Ok(())
+        result
     }
 
     /// Execute content streams.
@@ -1554,7 +1572,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     ///
     /// Port of PDFPageInterpreter.execute from pdfminer.six
     pub fn execute(&mut self, streams: &[Vec<u8>]) {
-        if streams.is_empty() {
+        if streams.is_empty() || self.cancellation.is_cancelled() {
             return;
         }
 
@@ -1562,6 +1580,9 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         let mut operand_stack: Vec<PSToken> = Vec::new();
 
         for token in parser {
+            if self.cancellation.is_cancelled() {
+                return;
+            }
             match token {
                 ContentToken::Operand(op) => {
                     operand_stack.push(op);

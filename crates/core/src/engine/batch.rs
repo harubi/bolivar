@@ -7,6 +7,7 @@ use crate::document::{PDFDocument, PDFPage};
 use crate::error::Result;
 
 use super::plan::ExecutionPlan;
+use super::runtime::shared_engine;
 
 /// Run `per_page` against every selected page in parallel. Each invocation receives
 /// a freshly-reset arena, the page index, a borrowed page handle, and the document;
@@ -26,9 +27,9 @@ where
     F: Fn(&mut PageArena, usize, &PDFPage, &PDFDocument) -> Result<R> + Sync,
 {
     let plan = ExecutionPlan::new(doc.page_index().len(), page_numbers, maxpages);
-    let pool = plan.build_pool()?;
+    let engine = shared_engine()?;
 
-    let mut results: Vec<(usize, Result<R>)> = pool.install(|| {
+    let mut results: Vec<(usize, Result<R>)> = engine.install(|| {
         plan.order
             .par_iter()
             .map_init(PageArena::new, |arena, &page_idx| {

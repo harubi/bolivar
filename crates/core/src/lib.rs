@@ -2,6 +2,7 @@
 //! bolivar - A Rust port of pdfminer.six for PDF text extraction.
 
 pub mod arena;
+pub mod cancellation;
 pub mod codec;
 pub mod device;
 pub mod document;
@@ -56,4 +57,5 @@ pub use document::security;
 // Re-export interp modules for backwards compatibility
 pub use interp::interpreter as pdfinterp;
 
+pub use cancellation::CancellationToken;
 pub use error::{PdfError, Result};

@@ -1,3 +1,4 @@
+use crate::cancellation::CancellationToken;
 use crate::device::PDFEdgeProbe;
 use crate::document::{PDFDocument, PDFPage};
 use crate::error::Result;
@@ -7,12 +8,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::types::{TableProbePolicy, TableSettings};
 
-pub(crate) fn page_has_edges(page: &PDFPage, doc: &PDFDocument, caching: bool) -> Result<bool> {
+pub(crate) fn page_has_edges_with_cancellation(
+    page: &PDFPage,
+    doc: &PDFDocument,
+    caching: bool,
+    cancellation: &CancellationToken,
+) -> Result<bool> {
     #[cfg(test)]
     PROBE_CALLS.fetch_add(1, Ordering::Relaxed);
     let mut rsrcmgr = PDFResourceManager::with_caching(caching);
     let mut probe = PDFEdgeProbe::new();
-    let mut interpreter = PDFPageInterpreter::new(&mut rsrcmgr, &mut probe);
+    let mut interpreter =
+        PDFPageInterpreter::new_with_cancellation(&mut rsrcmgr, &mut probe, cancellation.clone());
     interpreter.process_page(page, Some(doc))?;
     Ok(probe.has_edges())
 }

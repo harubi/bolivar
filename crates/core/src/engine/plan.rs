@@ -1,13 +1,10 @@
-//! Page-selection plan and worker-pool construction.
-
-use rayon::{ThreadPool, ThreadPoolBuilder};
+//! Page-selection plan.
 
 use crate::error::{PdfError, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionPlan {
     pub order: Vec<usize>,
-    pub worker_count: usize,
 }
 
 impl ExecutionPlan {
@@ -15,15 +12,7 @@ impl ExecutionPlan {
     pub fn new(page_count: usize, page_numbers: Option<&[usize]>, maxpages: usize) -> Self {
         Self {
             order: select_pages_ref(page_count, page_numbers, maxpages),
-            worker_count: default_worker_count(),
         }
-    }
-
-    pub fn build_pool(&self) -> Result<ThreadPool> {
-        ThreadPoolBuilder::new()
-            .num_threads(self.worker_count)
-            .build()
-            .map_err(|e| PdfError::DecodeError(e.to_string()))
     }
 }
 
