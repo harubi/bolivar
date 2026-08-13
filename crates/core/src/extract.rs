@@ -40,7 +40,7 @@ use crate::error::{PdfError, Result};
 use crate::image::ImageWriter;
 use crate::interp::PDFResourceManager;
 use crate::layout::{LAParams, LTPage};
-use crate::table::probe::{page_has_edges_with_cancellation, should_skip_tables};
+use crate::table::probe::{page_has_edges_with_cancellation, should_probe_tables};
 use crate::table::{
     PageGeometry, TableMetadata, TableSettings, TextSettings, WordObj,
     collect_table_objects_from_arena, extract_tables_from_objects_with_cancellation,
@@ -587,13 +587,17 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
         options.page_numbers.clone(),
         options.maxpages,
         move |_page_idx, page, doc, cancellation| {
+            if !should_probe_tables(&settings_for_pre) {
+                return Ok(None);
+            }
+
             // Cheap edge probe before running the full interpreter — preserves the
             // original skip path so text-only PDFs don't pay table-collector cost.
             let has_edges = page_has_edges_with_cancellation(page, doc, caching, cancellation)?;
-            if should_skip_tables(&settings_for_pre, has_edges) {
-                Ok(Some(Vec::new()))
-            } else {
+            if has_edges {
                 Ok(None)
+            } else {
+                Ok(Some(Vec::new()))
             }
         },
         move |arena, page_idx, page, doc, cancellation| {
@@ -955,15 +959,10 @@ mod tests {
         assert!(err.to_string().contains("geometry"));
     }
 
-    #[test]
-    fn table_probe_policy_controls_skip() {
+    fn table_probe_calls(settings: TableSettings) -> usize {
         let pdf_data = build_minimal_pdf_with_pages(1);
         let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
         let options = ExtractOptions::default();
-        let settings = TableSettings {
-            probe_policy: TableProbePolicy::Always,
-            ..Default::default()
-        };
 
         crate::layout::table::probe::take_probe_calls();
         let out: Vec<PageTables> =
@@ -973,8 +972,37 @@ mod tests {
                 .collect::<Result<Vec<_>>>()
                 .unwrap();
         assert_eq!(out.len(), 1);
-        let calls = crate::layout::table::probe::take_probe_calls();
-        assert!(calls > 0);
+        crate::layout::table::probe::take_probe_calls()
+    }
+
+    #[test]
+    fn table_probe_policy_always_runs_probe() {
+        let settings = TableSettings {
+            probe_policy: TableProbePolicy::Always,
+            ..Default::default()
+        };
+
+        assert!(table_probe_calls(settings) > 0);
+    }
+
+    #[test]
+    fn table_probe_policy_never_bypasses_probe() {
+        let settings = TableSettings {
+            probe_policy: TableProbePolicy::Never,
+            ..Default::default()
+        };
+
+        assert_eq!(table_probe_calls(settings), 0);
+    }
+
+    #[test]
+    fn table_probe_policy_auto_bypasses_probe_for_text_strategy() {
+        let settings = TableSettings {
+            vertical_strategy: crate::table::TableStrategy::Text,
+            ..Default::default()
+        };
+
+        assert_eq!(table_probe_calls(settings), 0);
     }
 
     #[test]

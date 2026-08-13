@@ -24,10 +24,7 @@ pub(crate) fn page_has_edges_with_cancellation(
     Ok(probe.has_edges())
 }
 
-pub(crate) fn should_skip_tables(settings: &TableSettings, has_edges: bool) -> bool {
-    if has_edges {
-        return false;
-    }
+pub(crate) fn should_probe_tables(settings: &TableSettings) -> bool {
     match settings.probe_policy {
         TableProbePolicy::Never => false,
         TableProbePolicy::Always => true,
