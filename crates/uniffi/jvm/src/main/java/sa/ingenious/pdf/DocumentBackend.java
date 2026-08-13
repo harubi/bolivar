@@ -5,7 +5,7 @@ import java.util.List;
 interface DocumentBackend {
   String extractText();
 
-  List<PageSummary> extractPageSummaries();
+  CursorBackend<PageSummary> pageSummaries();
 
   List<LayoutPage> extractLayoutPages();
 

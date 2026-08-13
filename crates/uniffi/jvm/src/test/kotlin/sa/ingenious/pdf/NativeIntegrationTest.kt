@@ -36,6 +36,11 @@ class NativeIntegrationTest {
                 .toAbsolutePath()
                 .normalize()
         Document.open(fixture).use { document ->
+            document.pageSummaries().use { pages ->
+                assertTrue(pages.hasNext())
+                assertEquals(1, pages.next().pageNumber)
+                assertFalse(pages.hasNext())
+            }
             document.tableRows(TableOptions()).use { rows ->
                 assertTrue(rows.hasNext())
                 assertEquals(1, rows.next().pageNumber)

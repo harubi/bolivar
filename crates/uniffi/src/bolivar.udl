@@ -241,7 +241,7 @@ interface NativePdfDocument {
     string extract_text();
 
     [Throws=BolivarError]
-    sequence<PageSummary> extract_page_summaries();
+    NativePageSummaryCursor page_summaries();
 
     [Throws=BolivarError]
     sequence<LayoutPage> extract_layout_pages();
@@ -265,6 +265,13 @@ interface NativePdfDocument {
 interface NativeTableCursor {
     [Throws=BolivarError]
     Table? next();
+
+    void cancel();
+};
+
+interface NativePageSummaryCursor {
+    [Throws=BolivarError]
+    PageSummary? next();
 
     void cancel();
 };

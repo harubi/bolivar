@@ -273,15 +273,22 @@ fn native_document_from_path_matches_from_bytes_for_same_pdf() {
 }
 
 #[test]
-fn native_document_extract_page_summaries_with_page_filters() {
+fn native_document_page_summaries_respect_page_filters() {
     let pdf = build_minimal_pdf_with_pages(3);
     let options = options_with_page_range(vec![2, 3], Some(1));
 
     let doc = NativePdfDocument::from_bytes(pdf, Some(options)).expect("doc from bytes");
-    let summaries = doc.extract_page_summaries().expect("page summaries");
+    let summaries = doc.page_summaries().expect("page summaries");
 
-    assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].page_number, 2);
+    assert_eq!(
+        summaries
+            .next()
+            .expect("first page")
+            .expect("page summary")
+            .page_number,
+        2
+    );
+    assert!(summaries.next().expect("cursor end").is_none());
 }
 
 #[test]

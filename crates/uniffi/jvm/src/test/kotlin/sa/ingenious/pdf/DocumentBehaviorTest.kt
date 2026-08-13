@@ -17,7 +17,7 @@ class DocumentBehaviorTest {
                     return "hello"
                 }
 
-                override fun extractPageSummaries(): List<PageSummary> = emptyList()
+                override fun pageSummaries(): CursorBackend<PageSummary> = emptyCursor()
 
                 override fun extractLayoutPages(): List<LayoutPage> = emptyList()
 
@@ -60,7 +60,7 @@ class DocumentBehaviorTest {
             object : DocumentBackend {
                 override fun extractText(): String = throw IllegalStateException("backend exploded")
 
-                override fun extractPageSummaries(): List<PageSummary> = emptyList()
+                override fun pageSummaries(): CursorBackend<PageSummary> = emptyCursor()
 
                 override fun extractLayoutPages(): List<LayoutPage> = emptyList()
 
@@ -87,7 +87,7 @@ class DocumentBehaviorTest {
             object : DocumentBackend {
                 override fun extractText(): String = "ok"
 
-                override fun extractPageSummaries(): List<PageSummary> = emptyList()
+                override fun pageSummaries(): CursorBackend<PageSummary> = emptyCursor()
 
                 override fun extractLayoutPages(): List<LayoutPage> = emptyList()
 

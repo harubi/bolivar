@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -12,7 +11,7 @@ import java.util.function.Supplier;
 import sa.ingenious.ffi.BolivarKt;
 import sa.ingenious.ffi.NativePdfDocument;
 
-public final class Document implements AutoCloseable, Iterable<PageSummary> {
+public final class Document implements AutoCloseable {
   private final DocumentBackend backend;
 
   private Document(DocumentBackend backend) {
@@ -232,16 +231,8 @@ public final class Document implements AutoCloseable, Iterable<PageSummary> {
     return future(executor, this::extractText);
   }
 
-  public List<PageSummary> extractPageSummaries() throws PdfException {
-    return translate(backend::extractPageSummaries);
-  }
-
-  public CompletableFuture<List<PageSummary>> extractPageSummariesAsync() {
-    return extractPageSummariesAsync(null);
-  }
-
-  public CompletableFuture<List<PageSummary>> extractPageSummariesAsync(Executor executor) {
-    return future(executor, this::extractPageSummaries);
+  public PageSummaryCursor pageSummaries() throws PdfException {
+    return translate(() -> new PageSummaryCursor(backend.pageSummaries()));
   }
 
   public List<LayoutPage> extractLayoutPages() throws PdfException {
@@ -281,25 +272,6 @@ public final class Document implements AutoCloseable, Iterable<PageSummary> {
 
   public PageTableRowsCursor tableRows(TableOptions options) throws PdfException {
     return translate(() -> new PageTableRowsCursor(backend.tableRows(options)));
-  }
-
-  public List<PageSummary> pages() throws PdfException {
-    return extractPageSummaries();
-  }
-
-  public PageSummary get(int pageNumber) throws PdfException {
-    if (pageNumber <= 0) {
-      throw new PdfException.InvalidArgument("pageNumber must be >= 1", null);
-    }
-    return extractPageSummaries().stream()
-        .filter(page -> page.pageNumber() == pageNumber)
-        .findFirst()
-        .orElseThrow(() -> new PdfException.InvalidArgument("Page " + pageNumber + " was not extracted", null));
-  }
-
-  @Override
-  public Iterator<PageSummary> iterator() {
-    return extractPageSummaries().iterator();
   }
 
   @Override

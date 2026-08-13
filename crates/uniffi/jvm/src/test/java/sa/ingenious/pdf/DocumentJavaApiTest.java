@@ -54,6 +54,7 @@ class DocumentJavaApiTest {
     assertEquals(RawDocument.class, Document.class.getMethod("extractRawDocument").getReturnType());
     assertEquals(RawPage.class, Document.class.getMethod("extractRawPage", int.class).getReturnType());
     assertEquals(RawDocumentMetadata.class, Document.class.getMethod("metadata").getReturnType());
+    assertEquals(PageSummaryCursor.class, Document.class.getMethod("pageSummaries").getReturnType());
     assertEquals(TableCursor.class, Document.class.getMethod("tables").getReturnType());
     assertEquals(
         TableCursor.class,
@@ -62,6 +63,9 @@ class DocumentJavaApiTest {
         PageTableRowsCursor.class,
         Document.class.getMethod("tableRows", TableOptions.class).getReturnType());
     assertEquals(String.class, Document.class.getMethod("version").getReturnType());
+    assertThrows(
+        NoSuchMethodException.class, () -> Document.class.getMethod("extractPageSummaries"));
+    assertFalse(Iterable.class.isAssignableFrom(Document.class));
   }
 
   @Test
