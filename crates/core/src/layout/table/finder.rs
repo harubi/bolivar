@@ -579,6 +579,21 @@ fn table_to_metadata_with_cancellation(
     })
 }
 
+fn retain_tables_in_geometry(tables: &mut Vec<Table>, geom: &PageGeometry) {
+    if !geom.force_crop {
+        return;
+    }
+
+    let (x0, top, x1, bottom) = geom.page_bbox;
+    let crop = BBox {
+        x0,
+        top,
+        x1,
+        bottom,
+    };
+    tables.retain(|table| bbox_overlap_strict(table.bbox(), crop));
+}
+
 /// Extract all tables from a page as nested vectors of cell text.
 pub fn extract_tables_from_ltpage(
     page: &LTPage,
@@ -589,15 +604,7 @@ pub fn extract_tables_from_ltpage(
     arena.reset();
     let finder = TableFinder::new(page, geom, settings, &mut arena);
     let mut tables = finder.find_tables();
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
-    }
+    retain_tables_in_geometry(&mut tables, geom);
     tables
         .iter()
         .map(|t| t.extract(&finder.chars, &settings.text_settings, finder.arena))
@@ -635,15 +642,7 @@ pub(crate) fn extract_tables_from_objects_with_cancellation(
     let arena: &dyn ArenaLookup = arena;
     let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
     let mut tables = finder.find_tables_with_cancellation(cancellation)?;
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
-    }
+    retain_tables_in_geometry(&mut tables, geom);
     let mut extracted = Vec::with_capacity(tables.len());
     for table in &tables {
         cancellation.check()?;
@@ -688,15 +687,7 @@ pub(crate) fn extract_tables_with_metadata_from_objects_with_cancellation(
     let arena: &dyn ArenaLookup = arena;
     let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
     let mut tables = finder.find_tables_with_cancellation(cancellation)?;
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
-    }
+    retain_tables_in_geometry(&mut tables, geom);
     let mut metadata = Vec::with_capacity(tables.len());
     for table in &tables {
         cancellation.check()?;
@@ -722,15 +713,7 @@ pub fn extract_table_from_ltpage(
     arena.reset();
     let finder = TableFinder::new(page, geom, settings, &mut arena);
     let mut tables = finder.find_tables();
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
-    }
+    retain_tables_in_geometry(&mut tables, geom);
     if tables.is_empty() {
         return None;
     }
@@ -781,15 +764,7 @@ pub fn extract_table_from_objects(
     let arena: &dyn ArenaLookup = arena;
     let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
     let mut tables = finder.find_tables();
-    if geom.force_crop {
-        let crop = BBox {
-            x0: geom.page_bbox.0,
-            top: geom.page_bbox.1,
-            x1: geom.page_bbox.2,
-            bottom: geom.page_bbox.3,
-        };
-        tables.retain(|t| bbox_overlap_strict(t.bbox(), crop));
-    }
+    retain_tables_in_geometry(&mut tables, geom);
     if tables.is_empty() {
         return None;
     }
