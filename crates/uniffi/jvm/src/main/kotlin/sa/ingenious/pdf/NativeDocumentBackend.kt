@@ -46,7 +46,12 @@ private class NativePageTableRowsCursorBackend(
     override fun next(): PageTableRows? =
         withPdfExceptions {
             native.next()?.let {
-                PageTableRows(pageNumber = it.pageNumber.toInt(), tables = it.tables)
+                PageTableRows(
+                    pageNumber = it.pageNumber.toInt(),
+                    cells = it.cells,
+                    rowOffsets = IntArray(it.rowOffsets.size) { index -> it.rowOffsets[index].toInt() },
+                    tableOffsets = IntArray(it.tableOffsets.size) { index -> it.tableOffsets[index].toInt() },
+                )
             }
         }
 

@@ -24,11 +24,27 @@ import sa.ingenious.ffi.RawTextLine as NativeRawTextLine
 import sa.ingenious.ffi.Table as NativeTable
 import sa.ingenious.ffi.TableCell as NativeTableCell
 
+/**
+ * Flat table rows. Row offsets index cells; table offsets index rows.
+ * Both offset arrays start at zero and include the final end offset.
+ */
 @JvmRecord
 data class PageTableRows(
     val pageNumber: Int,
-    val tables: List<List<List<String?>>>,
-)
+    val cells: List<String?>,
+    val rowOffsets: IntArray,
+    val tableOffsets: IntArray,
+) {
+    fun toTables(): List<List<List<String?>>> =
+        List(tableOffsets.size - 1) { tableIndex ->
+            val firstRow = tableOffsets[tableIndex]
+            val rowCount = tableOffsets[tableIndex + 1] - firstRow
+            List(rowCount) { rowOffset ->
+                val rowIndex = firstRow + rowOffset
+                cells.subList(rowOffsets[rowIndex], rowOffsets[rowIndex + 1])
+            }
+        }
+}
 
 @JvmRecord
 data class BoundingBox(

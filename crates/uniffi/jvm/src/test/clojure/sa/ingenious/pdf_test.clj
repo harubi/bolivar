@@ -160,7 +160,10 @@
          (#'pdf/->table-options {:crop [1 2 3]})))))
 
 (deftest page-table-rows-convert-to-idiomatic-clojure-data
-  (let [page (PageTableRows. 3 [[["a" nil] [nil "b"]]])]
+  (let [page (PageTableRows. 3
+                             ["a" nil nil "b"]
+                             (int-array [0 2 4])
+                             (int-array [0 2]))]
     (is (= {:page-number 3
             :tables      [[["a" nil] [nil "b"]]]}
            (#'pdf/page-table-rows->map page)))))
