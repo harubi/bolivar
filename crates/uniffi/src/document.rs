@@ -5,7 +5,7 @@ use bolivar_core::extract::{
 use bolivar_core::pdfdocument::PDFDocument;
 use std::sync::Arc;
 
-use crate::cursor::{NativePageTableRowsCursor, NativeTableCursor};
+use crate::cursor::{NativePageSummaryCursor, NativePageTableRowsCursor, NativeTableCursor};
 use crate::error::BolivarError;
 use crate::extract::{
     core_extract_options, extract_layout_pages_core, extract_raw_document_core,
@@ -13,8 +13,8 @@ use crate::extract::{
 };
 use crate::metadata::metadata_from_document;
 use crate::types::{
-    ExtractOptions, LayoutPage, PageSummary, RawDocument, RawDocumentMetadata, RawPage,
-    TableOptions, cache_capacity, summary_from_ltpage,
+    ExtractOptions, LayoutPage, RawDocument, RawDocumentMetadata, RawPage, TableOptions,
+    cache_capacity,
 };
 
 pub struct NativePdfDocument {
@@ -64,18 +64,8 @@ impl NativePdfDocument {
         core_extract_text_with_document(self.doc.as_ref(), options).map_err(BolivarError::from)
     }
 
-    pub fn extract_page_summaries(&self) -> Result<Vec<PageSummary>, BolivarError> {
-        let stream = bolivar_core::extract::extract_pages_stream_from_doc(
-            Arc::clone(&self.doc),
-            self.core_options(),
-        )
-        .map_err(BolivarError::from)?;
-        let mut summaries = Vec::new();
-        for page in stream {
-            let (_, page) = page.map_err(BolivarError::from)?;
-            summaries.push(summary_from_ltpage(&page));
-        }
-        Ok(summaries)
+    pub fn page_summaries(&self) -> Result<Arc<NativePageSummaryCursor>, BolivarError> {
+        NativePageSummaryCursor::open(Arc::clone(&self.doc), self.core_options())
     }
 
     pub fn extract_layout_pages(&self) -> Result<Vec<LayoutPage>, BolivarError> {

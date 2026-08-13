@@ -175,8 +175,9 @@ import sa.ingenious.pdf.Document;
 import sa.ingenious.pdf.DocumentOptions;
 
 var options = DocumentOptions.builder().maxPages(3).build();
-try (Document doc = Document.open("doc.pdf", options)) {
-    for (var page : doc.extractPageSummaries()) {
+try (Document doc = Document.open("doc.pdf", options);
+     var pages = doc.pageSummaries()) {
+    for (var page : pages) {
         System.out.println(page.pageNumber() + ": " + page.text().substring(0, Math.min(80, page.text().length())));
     }
 }
@@ -189,8 +190,10 @@ val doc = openDocument("doc.pdf") {
     maxPages = 3
 }
 doc.use {
-    for (page in it.extractPageSummaries()) {
-        println("${page.pageNumber}: ${page.text.take(80)}")
+    it.pageSummaries().use { pages ->
+        for (page in pages) {
+            println("${page.pageNumber}: ${page.text.take(80)}")
+        }
     }
 }
 ```
@@ -198,8 +201,9 @@ doc.use {
 ```clojure
 (require '[sa.ingenious.pdf :as pdf])
 
-(with-open [doc (pdf/open "doc.pdf" {:max-pages 3})]
-  (doseq [page (pdf/page-summaries doc)]
+(with-open [doc (pdf/open "doc.pdf" {:max-pages 3})
+            pages (pdf/page-summaries doc)]
+  (doseq [page pages]
     (println (:page-number page) (subs (:text page) 0 (min 80 (count (:text page)))))))
 ```
 

@@ -2,13 +2,84 @@ use std::sync::{Arc, Mutex};
 use std::vec::IntoIter;
 
 use bolivar_core::engine::{CancellationHandle, PageTables, Stream};
+use bolivar_core::layout::LTPage;
 use bolivar_core::table::TableMetadata;
 
 use crate::error::BolivarError;
 use crate::extract::{TablePageContext, prepare_table_cursor, prepare_table_rows_cursor};
-use crate::types::{PageTableRows, Table, TableOptions, table_from_core, usize_to_u32};
+use crate::types::{
+    PageSummary, PageTableRows, Table, TableOptions, summary_from_ltpage, table_from_core,
+    usize_to_u32,
+};
 use bolivar_core::extract::ExtractOptions as CoreExtractOptions;
 use bolivar_core::pdfdocument::PDFDocument;
+
+struct PageSummaryCursorState {
+    stream: Option<Stream<LTPage>>,
+}
+
+impl PageSummaryCursorState {
+    fn fail(&mut self, error: BolivarError) -> Result<Option<PageSummary>, BolivarError> {
+        self.stream.take();
+        Err(error)
+    }
+
+    fn next(&mut self) -> Result<Option<PageSummary>, BolivarError> {
+        let Some(stream) = self.stream.as_mut() else {
+            return Ok(None);
+        };
+        match stream.next() {
+            Some(Ok((_, page))) => Ok(Some(summary_from_ltpage(&page))),
+            Some(Err(error)) => self.fail(BolivarError::from(error)),
+            None => {
+                self.stream.take();
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// A closeable native cursor that yields one page summary at a time.
+pub struct NativePageSummaryCursor {
+    cancellation: CancellationHandle,
+    state: Mutex<PageSummaryCursorState>,
+}
+
+impl std::fmt::Debug for NativePageSummaryCursor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativePageSummaryCursor")
+            .finish_non_exhaustive()
+    }
+}
+
+impl NativePageSummaryCursor {
+    pub(crate) fn open(
+        document: Arc<PDFDocument>,
+        options: CoreExtractOptions,
+    ) -> Result<Arc<Self>, BolivarError> {
+        let stream = bolivar_core::extract::extract_pages_stream_from_doc(document, options)
+            .map_err(BolivarError::from)?;
+        let cancellation = stream.cancellation_handle();
+        Ok(Arc::new(Self {
+            cancellation,
+            state: Mutex::new(PageSummaryCursorState {
+                stream: Some(stream),
+            }),
+        }))
+    }
+
+    pub fn next(&self) -> Result<Option<PageSummary>, BolivarError> {
+        self.state
+            .lock()
+            .map_err(|_| BolivarError::RuntimeError)?
+            .next()
+    }
+
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+}
 
 struct TableCursorState {
     stream: Option<Stream<Vec<TableMetadata>>>,

@@ -336,8 +336,29 @@
 (defn text [^Document doc]
   (wrap-jvm-errors #(.extractText doc)))
 
-(defn page-summaries [^Document doc]
-  (wrap-jvm-errors #(mapv page-summary->map (.extractPageSummaries doc))))
+(defn- mapped-cursor [cursor map-item]
+  (let [^Iterator iterator cursor
+        ^AutoCloseable closeable cursor]
+    (reify
+      Iterable
+      (iterator [this] this)
+
+      Iterator
+      (hasNext [_]
+        (boolean (wrap-jvm-errors #(.hasNext iterator))))
+      (next [_]
+        (wrap-jvm-errors #(map-item (.next iterator))))
+
+      AutoCloseable
+      (close [_]
+        (wrap-jvm-errors #(.close closeable))))))
+
+(defn page-summaries
+  "Return a closeable, single-pass page summary cursor. Use `with-open`."
+  [^Document doc]
+  (mapped-cursor
+   (wrap-jvm-errors #(.pageSummaries doc))
+   page-summary->map))
 
 (defn layout-pages [^Document doc]
   (wrap-jvm-errors #(mapv layout-page->map (.extractLayoutPages doc))))
@@ -431,23 +452,6 @@
         (assert-crop! value key)
         (apply! (->crop value)))
       (.build builder))))
-
-(defn- mapped-cursor [cursor map-item]
-  (let [^Iterator iterator cursor
-        ^AutoCloseable closeable cursor]
-    (reify
-      Iterable
-      (iterator [this] this)
-
-      Iterator
-      (hasNext [_]
-        (boolean (wrap-jvm-errors #(.hasNext iterator))))
-      (next [_]
-        (wrap-jvm-errors #(map-item (.next iterator))))
-
-      AutoCloseable
-      (close [_]
-        (wrap-jvm-errors #(.close closeable))))))
 
 (defn tables
   "Return a closeable, single-pass table cursor. Use `with-open`.

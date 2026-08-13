@@ -1,6 +1,7 @@
 package sa.ingenious.pdf
 
 import sa.ingenious.ffi.NativePageTableRowsCursor
+import sa.ingenious.ffi.NativePageSummaryCursor
 import sa.ingenious.ffi.NativePdfDocument
 import sa.ingenious.ffi.NativeTableCursor
 
@@ -9,7 +10,8 @@ internal class NativeDocumentBackend(
 ) : DocumentBackend {
     override fun extractText(): String = native.extractText()
 
-    override fun extractPageSummaries(): List<PageSummary> = native.extractPageSummaries().map { it.toPublic() }
+    override fun pageSummaries(): CursorBackend<PageSummary> =
+        NativePageSummaryCursorBackend(native.pageSummaries())
 
     override fun extractLayoutPages(): List<LayoutPage> = native.extractLayoutPages().map { it.toPublic() }
 
@@ -28,6 +30,16 @@ internal class NativeDocumentBackend(
     override fun close() {
         native.close()
     }
+}
+
+private class NativePageSummaryCursorBackend(
+    private val native: NativePageSummaryCursor,
+) : CursorBackend<PageSummary> {
+    override fun next(): PageSummary? = withPdfExceptions { native.next()?.toPublic() }
+
+    override fun cancel() = withPdfExceptions { native.cancel() }
+
+    override fun close() = withPdfExceptions { native.close() }
 }
 
 private class NativeTableCursorBackend(
