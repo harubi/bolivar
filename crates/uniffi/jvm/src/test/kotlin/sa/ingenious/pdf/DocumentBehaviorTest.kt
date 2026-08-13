@@ -23,7 +23,9 @@ class DocumentBehaviorTest {
 
                 override fun extractRawDocument(): RawDocument = RawDocument(0, 0, emptyList())
 
-                override fun extractTables(): List<Table> = emptyList()
+                override fun tables(options: TableOptions?): CursorBackend<Table> = emptyCursor()
+
+                override fun tableRows(options: TableOptions?): CursorBackend<PageTableRows> = emptyCursor()
 
                 override fun close() {}
             }
@@ -64,7 +66,9 @@ class DocumentBehaviorTest {
 
                 override fun extractRawDocument(): RawDocument = RawDocument(0, 0, emptyList())
 
-                override fun extractTables(): List<Table> = emptyList()
+                override fun tables(options: TableOptions?): CursorBackend<Table> = emptyCursor()
+
+                override fun tableRows(options: TableOptions?): CursorBackend<PageTableRows> = emptyCursor()
 
                 override fun close() {}
             }
@@ -89,7 +93,9 @@ class DocumentBehaviorTest {
 
                 override fun extractRawDocument(): RawDocument = RawDocument(0, 0, emptyList())
 
-                override fun extractTables(): List<Table> = emptyList()
+                override fun tables(options: TableOptions?): CursorBackend<Table> = emptyCursor()
+
+                override fun tableRows(options: TableOptions?): CursorBackend<PageTableRows> = emptyCursor()
 
                 override fun close() {
                     closed = true
@@ -101,4 +107,13 @@ class DocumentBehaviorTest {
 
         assertEquals(true, closed)
     }
+
+    private fun <T> emptyCursor(): CursorBackend<T> =
+        object : CursorBackend<T> {
+            override fun next(): T? = null
+
+            override fun cancel() {}
+
+            override fun close() {}
+        }
 }

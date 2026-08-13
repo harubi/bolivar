@@ -254,13 +254,24 @@ interface NativePdfDocument {
     RawDocumentMetadata metadata();
 
     [Throws=BolivarError]
-    sequence<Table> extract_tables();
+    NativeTableCursor tables(TableOptions? options);
 
     [Throws=BolivarError]
-    sequence<Table> extract_tables_with(TableOptions? options);
+    NativePageTableRowsCursor table_rows(TableOptions? options);
+};
 
+interface NativeTableCursor {
     [Throws=BolivarError]
-    sequence<PageTableRows> extract_table_rows_with(TableOptions? options);
+    Table? next();
+
+    void cancel();
+};
+
+interface NativePageTableRowsCursor {
+    [Throws=BolivarError]
+    PageTableRows? next();
+
+    void cancel();
 };
 
 namespace bolivar {
@@ -284,5 +295,6 @@ enum BolivarError {
     "EncryptionError",
     "PdfError",
     "DecodeError",
+    "Cancelled",
     "RuntimeError",
 };

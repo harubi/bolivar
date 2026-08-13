@@ -53,6 +53,11 @@ sealed class PdfException(
         cause: Throwable? = null,
     ) : PdfException(message, cause)
 
+    class Cancelled(
+        message: String,
+        cause: Throwable? = null,
+    ) : PdfException(message, cause)
+
     class RuntimeError(
         message: String,
         cause: Throwable? = null,
@@ -94,6 +99,7 @@ sealed class PdfException(
                 is NativePdfException.EncryptionException -> EncryptionError(error.message ?: "Encryption error", error)
                 is NativePdfException.PdfException -> MalformedPdf(error.message ?: "PDF error", error)
                 is NativePdfException.DecodeException -> DecodeError(error.message ?: "Decode error", error)
+                is NativePdfException.Cancelled -> Cancelled(error.message ?: "Operation cancelled", error)
                 is NativePdfException.RuntimeException -> RuntimeError(error.message ?: "Runtime error", error)
             }
     }

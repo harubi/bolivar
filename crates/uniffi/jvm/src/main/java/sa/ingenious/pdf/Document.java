@@ -36,6 +36,7 @@ public final class Document implements AutoCloseable, Iterable<PageSummary> {
     return open(path, new DocumentOptions());
   }
 
+  /** Open a memory-mapped path. Keep the source file stable until this document and its cursors close. */
   public static Document open(String path, DocumentOptions options) throws PdfException {
     return translate(
         () -> {
@@ -270,16 +271,16 @@ public final class Document implements AutoCloseable, Iterable<PageSummary> {
     return translate(backend::metadata);
   }
 
-  public List<Table> extractTables() throws PdfException {
-    return translate(backend::extractTables);
+  public TableCursor tables() throws PdfException {
+    return tables(null);
   }
 
-  public List<Table> extractTables(TableOptions options) throws PdfException {
-    return translate(() -> backend.extractTables(options));
+  public TableCursor tables(TableOptions options) throws PdfException {
+    return translate(() -> new TableCursor(backend.tables(options)));
   }
 
-  public List<PageTableRows> extractTableRows(TableOptions options) throws PdfException {
-    return translate(() -> backend.extractTableRows(options));
+  public PageTableRowsCursor tableRows(TableOptions options) throws PdfException {
+    return translate(() -> new PageTableRowsCursor(backend.tableRows(options)));
   }
 
   public List<PageSummary> pages() throws PdfException {

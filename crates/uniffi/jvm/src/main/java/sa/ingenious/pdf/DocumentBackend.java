@@ -19,15 +19,9 @@ interface DocumentBackend {
     throw new UnsupportedOperationException("metadata requires the native backend");
   }
 
-  List<Table> extractTables();
+  CursorBackend<Table> tables(TableOptions options);
 
-  default List<Table> extractTables(TableOptions options) {
-    throw new UnsupportedOperationException("extractTables(TableOptions) requires the native backend");
-  }
-
-  default List<PageTableRows> extractTableRows(TableOptions options) {
-    throw new UnsupportedOperationException("extractTableRows requires the native backend");
-  }
+  CursorBackend<PageTableRows> tableRows(TableOptions options);
 
   void close();
 }

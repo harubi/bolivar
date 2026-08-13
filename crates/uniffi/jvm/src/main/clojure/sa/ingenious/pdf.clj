@@ -1,7 +1,9 @@
 (ns sa.ingenious.pdf
   (:import [clojure.lang ExceptionInfo]
            [java.io File InputStream]
+           [java.lang AutoCloseable]
            [java.nio.file Path]
+           [java.util Iterator]
            [sa.ingenious.pdf BoundingBox Document DocumentOptions LayoutChar LayoutLine LayoutOptions
             LayoutPage LayoutTextBox MetadataEntry PageSummary PageTableRows PdfException PdfPermissions
             PdfVersion RawCharacter RawDocument RawDocumentMetadata RawPage RawPageBoxes RawTable
@@ -430,19 +432,38 @@
         (apply! (->crop value)))
       (.build builder))))
 
+(defn- mapped-cursor [cursor map-item]
+  (let [^Iterator iterator cursor
+        ^AutoCloseable closeable cursor]
+    (reify
+      Iterable
+      (iterator [this] this)
+
+      Iterator
+      (hasNext [_]
+        (boolean (wrap-jvm-errors #(.hasNext iterator))))
+      (next [_]
+        (wrap-jvm-errors #(map-item (.next iterator))))
+
+      AutoCloseable
+      (close [_]
+        (wrap-jvm-errors #(.close closeable))))))
+
 (defn tables
-  "Extract tables. `opts` tunes extraction (pdfplumber vocabulary):
+  "Return a closeable, single-pass table cursor. Use `with-open`.
+  `opts` tunes extraction (pdfplumber vocabulary):
   :vertical-strategy/:horizontal-strategy (\"lines\" \"lines_strict\" \"text\"
   \"explicit\"), :snap-tolerance/:join-tolerance/:intersection-tolerance and
   their -x-/-y- variants, :explicit-vertical-lines/:explicit-horizontal-lines,
   and page crops :crop/:first-page-crop as [x0 y0 x1 y1]."
   ([^Document doc]
-   (wrap-jvm-errors #(mapv table->map (.extractTables doc))))
+   (mapped-cursor (wrap-jvm-errors #(.tables doc)) table->map))
   ([^Document doc opts]
    (if (nil? opts)
      (tables doc)
-     (wrap-jvm-errors
-      #(mapv table->map (.extractTables doc (->table-options opts)))))))
+     (mapped-cursor
+      (wrap-jvm-errors #(.tables doc (->table-options opts)))
+      table->map))))
 
 (defn- page-table-rows->map [^PageTableRows page]
   {:page-number (.pageNumber page)
@@ -451,12 +472,13 @@
 (defn table-rows
   "Extract raw table rows per page (nil = empty cell), exactly as the
   pdfplumber-compatible rows pipeline emits them. Takes the same options as
-  `tables`. Returns [{:page-number n :tables [[[cell ...] ...] ...]}]."
+  `tables`. Returns a closeable, single-pass cursor. Use `with-open`."
   ([^Document doc]
    (table-rows doc nil))
   ([^Document doc opts]
-   (wrap-jvm-errors
-    #(mapv page-table-rows->map (.extractTableRows doc (->table-options opts))))))
+   (mapped-cursor
+    (wrap-jvm-errors #(.tableRows doc (->table-options opts)))
+    page-table-rows->map)))
 
 (defn extract-text
   ([source]

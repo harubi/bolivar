@@ -21,6 +21,8 @@ pub enum BolivarError {
     PdfError,
     #[error("decode error")]
     DecodeError,
+    #[error("operation cancelled")]
+    Cancelled,
     #[error("runtime error")]
     RuntimeError,
 }
@@ -41,6 +43,8 @@ impl From<PdfError> for BolivarError {
             PdfError::SyntaxError(_) => Self::SyntaxError,
             PdfError::InvalidArgument(_) => Self::InvalidArgument,
             PdfError::EncryptionError(_) => Self::EncryptionError,
+            PdfError::Cancelled => Self::Cancelled,
+            PdfError::RuntimeError(_) => Self::RuntimeError,
             _ => Self::PdfError,
         }
     }
@@ -63,6 +67,14 @@ mod tests {
         assert!(matches!(
             BolivarError::from(PdfError::EncryptionError("bad".to_string())),
             BolivarError::EncryptionError
+        ));
+        assert!(matches!(
+            BolivarError::from(PdfError::Cancelled),
+            BolivarError::Cancelled
+        ));
+        assert!(matches!(
+            BolivarError::from(PdfError::RuntimeError("bad".to_string())),
+            BolivarError::RuntimeError
         ));
     }
 }
