@@ -12,7 +12,7 @@ use super::super::types::{
 };
 use super::clustering::{group_textboxes_exact, group_textboxes_exact_owned};
 use super::grouping::{group_objects, group_objects_arena, group_textlines, group_textlines_arena};
-use crate::layout::arena::LayoutArena;
+use crate::layout::arena::{BoxId, CompactPageLayout, LayoutArena};
 
 impl LTLayoutContainer {
     /// Groups character objects into text lines.
@@ -169,6 +169,180 @@ impl LTFigure {
 impl LTPage {
     /// Performs layout analysis on the page.
     pub fn analyze(&mut self, laparams: &LAParams) {
-        self.container.analyze(laparams);
+        if self.compact_layout.is_some() {
+            return;
+        }
+        if self.container.groups.is_some() {
+            self.container.analyze(laparams);
+            return;
+        }
+
+        let source_items = std::mem::take(&mut self.container.items);
+        let char_count = source_items.iter().filter(|item| item.is_char()).count();
+        if char_count == 0 {
+            self.container.items = source_items;
+            return;
+        }
+
+        let mut other_items = Vec::with_capacity(source_items.len() - char_count);
+        let mut arena = LayoutArena::with_char_capacity(char_count);
+        for item in source_items {
+            match item {
+                LTItem::Char(character) => {
+                    arena.push_char(character);
+                }
+                other => other_items.push(other),
+            }
+        }
+
+        let line_ids = group_objects_arena(laparams, &mut arena);
+        let (empty_lines, non_empty_lines): (Vec<_>, Vec<_>) = line_ids
+            .iter()
+            .copied()
+            .partition(|id| arena.line_is_empty(*id));
+        let box_ids = group_textlines_arena(laparams, &mut arena, &non_empty_lines);
+        for id in &box_ids {
+            arena.analyze_box(*id);
+        }
+
+        let (box_order, groups) = if laparams.boxes_flow.is_none() {
+            let mut box_order = box_ids;
+            box_order.sort_by_key(|id| simple_box_sort_key(&arena, *id));
+            (box_order, None)
+        } else {
+            let proxies = box_ids.iter().map(|id| arena.box_proxy(*id)).collect();
+            let mut groups = group_textboxes_exact_owned(laparams, proxies);
+            let mut assigner = IndexAssigner::new();
+            let mut box_order = Vec::with_capacity(box_ids.len());
+            for group in &mut groups {
+                group.analyze(laparams);
+                assigner.run_with_assignment(group, &mut |source_index, index| {
+                    let id = BoxId(
+                        usize::try_from(source_index)
+                            .expect("compact text box source index must be non-negative"),
+                    );
+                    arena.set_box_index(id, index);
+                    box_order.push(id);
+                });
+            }
+            (box_order, Some(groups))
+        };
+
+        let layout = CompactPageLayout::new(
+            arena,
+            box_order,
+            empty_lines,
+            other_items,
+            groups.as_deref(),
+        );
+        self.install_compact_layout(layout);
+    }
+}
+
+fn simple_box_sort_key(arena: &LayoutArena, id: BoxId) -> (i32, i64, i64) {
+    let bbox = arena.box_bbox(id);
+    if arena.box_is_vertical(id) {
+        (0, (-bbox.2 * 1000.0) as i64, (-bbox.1 * 1000.0) as i64)
+    } else {
+        (1, (-bbox.1 * 1000.0) as i64, (bbox.0 * 1000.0) as i64)
+    }
+}
+
+#[cfg(test)]
+mod compact_page_tests {
+    use super::*;
+
+    #[test]
+    fn analyzed_page_keeps_compact_arrays_until_items_are_requested() {
+        let mut page = LTPage::new(1, (0.0, 0.0, 100.0, 100.0), 0.0);
+        page.add(LTItem::Char(LTChar::new(
+            (0.0, 0.0, 5.0, 10.0),
+            "A",
+            "F1",
+            10.0,
+            true,
+            5.0,
+        )));
+        page.add(LTItem::Char(LTChar::new(
+            (6.0, 0.0, 11.0, 10.0),
+            "B",
+            "F1",
+            10.0,
+            true,
+            5.0,
+        )));
+
+        page.analyze(&LAParams::default());
+
+        assert_eq!(page.compact_storage_counts(), Some((2, 1, 1)));
+        assert_eq!(page.iter().count(), 1);
+        assert_eq!(page.groups().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn adding_after_analysis_materializes_the_page_before_mutation() {
+        let mut page = LTPage::new(1, (0.0, 0.0, 100.0, 100.0), 0.0);
+        page.add(LTItem::Char(LTChar::new(
+            (0.0, 0.0, 5.0, 10.0),
+            "A",
+            "F1",
+            10.0,
+            true,
+            5.0,
+        )));
+        page.analyze(&LAParams::default());
+
+        page.add(LTItem::Anno(crate::layout::types::LTAnno::new("x")));
+
+        assert_eq!(page.compact_storage_counts(), None);
+        assert_eq!(page.iter().count(), 2);
+        assert_eq!(page.groups().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn analyzed_page_distinguishes_empty_groups_from_disabled_groups() {
+        let mut page = LTPage::new(1, (0.0, 0.0, 100.0, 100.0), 0.0);
+        page.add(LTItem::Char(LTChar::new(
+            (0.0, 0.0, 5.0, 10.0),
+            " ",
+            "F1",
+            10.0,
+            true,
+            5.0,
+        )));
+
+        page.analyze(&LAParams::default());
+
+        assert_eq!(page.groups().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn reanalysis_after_mutation_keeps_legacy_group_state() {
+        let mut page = LTPage::new(1, (0.0, 0.0, 100.0, 100.0), 0.0);
+        page.add(LTItem::Char(LTChar::new(
+            (0.0, 0.0, 5.0, 10.0),
+            "A",
+            "F1",
+            10.0,
+            true,
+            5.0,
+        )));
+        page.analyze(&LAParams::default());
+        page.add(LTItem::Char(LTChar::new(
+            (20.0, 0.0, 25.0, 10.0),
+            "B",
+            "F1",
+            10.0,
+            true,
+            5.0,
+        )));
+        let params = LAParams {
+            boxes_flow: None,
+            ..LAParams::default()
+        };
+
+        page.analyze(&params);
+
+        assert_eq!(page.groups().map(Vec::len), Some(1));
     }
 }
