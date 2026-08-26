@@ -10,7 +10,7 @@ use itertools::Itertools;
 use crate::arena::ArenaLookup;
 use crate::layout::bidi::{
     contains_rtl_text, has_compact_mixed_token, is_ltr_prefixed_compact_mixed,
-    reconstruct_text_for_output, reorder_text_for_output, reorder_visual_word_runs,
+    reconstruct_text_for_output, reconstruct_words, reorder_text_for_output, reorder_visual_word_runs,
 };
 
 use super::clustering::{bbox_from_chars, cluster_objects};
@@ -616,9 +616,12 @@ fn extract_text_refs(
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         if settings.bidi {
-            let line_str = line_sorted.iter().map(|word| word.text.as_str()).join(" ");
             if should_reconstruct_geometric_line(&line_sorted) {
-                line_texts.push(reconstruct_text_for_output(&line_str));
+                // Same text as the string path, but keeps the source word of
+                // each output run.
+                let words: Vec<&str> =
+                    line_sorted.iter().map(|word| word.text.as_str()).collect();
+                line_texts.push(reconstruct_words(&words, " ").text);
             } else {
                 let legacy_order =
                     reorder_visual_word_runs(line_sorted.iter().collect::<Vec<_>>(), |word| {
