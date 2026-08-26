@@ -823,6 +823,26 @@ pub(crate) fn normalize_arabic_presentation_forms(text: &str) -> String {
 }
 
 /// Return final logical and nominal Arabic text.
+/// Reconstruct one line from its words, keeping the source word of each output run.
+///
+/// `reconstruct_text_for_output` takes a `&str`, so a caller that knows its word
+/// boundaries loses them and the reordering re-derives order from characters
+/// alone. Here `source_index` on every returned span is the index of the word it
+/// came from: two runs sharing an index are one word, however it was reordered.
+pub fn reconstruct_words(words: &[&str], separator: &str) -> ReconstructedLine {
+    let mut raw_text = String::new();
+    let mut source: Vec<SourceScalar> = Vec::new();
+    for (source_index, word) in words.iter().enumerate() {
+        if source_index > 0 {
+            raw_text.push_str(separator);
+            source.extend(separator.chars().map(|ch| SourceScalar { ch, source_index }));
+        }
+        raw_text.push_str(word);
+        source.extend(word.chars().map(|ch| SourceScalar { ch, source_index }));
+    }
+    reconstruct_source(raw_text, source, false)
+}
+
 pub fn reconstruct_text_for_output(text: &str) -> String {
     reconstruct_text_per_line(text)
 }
@@ -1107,5 +1127,38 @@ mod tests {
         );
         assert_eq!(reorder_text_for_output("sample# ةلمج"), "sample# جملة");
         assert_eq!(normalize_presentation_forms_for_output("① ﺏ"), "1 ب");
+    }
+}
+
+#[cfg(test)]
+mod word_provenance_tests {
+    use super::*;
+
+    const WORDS: &[&str] = &["الف", "باء", "TIME:01:02:03,", "ALPHA", "BETA", "G", "H", "جيم:1234567890123456"];
+
+    #[test]
+    fn word_reconstruction_matches_the_string_path() {
+        let line = reconstruct_words(WORDS, " ");
+        assert_eq!(line.text, reconstruct_text_for_output(&WORDS.join(" ")));
+    }
+
+    #[test]
+    fn every_span_names_a_source_word() {
+        let line = reconstruct_words(WORDS, " ");
+        assert!(line.spans.iter().all(|s| s.source_index < WORDS.len()));
+    }
+
+    #[test]
+    fn spans_concatenate_to_the_text() {
+        let line = reconstruct_words(WORDS, " ");
+        let rebuilt: String = line.spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(rebuilt, line.text);
+    }
+
+    #[test]
+    fn separated_latin_runs_keep_distinct_word_ids() {
+        let line = reconstruct_words(WORDS, " ");
+        let ids: Vec<usize> = line.spans.iter().map(|s| s.source_index).collect();
+        assert!(ids.contains(&3) && ids.contains(&4));
     }
 }
