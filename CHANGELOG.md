@@ -1,3 +1,9 @@
+## [2.1.0](https://github.com/harubi/bolivar/compare/v2.0.0...v2.1.0) (2026-08-26)
+
+### Features
+
+* **bidi:** add `reconstruct_words` to preserve word provenance ([d88a573](https://github.com/harubi/bolivar/commit/d88a573bf1fa831123e7c85bf7b6c5d967bf22da))
+
 ## [2.0.0](https://github.com/harubi/bolivar/compare/v1.9.3...v2.0.0) (2026-08-13)
 
 ### ⚠ BREAKING CHANGES
