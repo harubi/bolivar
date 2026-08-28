@@ -9,6 +9,7 @@ use super::cmap::{
 use super::truetype::create_unicode_map_from_ttf;
 use crate::pdftypes::{PDFDict, PDFObjRef, PDFObject};
 use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 /// Type alias for font width dictionaries.
@@ -261,9 +262,13 @@ pub enum DynUnicodeMap {
 impl DynUnicodeMap {
     /// Get Unicode string for a CID.
     pub fn get_unichr(&self, cid: u32) -> Option<String> {
+        self.get_unichr_cow(cid).map(Cow::into_owned)
+    }
+
+    fn get_unichr_cow(&self, cid: u32) -> Option<Cow<'_, str>> {
         match self {
-            Self::UnicodeMap(map) => map.get_unichr(cid),
-            Self::IdentityUnicodeMap(map) => map.get_unichr(cid),
+            Self::UnicodeMap(map) => map.get_unichr_cow(cid),
+            Self::IdentityUnicodeMap(map) => map.get_unichr_cow(cid),
         }
     }
 }
@@ -699,15 +704,39 @@ impl PDFCIDFont {
 
     /// Decode bytes to character IDs.
     pub fn decode(&self, data: &[u8]) -> Vec<u32> {
+        let mut output = Vec::new();
+        self.decode_into(data, &mut output);
+        output
+    }
+
+    pub(crate) fn decode_into(&self, data: &[u8], output: &mut Vec<u32>) {
+        output.clear();
         if self.cid2unicode.is_some() {
-            return data.iter().map(|&b| b as u32).collect();
+            output.extend(data.iter().map(|&byte| byte as u32));
+            return;
         }
 
         match &self.cmap {
-            DynCMap::CMap(c) => c.decode(data).collect(),
-            DynCMap::IdentityCMap(c) => c.decode(data).collect(),
-            DynCMap::IdentityCMapByte(c) => c.decode(data).collect(),
+            DynCMap::CMap(c) => output.extend(c.decode(data)),
+            DynCMap::IdentityCMap(c) => output.extend(c.decode(data)),
+            DynCMap::IdentityCMapByte(c) => output.extend(c.decode(data)),
         }
+    }
+
+    pub(crate) fn unicode_cow(&self, cid: u32) -> Option<Cow<'_, str>> {
+        if let Some(map) = &self.unicode_map
+            && let Some(text) = map.get_unichr_cow(cid)
+        {
+            return Some(text);
+        }
+
+        if cid > 255 {
+            return None;
+        }
+        self.cid2unicode
+            .as_ref()?
+            .get(&(cid as u8))
+            .map(|text| Cow::Borrowed(text.as_str()))
     }
 
     /// Check if this font is for vertical writing.
@@ -723,26 +752,7 @@ impl PDFCIDFont {
 
 impl PDFFont for PDFCIDFont {
     fn to_unichr(&self, cid: u32) -> Option<String> {
-        // Try unicode_map first (from ToUnicode stream)
-        if let Some(ref map) = self.unicode_map
-            && let Some(s) = map.get_unichr(cid)
-        {
-            return Some(s);
-        }
-        // If ToUnicode exists but CID not found, fall through to cid2unicode
-        // (matches pdfminer.six PDFSimpleFont behavior)
-
-        // Try cid2unicode (from Encoding entry for simple fonts)
-        if let Some(ref enc) = self.cid2unicode
-            && cid <= 255
-            && let Some(s) = enc.get(&(cid as u8))
-        {
-            return Some(s.clone());
-        }
-
-        // No ASCII fallback - matches Python behavior
-        // Unmapped CIDs render as (cid:X)
-        None
+        self.unicode_cow(cid).map(Cow::into_owned)
     }
 
     fn char_width(&self, cid: u32) -> f64 {
@@ -802,6 +812,7 @@ mod tests {
     use super::{PDFCIDFont, PDFFont};
     use crate::model::objects::{PDFDict, PDFObject};
     use rustc_hash::FxHashMap;
+    use std::borrow::Cow;
     use std::sync::Arc;
 
     #[test]
@@ -816,6 +827,34 @@ mod tests {
             PDFCIDFont::new_with_ttf_and_cid2unicode(&spec, None, None, false, None, override_map);
 
         assert_eq!(font.to_unichr(65), Some("A".to_string()));
+    }
+
+    #[test]
+    fn decode_into_reuses_the_output_buffer() {
+        let font = PDFCIDFont::new(&PDFDict::default(), None);
+        let mut output = vec![999];
+
+        font.decode_into(b"ABC", &mut output);
+
+        assert_eq!(output, font.decode(b"ABC"));
+    }
+
+    #[test]
+    fn unicode_cow_borrows_simple_font_mappings() {
+        let mut spec = PDFDict::default();
+        spec.insert("Subtype".into(), PDFObject::Name("Type1".into()));
+        let mut map = FxHashMap::default();
+        map.insert(65u8, "A".into());
+        let font = PDFCIDFont::new_with_ttf_and_cid2unicode(
+            &spec,
+            None,
+            None,
+            false,
+            None,
+            Some(Arc::new(map)),
+        );
+
+        assert!(matches!(font.unicode_cow(65), Some(Cow::Borrowed("A"))));
     }
 
     #[test]
