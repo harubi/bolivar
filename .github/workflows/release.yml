@@ -526,7 +526,7 @@ jobs:
           cd crates/uniffi/jvm/natives
           for dir in native-*; do
             classifier="${dir#native-}"
-            mv "$dir" "$classifier"
+            mv -T "$dir" "$classifier"
           done
       - name: Verify all native libraries present
         run: |
