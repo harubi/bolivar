@@ -3,8 +3,11 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::mpsc::channel;
+use std::sync::{Arc, Once};
+
+use hotpath::wrap::std::sync::Mutex;
+use hotpath::wrap::std::sync::mpsc::{Receiver, Sender};
 
 use crate::arena::PageArena;
 use crate::cancellation::CancellationToken;
@@ -22,6 +25,99 @@ type PageWork<R> = dyn Fn(&mut PageArena, usize, &PDFPage, &PDFDocument, &Cancel
     + Send
     + Sync;
 
+trait PageWorker<R>: Send {
+    fn run(
+        &mut self,
+        arena: &mut PageArena,
+        page_index: usize,
+        page: &PDFPage,
+        document: &PDFDocument,
+        cancellation: &CancellationToken,
+    ) -> Result<R>;
+}
+
+trait WorkerFactory<R>: Send + Sync {
+    fn create(&self) -> Box<dyn PageWorker<R>>;
+}
+
+struct SharedWorker<R> {
+    page_work: Arc<PageWork<R>>,
+}
+
+impl<R> PageWorker<R> for SharedWorker<R> {
+    fn run(
+        &mut self,
+        arena: &mut PageArena,
+        page_index: usize,
+        page: &PDFPage,
+        document: &PDFDocument,
+        cancellation: &CancellationToken,
+    ) -> Result<R> {
+        (self.page_work)(arena, page_index, page, document, cancellation)
+    }
+}
+
+struct SharedFactory<R> {
+    page_work: Arc<PageWork<R>>,
+}
+
+impl<R: 'static> WorkerFactory<R> for SharedFactory<R> {
+    fn create(&self) -> Box<dyn PageWorker<R>> {
+        Box::new(SharedWorker {
+            page_work: Arc::clone(&self.page_work),
+        })
+    }
+}
+
+type StateInit<S> = dyn Fn() -> S + Send + Sync;
+type StatefulWork<R, S> = dyn Fn(&mut S, &mut PageArena, usize, &PDFPage, &PDFDocument, &CancellationToken) -> Result<R>
+    + Send
+    + Sync;
+
+struct StreamRuntime {
+    engine: Arc<Engine>,
+    window_capacity: usize,
+}
+
+struct StatefulWorker<R, S> {
+    state: S,
+    page_work: Arc<StatefulWork<R, S>>,
+}
+
+impl<R, S: Send> PageWorker<R> for StatefulWorker<R, S> {
+    fn run(
+        &mut self,
+        arena: &mut PageArena,
+        page_index: usize,
+        page: &PDFPage,
+        document: &PDFDocument,
+        cancellation: &CancellationToken,
+    ) -> Result<R> {
+        (self.page_work)(
+            &mut self.state,
+            arena,
+            page_index,
+            page,
+            document,
+            cancellation,
+        )
+    }
+}
+
+struct StatefulFactory<R, S> {
+    init_state: Arc<StateInit<S>>,
+    page_work: Arc<StatefulWork<R, S>>,
+}
+
+impl<R: 'static, S: Send + 'static> WorkerFactory<R> for StatefulFactory<R, S> {
+    fn create(&self) -> Box<dyn PageWorker<R>> {
+        Box::new(StatefulWorker {
+            state: (self.init_state)(),
+            page_work: Arc::clone(&self.page_work),
+        })
+    }
+}
+
 enum StreamMessage<R> {
     Completed { position: usize, result: Result<R> },
     Wake,
@@ -38,11 +134,12 @@ struct Scheduler<R> {
     document: Arc<PDFDocument>,
     order: Arc<[usize]>,
     precheck: Arc<Precheck<R>>,
-    page_work: Arc<PageWork<R>>,
+    worker_factory: Arc<dyn WorkerFactory<R>>,
     sender: Sender<StreamMessage<R>>,
     cancellation: CancellationToken,
     window_capacity: usize,
     state: Mutex<SchedulerState>,
+    workers: Mutex<Vec<Box<dyn PageWorker<R>>>>,
 }
 
 impl<R: Send + 'static> Scheduler<R> {
@@ -98,18 +195,30 @@ impl<R: Send + 'static> Scheduler<R> {
             .expect("active stream worker");
     }
 
+    #[hotpath::measure]
     fn run_worker(self: Arc<Self>) {
         let mut arena = PageArena::new();
+        let mut worker = self
+            .workers
+            .lock()
+            .expect("stream worker state")
+            .pop()
+            .unwrap_or_else(|| self.worker_factory.create());
         while let Some(position) = self.claim_position() {
-            self.run_page(position, &mut arena);
+            self.run_page(position, &mut arena, worker.as_mut());
         }
+        self.workers
+            .lock()
+            .expect("stream worker state")
+            .push(worker);
         self.worker_finished();
         if !self.cancellation.is_cancelled() {
             self.start_workers();
         }
     }
 
-    fn run_page(&self, position: usize, arena: &mut PageArena) {
+    #[hotpath::measure]
+    fn run_page(&self, position: usize, arena: &mut PageArena, worker: &mut dyn PageWorker<R>) {
         let work = catch_unwind(AssertUnwindSafe(|| -> Result<R> {
             self.cancellation.check()?;
             let page_index = self.order[position];
@@ -126,7 +235,7 @@ impl<R: Send + 'static> Scheduler<R> {
                 None => {
                     self.cancellation.check()?;
                     arena.reset();
-                    (self.page_work)(
+                    worker.run(
                         arena,
                         page_index,
                         page.as_ref(),
@@ -240,6 +349,7 @@ impl<R: Send + 'static> Stream<R> {
 impl<R: Send + 'static> Iterator for Stream<R> {
     type Item = Result<(usize, R)>;
 
+    #[hotpath::measure]
     fn next(&mut self) -> Option<Self::Item> {
         if self.failed {
             return None;
@@ -345,6 +455,35 @@ where
         + Sync
         + 'static,
 {
+    let page_work: Arc<PageWork<R>> = Arc::new(page_work);
+    let worker_factory = Arc::new(SharedFactory { page_work });
+    run_stream_with_factory(
+        engine,
+        document,
+        page_numbers,
+        maxpages,
+        window_capacity,
+        precheck,
+        worker_factory,
+    )
+}
+
+fn run_stream_with_factory<R, P>(
+    engine: Arc<Engine>,
+    document: Arc<PDFDocument>,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    window_capacity: usize,
+    precheck: P,
+    worker_factory: Arc<dyn WorkerFactory<R>>,
+) -> Result<Stream<R>>
+where
+    R: Send + 'static,
+    P: Fn(usize, &PDFPage, &PDFDocument, &CancellationToken) -> Result<Option<R>>
+        + Send
+        + Sync
+        + 'static,
+{
     let plan = ExecutionPlan::new(
         document.page_index().len(),
         page_numbers.as_deref(),
@@ -355,23 +494,100 @@ where
     let schedule_limit = window_capacity.min(order.len());
     // The sliding window bounds the queue. An unbounded channel keeps a
     // completed worker from blocking the shared pool when its cursor is idle.
-    let (sender, receiver) = channel();
+    let (sender, receiver) =
+        hotpath::channel!(channel::<StreamMessage<R>>(), label = "page-results");
     let scheduler = Arc::new(Scheduler {
         engine,
         document,
         order,
         precheck: Arc::new(precheck),
-        page_work: Arc::new(page_work),
+        worker_factory,
         sender,
         cancellation: CancellationToken::new(),
         window_capacity,
-        state: Mutex::new(SchedulerState {
-            next_work_position: 0,
-            schedule_limit,
-            active_workers: 0,
-        }),
+        state: hotpath::mutex!(
+            std::sync::Mutex::new(SchedulerState {
+                next_work_position: 0,
+                schedule_limit,
+                active_workers: 0,
+            }),
+            label = "stream-scheduler"
+        ),
+        workers: hotpath::mutex!(std::sync::Mutex::new(Vec::new()), label = "stream-workers"),
     });
     Ok(Stream::new(scheduler, receiver))
+}
+
+pub(crate) fn run_stateful_stream<R, P, S, I, F>(
+    document: Arc<PDFDocument>,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    precheck: P,
+    init_state: I,
+    page_work: F,
+) -> Result<Stream<R>>
+where
+    R: Send + 'static,
+    P: Fn(usize, &PDFPage, &PDFDocument, &CancellationToken) -> Result<Option<R>>
+        + Send
+        + Sync
+        + 'static,
+    S: Send + 'static,
+    I: Fn() -> S + Send + Sync + 'static,
+    F: Fn(&mut S, &mut PageArena, usize, &PDFPage, &PDFDocument, &CancellationToken) -> Result<R>
+        + Send
+        + Sync
+        + 'static,
+{
+    run_stream_stateful_on_engine(
+        StreamRuntime {
+            engine: shared_engine()?,
+            window_capacity: DEFAULT_STREAM_WINDOW_CAPACITY,
+        },
+        document,
+        page_numbers,
+        maxpages,
+        precheck,
+        init_state,
+        page_work,
+    )
+}
+
+fn run_stream_stateful_on_engine<R, P, S, I, F>(
+    runtime: StreamRuntime,
+    document: Arc<PDFDocument>,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    precheck: P,
+    init_state: I,
+    page_work: F,
+) -> Result<Stream<R>>
+where
+    R: Send + 'static,
+    P: Fn(usize, &PDFPage, &PDFDocument, &CancellationToken) -> Result<Option<R>>
+        + Send
+        + Sync
+        + 'static,
+    S: Send + 'static,
+    I: Fn() -> S + Send + Sync + 'static,
+    F: Fn(&mut S, &mut PageArena, usize, &PDFPage, &PDFDocument, &CancellationToken) -> Result<R>
+        + Send
+        + Sync
+        + 'static,
+{
+    let worker_factory = Arc::new(StatefulFactory {
+        init_state: Arc::new(init_state),
+        page_work: Arc::new(page_work),
+    });
+    run_stream_with_factory(
+        runtime.engine,
+        document,
+        page_numbers,
+        maxpages,
+        runtime.window_capacity,
+        precheck,
+        worker_factory,
+    )
 }
 
 /// Run a stream with callbacks that do not need the cancellation token.
@@ -510,6 +726,33 @@ mod tests {
     }
 
     #[test]
+    fn stateful_worker_reuses_state_across_pages() {
+        let engine = Engine::new(1).expect("engine");
+        let stream = run_stream_stateful_on_engine(
+            StreamRuntime {
+                engine,
+                window_capacity: 1,
+            },
+            test_document(),
+            None,
+            0,
+            no_precheck_cancellable::<usize>,
+            || 0usize,
+            |count, _arena, _page_index, _page, _document, _cancellation| {
+                *count += 1;
+                Ok(*count)
+            },
+        )
+        .expect("stream");
+
+        let values = stream
+            .map(|result| result.expect("page result").1)
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
     fn unread_stream_does_not_block_another_stream_on_one_worker() {
         let engine = Engine::new(1).expect("engine");
         let (completed_sender, completed_receiver) = std::sync::mpsc::channel();
@@ -621,7 +864,8 @@ mod tests {
 
     #[test]
     fn repeated_cancellation_sends_one_wake() {
-        let (sender, receiver) = channel::<StreamMessage<()>>();
+        let (sender, receiver) =
+            hotpath::channel!(channel::<StreamMessage<()>>(), label = "cancellation-wake");
         let cancellation = CancellationHandle::new(CancellationToken::new(), sender);
 
         cancellation.cancel();
