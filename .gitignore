@@ -474,8 +474,12 @@ node_modules/
 # UniFFI JVM local build artifacts
 crates/uniffi/jvm/.gradle/
 crates/uniffi/jvm/.kotlin/
+crates/uniffi/jvm/.classpath
+crates/uniffi/jvm/.project
+crates/uniffi/jvm/.settings/
 crates/uniffi/jvm/bin/
 crates/uniffi/jvm/build/
+crates/uniffi/jvm/natives/
 
 # CI native-dependency caches. In-workspace so container builds see them
 # without an extra mount; must stay untracked for `cargo publish`.
