@@ -3,6 +3,8 @@
 //! This module provides the main entry points for extracting tables,
 //! words, and text from PDF pages.
 
+use std::borrow::Cow;
+
 use crate::arena::{ArenaLookup, PageArena};
 use crate::cancellation::CancellationToken;
 use crate::error::Result;
@@ -11,13 +13,14 @@ use crate::utils::{HasBBox, Rect};
 
 use super::clustering::{bbox_overlap, bbox_overlap_strict};
 use super::edges::{
-    clip_edge_to_bbox, curve_to_edges, filter_edges, filter_edges_ref, merge_edges, rect_to_edges,
-    words_to_edges_h, words_to_edges_v,
+    clip_edge_to_bbox, curve_to_edges, merge_edges_cancellable, rect_to_edges,
+    words_to_edges_h_cancellable, words_to_edges_v_cancellable,
 };
 use super::geometry::{to_top_left_bbox, to_top_left_bboxes_batch};
-use super::grid::{Table, cells_to_tables, intersections_to_cells};
-use super::intersections::edges_to_intersections;
-use super::text::{extract_text, extract_words};
+use super::grid::{Table, build_cells, group_cells};
+use super::intersections::find_intersections;
+use super::text::TextSpan;
+use super::text::{extract_text, extract_words, extract_words_cancellable};
 use super::types::{
     BBox, CharObj, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TableStrategy,
     TextSettings, WordObj,
@@ -219,10 +222,15 @@ fn collect_page_objects(
 /// Main table finder that orchestrates the extraction pipeline.
 struct TableFinder<'a> {
     page_bbox: BBox,
-    chars: Vec<CharObj>,
-    edges: Vec<EdgeObj>,
+    chars: Cow<'a, [CharObj]>,
+    edges: Cow<'a, [EdgeObj]>,
     settings: &'a TableSettings,
     arena: &'a dyn ArenaLookup,
+}
+
+#[derive(Default)]
+pub(crate) struct TableWorkspace {
+    edges: Vec<EdgeObj>,
 }
 
 impl<'a> TableFinder<'a> {
@@ -242,16 +250,16 @@ impl<'a> TableFinder<'a> {
         };
         Self {
             page_bbox,
-            chars,
-            edges,
+            chars: Cow::Owned(chars),
+            edges: Cow::Owned(edges),
             settings,
             arena: arena_lookup,
         }
     }
 
     fn from_objects(
-        chars: Vec<CharObj>,
-        edges: Vec<EdgeObj>,
+        chars: &'a [CharObj],
+        edges: &'a [EdgeObj],
         geom: &PageGeometry,
         settings: &'a TableSettings,
         arena: &'a dyn ArenaLookup,
@@ -264,35 +272,74 @@ impl<'a> TableFinder<'a> {
         };
         Self {
             page_bbox,
-            chars,
-            edges,
+            chars: Cow::Borrowed(chars),
+            edges: Cow::Borrowed(edges),
             settings,
             arena,
         }
     }
 
+    #[hotpath::measure]
     fn get_edges_with_cancellation(
         &self,
         cancellation: &CancellationToken,
-    ) -> Result<Vec<EdgeObj>> {
+        edges: &mut Vec<EdgeObj>,
+    ) -> Result<()> {
         cancellation.check()?;
         let settings = &self.settings;
+        edges.clear();
 
         let v_strat = settings.vertical_strategy;
         let h_strat = settings.horizontal_strategy;
 
         let mut words: Vec<WordObj> = Vec::new();
         if v_strat.uses_text() || h_strat.uses_text() {
-            words = extract_words(&self.chars, &settings.text_settings, self.arena);
-            cancellation.check()?;
+            words = extract_words_cancellable(
+                &self.chars,
+                &settings.text_settings,
+                self.arena,
+                cancellation,
+            )?;
         }
 
-        // explicit vertical lines
-        let mut v_explicit: Vec<EdgeObj> = Vec::new();
+        match v_strat {
+            TableStrategy::Lines => {
+                edges.extend(
+                    self.edges
+                        .iter()
+                        .filter(|edge| {
+                            edge.orientation == Some(Orientation::Vertical)
+                                && edge.height >= settings.edge_min_length_prefilter
+                        })
+                        .cloned(),
+                );
+            }
+            TableStrategy::LinesStrict => {
+                edges.extend(
+                    self.edges
+                        .iter()
+                        .filter(|edge| {
+                            edge.orientation == Some(Orientation::Vertical)
+                                && edge.object_type == "line"
+                                && edge.height >= settings.edge_min_length_prefilter
+                        })
+                        .cloned(),
+                );
+            }
+            TableStrategy::Text => {
+                edges.extend(words_to_edges_v_cancellable(
+                    &words,
+                    settings.min_words_vertical,
+                    cancellation,
+                )?);
+            }
+            TableStrategy::Explicit => {}
+        }
+
         for desc in &settings.explicit_vertical_lines {
             cancellation.check()?;
             match desc {
-                ExplicitLine::Coord(x) => v_explicit.push(EdgeObj {
+                ExplicitLine::Coord(x) => edges.push(EdgeObj {
                     x0: *x,
                     x1: *x,
                     top: self.page_bbox.top,
@@ -304,59 +351,64 @@ impl<'a> TableFinder<'a> {
                 }),
                 ExplicitLine::Edge(e) => {
                     if e.orientation == Some(Orientation::Vertical) {
-                        v_explicit.push(e.clone())
+                        edges.push(e.clone());
                     }
                 }
                 ExplicitLine::Rect(b) => {
-                    v_explicit.extend(
+                    edges.extend(
                         rect_to_edges(*b)
                             .into_iter()
-                            .filter(|e| e.orientation == Some(Orientation::Vertical)),
+                            .filter(|edge| edge.orientation == Some(Orientation::Vertical)),
                     );
                 }
                 ExplicitLine::Curve(pts) => {
-                    v_explicit.extend(
+                    edges.extend(
                         curve_to_edges(pts, "curve_edge")
                             .into_iter()
-                            .filter(|e| e.orientation == Some(Orientation::Vertical)),
+                            .filter(|edge| edge.orientation == Some(Orientation::Vertical)),
                     );
                 }
             }
         }
 
-        let mut v_base = Vec::new();
-        match v_strat {
+        match h_strat {
             TableStrategy::Lines => {
-                v_base = filter_edges_ref(
-                    &self.edges,
-                    Some(Orientation::Vertical),
-                    None,
-                    settings.edge_min_length_prefilter,
+                edges.extend(
+                    self.edges
+                        .iter()
+                        .filter(|edge| {
+                            edge.orientation == Some(Orientation::Horizontal)
+                                && edge.width >= settings.edge_min_length_prefilter
+                        })
+                        .cloned(),
                 );
             }
             TableStrategy::LinesStrict => {
-                v_base = filter_edges_ref(
-                    &self.edges,
-                    Some(Orientation::Vertical),
-                    Some("line"),
-                    settings.edge_min_length_prefilter,
+                edges.extend(
+                    self.edges
+                        .iter()
+                        .filter(|edge| {
+                            edge.orientation == Some(Orientation::Horizontal)
+                                && edge.object_type == "line"
+                                && edge.width >= settings.edge_min_length_prefilter
+                        })
+                        .cloned(),
                 );
             }
             TableStrategy::Text => {
-                v_base = words_to_edges_v(&words, settings.min_words_vertical);
+                edges.extend(words_to_edges_h_cancellable(
+                    &words,
+                    settings.min_words_horizontal,
+                    cancellation,
+                )?);
             }
             TableStrategy::Explicit => {}
         }
 
-        let mut v = v_base;
-        v.extend(v_explicit);
-
-        // explicit horizontal lines
-        let mut h_explicit: Vec<EdgeObj> = Vec::new();
         for desc in &settings.explicit_horizontal_lines {
             cancellation.check()?;
             match desc {
-                ExplicitLine::Coord(y) => h_explicit.push(EdgeObj {
+                ExplicitLine::Coord(y) => edges.push(EdgeObj {
                     x0: self.page_bbox.x0,
                     x1: self.page_bbox.x1,
                     top: *y,
@@ -366,91 +418,72 @@ impl<'a> TableFinder<'a> {
                     orientation: Some(Orientation::Horizontal),
                     object_type: "explicit_edge",
                 }),
-                ExplicitLine::Edge(e) => {
-                    if e.orientation == Some(Orientation::Horizontal) {
-                        h_explicit.push(e.clone())
+                ExplicitLine::Edge(edge) => {
+                    if edge.orientation == Some(Orientation::Horizontal) {
+                        edges.push(edge.clone());
                     }
                 }
-                ExplicitLine::Rect(b) => {
-                    h_explicit.extend(
-                        rect_to_edges(*b)
+                ExplicitLine::Rect(bbox) => {
+                    edges.extend(
+                        rect_to_edges(*bbox)
                             .into_iter()
-                            .filter(|e| e.orientation == Some(Orientation::Horizontal)),
+                            .filter(|edge| edge.orientation == Some(Orientation::Horizontal)),
                     );
                 }
-                ExplicitLine::Curve(pts) => {
-                    h_explicit.extend(
-                        curve_to_edges(pts, "curve_edge")
+                ExplicitLine::Curve(points) => {
+                    edges.extend(
+                        curve_to_edges(points, "curve_edge")
                             .into_iter()
-                            .filter(|e| e.orientation == Some(Orientation::Horizontal)),
+                            .filter(|edge| edge.orientation == Some(Orientation::Horizontal)),
                     );
                 }
             }
         }
-
-        let mut h_base = Vec::new();
-        match h_strat {
-            TableStrategy::Lines => {
-                h_base = filter_edges_ref(
-                    &self.edges,
-                    Some(Orientation::Horizontal),
-                    None,
-                    settings.edge_min_length_prefilter,
-                );
-            }
-            TableStrategy::LinesStrict => {
-                h_base = filter_edges_ref(
-                    &self.edges,
-                    Some(Orientation::Horizontal),
-                    Some("line"),
-                    settings.edge_min_length_prefilter,
-                );
-            }
-            TableStrategy::Text => {
-                h_base = words_to_edges_h(&words, settings.min_words_horizontal);
-            }
-            TableStrategy::Explicit => {}
-        }
-
-        let mut h = h_base;
-        h.extend(h_explicit);
-
-        let mut edges = v;
-        edges.extend(h);
 
         cancellation.check()?;
-        let edges = merge_edges(
-            edges,
+        *edges = merge_edges_cancellable(
+            std::mem::take(edges),
             settings.snap_x_tolerance,
             settings.snap_y_tolerance,
             settings.join_x_tolerance,
             settings.join_y_tolerance,
-        );
+            cancellation,
+        )?;
 
         cancellation.check()?;
-        Ok(filter_edges(edges, None, None, settings.edge_min_length))
+        edges.retain(|edge| {
+            let length = if edge.orientation == Some(Orientation::Vertical) {
+                edge.height
+            } else {
+                edge.width
+            };
+            length >= settings.edge_min_length
+        });
+        Ok(())
     }
 
     fn find_tables(&self) -> Vec<Table> {
-        self.find_tables_with_cancellation(&CancellationToken::new())
+        let mut workspace = TableWorkspace::default();
+        self.find_tables_with_cancellation(&CancellationToken::new(), &mut workspace)
             .expect("a new cancellation token cannot be cancelled")
     }
 
+    #[hotpath::measure]
     fn find_tables_with_cancellation(
         &self,
         cancellation: &CancellationToken,
+        workspace: &mut TableWorkspace,
     ) -> Result<Vec<Table>> {
-        let edges = self.get_edges_with_cancellation(cancellation)?;
+        self.get_edges_with_cancellation(cancellation, &mut workspace.edges)?;
         cancellation.check()?;
-        let (store, intersections) = edges_to_intersections(
-            &edges,
+        let (store, intersections) = find_intersections(
+            &workspace.edges,
             self.settings.intersection_x_tolerance,
             self.settings.intersection_y_tolerance,
-        );
-        cancellation.check()?;
-        let cells = intersections_to_cells(&store, &intersections);
-        cancellation.check()?;
-        let tables = cells_to_tables(cells);
+            cancellation,
+        )?;
+        let cells = build_cells(&store, &intersections, cancellation)?;
+        let tables = group_cells(cells, cancellation)?;
         let mut found = Vec::with_capacity(tables.len());
         for cell_group in tables {
             cancellation.check()?;
@@ -468,6 +501,10 @@ pub struct TableCellMetadata {
     pub column_span: usize,
     pub bbox: BBox,
     pub text: String,
+    /// Where each run of `text` came from, when bidi reordering could have
+    /// moved it. Empty when the layout path was used or runs were not asked
+    /// for; never a guess.
+    pub text_spans: Vec<TextSpan>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -519,8 +556,8 @@ fn table_to_metadata_with_cancellation(
     let rows = table.rows();
     let row_count = rows.len();
     let column_count = rows.first().map(|row| row.cells.len()).unwrap_or(0);
-    let text_grid =
-        table.extract_soa_with_cancellation(chars, text_settings, arena, cancellation)?;
+    let (text_grid, spans_grid) =
+        table.extract_soa_with_spans_cancellation(chars, text_settings, arena, cancellation)?;
 
     let mut row_starts: Vec<f64> = Vec::with_capacity(row_count);
     for (row_idx, row) in rows.iter().enumerate() {
@@ -560,6 +597,11 @@ fn table_to_metadata_with_cancellation(
                 .and_then(|text_row| text_row.get(col_idx))
                 .and_then(|value| value.clone())
                 .unwrap_or_default();
+            let text_spans = spans_grid
+                .get(row_idx)
+                .and_then(|spans_row| spans_row.get(col_idx))
+                .and_then(|value| value.clone())
+                .unwrap_or_default();
             cells.push(TableCellMetadata {
                 row_index: row_idx,
                 column_index: col_idx,
@@ -567,6 +609,7 @@ fn table_to_metadata_with_cancellation(
                 column_span: span_for_axis(&column_starts, col_idx, bbox.x1),
                 bbox: *bbox,
                 text,
+                text_spans,
             });
         }
     }
@@ -630,6 +673,42 @@ pub fn extract_tables_from_objects(
     .expect("a new cancellation token cannot be cancelled")
 }
 
+/// Per-table run grid: rows of cells, each holding its output runs.
+pub type TableTextSpans = Vec<Vec<Option<Vec<TextSpan>>>>;
+type ExtractedTables = Vec<Vec<Vec<Option<String>>>>;
+
+#[hotpath::measure]
+pub(crate) fn extract_spans_borrowed(
+    chars: &[CharObj],
+    edges: &[EdgeObj],
+    geom: &PageGeometry,
+    settings: &TableSettings,
+    arena: &impl ArenaLookup,
+    cancellation: &CancellationToken,
+    workspace: &mut TableWorkspace,
+) -> Result<(ExtractedTables, Vec<TableTextSpans>)> {
+    cancellation.check()?;
+    let arena: &dyn ArenaLookup = arena;
+    let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
+    let mut tables = finder.find_tables_with_cancellation(cancellation, workspace)?;
+    retain_tables_in_geometry(&mut tables, geom);
+    let mut extracted = Vec::with_capacity(tables.len());
+    let mut runs = Vec::with_capacity(tables.len());
+    for table in &tables {
+        cancellation.check()?;
+        let (text, table_runs) = table.extract_soa_with_spans_cancellation(
+            &finder.chars,
+            &settings.text_settings,
+            finder.arena,
+            cancellation,
+        )?;
+        extracted.push(text);
+        runs.push(table_runs);
+    }
+    Ok((extracted, runs))
+}
+
+#[hotpath::measure]
 pub(crate) fn extract_tables_from_objects_with_cancellation(
     chars: Vec<CharObj>,
     edges: Vec<EdgeObj>,
@@ -638,10 +717,31 @@ pub(crate) fn extract_tables_from_objects_with_cancellation(
     arena: &impl ArenaLookup,
     cancellation: &CancellationToken,
 ) -> Result<Vec<Vec<Vec<Option<String>>>>> {
+    let mut workspace = TableWorkspace::default();
+    extract_tables_borrowed(
+        &chars,
+        &edges,
+        geom,
+        settings,
+        arena,
+        cancellation,
+        &mut workspace,
+    )
+}
+
+pub(crate) fn extract_tables_borrowed(
+    chars: &[CharObj],
+    edges: &[EdgeObj],
+    geom: &PageGeometry,
+    settings: &TableSettings,
+    arena: &impl ArenaLookup,
+    cancellation: &CancellationToken,
+    workspace: &mut TableWorkspace,
+) -> Result<Vec<Vec<Vec<Option<String>>>>> {
     cancellation.check()?;
     let arena: &dyn ArenaLookup = arena;
     let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
-    let mut tables = finder.find_tables_with_cancellation(cancellation)?;
+    let mut tables = finder.find_tables_with_cancellation(cancellation, workspace)?;
     retain_tables_in_geometry(&mut tables, geom);
     let mut extracted = Vec::with_capacity(tables.len());
     for table in &tables {
@@ -675,6 +775,7 @@ pub fn extract_tables_with_metadata_from_objects(
     .expect("a new cancellation token cannot be cancelled")
 }
 
+#[hotpath::measure]
 pub(crate) fn extract_tables_with_metadata_from_objects_with_cancellation(
     chars: Vec<CharObj>,
     edges: Vec<EdgeObj>,
@@ -683,10 +784,31 @@ pub(crate) fn extract_tables_with_metadata_from_objects_with_cancellation(
     arena: &impl ArenaLookup,
     cancellation: &CancellationToken,
 ) -> Result<Vec<TableMetadata>> {
+    let mut workspace = TableWorkspace::default();
+    extract_metadata_borrowed(
+        &chars,
+        &edges,
+        geom,
+        settings,
+        arena,
+        cancellation,
+        &mut workspace,
+    )
+}
+
+pub(crate) fn extract_metadata_borrowed(
+    chars: &[CharObj],
+    edges: &[EdgeObj],
+    geom: &PageGeometry,
+    settings: &TableSettings,
+    arena: &impl ArenaLookup,
+    cancellation: &CancellationToken,
+    workspace: &mut TableWorkspace,
+) -> Result<Vec<TableMetadata>> {
     cancellation.check()?;
     let arena: &dyn ArenaLookup = arena;
     let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
-    let mut tables = finder.find_tables_with_cancellation(cancellation)?;
+    let mut tables = finder.find_tables_with_cancellation(cancellation, workspace)?;
     retain_tables_in_geometry(&mut tables, geom);
     let mut metadata = Vec::with_capacity(tables.len());
     for table in &tables {
@@ -762,7 +884,7 @@ pub fn extract_table_from_objects(
     arena: &impl ArenaLookup,
 ) -> Option<Vec<Vec<Option<String>>>> {
     let arena: &dyn ArenaLookup = arena;
-    let finder = TableFinder::from_objects(chars, edges, geom, settings, arena);
+    let finder = TableFinder::from_objects(&chars, &edges, geom, settings, arena);
     let mut tables = finder.find_tables();
     retain_tables_in_geometry(&mut tables, geom);
     if tables.is_empty() {
@@ -825,6 +947,7 @@ pub fn extract_words_from_objects(
     extract_words_from_objects_borrowed(chars, &settings, arena)
 }
 
+#[hotpath::measure]
 pub(crate) fn extract_words_from_objects_borrowed(
     chars: Vec<CharObj>,
     settings: &TextSettings,
@@ -855,6 +978,7 @@ pub fn extract_text_from_objects(
     extract_text_from_objects_borrowed(chars, &settings, arena)
 }
 
+#[hotpath::measure]
 pub(crate) fn extract_text_from_objects_borrowed(
     chars: Vec<CharObj>,
     settings: &TextSettings,
@@ -867,12 +991,39 @@ pub(crate) fn extract_text_from_objects_borrowed(
 #[cfg(test)]
 mod tests {
     use super::collect_page_objects;
-    use super::{Table, table_to_metadata};
-    use crate::arena::PageArena;
-    use crate::arena::types::{ArenaChar, ArenaItem, ArenaLine, ArenaPage, ArenaRect};
+    use super::{Table, TableFinder, TableWorkspace, table_to_metadata};
+    use crate::arena::types::{ArenaChar, ArenaItem, ArenaLine, ArenaPage, ArenaRect, ColorId};
+    use crate::arena::{ArenaLookup, PageArena};
+    use crate::cancellation::CancellationToken;
+    use crate::error::PdfError;
     use crate::layout::table::collect_table_objects_from_arena;
-    use crate::layout::table::types::{BBox, CharObj, PageGeometry, TextSettings};
+    use crate::layout::table::types::{
+        BBox, CharObj, PageGeometry, TableSettings, TableStrategy, TextSettings,
+    };
     use crate::utils::Rect;
+    use lasso::Spur;
+    use std::cell::Cell;
+
+    struct CancelLookup<'a> {
+        arena: &'a PageArena,
+        token: &'a CancellationToken,
+        calls: Cell<usize>,
+    }
+
+    impl ArenaLookup for CancelLookup<'_> {
+        fn resolve(&self, key: Spur) -> &str {
+            let calls = self.calls.get() + 1;
+            self.calls.set(calls);
+            if calls == 1 {
+                self.token.cancel();
+            }
+            self.arena.resolve(key)
+        }
+
+        fn color(&self, id: ColorId) -> &[f64] {
+            self.arena.color(id)
+        }
+    }
 
     #[test]
     fn collect_table_objects_from_arena_matches_ltpage() {
@@ -951,6 +1102,49 @@ mod tests {
             lt_arena.resolve(chars_lt[0].text),
             ctx.resolve(chars_arena[0].text)
         );
+    }
+
+    #[test]
+    fn text_edges_stop_after_cancellation() {
+        let mut arena = PageArena::new();
+        let text = arena.intern("A");
+        let chars = (0..1_024)
+            .map(|index| CharObj {
+                text,
+                x0: index as f64,
+                x1: index as f64 + 1.0,
+                top: 0.0,
+                bottom: 10.0,
+                doctop: 0.0,
+                width: 1.0,
+                height: 10.0,
+                size: 10.0,
+                upright: true,
+            })
+            .collect::<Vec<_>>();
+        let geometry = PageGeometry {
+            page_bbox: (0.0, 0.0, 1_024.0, 10.0),
+            mediabox: (0.0, 0.0, 1_024.0, 10.0),
+            initial_doctop: 0.0,
+            force_crop: false,
+        };
+        let settings = TableSettings {
+            vertical_strategy: TableStrategy::Text,
+            ..TableSettings::default()
+        };
+        let token = CancellationToken::new();
+        let lookup = CancelLookup {
+            arena: &arena,
+            token: &token,
+            calls: Cell::new(0),
+        };
+        let finder = TableFinder::from_objects(&chars, &[], &geometry, &settings, &lookup);
+        let mut workspace = TableWorkspace::default();
+
+        let result = finder.find_tables_with_cancellation(&token, &mut workspace);
+
+        assert!(matches!(result, Err(PdfError::Cancelled)));
+        assert!(lookup.calls.get() < chars.len());
     }
 
     #[test]

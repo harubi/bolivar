@@ -5,19 +5,46 @@
 
 use std::collections::HashMap;
 
-use itertools::Itertools;
-
 use crate::arena::ArenaLookup;
+use crate::cancellation::CancellationToken;
+use crate::error::Result;
 use crate::layout::bidi::{
     contains_rtl_text, has_compact_mixed_token, is_ltr_prefixed_compact_mixed,
-    reconstruct_text_for_output, reconstruct_words, reorder_text_for_output, reorder_visual_word_runs,
+    reconstruct_text_for_output, reconstruct_words, reorder_text_for_output,
+    reorder_visual_word_runs,
 };
 
-use super::clustering::{bbox_from_chars, cluster_objects};
+use super::clustering::cluster_objects;
 use super::types::{CharId, CharObj, TextDir, TextSettings, WordObj};
+
+/// One span of a cell's text, and the word on the page it came from.
+///
+/// Bidi reconstruction reorders words, so the order a reader sees is not the
+/// order the page laid down. `start` and `end` are character offsets into the
+/// extracted text; `word_index` is the word's position in the line's geometric
+/// order. Two spans sharing a `word_index` were one word before reordering.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextSpan {
+    pub text: String,
+    pub line_index: usize,
+    pub word_index: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Whether a line's spans could be established at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpanFidelity {
+    /// Every span is anchored to the word it came from.
+    Exact,
+    /// The line was reordered by a path that carries no word identity, so no
+    /// span is claimed for it rather than guessing one.
+    Unavailable,
+}
 
 const DEFAULT_X_DENSITY: f64 = 7.25;
 const DEFAULT_Y_DENSITY: f64 = 13.0;
+const CANCEL_INTERVAL: usize = 256;
 
 fn char_text<'a>(obj: &CharObj, arena: &'a dyn ArenaLookup) -> &'a str {
     arena.resolve(obj.text)
@@ -82,37 +109,67 @@ fn get_char_dir(upright: bool, settings: &TextSettings) -> TextDir {
     }
 }
 
-/// Merge characters into a word.
-pub fn merge_chars(
-    ordered: &[&CharObj],
-    settings: &TextSettings,
-    arena: &dyn ArenaLookup,
-) -> WordObj {
-    merge_chars_with_bidi(ordered, settings, arena, true)
-}
-
 fn merge_chars_with_bidi(
     ordered: &[&CharObj],
     settings: &TextSettings,
     arena: &dyn ArenaLookup,
     reconstruct_bidi: bool,
 ) -> WordObj {
-    let bbox = bbox_from_chars(ordered);
+    merge_chars_cancellable(
+        ordered,
+        settings,
+        arena,
+        reconstruct_bidi,
+        &CancellationToken::new(),
+    )
+    .expect("a new cancellation token cannot be cancelled")
+}
+
+fn merge_chars_cancellable(
+    ordered: &[&CharObj],
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+    reconstruct_bidi: bool,
+    cancellation: &CancellationToken,
+) -> Result<WordObj> {
+    cancellation.check()?;
+    let mut x0 = f64::INFINITY;
+    let mut top = f64::INFINITY;
+    let mut x1 = f64::NEG_INFINITY;
+    let mut bottom = f64::NEG_INFINITY;
+    let mut text = String::new();
+    for (index, char) in ordered.iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        x0 = x0.min(char.x0);
+        top = top.min(char.top);
+        x1 = x1.max(char.x1);
+        bottom = bottom.max(char.bottom);
+        text.push_str(expand_ligature(
+            char_text(char, arena),
+            settings.expand_ligatures,
+        ));
+    }
+    cancellation.check()?;
+
+    let bbox = super::types::BBox {
+        x0,
+        top,
+        x1,
+        bottom,
+    };
     let doctop_adj = ordered[0].doctop - ordered[0].top;
     let upright = ordered[0].upright;
     let char_dir = get_char_dir(upright, settings);
 
-    let text = ordered
-        .iter()
-        .map(|c| expand_ligature(char_text(c, arena), settings.expand_ligatures))
-        .collect::<String>();
     let text = if reconstruct_bidi {
         maybe_reorder_bidi_default(text, settings)
     } else {
         text
     };
 
-    WordObj {
+    Ok(WordObj {
         text,
         x0: bbox.x0,
         x1: bbox.x1,
@@ -123,23 +180,23 @@ fn merge_chars_with_bidi(
         width: bbox.width(),
         upright,
         direction: char_dir,
-    }
+    })
 }
 
 /// Expand ligature characters to their component characters.
-fn expand_ligature(text: &str, expand: bool) -> String {
+fn expand_ligature(text: &str, expand: bool) -> &str {
     if !expand {
-        return text.to_string();
+        return text;
     }
     match text {
-        "\u{fb00}" => "ff".to_string(),
-        "\u{fb03}" => "ffi".to_string(),
-        "\u{fb04}" => "ffl".to_string(),
-        "\u{fb01}" => "fi".to_string(),
-        "\u{fb02}" => "fl".to_string(),
-        "\u{fb06}" => "st".to_string(),
-        "\u{fb05}" => "st".to_string(),
-        _ => text.to_string(),
+        "\u{fb00}" => "ff",
+        "\u{fb03}" => "ffi",
+        "\u{fb04}" => "ffl",
+        "\u{fb01}" => "fi",
+        "\u{fb02}" => "fl",
+        "\u{fb06}" => "st",
+        "\u{fb05}" => "st",
+        _ => text,
     }
 }
 
@@ -246,6 +303,16 @@ fn iter_chars_to_lines<'a>(
     chars: &[&'a CharObj],
     settings: &TextSettings,
 ) -> Vec<(Vec<&'a CharObj>, TextDir)> {
+    iter_chars_to_lines_cancellable(chars, settings, &CancellationToken::new())
+        .expect("a new cancellation token cannot be cancelled")
+}
+
+fn iter_chars_to_lines_cancellable<'a>(
+    chars: &[&'a CharObj],
+    settings: &TextSettings,
+    cancellation: &CancellationToken,
+) -> Result<Vec<(Vec<&'a CharObj>, TextDir)>> {
+    cancellation.check()?;
     let upright = chars.first().map(|c| c.upright).unwrap_or(true);
     let line_dir = if upright {
         settings.line_dir
@@ -269,18 +336,143 @@ fn iter_chars_to_lines<'a>(
         settings.x_tolerance
     };
 
-    let subclusters = cluster_objects(chars, line_cluster_key, tolerance, false);
+    let mut sorted = chars.to_vec();
+    sorted.sort_by(|first, second| {
+        line_cluster_key(first)
+            .partial_cmp(&line_cluster_key(second))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    cancellation.check()?;
+
+    let mut subclusters = Vec::new();
+    let mut current = Vec::new();
+    let mut last_key = None;
+    for (index, char) in sorted.into_iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        let key = line_cluster_key(&char);
+        if last_key.is_some_and(|last| key > last + tolerance) {
+            subclusters.push(current);
+            current = Vec::new();
+        }
+        current.push(char);
+        last_key = Some(key);
+    }
+    if !current.is_empty() {
+        subclusters.push(current);
+    }
+
     let mut out = Vec::new();
-    for sc in subclusters {
+    for (index, sc) in subclusters.into_iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
         let mut sorted = sc;
         sorted.sort_by(|a, b| {
             let ka = char_sort_key(a);
             let kb = char_sort_key(b);
             ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
         });
+        cancellation.check()?;
         out.push((sorted, char_dir));
     }
-    out
+    Ok(out)
+}
+
+fn push_word(
+    chars: &[&CharObj],
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+    words: &mut Vec<WordObj>,
+    cancellation: &CancellationToken,
+) -> Result<()> {
+    words.push(merge_chars_cancellable(
+        chars,
+        settings,
+        arena,
+        true,
+        cancellation,
+    )?);
+    Ok(())
+}
+
+fn append_line_words(
+    line_chars: &[&CharObj],
+    direction: TextDir,
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+    words: &mut Vec<WordObj>,
+    cancellation: &CancellationToken,
+) -> Result<()> {
+    cancellation.check()?;
+    let mut word_start = None;
+    for (index, &char) in line_chars.iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        let text = char_text(char, arena);
+        if !settings.keep_blank_chars && text.chars().all(char::is_whitespace) {
+            if let Some(start) = word_start.take() {
+                push_word(
+                    &line_chars[start..index],
+                    settings,
+                    arena,
+                    words,
+                    cancellation,
+                )?;
+            }
+            continue;
+        }
+
+        if settings.split_at_punctuation.contains(text) {
+            if let Some(start) = word_start.take() {
+                push_word(
+                    &line_chars[start..index],
+                    settings,
+                    arena,
+                    words,
+                    cancellation,
+                )?;
+            }
+            push_word(
+                &line_chars[index..=index],
+                settings,
+                arena,
+                words,
+                cancellation,
+            )?;
+            continue;
+        }
+
+        let Some(start) = word_start else {
+            word_start = Some(index);
+            continue;
+        };
+        let previous = line_chars[index - 1];
+        let x_tolerance = settings
+            .x_tolerance_ratio
+            .map(|ratio| ratio * previous.size)
+            .unwrap_or(settings.x_tolerance);
+        let y_tolerance = settings
+            .y_tolerance_ratio
+            .map(|ratio| ratio * previous.size)
+            .unwrap_or(settings.y_tolerance);
+        if char_begins_new_word(previous, char, direction, x_tolerance, y_tolerance) {
+            push_word(
+                &line_chars[start..index],
+                settings,
+                arena,
+                words,
+                cancellation,
+            )?;
+            word_start = Some(index);
+        }
+    }
+    if let Some(start) = word_start {
+        push_word(&line_chars[start..], settings, arena, words, cancellation)?;
+    }
+    Ok(())
 }
 
 /// Extract words from characters.
@@ -289,11 +481,28 @@ pub fn extract_words(
     settings: &TextSettings,
     arena: &dyn ArenaLookup,
 ) -> Vec<WordObj> {
+    extract_words_cancellable(chars, settings, arena, &CancellationToken::new())
+        .expect("a new cancellation token cannot be cancelled")
+}
+
+pub(super) fn extract_words_cancellable(
+    chars: &[CharObj],
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+    cancellation: &CancellationToken,
+) -> Result<Vec<WordObj>> {
+    cancellation.check()?;
     if chars.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let refs: Vec<&CharObj> = chars.iter().collect();
-    extract_words_refs(&refs, settings, arena)
+    let mut refs = Vec::with_capacity(chars.len());
+    for (index, char) in chars.iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        refs.push(char);
+    }
+    extract_words_refs_cancellable(&refs, settings, arena, cancellation)
 }
 
 /// Extract words from character references.
@@ -302,29 +511,84 @@ fn extract_words_refs<'a>(
     settings: &TextSettings,
     arena: &dyn ArenaLookup,
 ) -> Vec<WordObj> {
+    extract_words_refs_cancellable(chars, settings, arena, &CancellationToken::new())
+        .expect("a new cancellation token cannot be cancelled")
+}
+
+fn extract_words_refs_cancellable<'a>(
+    chars: &'a [&'a CharObj],
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+    cancellation: &CancellationToken,
+) -> Result<Vec<WordObj>> {
+    cancellation.check()?;
     if chars.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
+
+    let upright = chars[0].upright;
+    let mut same_orientation = true;
+    for (index, char) in chars.iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        if char.upright != upright {
+            same_orientation = false;
+            break;
+        }
+    }
+
+    if same_orientation {
+        let line_groups = if settings.use_text_flow {
+            vec![(chars.to_vec(), settings.char_dir)]
+        } else {
+            iter_chars_to_lines_cancellable(chars, settings, cancellation)?
+        };
+        let mut words = Vec::new();
+        for (line_chars, direction) in line_groups {
+            append_line_words(
+                &line_chars,
+                direction,
+                settings,
+                arena,
+                &mut words,
+                cancellation,
+            )?;
+        }
+        return Ok(words);
+    }
+
     let mut grouped: HashMap<(bool, String), Vec<&CharObj>> = HashMap::new();
-    for &c in chars {
-        let key = (c.upright, String::new());
-        grouped.entry(key).or_default().push(c);
+    for (index, &char) in chars.iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        let key = (char.upright, String::new());
+        grouped.entry(key).or_default().push(char);
     }
 
     let mut words = Vec::new();
-    for (_key, group) in grouped {
+    for (index, (_key, group)) in grouped.into_iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
         let line_groups = if settings.use_text_flow {
             vec![(group.clone(), settings.char_dir)]
         } else {
-            iter_chars_to_lines(&group, settings)
+            iter_chars_to_lines_cancellable(&group, settings, cancellation)?
         };
         for (line_chars, direction) in line_groups {
-            for word_chars in iter_chars_to_words(&line_chars, direction, settings, arena) {
-                words.push(merge_chars(&word_chars, settings, arena));
-            }
+            append_line_words(
+                &line_chars,
+                direction,
+                settings,
+                arena,
+                &mut words,
+                cancellation,
+            )?;
         }
     }
-    words
+    Ok(words)
 }
 
 fn extract_word_map<'a>(
@@ -571,8 +835,24 @@ fn extract_text_refs(
     settings: &TextSettings,
     arena: &dyn ArenaLookup,
 ) -> String {
+    extract_text_refs_inner(chars, settings, arena, false).0
+}
+
+/// Extract text and, where the layout permits it, the source word of each run.
+///
+/// Runs are only offered when the lines are stacked top to bottom and read left
+/// to right, because `textmap_to_string` transposes or reverses every other
+/// combination and a character offset into the result would not address the run
+/// it came from. In those cases the text is returned and the run list is empty:
+/// no offset is invented.
+fn extract_text_refs_inner(
+    chars: &[&CharObj],
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+    want_spans: bool,
+) -> (String, Vec<TextSpan>) {
     if chars.is_empty() {
-        return String::new();
+        return (String::new(), Vec::new());
     }
     let words = if settings.bidi {
         extract_word_map(chars, settings, arena, false)
@@ -593,9 +873,36 @@ fn extract_text_refs(
         settings.x_tolerance
     };
 
-    let lines = cluster_objects(&words, line_cluster_key, tolerance, false);
+    let mut words = words;
+    words.sort_by(|first, second| {
+        line_cluster_key(first)
+            .partial_cmp(&line_cluster_key(second))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut lines = Vec::new();
+    let mut current = Vec::new();
+    let mut last_key = None;
+    for word in words {
+        let key = line_cluster_key(&word);
+        if last_key.is_some_and(|last| key > last + tolerance) {
+            lines.push(current);
+            current = Vec::new();
+        }
+        current.push(word);
+        last_key = Some(key);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    // Offsets only address the result when lines are joined with a newline in
+    // the order they were built. Anything else is transposed or reversed.
+    let offsets_addressable = line_dir_render == TextDir::Ttb && char_dir_render != TextDir::Rtl;
+    let collect_spans = want_spans && offsets_addressable;
 
     let mut line_texts = Vec::new();
+    let mut per_line: Vec<Vec<(String, usize)>> = Vec::new();
+
     for line in lines {
         let mut line_sorted = line;
         line_sorted.sort_by(|a, b| {
@@ -615,54 +922,157 @@ fn extract_text_refs(
                 .partial_cmp(&key_b)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        let mut pieces: Vec<(String, usize)> = Vec::new();
         if settings.bidi {
             if should_reconstruct_geometric_line(&line_sorted) {
                 // Same text as the string path, but keeps the source word of
                 // each output run.
-                let words: Vec<&str> =
-                    line_sorted.iter().map(|word| word.text.as_str()).collect();
-                line_texts.push(reconstruct_words(&words, " ").text);
+                let words: Vec<&str> = line_sorted.iter().map(|word| word.text.as_str()).collect();
+                let reconstructed = reconstruct_words(&words, " ");
+                if collect_spans {
+                    for span in &reconstructed.spans {
+                        pieces.push((span.text.clone(), span.source_index));
+                    }
+                }
+                line_texts.push(reconstructed.text);
             } else {
+                let indexed: Vec<(usize, &WordObj)> = line_sorted.iter().enumerate().collect();
                 let legacy_order =
-                    reorder_visual_word_runs(line_sorted.iter().collect::<Vec<_>>(), |word| {
-                        word.text.as_str()
-                    });
-                line_texts.push(
-                    legacy_order
-                        .into_iter()
-                        .map(|word| reorder_text_for_output(&word.text))
-                        .join(" "),
-                );
+                    reorder_visual_word_runs(indexed, |(_, word)| word.text.as_str());
+                let mut text = String::new();
+                for (position, (word_index, word)) in legacy_order.into_iter().enumerate() {
+                    if position > 0 {
+                        text.push(' ');
+                        if collect_spans {
+                            pieces.push((" ".to_string(), word_index));
+                        }
+                    }
+                    let piece = reorder_text_for_output(&word.text);
+                    if collect_spans {
+                        pieces.push((piece.clone(), word_index));
+                    }
+                    text.push_str(&piece);
+                }
+                line_texts.push(text);
             }
         } else {
-            if char_dir_render == TextDir::Ltr {
-                line_sorted = reorder_visual_word_runs(line_sorted, |word| word.text.as_str());
+            if !collect_spans {
+                let ordered = if char_dir_render == TextDir::Ltr {
+                    reorder_visual_word_runs(line_sorted, |word| word.text.as_str())
+                } else {
+                    line_sorted
+                };
+                let mut text = String::new();
+                for (position, word) in ordered.into_iter().enumerate() {
+                    if position > 0 {
+                        text.push(' ');
+                    }
+                    text.push_str(&word.text);
+                }
+                line_texts.push(text);
+                continue;
             }
-            line_texts.push(line_sorted.iter().map(|word| word.text.as_str()).join(" "));
+
+            let mut indexed: Vec<(usize, &WordObj)> = line_sorted.iter().enumerate().collect();
+            if char_dir_render == TextDir::Ltr {
+                indexed = reorder_visual_word_runs(indexed, |(_, word)| word.text.as_str());
+            }
+            let mut text = String::new();
+            for (position, (word_index, word)) in indexed.into_iter().enumerate() {
+                if position > 0 {
+                    text.push(' ');
+                    if collect_spans {
+                        pieces.push((" ".to_string(), word_index));
+                    }
+                }
+                if collect_spans {
+                    pieces.push((word.text.clone(), word_index));
+                }
+                text.push_str(&word.text);
+            }
+            line_texts.push(text);
+        }
+        if collect_spans {
+            per_line.push(pieces);
         }
     }
 
-    textmap_to_string(line_texts, line_dir_render, char_dir_render)
+    let text = textmap_to_string(line_texts, line_dir_render, char_dir_render);
+    if !collect_spans {
+        return (text, Vec::new());
+    }
+
+    // Lines were joined with a single newline, so a line's start is every
+    // earlier line's characters plus one separator each.
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    for (line_index, pieces) in per_line.into_iter().enumerate() {
+        if line_index > 0 {
+            cursor += 1;
+        }
+        for (piece, word_index) in pieces {
+            let length = piece.chars().count();
+            if piece.trim().is_empty() {
+                cursor += length;
+                continue;
+            }
+            out.push(TextSpan {
+                text: piece,
+                line_index,
+                word_index,
+                start: cursor,
+                end: cursor + length,
+            });
+            cursor += length;
+        }
+    }
+    (text, out)
+}
+
+fn char_refs<I>(chars: &[CharObj], ids: I) -> Vec<&CharObj>
+where
+    I: ExactSizeIterator<Item = CharId>,
+{
+    let mut refs: Vec<&CharObj> = Vec::with_capacity(ids.len());
+    for id in ids {
+        refs.push(&chars[id.index()]);
+    }
+    refs
 }
 
 /// Extract text from specific character indices.
-pub fn extract_text_from_char_ids(
+pub(super) fn extract_text_from_id_iter<I>(
     chars: &[CharObj],
-    ids: &[CharId],
+    ids: I,
     settings: &TextSettings,
     arena: &dyn ArenaLookup,
-) -> String {
-    if ids.is_empty() {
-        return String::new();
-    }
-    let mut refs: Vec<&CharObj> = Vec::with_capacity(ids.len());
-    for id in ids {
-        refs.push(&chars[id.0]);
-    }
+) -> String
+where
+    I: ExactSizeIterator<Item = CharId>,
+{
+    let refs = char_refs(chars, ids);
     extract_text_refs(&refs, settings, arena)
 }
 
 /// Extract text from specific character indices with layout spacing.
+pub(super) fn extract_layout_from_id_iter<I>(
+    chars: &[CharObj],
+    ids: I,
+    settings: &TextSettings,
+    layout_bbox: &super::types::BBox,
+    arena: &dyn ArenaLookup,
+) -> String
+where
+    I: ExactSizeIterator<Item = CharId>,
+{
+    let refs = char_refs(chars, ids);
+    if refs.is_empty() {
+        return String::new();
+    }
+    extract_text_layout_refs(&refs, settings, layout_bbox, arena)
+}
+
+#[cfg(test)]
 pub fn extract_text_from_char_ids_layout(
     chars: &[CharObj],
     ids: &[CharId],
@@ -670,12 +1080,36 @@ pub fn extract_text_from_char_ids_layout(
     layout_bbox: &super::types::BBox,
     arena: &dyn ArenaLookup,
 ) -> String {
-    if ids.is_empty() {
-        return String::new();
+    extract_layout_from_id_iter(chars, ids.iter().copied(), settings, layout_bbox, arena)
+}
+
+/// Extract a cell's text together with the source word of each output run.
+pub(super) fn extract_spans_from_id_iter<I>(
+    chars: &[CharObj],
+    ids: I,
+    settings: &TextSettings,
+    arena: &dyn ArenaLookup,
+) -> (String, Vec<TextSpan>)
+where
+    I: ExactSizeIterator<Item = CharId>,
+{
+    let refs = char_refs(chars, ids);
+    if refs.is_empty() {
+        return (String::new(), Vec::new());
     }
-    let mut refs: Vec<&CharObj> = Vec::with_capacity(ids.len());
-    for id in ids {
-        refs.push(&chars[id.0]);
+    extract_text_refs_inner(&refs, settings, arena, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expand_ligature;
+
+    #[test]
+    fn normal_text_does_not_allocate_for_ligatures() {
+        let text = String::from("plain");
+        let expanded = expand_ligature(&text, true);
+
+        assert_eq!(expanded.as_ptr(), text.as_ptr());
+        assert_eq!(expand_ligature("\u{fb03}", true), "ffi");
     }
-    extract_text_layout_refs(&refs, settings, layout_bbox, arena)
 }

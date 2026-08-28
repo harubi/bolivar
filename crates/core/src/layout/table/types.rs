@@ -251,18 +251,53 @@ pub struct PageGeometry {
 
 // Internal ID types for efficient indexing
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct VEdgeId(pub usize);
+pub struct VEdgeId(pub u32);
+
+impl VEdgeId {
+    pub(super) fn from_index(index: usize) -> Self {
+        Self(u32::try_from(index).expect("a page cannot contain more than u32::MAX vertical edges"))
+    }
+
+    pub(super) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct HEdgeId(pub usize);
+pub struct HEdgeId(pub u32);
+
+impl HEdgeId {
+    pub(super) fn from_index(index: usize) -> Self {
+        Self(
+            u32::try_from(index)
+                .expect("a page cannot contain more than u32::MAX horizontal edges"),
+        )
+    }
+
+    pub(super) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct CharId(pub usize);
+pub struct CharId(pub u32);
+
+impl CharId {
+    pub(super) fn from_index(index: usize) -> Self {
+        Self(u32::try_from(index).expect("a page cannot contain more than u32::MAX characters"))
+    }
+
+    pub(super) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 // BBox key for hashing
+#[cfg(test)]
 #[derive(Hash, Eq, PartialEq, Clone, Copy, Debug)]
 pub struct BBoxKey(pub u64, pub u64, pub u64, pub u64);
 
+#[cfg(test)]
 pub const fn bbox_key(b: &BBox) -> BBoxKey {
     BBoxKey(
         b.x0.to_bits(),

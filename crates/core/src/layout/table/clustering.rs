@@ -5,19 +5,32 @@
 
 use std::collections::HashMap;
 
-use super::types::{BBox, CharObj, EdgeObj, KeyF64, Orientation, WordObj, key_f64};
+use crate::cancellation::CancellationToken;
+use crate::error::Result;
 
-/// Cluster a list of f64 values based on tolerance.
-pub fn cluster_list(mut xs: Vec<f64>, tolerance: f64) -> Vec<Vec<f64>> {
+use super::types::{BBox, KeyF64, WordObj, key_f64};
+
+const CANCEL_INTERVAL: usize = 256;
+
+fn cluster_list_cancellable(
+    mut xs: Vec<f64>,
+    tolerance: f64,
+    cancellation: &CancellationToken,
+) -> Result<Vec<Vec<f64>>> {
+    cancellation.check()?;
     xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    cancellation.check()?;
     if tolerance == 0.0 || xs.len() < 2 {
-        return xs.into_iter().map(|x| vec![x]).collect();
+        return Ok(xs.into_iter().map(|x| vec![x]).collect());
     }
     let mut groups: Vec<Vec<f64>> = Vec::new();
     let mut current: Vec<f64> = Vec::new();
     let mut last = xs[0];
     current.push(xs[0]);
-    for x in xs.into_iter().skip(1) {
+    for (index, x) in xs.into_iter().skip(1).enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
         if x <= last + tolerance {
             current.push(x);
         } else {
@@ -27,22 +40,32 @@ pub fn cluster_list(mut xs: Vec<f64>, tolerance: f64) -> Vec<Vec<f64>> {
         last = x;
     }
     groups.push(current);
-    groups
+    Ok(groups)
 }
 
-/// Create a mapping from values to their cluster indices.
-pub fn make_cluster_dict(values: Vec<f64>, tolerance: f64) -> HashMap<KeyF64, usize> {
+fn make_cluster_dict_cancellable(
+    values: Vec<f64>,
+    tolerance: f64,
+    cancellation: &CancellationToken,
+) -> Result<HashMap<KeyF64, usize>> {
+    cancellation.check()?;
     let mut unique: Vec<f64> = values;
     unique.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    cancellation.check()?;
     unique.dedup_by(|a, b| (*a - *b).abs() == 0.0);
-    let clusters = cluster_list(unique, tolerance);
+    let clusters = cluster_list_cancellable(unique, tolerance, cancellation)?;
     let mut dict = HashMap::new();
-    for (i, cluster) in clusters.into_iter().enumerate() {
-        for val in cluster {
-            dict.insert(key_f64(val), i);
+    let mut count = 0usize;
+    for (cluster_index, cluster) in clusters.into_iter().enumerate() {
+        for value in cluster {
+            if count.is_multiple_of(CANCEL_INTERVAL) {
+                cancellation.check()?;
+            }
+            count += 1;
+            dict.insert(key_f64(value), cluster_index);
         }
     }
-    dict
+    Ok(dict)
 }
 
 /// Cluster objects based on a key function and tolerance.
@@ -52,84 +75,67 @@ pub fn cluster_objects<T: Clone, F: Fn(&T) -> f64>(
     tolerance: f64,
     preserve_order: bool,
 ) -> Vec<Vec<T>> {
-    let values: Vec<f64> = xs.iter().map(&key_fn).collect();
-    let cluster_dict = make_cluster_dict(values, tolerance);
+    cluster_objects_cancellable(
+        xs,
+        key_fn,
+        tolerance,
+        preserve_order,
+        &CancellationToken::new(),
+    )
+    .expect("a new cancellation token cannot be cancelled")
+}
 
-    let mut cluster_tuples: Vec<(T, usize)> = if preserve_order {
-        xs.iter()
-            .map(|x| {
-                (
-                    x.clone(),
-                    *cluster_dict.get(&key_f64(key_fn(x))).unwrap_or(&0),
-                )
-            })
-            .collect()
-    } else {
-        let mut tuples: Vec<(T, usize)> = xs
-            .iter()
-            .map(|x| {
-                (
-                    x.clone(),
-                    *cluster_dict.get(&key_f64(key_fn(x))).unwrap_or(&0),
-                )
-            })
-            .collect();
-        tuples.sort_by_key(|tuple| tuple.1);
-        tuples
-    };
+pub(super) fn cluster_objects_cancellable<T: Clone, F: Fn(&T) -> f64>(
+    xs: &[T],
+    key_fn: F,
+    tolerance: f64,
+    preserve_order: bool,
+    cancellation: &CancellationToken,
+) -> Result<Vec<Vec<T>>> {
+    cancellation.check()?;
+    let mut values = Vec::with_capacity(xs.len());
+    for (index, item) in xs.iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        values.push(key_fn(item));
+    }
+    let cluster_dict = make_cluster_dict_cancellable(values, tolerance, cancellation)?;
+
+    let mut cluster_tuples = Vec::with_capacity(xs.len());
+    for (index, item) in xs.iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        cluster_tuples.push((
+            item.clone(),
+            *cluster_dict.get(&key_f64(key_fn(item))).unwrap_or(&0),
+        ));
+    }
+    if !preserve_order {
+        cluster_tuples.sort_by_key(|tuple| tuple.1);
+        cancellation.check()?;
+    }
 
     let mut groups: Vec<Vec<T>> = Vec::new();
     let mut current: Vec<T> = Vec::new();
     let mut last_idx: Option<usize> = None;
-    for (item, idx) in cluster_tuples.drain(..) {
-        if last_idx.is_none() || last_idx.unwrap() == idx {
+    for (index, (item, cluster_index)) in cluster_tuples.drain(..).enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        if last_idx.is_none() || last_idx == Some(cluster_index) {
             current.push(item);
         } else {
             groups.push(current);
             current = vec![item];
         }
-        last_idx = Some(idx);
+        last_idx = Some(cluster_index);
     }
     if !current.is_empty() {
         groups.push(current);
     }
-    groups
-}
-
-/// Move an edge along an axis by a given value.
-pub fn move_edge(edge: &EdgeObj, axis: Orientation, value: f64) -> EdgeObj {
-    match axis {
-        Orientation::Horizontal => EdgeObj {
-            x0: edge.x0 + value,
-            x1: edge.x1 + value,
-            ..edge.clone()
-        },
-        Orientation::Vertical => EdgeObj {
-            top: edge.top + value,
-            bottom: edge.bottom + value,
-            ..edge.clone()
-        },
-    }
-}
-
-/// Compute a bounding box from a slice of character references.
-pub fn bbox_from_chars(chars: &[&CharObj]) -> BBox {
-    let mut x0 = f64::INFINITY;
-    let mut top = f64::INFINITY;
-    let mut x1 = f64::NEG_INFINITY;
-    let mut bottom = f64::NEG_INFINITY;
-    for c in chars {
-        x0 = x0.min(c.x0);
-        top = top.min(c.top);
-        x1 = x1.max(c.x1);
-        bottom = bottom.max(c.bottom);
-    }
-    BBox {
-        x0,
-        top,
-        x1,
-        bottom,
-    }
+    Ok(groups)
 }
 
 /// Compute a bounding box from a slice of words.

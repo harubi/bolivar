@@ -992,6 +992,7 @@ mod tests {
                     bottom: 88.0,
                 },
                 text: "value".to_owned(),
+                text_spans: Vec::new(),
             }],
         };
 

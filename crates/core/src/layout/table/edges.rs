@@ -4,14 +4,17 @@
 //! clean, aligned edges suitable for table detection.
 
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
 
 use ordered_float::OrderedFloat;
 
+use crate::cancellation::CancellationToken;
+use crate::error::Result;
 use crate::utils::Point;
 
-use super::clustering::{bbox_from_words, bbox_overlap, cluster_objects, move_edge};
+use super::clustering::{bbox_from_words, bbox_overlap, cluster_objects_cancellable};
 use super::types::{BBox, EdgeObj, Orientation, WordObj};
+
+const CANCEL_INTERVAL: usize = 256;
 
 /// Clip an edge to a bounding box, returning None if no overlap.
 pub fn clip_edge_to_bbox(edge: EdgeObj, crop: BBox) -> Option<EdgeObj> {
@@ -34,105 +37,131 @@ pub fn clip_edge_to_bbox(edge: EdgeObj, crop: BBox) -> Option<EdgeObj> {
     })
 }
 
-fn snap_edges(edges: Vec<EdgeObj>, x_tolerance: f64, y_tolerance: f64) -> Vec<EdgeObj> {
-    let mut v_edges = Vec::new();
-    let mut h_edges = Vec::new();
-    for edge in edges {
-        match edge.orientation {
-            Some(Orientation::Vertical) => v_edges.push(edge),
-            Some(Orientation::Horizontal) => h_edges.push(edge),
-            None => {}
-        }
+fn edge_position(edge: &EdgeObj) -> f64 {
+    match edge.orientation {
+        Some(Orientation::Horizontal) => edge.top,
+        Some(Orientation::Vertical) => edge.x0,
+        None => 0.0,
     }
-
-    if x_tolerance > 0.0 {
-        let clusters = cluster_objects(&v_edges, |e| e.x0, x_tolerance, false);
-        let mut snapped: Vec<EdgeObj> = Vec::new();
-        for cluster in clusters {
-            let avg = cluster.iter().map(|e| e.x0).sum::<f64>() / (cluster.len() as f64);
-            for e in cluster {
-                snapped.push(move_edge(&e, Orientation::Horizontal, avg - e.x0));
-            }
-        }
-        v_edges = snapped;
-    }
-
-    if y_tolerance > 0.0 {
-        let clusters = cluster_objects(&h_edges, |e| e.top, y_tolerance, false);
-        let mut snapped: Vec<EdgeObj> = Vec::new();
-        for cluster in clusters {
-            let avg = cluster.iter().map(|e| e.top).sum::<f64>() / (cluster.len() as f64);
-            for e in cluster {
-                snapped.push(move_edge(&e, Orientation::Vertical, avg - e.top));
-            }
-        }
-        h_edges = snapped;
-    }
-
-    v_edges.into_iter().chain(h_edges).collect()
 }
 
-fn join_edge_group(
-    mut sorted: Vec<EdgeObj>,
-    orientation: Orientation,
-    tolerance: f64,
-) -> Vec<EdgeObj> {
-    sorted.sort_by(|a, b| {
-        let a_min = if orientation == Orientation::Horizontal {
-            a.x0
-        } else {
-            a.top
-        };
-        let b_min = if orientation == Orientation::Horizontal {
-            b.x0
-        } else {
-            b.top
-        };
-        a_min
-            .partial_cmp(&b_min)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let mut joined: Vec<EdgeObj> = Vec::new();
-    if sorted.is_empty() {
-        return joined;
+fn edge_start(edge: &EdgeObj) -> f64 {
+    match edge.orientation {
+        Some(Orientation::Horizontal) => edge.x0,
+        Some(Orientation::Vertical) => edge.top,
+        None => 0.0,
     }
-    let mut sorted = sorted.into_iter();
-    joined.push(sorted.next().expect("non-empty edge group"));
-    for e in sorted {
-        let last = joined.last_mut().unwrap();
-        let e_min = if orientation == Orientation::Horizontal {
-            e.x0
-        } else {
-            e.top
+}
+
+fn snap_edges(
+    edges: &mut [EdgeObj],
+    x_tolerance: f64,
+    y_tolerance: f64,
+    cancellation: &CancellationToken,
+) -> Result<()> {
+    edges.sort_by_key(|edge| {
+        (
+            edge.orientation.expect("oriented edge"),
+            OrderedFloat(edge_position(edge)),
+        )
+    });
+    cancellation.check()?;
+
+    let mut start = 0usize;
+    while start < edges.len() {
+        if start.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        let orientation = edges[start].orientation.expect("oriented edge");
+        let tolerance = match orientation {
+            Orientation::Horizontal => y_tolerance,
+            Orientation::Vertical => x_tolerance,
         };
-        let e_max = if orientation == Orientation::Horizontal {
-            e.x1
-        } else {
-            e.bottom
-        };
-        let last_max = if orientation == Orientation::Horizontal {
-            last.x1
-        } else {
-            last.bottom
-        };
-        if e_min <= last_max + tolerance {
-            if e_max > last_max {
-                if orientation == Orientation::Horizontal {
-                    last.x1 = e.x1;
-                    last.width = last.x1 - last.x0;
-                } else {
-                    last.bottom = e.bottom;
-                    last.height = last.bottom - last.top;
+        if tolerance <= 0.0 {
+            start += 1;
+            continue;
+        }
+
+        let mut end = start + 1;
+        let mut last = edge_position(&edges[start]);
+        while end < edges.len() && edges[end].orientation == Some(orientation) {
+            let position = edge_position(&edges[end]);
+            if position > last + tolerance {
+                break;
+            }
+            last = position;
+            end += 1;
+        }
+
+        let mut position_sum = 0.0;
+        for (index, edge) in edges[start..end].iter().enumerate() {
+            if index.is_multiple_of(CANCEL_INTERVAL) {
+                cancellation.check()?;
+            }
+            position_sum += edge_position(edge);
+        }
+        let average = position_sum / ((end - start) as f64);
+        for (index, edge) in edges[start..end].iter_mut().enumerate() {
+            if index.is_multiple_of(CANCEL_INTERVAL) {
+                cancellation.check()?;
+            }
+            match orientation {
+                Orientation::Horizontal => {
+                    let offset = average - edge.top;
+                    edge.top += offset;
+                    edge.bottom += offset;
+                }
+                Orientation::Vertical => {
+                    let offset = average - edge.x0;
+                    edge.x0 += offset;
+                    edge.x1 += offset;
                 }
             }
-        } else {
-            joined.push(e);
         }
+        start = end;
     }
-    joined
+    Ok(())
+}
+
+fn join_edge(
+    previous: &mut EdgeObj,
+    edge: &EdgeObj,
+    join_x_tolerance: f64,
+    join_y_tolerance: f64,
+) -> bool {
+    let orientation = edge.orientation.expect("oriented edge");
+    if previous.orientation != Some(orientation) || edge_position(previous) != edge_position(edge) {
+        return false;
+    }
+
+    let tolerance = match orientation {
+        Orientation::Horizontal => join_x_tolerance,
+        Orientation::Vertical => join_y_tolerance,
+    };
+    let previous_end = match orientation {
+        Orientation::Horizontal => previous.x1,
+        Orientation::Vertical => previous.bottom,
+    };
+    if edge_start(edge) > previous_end + tolerance {
+        return false;
+    }
+
+    match orientation {
+        Orientation::Horizontal if edge.x1 > previous.x1 => {
+            previous.x1 = edge.x1;
+            previous.width = previous.x1 - previous.x0;
+        }
+        Orientation::Vertical if edge.bottom > previous.bottom => {
+            previous.bottom = edge.bottom;
+            previous.height = previous.bottom - previous.top;
+        }
+        _ => {}
+    }
+    true
 }
 
 /// Merge edges by snapping and joining.
+#[cfg(test)]
 pub fn merge_edges(
     edges: Vec<EdgeObj>,
     snap_x_tolerance: f64,
@@ -140,98 +169,88 @@ pub fn merge_edges(
     join_x_tolerance: f64,
     join_y_tolerance: f64,
 ) -> Vec<EdgeObj> {
-    let mut edges = edges;
-    if snap_x_tolerance > 0.0 || snap_y_tolerance > 0.0 {
-        edges = snap_edges(edges, snap_x_tolerance, snap_y_tolerance);
-    }
-
-    // Group by orientation and position (match pdfplumber exact grouping)
-    let mut grouped: BTreeMap<(Orientation, OrderedFloat<f64>), Vec<EdgeObj>> = BTreeMap::new();
-    for e in edges {
-        let orientation = match e.orientation {
-            Some(o) => o,
-            None => continue,
-        };
-        let key_val = match orientation {
-            Orientation::Horizontal => e.top,
-            Orientation::Vertical => e.x0,
-        };
-        let key = (orientation, OrderedFloat(key_val));
-        grouped.entry(key).or_default().push(e);
-    }
-
-    let mut merged: Vec<EdgeObj> = Vec::new();
-    for ((orientation, _), group) in grouped {
-        let tol = if orientation == Orientation::Horizontal {
-            join_x_tolerance
-        } else {
-            join_y_tolerance
-        };
-        merged.extend(join_edge_group(group, orientation, tol));
-    }
-
-    merged
+    merge_edges_cancellable(
+        edges,
+        snap_x_tolerance,
+        snap_y_tolerance,
+        join_x_tolerance,
+        join_y_tolerance,
+        &CancellationToken::new(),
+    )
+    .expect("a new cancellation token cannot be cancelled")
 }
 
-/// Filter edges by orientation, type, and minimum length.
-pub fn filter_edges_ref(
-    edges: &[EdgeObj],
-    orientation: Option<Orientation>,
-    edge_type: Option<&str>,
-    min_length: f64,
-) -> Vec<EdgeObj> {
-    edges
-        .iter()
-        .filter(|e| {
-            let dim = if e.orientation == Some(Orientation::Vertical) {
-                e.height
-            } else {
-                e.width
-            };
-            let et_ok = match edge_type {
-                Some(t) => e.object_type == t,
-                None => true,
-            };
-            let orient_ok = match orientation {
-                Some(o) => e.orientation == Some(o),
-                None => true,
-            };
-            et_ok && orient_ok && dim >= min_length
-        })
-        .cloned()
-        .collect()
-}
-
-/// Filter edges by orientation, type, and minimum length.
-pub fn filter_edges(
+pub(crate) fn merge_edges_cancellable(
     edges: Vec<EdgeObj>,
-    orientation: Option<Orientation>,
-    edge_type: Option<&str>,
-    min_length: f64,
-) -> Vec<EdgeObj> {
-    edges
-        .into_iter()
-        .filter(|e| {
-            let dim = if e.orientation == Some(Orientation::Vertical) {
-                e.height
-            } else {
-                e.width
+    snap_x_tolerance: f64,
+    snap_y_tolerance: f64,
+    join_x_tolerance: f64,
+    join_y_tolerance: f64,
+    cancellation: &CancellationToken,
+) -> Result<Vec<EdgeObj>> {
+    cancellation.check()?;
+    let mut edges = edges;
+    let mut kept = 0usize;
+    for read in 0..edges.len() {
+        if read.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        if edges[read].orientation.is_none() {
+            continue;
+        }
+        if kept != read {
+            edges.swap(kept, read);
+        }
+        kept += 1;
+    }
+    edges.truncate(kept);
+
+    if snap_x_tolerance > 0.0 || snap_y_tolerance > 0.0 {
+        snap_edges(&mut edges, snap_x_tolerance, snap_y_tolerance, cancellation)?;
+    }
+
+    edges.sort_by_key(|edge| {
+        (
+            edge.orientation.expect("oriented edge"),
+            OrderedFloat(edge_position(edge)),
+            OrderedFloat(edge_start(edge)),
+        )
+    });
+    cancellation.check()?;
+
+    if !edges.is_empty() {
+        let mut write = 0usize;
+        for read in 1..edges.len() {
+            if read.is_multiple_of(CANCEL_INTERVAL) {
+                cancellation.check()?;
+            }
+            let joined = {
+                let (previous, current) = edges.split_at_mut(read);
+                join_edge(
+                    &mut previous[write],
+                    &current[0],
+                    join_x_tolerance,
+                    join_y_tolerance,
+                )
             };
-            let et_ok = match edge_type {
-                Some(t) => e.object_type == t,
-                None => true,
-            };
-            let orient_ok = match orientation {
-                Some(o) => e.orientation == Some(o),
-                None => true,
-            };
-            et_ok && orient_ok && dim >= min_length
-        })
-        .collect()
+            if joined {
+                continue;
+            }
+
+            write += 1;
+            if write != read {
+                edges.swap(write, read);
+            }
+        }
+        edges.truncate(write + 1);
+    }
+
+    cancellation.check()?;
+    Ok(edges)
 }
 
 /// Convert a rectangle to four edges.
-pub fn rect_to_edges(rect: BBox) -> Vec<EdgeObj> {
+pub fn rect_to_edges(rect: BBox) -> [EdgeObj; 4] {
     let top = EdgeObj {
         x0: rect.x0,
         x1: rect.x1,
@@ -272,7 +291,7 @@ pub fn rect_to_edges(rect: BBox) -> Vec<EdgeObj> {
         orientation: Some(Orientation::Vertical),
         object_type: "rect_edge",
     };
-    vec![top, bottom, left, right]
+    [top, bottom, left, right]
 }
 
 /// Convert a curve (series of points) to edges.
@@ -306,27 +325,45 @@ pub fn curve_to_edges(points: &[Point], object_type: &'static str) -> Vec<EdgeOb
     edges
 }
 
-/// Generate horizontal edges from word clusters.
-pub fn words_to_edges_h(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj> {
-    let clusters = cluster_objects(words, |w| w.top, 1.0, false);
-    let large_clusters = clusters
-        .into_iter()
-        .filter(|c| c.len() >= word_threshold)
-        .collect::<Vec<_>>();
-    let mut rects: Vec<BBox> = large_clusters.iter().map(|c| bbox_from_words(c)).collect();
+pub(super) fn words_to_edges_h_cancellable(
+    words: &[WordObj],
+    word_threshold: usize,
+    cancellation: &CancellationToken,
+) -> Result<Vec<EdgeObj>> {
+    let clusters = cluster_objects_cancellable(words, |word| word.top, 1.0, false, cancellation)?;
+    let mut rects = Vec::new();
+    for (index, cluster) in clusters.into_iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        if cluster.len() >= word_threshold {
+            rects.push(bbox_from_words(&cluster));
+        }
+    }
     if rects.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    let min_x0 = rects.iter().map(|r| r.x0).fold(f64::INFINITY, f64::min);
-    let max_x1 = rects.iter().map(|r| r.x1).fold(f64::NEG_INFINITY, f64::max);
 
-    let mut edges = Vec::new();
-    for r in rects.drain(..) {
+    let mut min_x0 = f64::INFINITY;
+    let mut max_x1 = f64::NEG_INFINITY;
+    for (index, rect) in rects.iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        min_x0 = min_x0.min(rect.x0);
+        max_x1 = max_x1.max(rect.x1);
+    }
+
+    let mut edges = Vec::with_capacity(rects.len() * 2);
+    for (index, rect) in rects.into_iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
         edges.push(EdgeObj {
             x0: min_x0,
             x1: max_x1,
-            top: r.top,
-            bottom: r.top,
+            top: rect.top,
+            bottom: rect.top,
             width: max_x1 - min_x0,
             height: 0.0,
             orientation: Some(Orientation::Horizontal),
@@ -335,22 +372,31 @@ pub fn words_to_edges_h(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj
         edges.push(EdgeObj {
             x0: min_x0,
             x1: max_x1,
-            top: r.bottom,
-            bottom: r.bottom,
+            top: rect.bottom,
+            bottom: rect.bottom,
             width: max_x1 - min_x0,
             height: 0.0,
             orientation: Some(Orientation::Horizontal),
             object_type: "word_edge",
         });
     }
-    edges
+    Ok(edges)
 }
 
-/// Generate vertical edges from word clusters.
-pub fn words_to_edges_v(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj> {
-    let by_x0 = cluster_objects(words, |w| w.x0, 1.0, false);
-    let by_x1 = cluster_objects(words, |w| w.x1, 1.0, false);
-    let by_center = cluster_objects(words, |w| (w.x0 + w.x1) / 2.0, 1.0, false);
+pub(super) fn words_to_edges_v_cancellable(
+    words: &[WordObj],
+    word_threshold: usize,
+    cancellation: &CancellationToken,
+) -> Result<Vec<EdgeObj>> {
+    let by_x0 = cluster_objects_cancellable(words, |word| word.x0, 1.0, false, cancellation)?;
+    let by_x1 = cluster_objects_cancellable(words, |word| word.x1, 1.0, false, cancellation)?;
+    let by_center = cluster_objects_cancellable(
+        words,
+        |word| (word.x0 + word.x1) / 2.0,
+        1.0,
+        false,
+        cancellation,
+    )?;
 
     let mut clusters = Vec::new();
     clusters.extend(by_x0);
@@ -358,17 +404,27 @@ pub fn words_to_edges_v(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj
     clusters.extend(by_center);
 
     clusters.sort_by_key(|c| Reverse(c.len()));
-    let large_clusters: Vec<Vec<WordObj>> = clusters
-        .into_iter()
-        .filter(|c| c.len() >= word_threshold)
-        .collect();
-
-    let bboxes: Vec<BBox> = large_clusters.iter().map(|c| bbox_from_words(c)).collect();
+    cancellation.check()?;
+    let mut bboxes = Vec::new();
+    for (index, cluster) in clusters.into_iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        if cluster.len() >= word_threshold {
+            bboxes.push(bbox_from_words(&cluster));
+        }
+    }
 
     let mut condensed: Vec<BBox> = Vec::new();
-    'outer: for bbox in bboxes {
-        for c in &condensed {
-            if bbox_overlap(bbox, *c).is_some() {
+    'outer: for (bbox_index, bbox) in bboxes.into_iter().enumerate() {
+        if bbox_index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        for (index, existing) in condensed.iter().enumerate() {
+            if index.is_multiple_of(CANCEL_INTERVAL) {
+                cancellation.check()?;
+            }
+            if bbox_overlap(bbox, *existing).is_some() {
                 continue 'outer;
             }
         }
@@ -376,29 +432,32 @@ pub fn words_to_edges_v(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj
     }
 
     if condensed.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     condensed.sort_by(|a, b| a.x0.partial_cmp(&b.x0).unwrap_or(std::cmp::Ordering::Equal));
+    cancellation.check()?;
 
-    let max_x1 = condensed
-        .iter()
-        .map(|r| r.x1)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let min_top = condensed
-        .iter()
-        .map(|r| r.top)
-        .fold(f64::INFINITY, f64::min);
-    let max_bottom = condensed
-        .iter()
-        .map(|r| r.bottom)
-        .fold(f64::NEG_INFINITY, f64::max);
+    let mut max_x1 = f64::NEG_INFINITY;
+    let mut min_top = f64::INFINITY;
+    let mut max_bottom = f64::NEG_INFINITY;
+    for (index, rect) in condensed.iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        max_x1 = max_x1.max(rect.x1);
+        min_top = min_top.min(rect.top);
+        max_bottom = max_bottom.max(rect.bottom);
+    }
 
-    let mut edges = Vec::new();
-    for r in condensed {
+    let mut edges = Vec::with_capacity(condensed.len() + 1);
+    for (index, rect) in condensed.into_iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
         edges.push(EdgeObj {
-            x0: r.x0,
-            x1: r.x0,
+            x0: rect.x0,
+            x1: rect.x0,
             top: min_top,
             bottom: max_bottom,
             width: 0.0,
@@ -417,12 +476,14 @@ pub fn words_to_edges_v(words: &[WordObj], word_threshold: usize) -> Vec<EdgeObj
         orientation: Some(Orientation::Vertical),
         object_type: "word_edge",
     });
-    edges
+    Ok(edges)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{filter_edges, filter_edges_ref};
+    use super::{merge_edges, merge_edges_cancellable};
+    use crate::cancellation::CancellationToken;
+    use crate::error::PdfError;
     use crate::layout::table::{EdgeObj, Orientation};
 
     fn edge(
@@ -444,38 +505,75 @@ mod tests {
     }
 
     #[test]
-    fn filter_edges_ref_matches_owned_filter() {
+    fn merge_edges_honors_cancellation() {
+        let token = CancellationToken::new();
+        token.cancel();
+
+        let result = merge_edges_cancellable(Vec::new(), 3.0, 3.0, 3.0, 3.0, &token);
+
+        assert!(matches!(result, Err(PdfError::Cancelled)));
+    }
+
+    #[test]
+    fn merge_edges_snaps_then_joins_in_order() {
         let edges = vec![
-            edge(Orientation::Horizontal, "line", 10.0, 0.0),
-            edge(Orientation::Horizontal, "rect_edge", 2.0, 0.0),
-            edge(Orientation::Vertical, "line", 0.0, 12.0),
-            edge(Orientation::Vertical, "curve_edge", 0.0, 1.0),
+            EdgeObj {
+                x0: 11.0,
+                x1: 11.0,
+                top: 8.0,
+                bottom: 15.0,
+                width: 0.0,
+                height: 7.0,
+                orientation: Some(Orientation::Vertical),
+                object_type: "line",
+            },
+            EdgeObj {
+                x0: 10.0,
+                x1: 10.0,
+                top: 0.0,
+                bottom: 10.0,
+                width: 0.0,
+                height: 10.0,
+                orientation: Some(Orientation::Vertical),
+                object_type: "line",
+            },
         ];
 
-        let expected = filter_edges(
-            edges.clone(),
-            Some(Orientation::Vertical),
-            Some("line"),
-            3.0,
-        );
-        let actual = filter_edges_ref(&edges, Some(Orientation::Vertical), Some("line"), 3.0);
+        let merged = merge_edges(edges, 3.0, 3.0, 3.0, 3.0);
 
-        let as_key = |edge: &EdgeObj| {
-            (
-                edge.orientation,
-                edge.object_type,
-                edge.x0,
-                edge.x1,
-                edge.top,
-                edge.bottom,
-                edge.width,
-                edge.height,
-            )
-        };
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].x0, 10.5);
+        assert_eq!((merged[0].top, merged[0].bottom), (0.0, 15.0));
+    }
 
-        assert_eq!(
-            actual.iter().map(as_key).collect::<Vec<_>>(),
-            expected.iter().map(as_key).collect::<Vec<_>>()
-        );
+    #[test]
+    fn merge_edges_uses_chained_snap_clusters() {
+        let edges = vec![
+            edge(Orientation::Vertical, "line", 0.0, 2.0),
+            EdgeObj {
+                x0: 2.0,
+                x1: 2.0,
+                top: 4.0,
+                bottom: 6.0,
+                width: 0.0,
+                height: 2.0,
+                orientation: Some(Orientation::Vertical),
+                object_type: "line",
+            },
+            EdgeObj {
+                x0: 4.0,
+                x1: 4.0,
+                top: 8.0,
+                bottom: 10.0,
+                width: 0.0,
+                height: 2.0,
+                orientation: Some(Orientation::Vertical),
+                object_type: "line",
+            },
+        ];
+
+        let merged = merge_edges(edges, 2.0, 0.0, 0.0, 0.0);
+
+        assert!(merged.iter().all(|item| item.x0 == 2.0));
     }
 }

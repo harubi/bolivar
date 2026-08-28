@@ -20,17 +20,21 @@ pub use types::{
     TableSettings, TableStrategy, TextDir, TextSettings, WordObj,
 };
 
+pub(crate) use clustering::bbox_overlap;
 pub(crate) use collector::collect_table_objects_from_arena;
+pub(crate) use edges::{clip_edge_to_bbox, rect_to_edges};
+pub(crate) use finder::TableWorkspace;
 pub(crate) use finder::{
-    extract_tables_from_objects_with_cancellation,
+    extract_metadata_borrowed, extract_spans_borrowed, extract_tables_borrowed,
     extract_tables_with_metadata_from_objects_with_cancellation,
 };
 pub(crate) use finder::{extract_text_from_objects_borrowed, extract_words_from_objects_borrowed};
+pub(crate) use geometry::to_top_left_bbox;
 
 // Re-export public API functions
 pub use finder::{
-    TableCellMetadata, TableMetadata, extract_table_from_ltpage, extract_table_from_objects,
-    extract_tables_from_ltpage, extract_tables_from_objects,
+    TableCellMetadata, TableMetadata, TableTextSpans, extract_table_from_ltpage,
+    extract_table_from_objects, extract_tables_from_ltpage, extract_tables_from_objects,
     extract_tables_with_metadata_from_objects, extract_text_from_ltpage, extract_text_from_objects,
     extract_words_from_ltpage, extract_words_from_objects,
 };
@@ -38,15 +42,17 @@ pub use finder::{
 #[cfg(test)]
 mod table_extraction_tests {
     use super::geometry::transform_bboxes_batch;
-    use super::grid::{cells_to_tables, intersections_to_cells};
-    use super::intersections::edges_to_intersections;
+    use super::grid::{build_cells, cells_to_tables, group_cells, intersections_to_cells};
     use super::intersections::{ActiveBucket, IntersectionIdx};
+    use super::intersections::{edges_to_intersections, find_intersections};
     use super::text::{extract_text, extract_text_from_char_ids_layout, extract_words};
     use super::types::{
         BBox, BBoxKey, CharId, CharObj, EdgeObj, HEdgeId, KeyPoint, Orientation, TextSettings,
         VEdgeId, bbox_key, key_point,
     };
     use crate::arena::PageArena;
+    use crate::cancellation::CancellationToken;
+    use crate::error::PdfError;
     use crate::utils::apply_matrix_rect;
     use std::collections::HashMap;
 
@@ -115,8 +121,8 @@ mod table_extraction_tests {
                         v: Vec::new(),
                         h: Vec::new(),
                     });
-                    entry.v.push(VEdgeId(v_idx));
-                    entry.h.push(HEdgeId(h_idx));
+                    entry.v.push(VEdgeId::from_index(v_idx));
+                    entry.h.push(HEdgeId::from_index(h_idx));
                 }
             }
         }
@@ -758,8 +764,59 @@ mod table_extraction_tests {
         let edges = sample_edges_for_intersections();
         let (_store, out) = edges_to_intersections(&edges, 0.0, 0.0);
         assert_eq!(out.len(), scalar_edges_to_intersections(&edges).len());
-        let buckets = super::intersections::bucket_count_for_edges(&edges, 0.0);
+        let buckets = super::intersections::bucket_count_for_edges(&edges);
         assert!(buckets > 0);
+    }
+
+    #[test]
+    fn intersection_buckets_ignore_coordinate_span() {
+        let edges = vec![
+            make_v_edge(0.0, 0.0, 10.0),
+            make_v_edge(1_000_000_000.0, 0.0, 10.0),
+        ];
+
+        let buckets = super::intersections::bucket_count_for_edges(&edges);
+
+        assert!(buckets <= edges.len());
+    }
+
+    #[test]
+    fn intersections_support_distant_edges() {
+        let edges = vec![
+            make_v_edge(0.0, 0.0, 10.0),
+            make_v_edge(1_000_000_000.0, 0.0, 10.0),
+            make_h_edge(0.0, 0.0, 1_000_000_000.0),
+            make_h_edge(10.0, 0.0, 1_000_000_000.0),
+        ];
+
+        let (store, intersections) = edges_to_intersections(&edges, 3.0, 3.0);
+        let cells = intersections_to_cells(&store, &intersections);
+
+        assert_eq!(intersections.len(), 4);
+        assert_eq!(cells.len(), 1);
+    }
+
+    #[test]
+    fn table_kernels_honor_cancellation() {
+        let edges = sample_edges_for_intersections();
+        let live = CancellationToken::new();
+        let (store, intersections) = find_intersections(&edges, 0.0, 0.0, &live).unwrap();
+        let cells = build_cells(&store, &intersections, &live).unwrap();
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+
+        assert!(matches!(
+            find_intersections(&edges, 0.0, 0.0, &cancelled),
+            Err(PdfError::Cancelled)
+        ));
+        assert!(matches!(
+            build_cells(&store, &intersections, &cancelled),
+            Err(PdfError::Cancelled)
+        ));
+        assert!(matches!(
+            group_cells(cells, &cancelled),
+            Err(PdfError::Cancelled)
+        ));
     }
 
     #[test]
