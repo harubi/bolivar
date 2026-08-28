@@ -12,9 +12,15 @@ description = "PDF text extraction CLI tools"
 [dependencies]
 bolivar-core.workspace = true
 clap.workspace = true
+hotpath.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 memmap2.workspace = true
+
+[features]
+default = []
+hotpath = ["hotpath/hotpath", "bolivar-core/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc", "bolivar-core/hotpath-alloc"]
 
 [[bin]]
 name = "pdf2txt"

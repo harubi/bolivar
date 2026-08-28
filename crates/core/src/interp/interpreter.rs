@@ -1577,6 +1577,7 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
         self.execute_owned(streams.to_vec());
     }
 
+    #[hotpath::measure]
     pub(crate) fn execute_owned(&mut self, streams: Vec<Vec<u8>>) {
         if streams.is_empty() || self.cancellation.is_cancelled() || self.device.is_complete() {
             return;
