@@ -7,6 +7,10 @@
 use std::collections::HashMap;
 
 use super::types::{EdgeObj, HEdgeId, KeyPoint, Orientation, VEdgeId, key_point};
+use crate::cancellation::CancellationToken;
+use crate::error::Result;
+
+const CANCEL_INTERVAL: usize = 256;
 
 /// Storage for sorted vertical and horizontal edges.
 pub struct EdgeStore {
@@ -14,18 +18,19 @@ pub struct EdgeStore {
     pub h: Vec<EdgeObj>,
 }
 
+#[cfg(test)]
 impl EdgeStore {
     pub fn v(&self, id: VEdgeId) -> &EdgeObj {
-        &self.v[id.0]
+        &self.v[id.index()]
     }
 
     pub fn h(&self, id: HEdgeId) -> &EdgeObj {
-        &self.h[id.0]
+        &self.h[id.index()]
     }
 }
 
 /// Index of edges meeting at an intersection point.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct IntersectionIdx {
     pub v: Vec<VEdgeId>,
     pub h: Vec<HEdgeId>,
@@ -63,7 +68,6 @@ pub(crate) struct ActiveBucket {
     blocks: Vec<AoSoABlock>,
     free: Vec<ActiveSlot>,
     active_blocks: Vec<usize>,
-    len: usize,
 }
 
 impl ActiveBucket {
@@ -80,7 +84,6 @@ impl ActiveBucket {
             if was_empty {
                 self.active_blocks.push(slot.block);
             }
-            self.len += 1;
             return slot;
         }
 
@@ -103,128 +106,89 @@ impl ActiveBucket {
                 lane: lane as u8,
             });
         }
-        self.len += 1;
         slot
     }
 
-    fn remove(&mut self, slot: ActiveSlot) -> Option<(usize, usize)> {
+    fn remove(&mut self, slot: ActiveSlot) -> Option<usize> {
         let lane = slot.lane as usize;
-        if let Some(block) = self.blocks.get_mut(slot.block) {
-            let bit = 1u8 << lane;
-            if block.mask & bit != 0 {
-                block.mask &= !bit;
-                self.len = self.len.saturating_sub(1);
-                if block.mask != 0 {
-                    self.free.push(slot);
-                    return None;
-                }
-                let removed_block = slot.block;
-                self.free.retain(|entry| entry.block != removed_block);
-                if let Some(pos) = self
-                    .active_blocks
-                    .iter()
-                    .position(|&block_idx| block_idx == removed_block)
-                {
-                    self.active_blocks.swap_remove(pos);
-                }
-                let last_idx = self.blocks.len().saturating_sub(1);
-                if removed_block == last_idx {
-                    self.blocks.pop();
-                    return None;
-                }
-                self.blocks.swap_remove(removed_block);
-                for entry in &mut self.active_blocks {
-                    if *entry == last_idx {
-                        *entry = removed_block;
-                    }
-                }
-                for entry in &mut self.free {
-                    if entry.block == last_idx {
-                        entry.block = removed_block;
-                    }
-                }
-                return Some((last_idx, removed_block));
+        let block = self.blocks.get_mut(slot.block)?;
+        let bit = 1u8 << lane;
+        if block.mask & bit == 0 {
+            return None;
+        }
+
+        block.mask &= !bit;
+        if block.mask != 0 {
+            self.free.push(slot);
+            return None;
+        }
+
+        let removed_block = slot.block;
+        self.free.retain(|entry| entry.block != removed_block);
+        if let Some(pos) = self
+            .active_blocks
+            .iter()
+            .position(|&block_idx| block_idx == removed_block)
+        {
+            self.active_blocks.swap_remove(pos);
+        }
+        let last_idx = self.blocks.len().saturating_sub(1);
+        if removed_block == last_idx {
+            self.blocks.pop();
+            return None;
+        }
+
+        self.blocks.swap_remove(removed_block);
+        for entry in &mut self.active_blocks {
+            if *entry == last_idx {
+                *entry = removed_block;
             }
         }
-        None
+        for entry in &mut self.free {
+            if entry.block == last_idx {
+                entry.block = removed_block;
+            }
+        }
+        Some(removed_block)
     }
 
     #[cfg(test)]
     pub(crate) fn active_len(&self) -> usize {
-        self.len
+        self.blocks
+            .iter()
+            .map(|block| block.mask.count_ones() as usize)
+            .sum()
     }
 }
 
-fn bucket_params_for_edges(edges: &[EdgeObj], x_tol: f64) -> Option<(f64, f64, usize)> {
-    let mut min_x = f64::INFINITY;
-    let mut max_x = f64::NEG_INFINITY;
-    let mut v_count = 0usize;
-    for edge in edges {
-        if edge.orientation == Some(Orientation::Vertical) {
-            min_x = min_x.min(edge.x0);
-            max_x = max_x.max(edge.x0);
-            v_count += 1;
-        }
-    }
-    if v_count == 0 || !min_x.is_finite() || !max_x.is_finite() {
-        return None;
-    }
-    let min_x = min_x - x_tol;
-    let max_x = max_x + x_tol;
-    let span = (max_x - min_x).max(0.0);
-    let bucket_width = if x_tol > 0.0 {
-        (x_tol * 2.0).max(1e-6)
-    } else {
-        (span / v_count as f64).max(1.0)
-    };
-    if !bucket_width.is_finite() || bucket_width <= 0.0 {
-        return None;
-    }
-    let bucket_count = ((span / bucket_width).floor() as usize).saturating_add(1);
-    Some((min_x, bucket_width, bucket_count))
+const EDGES_PER_BUCKET: usize = 32;
+
+fn bucket_count(vertical_edges: usize) -> usize {
+    vertical_edges.div_ceil(EDGES_PER_BUCKET)
 }
 
-fn bucket_index(x: f64, min_x: f64, bucket_width: f64, bucket_count: usize) -> usize {
-    if bucket_count == 0 {
-        return 0;
-    }
-    if x <= min_x {
-        return 0;
-    }
-    let raw = ((x - min_x) / bucket_width).floor();
-    if !raw.is_finite() {
-        return 0;
-    }
-    let idx = raw as isize;
-    if idx < 0 {
-        0
-    } else if (idx as usize) >= bucket_count {
-        bucket_count - 1
-    } else {
-        idx as usize
-    }
+fn edge_bucket(edge_index: usize) -> usize {
+    edge_index / EDGES_PER_BUCKET
 }
 
-fn bucket_range(
-    x_min: f64,
-    x_max: f64,
-    min_x: f64,
-    bucket_width: f64,
-    bucket_count: usize,
-) -> Option<(usize, usize)> {
-    if bucket_count == 0 {
+fn query_buckets(edges: &[EdgeObj], x_min: f64, x_max: f64) -> Option<(usize, usize)> {
+    let first_edge = edges.partition_point(|edge| edge.x0 < x_min);
+    let after_last = edges.partition_point(|edge| edge.x0 <= x_max);
+    if first_edge == after_last {
         return None;
     }
-    let start = bucket_index(x_min, min_x, bucket_width, bucket_count);
-    let end = bucket_index(x_max, min_x, bucket_width, bucket_count);
-    Some((start.min(end), start.max(end)))
+
+    Some((edge_bucket(first_edge), edge_bucket(after_last - 1)))
 }
 
 #[cfg(test)]
-pub(crate) fn bucket_count_for_edges(edges: &[EdgeObj], x_tol: f64) -> usize {
-    bucket_params_for_edges(edges, x_tol)
-        .map(|(_, _, count)| count)
-        .unwrap_or(0)
+pub(crate) fn bucket_count_for_edges(edges: &[EdgeObj]) -> usize {
+    bucket_count(
+        edges
+            .iter()
+            .filter(|edge| edge.orientation == Some(Orientation::Vertical))
+            .count(),
+    )
 }
 
 pub(crate) fn remove_active_entry(
@@ -238,7 +202,7 @@ pub(crate) fn remove_active_entry(
     let Some(bucket) = active.get_mut(bucket_idx) else {
         return;
     };
-    let Some((_from, to)) = bucket.remove(slot) else {
+    let Some(to) = bucket.remove(slot) else {
         return;
     };
     let Some(block) = bucket.blocks.get(to) else {
@@ -259,11 +223,24 @@ pub(crate) fn remove_active_entry(
 ///
 /// Returns the edge store and a map from intersection points to the
 /// edges that meet at each point.
+#[cfg(test)]
 pub fn edges_to_intersections(
     edges: &[EdgeObj],
     x_tol: f64,
     y_tol: f64,
 ) -> (EdgeStore, HashMap<KeyPoint, IntersectionIdx>) {
+    find_intersections(edges, x_tol, y_tol, &CancellationToken::new())
+        .expect("a new cancellation token cannot be cancelled")
+}
+
+#[hotpath::measure]
+pub(crate) fn find_intersections(
+    edges: &[EdgeObj],
+    x_tol: f64,
+    y_tol: f64,
+    cancellation: &CancellationToken,
+) -> Result<(EdgeStore, HashMap<KeyPoint, IntersectionIdx>)> {
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     enum EventKind {
         AddV,
         QueryH,
@@ -276,16 +253,19 @@ pub fn edges_to_intersections(
         idx: usize,
     }
 
-    let mut v_sorted: Vec<EdgeObj> = edges
-        .iter()
-        .filter(|e| e.orientation == Some(Orientation::Vertical))
-        .cloned()
-        .collect();
-    let mut h_sorted: Vec<EdgeObj> = edges
-        .iter()
-        .filter(|e| e.orientation == Some(Orientation::Horizontal))
-        .cloned()
-        .collect();
+    cancellation.check()?;
+    let mut v_sorted: Vec<EdgeObj> = Vec::new();
+    let mut h_sorted: Vec<EdgeObj> = Vec::new();
+    for (index, edge) in edges.iter().enumerate() {
+        if index.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
+        match edge.orientation {
+            Some(Orientation::Vertical) => v_sorted.push(edge.clone()),
+            Some(Orientation::Horizontal) => h_sorted.push(edge.clone()),
+            None => {}
+        }
+    }
 
     v_sorted.sort_by(|a, b| {
         a.x0.partial_cmp(&b.x0)
@@ -302,9 +282,23 @@ pub fn edges_to_intersections(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.x0.partial_cmp(&b.x0).unwrap_or(std::cmp::Ordering::Equal))
     });
+    cancellation.check()?;
+
+    if v_sorted.is_empty() || h_sorted.is_empty() {
+        return Ok((
+            EdgeStore {
+                v: v_sorted,
+                h: h_sorted,
+            },
+            HashMap::new(),
+        ));
+    }
 
     let mut events = Vec::with_capacity(v_sorted.len() * 2 + h_sorted.len());
     for (idx, v) in v_sorted.iter().enumerate() {
+        if idx.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
         events.push(Event {
             y: v.top - y_tol,
             kind: EventKind::AddV,
@@ -317,6 +311,9 @@ pub fn edges_to_intersections(
         });
     }
     for (idx, h) in h_sorted.iter().enumerate() {
+        if idx.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
         events.push(Event {
             y: h.top,
             kind: EventKind::QueryH,
@@ -324,18 +321,12 @@ pub fn edges_to_intersections(
         });
     }
 
-    let kind_order = |kind: &EventKind| match kind {
-        EventKind::AddV => 0,
-        EventKind::QueryH => 1,
-        EventKind::RemoveV => 2,
-    };
-
     events.sort_by(|a, b| {
         let y_cmp = a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal);
         if y_cmp != std::cmp::Ordering::Equal {
             return y_cmp;
         }
-        let kind_cmp = kind_order(&a.kind).cmp(&kind_order(&b.kind));
+        let kind_cmp = a.kind.cmp(&b.kind);
         if kind_cmp != std::cmp::Ordering::Equal {
             return kind_cmp;
         }
@@ -364,27 +355,20 @@ pub fn edges_to_intersections(
             .then(atop.partial_cmp(&btop).unwrap_or(std::cmp::Ordering::Equal))
             .then(a.idx.cmp(&b.idx))
     });
+    cancellation.check()?;
 
-    let bucket_params = bucket_params_for_edges(&v_sorted, x_tol);
-    if bucket_params.is_none() {
-        return (
-            EdgeStore {
-                v: v_sorted,
-                h: h_sorted,
-            },
-            HashMap::new(),
-        );
-    }
-    let (min_x, bucket_width, bucket_count) = bucket_params.unwrap();
-    let mut active = vec![ActiveBucket::default(); bucket_count];
+    let mut active = vec![ActiveBucket::default(); bucket_count(v_sorted.len())];
     let mut active_slots: Vec<Option<(usize, ActiveSlot)>> = vec![None; v_sorted.len()];
-    let mut pairs: HashMap<KeyPoint, Vec<(VEdgeId, HEdgeId)>> = HashMap::new();
+    let mut intersections: HashMap<KeyPoint, IntersectionIdx> = HashMap::new();
 
-    for event in events {
+    for (event_count, event) in events.into_iter().enumerate() {
+        if event_count.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
+        }
         match event.kind {
             EventKind::AddV => {
                 let v = &v_sorted[event.idx];
-                let bucket_idx = bucket_index(v.x0, min_x, bucket_width, bucket_count);
+                let bucket_idx = edge_bucket(event.idx);
                 let bucket = &mut active[bucket_idx];
                 let slot = bucket.insert(event.idx, v);
                 active_slots[event.idx] = Some((bucket_idx, slot));
@@ -396,12 +380,13 @@ pub fn edges_to_intersections(
                 let h = &h_sorted[event.idx];
                 let x_min = h.x0 - x_tol;
                 let x_max = h.x1 + x_tol;
-                let Some((start, end)) =
-                    bucket_range(x_min, x_max, min_x, bucket_width, bucket_count)
-                else {
+                let Some((start, end)) = query_buckets(&v_sorted, x_min, x_max) else {
                     continue;
                 };
-                for bucket in &active[start..=end] {
+                for (bucket_offset, bucket) in active[start..=end].iter().enumerate() {
+                    if bucket_offset.is_multiple_of(CANCEL_INTERVAL) {
+                        cancellation.check()?;
+                    }
                     for &block_idx in &bucket.active_blocks {
                         let block = &bucket.blocks[block_idx];
                         let mut mask_bits = 0u8;
@@ -422,10 +407,9 @@ pub fn edges_to_intersections(
                             if mask_bits & (1u8 << lane) != 0 {
                                 let v_idx = block.ids[lane];
                                 let vertex = key_point(v_sorted[v_idx].x0, h.top);
-                                pairs
-                                    .entry(vertex)
-                                    .or_default()
-                                    .push((VEdgeId(v_idx), HEdgeId(event.idx)));
+                                let intersection = intersections.entry(vertex).or_default();
+                                intersection.v.push(VEdgeId::from_index(v_idx));
+                                intersection.h.push(HEdgeId::from_index(event.idx));
                             }
                         }
                     }
@@ -434,24 +418,37 @@ pub fn edges_to_intersections(
         }
     }
 
-    let mut intersections: HashMap<KeyPoint, IntersectionIdx> = HashMap::with_capacity(pairs.len());
-    for (vertex, mut pair_list) in pairs {
-        pair_list.sort_by(|a, b| a.0.0.cmp(&b.0.0).then(a.1.0.cmp(&b.1.0)));
-        let mut v = Vec::with_capacity(pair_list.len());
-        let mut h = Vec::with_capacity(pair_list.len());
-        for (v_idx, h_idx) in pair_list {
-            v.push(v_idx);
-            h.push(h_idx);
+    for (intersection_count, intersection) in intersections.values_mut().enumerate() {
+        if intersection_count.is_multiple_of(CANCEL_INTERVAL) {
+            cancellation.check()?;
         }
-        intersections.insert(vertex, IntersectionIdx { v, h });
+        // Keep each vertical/horizontal pair aligned while restoring stable ID order.
+        for index in 1..intersection.v.len() {
+            if index.is_multiple_of(CANCEL_INTERVAL) {
+                cancellation.check()?;
+            }
+            let v_id = intersection.v[index];
+            let h_id = intersection.h[index];
+            let mut insert_at = index;
+            while insert_at > 0
+                && (intersection.v[insert_at - 1], intersection.h[insert_at - 1]) > (v_id, h_id)
+            {
+                intersection.v[insert_at] = intersection.v[insert_at - 1];
+                intersection.h[insert_at] = intersection.h[insert_at - 1];
+                insert_at -= 1;
+            }
+            intersection.v[insert_at] = v_id;
+            intersection.h[insert_at] = h_id;
+        }
     }
-    (
+    cancellation.check()?;
+    Ok((
         EdgeStore {
             v: v_sorted,
             h: h_sorted,
         },
         intersections,
-    )
+    ))
 }
 
 #[cfg(test)]
