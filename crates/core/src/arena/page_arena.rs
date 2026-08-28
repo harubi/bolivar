@@ -120,7 +120,7 @@ impl PageArena {
 
     pub fn reset(&mut self) {
         self.bump.reset();
-        self.interner = Rodeo::default();
+        self.interner.clear();
         self.intern_cache.clear();
         self.colors.clear();
         self.color_index.clear();
