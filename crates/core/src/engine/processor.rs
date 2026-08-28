@@ -96,6 +96,7 @@ where
 }
 
 /// Run a page through the interpreter with cooperative cancellation.
+#[hotpath::measure]
 pub fn process_page_with_cancellation<D, R>(
     page: &PDFPage,
     device: &mut D,

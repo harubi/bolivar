@@ -282,6 +282,7 @@ pub struct PDFDocument {
 }
 
 impl PDFDocument {
+    #[hotpath::measure]
     fn new_with_cache_inner(
         data: PdfBytes,
         password: &str,
@@ -444,6 +445,7 @@ impl PDFDocument {
             .and_then(|mut cache| cache.get(index))
     }
 
+    #[hotpath::measure]
     pub fn get_page_cached(&self, index: usize) -> Result<Arc<super::page::PDFPage>> {
         if let Some(page) = self.get_cached_page(index) {
             return Ok(page);
@@ -539,6 +541,7 @@ impl PDFDocument {
     }
 
     /// Parse the PDF document structure.
+    #[hotpath::measure]
     fn parse(&mut self, password: &str, allow_xref_fallback: bool) -> Result<()> {
         // Find startxref
         let startxref = self.find_startxref();
@@ -1029,6 +1032,7 @@ impl PDFDocument {
     /// Decode a PDF stream to shared bytes.
     ///
     /// Returns a zero-copy view when no decryption or filters are required.
+    #[hotpath::measure]
     pub fn decode_stream_bytes_with_objid(
         &self,
         stream: &crate::model::objects::PDFStream,
@@ -1519,6 +1523,7 @@ impl PDFDocument {
     }
 
     /// Get an object by ID without cloning the cached object.
+    #[hotpath::measure]
     pub fn getobj_shared(&self, objid: u32) -> Result<Arc<PDFObject>> {
         if objid == 0 {
             return Err(PdfError::ObjectNotFound(0));

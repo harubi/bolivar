@@ -16,6 +16,7 @@ use super::runtime::shared_engine;
 ///
 /// Replaces the four `par_iter().map_init(PageArena::new, …)` loops previously
 /// copy-pasted across `high_level.rs` and `stream.rs`.
+#[hotpath::measure]
 pub fn run_batch<R, F>(
     doc: &PDFDocument,
     page_numbers: Option<&[usize]>,

@@ -625,6 +625,7 @@ fn csv_escape(s: &str) -> String {
 }
 
 /// Process a single PDF file.
+#[hotpath::measure]
 fn process_file<W: Write>(
     path: &PathBuf,
     writer: &mut W,
@@ -838,6 +839,7 @@ fn process_file<W: Write>(
     Ok(())
 }
 
+#[hotpath::main]
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
@@ -861,11 +863,14 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     // Open output file or use stdout
     let mut output: Box<dyn Write> = if args.outfile == "-" {
-        Box::new(BufWriter::new(io::stdout()))
+        Box::new(BufWriter::new(hotpath::io!(
+            io::stdout(),
+            label = "pdf2txt-stdout"
+        )))
     } else {
         let file = File::create(&args.outfile)
             .map_err(|e| format!("Failed to create output file {}: {}", args.outfile, e))?;
-        Box::new(BufWriter::new(file))
+        Box::new(BufWriter::new(hotpath::io!(file, label = "pdf2txt-file")))
     };
 
     // Process each input file

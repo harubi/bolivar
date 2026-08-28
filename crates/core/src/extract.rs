@@ -97,6 +97,7 @@ fn geometry_for_page(
 /// let text = extract_text(&pdf_bytes, None)?;
 /// println!("{}", text);
 /// ```
+#[hotpath::measure]
 pub fn extract_text(pdf_data: &[u8], options: Option<ExtractOptions>) -> Result<String> {
     let options = options.unwrap_or_default();
     let doc =
@@ -149,6 +150,7 @@ pub fn extract_text_to_fp<W: Write>(
     extract_text_to_fp_from_doc_impl(&doc, writer, &options)
 }
 
+#[hotpath::measure]
 fn extract_text_to_fp_from_doc_impl<W: Write>(
     doc: &PDFDocument,
     writer: &mut W,
@@ -216,6 +218,7 @@ pub fn extract_pages_stream(
 /// (so the non-`Send` `Rc<RefCell<_>>` never crosses thread boundaries) and the
 /// writer is scoped to the page index, producing deterministic `page-XXXX-…`
 /// filenames regardless of cross-thread scheduling.
+#[hotpath::measure]
 pub fn extract_pages_with_images_with_document(
     doc: Arc<PDFDocument>,
     options: ExtractOptions,

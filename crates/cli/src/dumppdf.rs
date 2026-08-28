@@ -49,6 +49,7 @@ enum StreamCodec {
 }
 
 /// Dump a PDF object as XML.
+#[hotpath::measure]
 fn dumpxml<W: Write>(out: &mut W, obj: &PDFObject, codec: StreamCodec) -> Result<()> {
     match obj {
         PDFObject::Null => {
@@ -160,6 +161,7 @@ fn dumptrailers<W: Write>(out: &mut W, doc: &PDFDocument, show_fallback_xref: bo
 /// Dump all objects from the document.
 ///
 /// Iterates over all xref entries to enumerate ALL objects.
+#[hotpath::measure]
 fn dumpallobjs<W: Write>(
     out: &mut W,
     doc: &PDFDocument,
@@ -484,6 +486,7 @@ fn extract_single_embedded(
 }
 
 /// Main PDF dump function.
+#[hotpath::measure]
 fn dumppdf<W: Write>(
     out: &mut W,
     doc: &PDFDocument,
@@ -612,6 +615,7 @@ struct Args {
     text_stream: bool,
 }
 
+#[hotpath::main]
 fn main() -> core::result::Result<(), Box<dyn core::error::Error>> {
     let args = Args::parse();
 
@@ -653,10 +657,13 @@ fn main() -> core::result::Result<(), Box<dyn core::error::Error>> {
 
     // Open output
     let mut output: Box<dyn Write> = if args.outfile == "-" {
-        Box::new(BufWriter::new(io::stdout()))
+        Box::new(BufWriter::new(hotpath::io!(
+            io::stdout(),
+            label = "dumppdf-stdout"
+        )))
     } else {
         let file = File::create(&args.outfile)?;
-        Box::new(BufWriter::new(file))
+        Box::new(BufWriter::new(hotpath::io!(file, label = "dumppdf-file")))
     };
 
     // Process each input file

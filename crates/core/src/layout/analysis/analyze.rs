@@ -168,6 +168,7 @@ impl LTFigure {
 
 impl LTPage {
     /// Performs layout analysis on the page.
+    #[hotpath::measure]
     pub fn analyze(&mut self, laparams: &LAParams) {
         if self.compact_layout.is_some() {
             return;
