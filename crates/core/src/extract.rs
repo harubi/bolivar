@@ -26,11 +26,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::device::TextConverter;
-use crate::device::{PDFPageAggregator, PDFTableCollector};
+use crate::device::{PDFPageAggregator, PDFTableCollector, PDFTableDevice, TableDeviceBuffers};
 use crate::document::PDFDocument;
 use crate::document::catalog::DEFAULT_CACHE_CAPACITY;
 // Re-export engine items via `extract` so callers can reach `ExtractOptions`,
 // `process_page`, `aggregator_result`, etc. through the canonical extract path.
+use crate::engine::stream::run_stateful_stream;
 pub use crate::engine::{
     ExecutionPlan, ExtractOptions, PageTables, Stream, aggregator_result, collector_result,
     no_precheck, no_precheck_cancellable, process_page, process_page_with_cancellation, run_batch,
@@ -40,29 +41,93 @@ use crate::error::{PdfError, Result};
 use crate::image::ImageWriter;
 use crate::interp::PDFResourceManager;
 use crate::layout::{LAParams, LTPage};
-use crate::table::probe::{page_has_edges_with_cancellation, should_probe_tables};
+use crate::table::probe::should_probe_tables;
 use crate::table::{
-    PageGeometry, TableMetadata, TableSettings, TextSettings, WordObj,
-    collect_table_objects_from_arena, extract_tables_from_objects_with_cancellation,
-    extract_tables_with_metadata_from_objects_with_cancellation,
+    PageGeometry, TableMetadata, TableSettings, TableWorkspace, TextSettings, WordObj,
+    collect_table_objects_from_arena, extract_metadata_borrowed, extract_spans_borrowed,
+    extract_tables_borrowed, extract_tables_with_metadata_from_objects_with_cancellation,
     extract_text_from_objects_borrowed, extract_words_from_objects_borrowed,
 };
+use crate::utils::Rect;
+
+struct TableWorkerState {
+    resources: PDFResourceManager,
+    buffers: TableDeviceBuffers,
+    workspace: TableWorkspace,
+}
+
+impl TableWorkerState {
+    fn new(caching: bool) -> Self {
+        Self {
+            resources: PDFResourceManager::with_caching(caching),
+            buffers: TableDeviceBuffers::default(),
+            workspace: TableWorkspace::default(),
+        }
+    }
+}
 
 fn cache_capacity(caching: bool) -> usize {
     if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
+}
+
+// Rotate supplied top-left coordinates with the interpreted page.
+fn rotate_rect(rect: Rect, media: Rect, rotation: i64) -> Rect {
+    let rotation = rotation.rem_euclid(360);
+    let (media_x0, media_top, media_x1, media_bottom) = media;
+    let (x0, top, x1, bottom) = rect;
+    let width = media_x1 - media_x0;
+    let height = media_bottom - media_top;
+    let left = x0 - media_x0;
+    let right = x1 - media_x0;
+    let upper = top - media_top;
+    let lower = bottom - media_top;
+
+    if rotation == 90 {
+        return (
+            media_x0 + height - lower,
+            media_top + left,
+            media_x0 + height - upper,
+            media_top + right,
+        );
+    }
+    if rotation == 180 {
+        return (
+            media_x0 + width - right,
+            media_top + height - lower,
+            media_x0 + width - left,
+            media_top + height - upper,
+        );
+    }
+    if rotation == 270 {
+        return (
+            media_x0 + upper,
+            media_top + width - right,
+            media_x0 + lower,
+            media_top + width - left,
+        );
+    }
+    rect
+}
+
+fn rotate_geometry(mut geometry: PageGeometry, rotation: i64) -> PageGeometry {
+    let media = geometry.mediabox;
+    geometry.page_bbox = rotate_rect(geometry.page_bbox, media, rotation);
+    geometry.mediabox = rotate_rect(media, media, rotation);
+    geometry
 }
 
 fn index_geometries(
     page_count: usize,
     order: &[usize],
     geometries: Vec<PageGeometry>,
+    rotation: i64,
 ) -> Result<Arc<[Option<PageGeometry>]>> {
     validate_geometry_count(order, geometries.len())?;
 
     let mut by_page: Vec<Option<PageGeometry>> =
         std::iter::repeat_with(|| None).take(page_count).collect();
     for (page_idx, geometry) in order.iter().copied().zip(geometries) {
-        by_page[page_idx] = Some(geometry);
+        by_page[page_idx] = Some(rotate_geometry(geometry, rotation));
     }
     Ok(by_page.into())
 }
@@ -361,38 +426,43 @@ pub fn extract_tables_metadata_stream_from_doc_with_geometries(
         options.page_numbers.as_deref(),
         options.maxpages,
     );
-    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries)?;
-    let laparams = options.laparams;
     let caching = options.caching;
+    let rotation = options.rotation;
+    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries, rotation)?;
 
-    run_stream_cancellable(
+    run_stateful_stream(
         doc,
         options.page_numbers,
         options.maxpages,
         no_precheck_cancellable::<Vec<TableMetadata>>,
-        move |arena, page_idx, page, doc, cancellation| {
-            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
-            let page_arena = process_page_with_cancellation(
+        move || TableWorkerState::new(caching),
+        move |state, arena, page_idx, page, doc, cancellation| {
+            let geom = geometry_for_page(&geoms, page_idx)?.clone();
+            let buffers = std::mem::take(&mut state.buffers);
+            let mut device = PDFTableDevice::with_buffers(arena, Some(geom.clone()), buffers);
+            process_page_with_cancellation(
                 page,
-                &mut collector,
-                &mut rsrcmgr,
-                0,
+                &mut device,
+                &mut state.resources,
+                rotation,
                 doc,
                 cancellation,
-                collector_result,
+                |_| Ok(()),
             )?;
-            let arena_lookup = collector.arena_lookup();
-            let geom = geometry_for_page(&geoms, page_idx)?;
-            let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
-            extract_tables_with_metadata_from_objects_with_cancellation(
-                chars,
-                edges,
-                geom,
-                &settings,
-                arena_lookup,
-                cancellation,
-            )
+            let result = {
+                let (chars, edges) = device.objects();
+                extract_metadata_borrowed(
+                    chars,
+                    edges,
+                    &geom,
+                    &settings,
+                    device.arena_lookup(),
+                    cancellation,
+                    &mut state.workspace,
+                )
+            };
+            state.buffers = device.into_buffers();
+            result
         },
     )
 }
@@ -414,11 +484,11 @@ pub fn extract_layout_tables_metadata_stream_from_doc_with_geometries(
         options.page_numbers.as_deref(),
         options.maxpages,
     );
-    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries)?;
     let laparams = options.laparams;
     let caching = options.caching;
     let rotation = options.rotation;
     let bidi = options.bidi;
+    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries, rotation)?;
 
     run_stream_cancellable(
         doc,
@@ -482,9 +552,10 @@ pub fn extract_text_stream_from_doc_with_geometries(
         options.page_numbers.as_deref(),
         options.maxpages,
     );
-    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries)?;
     let laparams = options.laparams;
     let caching = options.caching;
+    let rotation = options.rotation;
+    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries, rotation)?;
 
     run_stream_cancellable(
         doc,
@@ -498,7 +569,7 @@ pub fn extract_text_stream_from_doc_with_geometries(
                 page,
                 &mut collector,
                 &mut rsrcmgr,
-                0,
+                rotation,
                 doc,
                 cancellation,
                 collector_result,
@@ -531,9 +602,10 @@ pub fn extract_words_stream_from_doc_with_geometries(
         options.page_numbers.as_deref(),
         options.maxpages,
     );
-    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries)?;
     let laparams = options.laparams;
     let caching = options.caching;
+    let rotation = options.rotation;
+    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries, rotation)?;
 
     run_stream_cancellable(
         doc,
@@ -547,7 +619,7 @@ pub fn extract_words_stream_from_doc_with_geometries(
                 page,
                 &mut collector,
                 &mut rsrcmgr,
-                0,
+                rotation,
                 doc,
                 cancellation,
                 collector_result,
@@ -559,6 +631,64 @@ pub fn extract_words_stream_from_doc_with_geometries(
             let words = extract_words_from_objects_borrowed(chars, &settings, arena_lookup);
             cancellation.check()?;
             Ok(words)
+        },
+    )
+}
+
+/// Stream tables together with the source word behind each output run.
+///
+/// Same extraction as `extract_tables_stream_from_doc_with_settings`; the runs
+/// ride along so a caller that needs to know where a character came from does
+/// not have to extract twice and hope the two agree.
+pub fn extract_tables_with_text_spans_stream_from_doc_with_settings(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    mut settings: TableSettings,
+) -> Result<Stream<(PageTables, Vec<crate::layout::table::TableTextSpans>)>> {
+    if options.laparams.is_none() {
+        options.laparams = Some(LAParams::default());
+    }
+    settings.text_settings.bidi |= options.bidi;
+
+    let caching = options.caching;
+    let rotation = options.rotation;
+    let settings_for_run = settings;
+
+    run_stateful_stream(
+        doc,
+        options.page_numbers.clone(),
+        options.maxpages,
+        no_precheck_cancellable::<(PageTables, Vec<crate::layout::table::TableTextSpans>)>,
+        move || TableWorkerState::new(caching),
+        move |state, arena, _page_idx, page, doc, cancellation| {
+            let buffers = std::mem::take(&mut state.buffers);
+            let mut device = PDFTableDevice::with_buffers(arena, None, buffers);
+            process_page_with_cancellation(
+                page,
+                &mut device,
+                &mut state.resources,
+                rotation,
+                doc,
+                cancellation,
+                |_| Ok(()),
+            )?;
+            let geom = device.geometry().clone();
+            let result = if should_probe_tables(&settings_for_run) && !device.has_edges() {
+                Ok((Vec::new(), Vec::new()))
+            } else {
+                let (chars, edges) = device.objects();
+                extract_spans_borrowed(
+                    chars,
+                    edges,
+                    &geom,
+                    &settings_for_run,
+                    device.arena_lookup(),
+                    cancellation,
+                    &mut state.workspace,
+                )
+            };
+            state.buffers = device.into_buffers();
+            result
         },
     )
 }
@@ -579,73 +709,59 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
         options.page_numbers.as_deref(),
         options.maxpages,
     );
+    let rotation = options.rotation;
     let geometries = match geometries {
         Some(geometries) => Some(index_geometries(
             doc.page_index().len(),
             &plan.order,
             geometries,
+            rotation,
         )?),
         None => None,
     };
-    let laparams = options.laparams;
     let caching = options.caching;
-    let settings_for_pre = settings.clone();
     let settings_for_run = settings;
     let geoms = geometries;
 
-    run_stream_cancellable(
+    run_stateful_stream(
         doc,
         options.page_numbers.clone(),
         options.maxpages,
-        move |_page_idx, page, doc, cancellation| {
-            if !should_probe_tables(&settings_for_pre) {
-                return Ok(None);
-            }
-
-            // Cheap edge probe before running the full interpreter — preserves the
-            // original skip path so text-only PDFs don't pay table-collector cost.
-            let has_edges = page_has_edges_with_cancellation(page, doc, caching, cancellation)?;
-            if has_edges {
-                Ok(None)
-            } else {
-                Ok(Some(Vec::new()))
-            }
-        },
-        move |arena, page_idx, page, doc, cancellation| {
-            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
-            let page_arena = process_page_with_cancellation(
+        no_precheck_cancellable::<PageTables>,
+        move || TableWorkerState::new(caching),
+        move |state, arena, page_idx, page, doc, cancellation| {
+            let geometry = geoms
+                .as_ref()
+                .map(|geometries| geometry_for_page(geometries, page_idx).cloned())
+                .transpose()?;
+            let buffers = std::mem::take(&mut state.buffers);
+            let mut device = PDFTableDevice::with_buffers(arena, geometry, buffers);
+            process_page_with_cancellation(
                 page,
-                &mut collector,
-                &mut rsrcmgr,
-                0,
+                &mut device,
+                &mut state.resources,
+                rotation,
                 doc,
                 cancellation,
-                collector_result,
+                |_| Ok(()),
             )?;
-            let arena_lookup = collector.arena_lookup();
-            let default_geometry;
-            let geom = match geoms.as_ref() {
-                Some(g) => geometry_for_page(g, page_idx)?,
-                None => {
-                    default_geometry = PageGeometry {
-                        page_bbox: page_arena.bbox,
-                        mediabox: page_arena.bbox,
-                        initial_doctop: 0.0,
-                        force_crop: false,
-                    };
-                    &default_geometry
-                }
+            let geom = device.geometry().clone();
+            let result = if should_probe_tables(&settings_for_run) && !device.has_edges() {
+                Ok(Vec::new())
+            } else {
+                let (chars, edges) = device.objects();
+                extract_tables_borrowed(
+                    chars,
+                    edges,
+                    &geom,
+                    &settings_for_run,
+                    device.arena_lookup(),
+                    cancellation,
+                    &mut state.workspace,
+                )
             };
-            let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
-            extract_tables_from_objects_with_cancellation(
-                chars,
-                edges,
-                geom,
-                &settings_for_run,
-                arena_lookup,
-                cancellation,
-            )
+            state.buffers = device.into_buffers();
+            result
         },
     )
 }
@@ -724,7 +840,7 @@ pub(crate) fn stream_usage_test_guard() -> std::sync::MutexGuard<'static, ()> {
 mod tests {
     use super::*;
     use crate::engine::processor;
-    use crate::table::{TableProbePolicy, TableSettings};
+    use crate::table::{BBox, TableProbePolicy, TableSettings};
     use std::collections::HashSet;
     use std::sync::{Mutex, OnceLock};
 
@@ -821,7 +937,11 @@ mod tests {
         out
     }
 
-    fn build_table_pdf_with_text() -> Vec<u8> {
+    fn build_table_pdf_with_text(page_count: usize) -> Vec<u8> {
+        build_table_pdf(page_count, 200, 200)
+    }
+
+    fn build_table_pdf(page_count: usize, page_width: u32, page_height: u32) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(b"%PDF-1.4\n");
 
@@ -838,35 +958,51 @@ mod tests {
             &mut offsets,
         );
 
-        // 2: Pages
+        let page_ids: Vec<usize> = (0..page_count).map(|index| 3 + index).collect();
+        let content_id = 3 + page_count;
+        let font_id = content_id + 1;
+
+        // All pages share the test content and font.
         push_obj(
             &mut out,
-            "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".to_string(),
+            format!(
+                "2 0 obj\n<< /Type /Pages /Kids [{}] /Count {} >>\nendobj\n",
+                page_ids
+                    .iter()
+                    .map(|id| format!("{id} 0 R"))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                page_count
+            ),
             &mut offsets,
         );
 
-        // 3: Page with font + contents
-        push_obj(
-            &mut out,
-            "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n".to_string(),
-            &mut offsets,
-        );
+        for page_id in page_ids {
+            push_obj(
+                &mut out,
+                format!(
+                    "{page_id} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {page_width} {page_height}] /Resources << /Font << /F1 {font_id} 0 R >> >> /Contents {content_id} 0 R >>\nendobj\n"
+                ),
+                &mut offsets,
+            );
+        }
 
         let stream = "0 0 0 RG\n0 0 0 rg\n1 w\n0 0 100 50 re S\n50 0 m 50 50 l S\nBT /F1 12 Tf 10 20 Td (Total) Tj ET\n";
         push_obj(
             &mut out,
             format!(
-                "4 0 obj\n<< /Length {} >>\nstream\n{}\nendstream\nendobj\n",
+                "{content_id} 0 obj\n<< /Length {} >>\nstream\n{}\nendstream\nendobj\n",
                 stream.len(),
                 stream
             ),
             &mut offsets,
         );
 
-        // 5: Font
         push_obj(
             &mut out,
-            "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n".to_string(),
+            format!(
+                "{font_id} 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
+            ),
             &mut offsets,
         );
 
@@ -970,12 +1106,13 @@ mod tests {
         assert!(err.to_string().contains("geometry"));
     }
 
-    fn table_probe_calls(settings: TableSettings) -> usize {
+    fn table_page_passes(settings: TableSettings) -> usize {
+        let _guard = crate::interp::interpreter::process_page_test_guard();
         let pdf_data = build_minimal_pdf_with_pages(1);
         let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
         let options = ExtractOptions::default();
 
-        crate::layout::table::probe::take_probe_calls();
+        crate::interp::interpreter::begin_process_page_count(doc.as_ref());
         let out: Vec<PageTables> =
             extract_tables_stream_from_doc_with_settings(Arc::clone(&doc), options, settings)
                 .unwrap()
@@ -983,42 +1120,71 @@ mod tests {
                 .collect::<Result<Vec<_>>>()
                 .unwrap();
         assert_eq!(out.len(), 1);
-        crate::layout::table::probe::take_probe_calls()
+        crate::interp::interpreter::end_process_page_count()
     }
 
     #[test]
-    fn table_probe_policy_always_runs_probe() {
+    fn table_probe_policy_always_uses_one_table_pass() {
         let settings = TableSettings {
             probe_policy: TableProbePolicy::Always,
             ..Default::default()
         };
 
-        assert!(table_probe_calls(settings) > 0);
+        assert_eq!(table_page_passes(settings), 1);
     }
 
     #[test]
-    fn table_probe_policy_never_bypasses_probe() {
+    fn table_probe_policy_never_uses_one_table_pass() {
         let settings = TableSettings {
             probe_policy: TableProbePolicy::Never,
             ..Default::default()
         };
 
-        assert_eq!(table_probe_calls(settings), 0);
+        assert_eq!(table_page_passes(settings), 1);
     }
 
     #[test]
-    fn table_probe_policy_auto_bypasses_probe_for_text_strategy() {
+    fn table_probe_policy_auto_uses_one_text_table_pass() {
         let settings = TableSettings {
             vertical_strategy: crate::table::TableStrategy::Text,
             ..Default::default()
         };
 
-        assert_eq!(table_probe_calls(settings), 0);
+        assert_eq!(table_page_passes(settings), 1);
     }
 
     #[test]
-    fn table_text_output_matches_before() {
-        let pdf_data = build_table_pdf_with_text();
+    fn table_probe_policies_keep_multi_page_output() {
+        let pdf_data = build_table_pdf_with_text(2);
+        let expected_page = vec![vec![vec![Some("Total".to_string()), Some(String::new())]]];
+
+        for probe_policy in [
+            TableProbePolicy::Always,
+            TableProbePolicy::Never,
+            TableProbePolicy::Auto,
+        ] {
+            let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
+            let settings = TableSettings {
+                probe_policy,
+                ..Default::default()
+            };
+            let out = extract_tables_stream_from_doc_with_settings(
+                doc,
+                ExtractOptions::default(),
+                settings,
+            )
+            .unwrap()
+            .map(|result| result.map(|(_, tables)| tables))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+
+            assert_eq!(out, vec![expected_page.clone(); 2]);
+        }
+    }
+
+    #[test]
+    fn table_text_output_is_exact() {
+        let pdf_data = build_table_pdf_with_text(1);
         let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
         let options = ExtractOptions::default();
         let settings = TableSettings::default();
@@ -1029,13 +1195,116 @@ mod tests {
                 .map(|r| r.map(|(_, t)| t))
                 .collect::<Result<Vec<_>>>()
                 .unwrap();
-        let found = out
-            .iter()
-            .flatten()
-            .flatten()
-            .flatten()
-            .any(|c| c.as_deref() == Some("Total"));
-        assert!(found, "tables: {:?}", out);
+        assert_eq!(
+            out,
+            vec![vec![vec![vec![
+                Some("Total".to_string()),
+                Some(String::new())
+            ]]]]
+        );
+    }
+
+    #[test]
+    fn table_stream_applies_requested_rotation() {
+        let pdf_data = build_table_pdf_with_text(1);
+        let extract = |rotation| {
+            let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
+            let options = ExtractOptions {
+                rotation,
+                ..Default::default()
+            };
+            extract_tables_stream_from_doc_with_settings(doc, options, TableSettings::default())
+                .unwrap()
+                .map(|result| result.map(|(_, tables)| tables))
+                .collect::<Result<Vec<_>>>()
+                .unwrap()
+        };
+
+        assert_ne!(extract(0), extract(90));
+    }
+
+    #[test]
+    fn table_metadata_applies_rotation() {
+        let pdf_data = build_table_pdf_with_text(1);
+        let extract = |rotation| {
+            let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
+            let options = ExtractOptions {
+                rotation,
+                ..Default::default()
+            };
+            extract_tables_metadata_stream_from_doc_with_geometries(
+                doc,
+                options,
+                TableSettings::default(),
+                full_page_geometries(1),
+            )
+            .unwrap()
+            .map(|result| result.map(|(_, tables)| tables))
+            .collect::<Result<Vec<_>>>()
+            .unwrap()
+        };
+
+        assert_ne!(extract(0), extract(90));
+    }
+
+    #[test]
+    fn supplied_geometry_rotates_non_square_page() {
+        let pdf_data = build_table_pdf(1, 300, 200);
+        let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
+        let options = ExtractOptions {
+            rotation: 90,
+            ..Default::default()
+        };
+        let geometry = PageGeometry {
+            page_bbox: (0.0, 0.0, 300.0, 200.0),
+            mediabox: (0.0, 0.0, 300.0, 200.0),
+            initial_doctop: 0.0,
+            force_crop: false,
+        };
+
+        let tables = extract_tables_metadata_stream_from_doc_with_geometries(
+            doc,
+            options,
+            TableSettings::default(),
+            vec![geometry],
+        )
+        .unwrap()
+        .map(|result| result.map(|(_, tables)| tables))
+        .collect::<Result<Vec<_>>>()
+        .unwrap();
+
+        assert_eq!(
+            tables[0][0].bbox,
+            BBox {
+                x0: 0.0,
+                top: 0.0,
+                x1: 50.0,
+                bottom: 100.0,
+            }
+        );
+    }
+
+    #[test]
+    fn table_text_spans_apply_rotation() {
+        let pdf_data = build_table_pdf_with_text(1);
+        let extract = |rotation| {
+            let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
+            let options = ExtractOptions {
+                rotation,
+                ..Default::default()
+            };
+            extract_tables_with_text_spans_stream_from_doc_with_settings(
+                doc,
+                options,
+                TableSettings::default(),
+            )
+            .unwrap()
+            .map(|result| result.map(|(_, tables)| tables))
+            .collect::<Result<Vec<_>>>()
+            .unwrap()
+        };
+
+        assert_ne!(extract(0), extract(90));
     }
 
     #[test]
@@ -1043,7 +1312,7 @@ mod tests {
         use crate::layout::{LTItem, LTTextBox, TextBoxType};
 
         let _guard = combined_pass_test_guard();
-        let pdf_data = build_table_pdf_with_text();
+        let pdf_data = build_table_pdf_with_text(1);
         let doc = Arc::new(PDFDocument::new(&pdf_data, "").unwrap());
         let options = ExtractOptions::default();
         let settings = TableSettings::default();
