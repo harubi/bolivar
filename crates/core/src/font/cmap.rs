@@ -5,6 +5,7 @@
 //!
 //! Port of pdfminer.six cmapdb.py
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// Base trait for all CMap types.
@@ -357,9 +358,13 @@ impl UnicodeMap {
     /// 4. Pack back to bytes, preserving original length
     /// 5. Decode as UTF-16BE
     pub fn get_unichr(&self, cid: u32) -> Option<String> {
+        self.get_unichr_cow(cid).map(Cow::into_owned)
+    }
+
+    pub(crate) fn get_unichr_cow(&self, cid: u32) -> Option<Cow<'_, str>> {
         // Try direct mapping first
         if let Some(s) = self.cid2unichr.get(&cid) {
-            return Some(s.clone());
+            return Some(Cow::Borrowed(s));
         }
 
         // Try ranges with Python-style byte-level incrementing
@@ -389,7 +394,7 @@ impl UnicodeMap {
                 result.extend_from_slice(&packed[4 - vlen..]);
 
                 // Decode UTF-16BE to String
-                return Some(decode_utf16be_string(&result));
+                return Some(Cow::Owned(decode_utf16be_string(&result)));
             }
         }
 
@@ -422,6 +427,10 @@ impl IdentityUnicodeMap {
     /// Get Unicode string for a CID (direct interpretation).
     pub fn get_unichr(&self, cid: u32) -> Option<String> {
         char::from_u32(cid).map(|c| c.to_string())
+    }
+
+    pub(crate) fn get_unichr_cow(&self, cid: u32) -> Option<Cow<'static, str>> {
+        char::from_u32(cid).map(|value| Cow::Owned(value.to_string()))
     }
 }
 
