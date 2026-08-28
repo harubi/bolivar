@@ -7,7 +7,10 @@
 
 use bolivar_core::device::{HOCRConverter, HTMLConverter, TextConverter, XMLConverter};
 use bolivar_core::error::{PdfError, Result};
-use bolivar_core::extract::{ExtractOptions, extract_pages_with_images_with_document};
+use bolivar_core::extract::{
+    ExtractOptions, extract_pages_with_images_with_document,
+    extract_tables_with_text_spans_stream_from_doc_with_settings,
+};
 use bolivar_core::extract::{
     extract_pages_stream_from_doc, extract_tables_stream_from_doc_with_settings,
 };
@@ -180,6 +183,13 @@ struct Args {
     /// Output format for table extraction (csv or json)
     #[arg(long = "table-format", value_enum, default_value = "csv")]
     table_format: TableFormat,
+
+    /// Emit, for every cell, the span each piece of its text occupies and the
+    /// word on the page that produced it. Bidi reconstruction reorders words,
+    /// so which characters came from where cannot be read off the text alone.
+    /// JSON output only.
+    #[arg(long = "text-spans", default_value_t = false)]
+    text_spans: bool,
 
     /// Table settings JSON file path
     #[arg(long = "table-settings-json")]
@@ -641,6 +651,9 @@ fn process_file<W: Write>(
     // Handle table extraction mode
     if args.extract_tables {
         let settings = build_table_settings(args, None)?;
+        if args.text_spans && matches!(args.table_format, TableFormat::Json) {
+            return write_tables_json_with_text_spans(writer, Arc::clone(&doc), options, settings);
+        }
         let stream =
             extract_tables_stream_from_doc_with_settings(Arc::clone(&doc), options, settings)?;
 
@@ -892,6 +905,91 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Write table JSON with a text-span map for every cell.
+///
+/// The shape matches the plain JSON writer and adds one key, `text_spans`,
+/// parallel to `rows`. Each cell lists its spans in reading order; each span
+/// carries the characters it covers (`start`, `end`) and the page word that
+/// produced them (`word`). A cell that cannot be mapped - the layout path, or a
+/// transposed line - gets an empty list, never a guess.
+fn write_tables_json_with_text_spans<W: Write>(
+    writer: &mut W,
+    doc: Arc<PDFDocument>,
+    options: ExtractOptions,
+    settings: bolivar_core::table::TableSettings,
+) -> Result<()> {
+    let stream =
+        extract_tables_with_text_spans_stream_from_doc_with_settings(doc, options, settings)?;
+    writeln!(writer, "{{")?;
+    writeln!(writer, "  \"pages\": [")?;
+
+    let mut iter = stream.peekable();
+    while let Some(item) = iter.next() {
+        let (page_idx, (tables, spans)) = item?;
+        let page_num = page_idx + 1;
+        let mut page_tables: Vec<serde_json::Value> = Vec::with_capacity(tables.len());
+        for (table_idx, table) in tables.iter().enumerate() {
+            let rows: Vec<serde_json::Value> = table
+                .iter()
+                .map(|row| {
+                    serde_json::Value::Array(
+                        row.iter()
+                            .map(|cell| match cell {
+                                Some(text) => serde_json::Value::String(text.clone()),
+                                None => serde_json::Value::Null,
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            let empty = Vec::new();
+            let table_spans = spans.get(table_idx).unwrap_or(&empty);
+            let span_rows: Vec<serde_json::Value> = table_spans
+                .iter()
+                .map(|row| {
+                    serde_json::Value::Array(
+                        row.iter()
+                            .map(|cell| match cell {
+                                Some(cell_spans) => serde_json::Value::Array(
+                                    cell_spans
+                                        .iter()
+                                        .map(|span| {
+                                            serde_json::json!({
+                                                "text": span.text,
+                                                "line": span.line_index,
+                                                "word": span.word_index,
+                                                "start": span.start,
+                                                "end": span.end,
+                                            })
+                                        })
+                                        .collect(),
+                                ),
+                                None => serde_json::Value::Null,
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            page_tables.push(serde_json::json!({ "rows": rows, "text_spans": span_rows }));
+        }
+        let page_json = serde_json::json!({ "page": page_num, "tables": page_tables });
+        let trailing_comma = iter.peek().is_some();
+        let page_json_str = serde_json::to_string_pretty(&page_json).expect("json serialize");
+        let lines: Vec<&str> = page_json_str.lines().collect();
+        for (idx, line) in lines.iter().enumerate() {
+            if idx + 1 == lines.len() && trailing_comma {
+                writeln!(writer, "    {line},")?;
+            } else {
+                writeln!(writer, "    {line}")?;
+            }
+        }
+    }
+
+    writeln!(writer, "  ]")?;
+    writeln!(writer, "}}")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -926,6 +1024,7 @@ mod tests {
             bidi: false,
             extract_tables: false,
             table_format: TableFormat::Csv,
+            text_spans: false,
             table_settings_json: None,
             table_settings: Some(_json_inline.to_string()),
             table_vertical_strategy: None,
