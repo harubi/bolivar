@@ -1,3 +1,24 @@
+## [2.2.0](https://github.com/harubi/bolivar/compare/v2.1.0...v2.2.0) (2026-08-28)
+
+### Features
+
+* **cli:** add table text spans ([46d47f4](https://github.com/harubi/bolivar/commit/46d47f44525abcc34202aa724996534bb0c7c3af))
+
+### Performance Improvements
+
+* **arena:** reuse page interner ([163a566](https://github.com/harubi/bolivar/commit/163a566e1b88ddf7bafa838cd372fd3f991e6435))
+* **bench:** measure one pass extraction ([8744c04](https://github.com/harubi/bolivar/commit/8744c0429604d723b5fc73faad39b326994f9e9a))
+* **device:** collect table data directly ([9dae016](https://github.com/harubi/bolivar/commit/9dae016f6ee6004e11736d3ec4821e0132ced27e))
+* **font:** reuse decode buffers ([d346d59](https://github.com/harubi/bolivar/commit/d346d59a32728e9b24d4c31aa344fc8a25c42114))
+* **stream:** reuse worker state ([5698313](https://github.com/harubi/bolivar/commit/56983138961088124d1f930f2acb9233ec9c3fa5))
+* **table:** extract each page once ([b1b1117](https://github.com/harubi/bolivar/commit/b1b1117b90e7c788805628b21096f48847fe459b))
+* **table:** skip bidi reorder for ascii text ([9e341e8](https://github.com/harubi/bolivar/commit/9e341e861326b6dcf88900b40a5f6a8705ef89b9))
+* **table:** streamline extraction data ([9abce12](https://github.com/harubi/bolivar/commit/9abce129338210c51f25d335c0ec60f7510b3d00))
+
+### Build System
+
+* add hotpath profiling ([d795794](https://github.com/harubi/bolivar/commit/d795794e6b3e96919b3f3c6aefc16b2462ec4230))
+
 ## [2.1.0](https://github.com/harubi/bolivar/compare/v2.0.0...v2.1.0) (2026-08-26)
 
 ### Features
