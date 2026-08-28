@@ -51,6 +51,11 @@ fn char_text<'a>(obj: &CharObj, arena: &'a dyn ArenaLookup) -> &'a str {
 }
 
 fn maybe_reorder_bidi_default(text: String, settings: &TextSettings) -> String {
+    // ASCII has no bidi controls, so keep the existing allocation.
+    if text.is_ascii() {
+        return text;
+    }
+
     if settings.horizontal_ltr
         && settings.line_dir == TextDir::Ttb
         && settings.char_dir == TextDir::Ltr
@@ -1102,7 +1107,18 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::expand_ligature;
+    use super::{expand_ligature, maybe_reorder_bidi_default};
+    use crate::layout::table::TextSettings;
+
+    #[test]
+    fn ascii_bidi_path_keeps_owned_buffer() {
+        let text = String::from("Cash Deposit 48,130.00 SAR");
+        let buffer = text.as_ptr();
+
+        let reordered = maybe_reorder_bidi_default(text, &TextSettings::default());
+
+        assert_eq!(reordered.as_ptr(), buffer);
+    }
 
     #[test]
     fn normal_text_does_not_allocate_for_ligatures() {
