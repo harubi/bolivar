@@ -1,3 +1,13 @@
+## [2.2.1](https://github.com/harubi/bolivar/compare/v2.2.0...v2.2.1) (2026-08-28)
+
+### Bug Fixes
+
+* remove eclipse jvm build artifacts from repo ([ef5d45f](https://github.com/harubi/bolivar/commit/ef5d45f3409e0fb56710d37f3d4702e458d2b0c4))
+
+### Miscellaneous Chores
+
+* ignore jvm eclipse and build artifacts ([d7039fe](https://github.com/harubi/bolivar/commit/d7039fedc38fa6fd13e66bd8abd43118625f564f))
+
 ## [2.2.0](https://github.com/harubi/bolivar/compare/v2.1.0...v2.2.0) (2026-08-28)
 
 ### Features
