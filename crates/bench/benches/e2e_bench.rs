@@ -10,8 +10,6 @@ mod fixtures;
 mod group_heavy;
 #[path = "common/group_light.rs"]
 mod group_light;
-#[path = "common/pages_throughput.rs"]
-mod pages_throughput;
 
 use std::hint::black_box;
 
@@ -19,11 +17,13 @@ use criterion::{BenchmarkId, criterion_group, criterion_main};
 
 use bolivar_core::document::PDFDocument;
 use bolivar_core::error::Result as CoreResult;
-use bolivar_core::extract::extract_pages_stream_from_doc;
-use bolivar_core::extract::{ExtractOptions, extract_text};
+use bolivar_core::extract::{
+    ExtractOptions, extract_pages_stream_from_doc, extract_tables_stream_from_doc_with_settings,
+    extract_text,
+};
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfpage::PDFPage;
-use bolivar_core::table::{PageGeometry, TableSettings, extract_tables_from_ltpage};
+use bolivar_core::table::TableSettings;
 
 use bench_criterion::{BenchCriterion, bench_criterion};
 use bench_tier::bench_tier;
@@ -31,7 +31,6 @@ use bytes_throughput::bytes_throughput;
 use fixtures::load_fixtures;
 use group_heavy::configure_group_heavy;
 use group_light::configure_group_light;
-use pages_throughput::pages_throughput;
 
 fn bench_parse_only(c: &mut BenchCriterion) {
     let tier = bench_tier();
@@ -125,7 +124,7 @@ fn bench_extract_tables_e2e(c: &mut BenchCriterion) {
     let fixtures = load_fixtures(Some("tables"));
     let settings = TableSettings::default();
 
-    let mut group = c.benchmark_group("e2e_extract_tables");
+    let mut group = c.benchmark_group("e2e_extract_tables_one_pass");
     configure_group_heavy(&mut group, tier);
 
     for fx in fixtures {
@@ -134,40 +133,23 @@ fn bench_extract_tables_e2e(c: &mut BenchCriterion) {
             laparams: Some(LAParams::default()),
             ..Default::default()
         };
-        let pages: Vec<_> =
-            extract_pages_stream_from_doc(std::sync::Arc::clone(&doc), options.clone())
-                .expect("extract pages")
-                .map(|r| r.map(|(_, p)| p))
-                .collect::<CoreResult<Vec<_>>>()
-                .expect("extract pages");
-        let geoms: Vec<PageGeometry> = pages
-            .iter()
-            .map(|page| {
-                let bbox = page.bbox();
-                PageGeometry {
-                    page_bbox: bbox,
-                    mediabox: bbox,
-                    initial_doctop: 0.0,
-                    force_crop: false,
+        group.throughput(bytes_throughput(fx.bytes.len()));
+        group.bench_with_input(BenchmarkId::new("tables", &fx.meta.id), &doc, |b, doc| {
+            b.iter(|| {
+                let stream = extract_tables_stream_from_doc_with_settings(
+                    std::sync::Arc::clone(doc),
+                    options.clone(),
+                    settings.clone(),
+                )
+                .expect("extract tables");
+                let mut count = 0usize;
+                for item in stream {
+                    let (_, tables) = item.expect("extract table page");
+                    count += tables.len();
                 }
+                black_box(count);
             })
-            .collect();
-
-        group.throughput(pages_throughput(pages.len()));
-        group.bench_with_input(
-            BenchmarkId::new("tables", &fx.meta.id),
-            &pages,
-            |b, pages| {
-                b.iter(|| {
-                    let mut count = 0usize;
-                    for (page, geom) in pages.iter().zip(geoms.iter()) {
-                        let tables = extract_tables_from_ltpage(page, geom, &settings);
-                        count += tables.len();
-                    }
-                    black_box(count);
-                })
-            },
-        );
+        });
     }
 
     group.finish();
