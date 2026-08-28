@@ -835,7 +835,11 @@ pub fn reconstruct_words(words: &[&str], separator: &str) -> ReconstructedLine {
     for (source_index, word) in words.iter().enumerate() {
         if source_index > 0 {
             raw_text.push_str(separator);
-            source.extend(separator.chars().map(|ch| SourceScalar { ch, source_index }));
+            source.extend(
+                separator
+                    .chars()
+                    .map(|ch| SourceScalar { ch, source_index }),
+            );
         }
         raw_text.push_str(word);
         source.extend(word.chars().map(|ch| SourceScalar { ch, source_index }));
@@ -1134,7 +1138,16 @@ mod tests {
 mod word_provenance_tests {
     use super::*;
 
-    const WORDS: &[&str] = &["الف", "باء", "TIME:01:02:03,", "ALPHA", "BETA", "G", "H", "جيم:1234567890123456"];
+    const WORDS: &[&str] = &[
+        "الف",
+        "باء",
+        "TIME:01:02:03,",
+        "ALPHA",
+        "BETA",
+        "G",
+        "H",
+        "جيم:1234567890123456",
+    ];
 
     #[test]
     fn word_reconstruction_matches_the_string_path() {
