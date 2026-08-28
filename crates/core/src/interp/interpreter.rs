@@ -18,6 +18,48 @@ use bytes::Bytes;
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(test)]
+use std::sync::{Mutex, MutexGuard, OnceLock};
+
+#[cfg(test)]
+static PROCESS_PAGE_COUNT: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+static PROCESS_PAGE_DOC: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+static PROCESS_PAGE_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn process_page_test_guard() -> MutexGuard<'static, ()> {
+    PROCESS_PAGE_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("process page test lock")
+}
+
+#[cfg(test)]
+pub(crate) fn begin_process_page_count(doc: &PDFDocument) {
+    PROCESS_PAGE_COUNT.store(0, Ordering::SeqCst);
+    PROCESS_PAGE_DOC.store(doc as *const PDFDocument as usize, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn end_process_page_count() -> usize {
+    PROCESS_PAGE_DOC.store(0, Ordering::SeqCst);
+    PROCESS_PAGE_COUNT.swap(0, Ordering::SeqCst)
+}
+
+#[cfg(test)]
+fn record_process_page(doc: Option<&PDFDocument>) {
+    let Some(doc) = doc else {
+        return;
+    };
+    let doc_key = doc as *const PDFDocument as usize;
+    if PROCESS_PAGE_DOC.load(Ordering::Relaxed) == doc_key {
+        PROCESS_PAGE_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 /// Token types produced by PDFContentParser.
 #[derive(Debug, Clone, PartialEq)]
@@ -1521,8 +1563,11 @@ impl<'a, D: PDFDevice> PDFPageInterpreter<'a, D> {
     /// Sets up the CTM based on page rotation, then renders the content streams.
     ///
     /// Port of PDFPageInterpreter.process_page from pdfminer.six
+    #[hotpath::measure]
     pub fn process_page(&mut self, page: &PDFPage, doc: Option<&'a PDFDocument>) -> Result<()> {
         self.cancellation.check()?;
+        #[cfg(test)]
+        record_process_page(doc);
         self.doc = doc;
         let mediabox = page.mediabox.unwrap_or([0.0, 0.0, 612.0, 792.0]);
         let (x0, y0, x1, y1) = (mediabox[0], mediabox[1], mediabox[2], mediabox[3]);
