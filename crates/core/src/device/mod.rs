@@ -5,6 +5,7 @@
 //! directory (added by Task C2).
 
 mod helpers;
+mod table;
 
 pub mod aggregator;
 pub mod collector;
@@ -19,6 +20,7 @@ pub use collector::PDFTableCollector;
 pub use edge_probe::PDFEdgeProbe;
 pub use html::{HOCRConverter, HTMLConverter};
 pub use layout_analyzer::{LTContainer, PDFLayoutAnalyzer, PathOp};
+pub(crate) use table::{PDFTableDevice, TableDeviceBuffers};
 pub use text::TextConverter;
 pub use xml::XMLConverter;
 
@@ -306,5 +308,76 @@ pub trait PDFTextDevice: PDFDevice {
         _graphicstate: &PDFGraphicState,
     ) -> f64 {
         0.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::arena::PageArena;
+    use crate::layout::table::{Orientation, PageGeometry};
+    use crate::pdfstate::PDFGraphicState;
+
+    use super::{PDFDevice, PDFTableDevice};
+
+    #[test]
+    fn table_device_collects_rectangle_edges_without_layout_objects() {
+        let mut arena = PageArena::new();
+        let geometry = PageGeometry {
+            page_bbox: (0.0, 0.0, 100.0, 100.0),
+            mediabox: (0.0, 0.0, 100.0, 100.0),
+            initial_doctop: 0.0,
+            force_crop: false,
+        };
+        let mut device = PDFTableDevice::new(&mut arena, Some(geometry));
+        device.begin_page(1, (0.0, 0.0, 100.0, 100.0), (1.0, 0.0, 0.0, 1.0, 0.0, 0.0));
+        device.paint_path(
+            &PDFGraphicState::new(),
+            true,
+            false,
+            false,
+            &[
+                crate::interp::PathSegment::MoveTo(10.0, 20.0),
+                crate::interp::PathSegment::LineTo(30.0, 20.0),
+                crate::interp::PathSegment::LineTo(30.0, 40.0),
+                crate::interp::PathSegment::LineTo(10.0, 40.0),
+                crate::interp::PathSegment::ClosePath,
+            ],
+        );
+
+        let (chars, edges) = device.objects();
+        assert!(chars.is_empty());
+        assert_eq!(edges.len(), 4);
+        assert_eq!(edges[0].orientation, Some(Orientation::Horizontal));
+        assert_eq!((edges[0].x0, edges[0].top, edges[0].x1), (10.0, 60.0, 30.0));
+        assert_eq!(edges[1].top, 80.0);
+    }
+
+    #[test]
+    fn table_device_reuses_edge_storage() {
+        let mut arena = PageArena::new();
+        let geometry = PageGeometry {
+            page_bbox: (0.0, 0.0, 100.0, 100.0),
+            mediabox: (0.0, 0.0, 100.0, 100.0),
+            initial_doctop: 0.0,
+            force_crop: false,
+        };
+        let mut device = PDFTableDevice::new(&mut arena, Some(geometry.clone()));
+        device.paint_path(
+            &PDFGraphicState::new(),
+            true,
+            false,
+            false,
+            &[
+                crate::interp::PathSegment::MoveTo(10.0, 20.0),
+                crate::interp::PathSegment::LineTo(30.0, 20.0),
+            ],
+        );
+        let buffers = device.into_buffers();
+        let edge_capacity = buffers.edge_capacity();
+
+        let device = PDFTableDevice::with_buffers(&mut arena, Some(geometry), buffers);
+
+        assert!(device.objects().1.is_empty());
+        assert_eq!(device.buffer_capacity().1, edge_capacity);
     }
 }
