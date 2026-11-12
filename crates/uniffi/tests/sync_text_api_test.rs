@@ -521,3 +521,201 @@ fn native_document_rejects_zero_page_number() {
         NativePdfDocument::from_bytes(pdf, Some(options)).expect_err("page numbers are 1-based");
     assert!(matches!(err, BolivarError::InvalidArgument));
 }
+
+fn options_with_bidi(bidi: bool) -> ExtractOptions {
+    ExtractOptions {
+        password: None,
+        page_numbers: None,
+        max_pages: None,
+        caching: Some(true),
+        layout_params: None,
+        bidi: Some(bidi),
+    }
+}
+
+fn sample_path(name: &str) -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("../../references/pdfplumber/tests/pdfs");
+    path.push(name);
+    assert!(path.exists(), "sample should exist at {path:?}");
+    path
+}
+
+fn page_text_samples() -> Vec<(String, Vec<u8>)> {
+    let mut samples = vec![
+        ("hello".to_owned(), build_single_page_text_pdf("Hello 2026")),
+        (
+            "multiline".to_owned(),
+            build_single_page_multiline_text_pdf("Hello", "World 42"),
+        ),
+        ("blank".to_owned(), build_minimal_pdf_with_pages(2)),
+    ];
+    for name in [
+        "table-curves-example.pdf",
+        "annotations-unicode-issues.pdf",
+        "issue-1114-dedupe-chars.pdf",
+        "nics-background-checks-2015-11-rotated.pdf",
+    ] {
+        samples.push((
+            name.to_owned(),
+            std::fs::read(sample_path(name)).expect("read sample"),
+        ));
+    }
+    samples
+}
+
+fn all_page_texts(document: &NativePdfDocument) -> Vec<bolivar_uniffi::PageText> {
+    let cursor = document.page_texts().expect("page text cursor");
+    let mut pages = Vec::new();
+    while let Some(page) = cursor.next().expect("next page text") {
+        pages.push(page);
+    }
+    pages
+}
+
+/// Java's `Character.isWhitespace`, spelled out from its documentation.
+fn expected_blank(text: &str) -> bool {
+    text.chars().all(|c| {
+        let code = c as u32;
+        (0x09..=0x0D).contains(&code)
+            || (0x1C..=0x1F).contains(&code)
+            || (c.is_whitespace()
+                && !matches!(code, 0x85 | 0xA0 | 0x2007 | 0x202F)
+                && !(0x09..=0x0D).contains(&code))
+    })
+}
+
+fn expected_summary(
+    page: &bolivar_uniffi::RawPage,
+) -> (Vec<String>, Vec<bolivar_uniffi::DigitStyle>) {
+    let mut fonts = std::collections::BTreeSet::new();
+    let mut digit_styles = std::collections::BTreeSet::new();
+    let digit = regex::Regex::new(r"\p{Nd}").expect("digit pattern");
+    for character in page
+        .text_boxes
+        .iter()
+        .flat_map(|text_box| &text_box.lines)
+        .flat_map(|line| &line.characters)
+    {
+        if expected_blank(&character.text) {
+            continue;
+        }
+        fonts.insert(character.font_name.clone());
+        if digit.is_match(&character.text) {
+            digit_styles.insert(bolivar_uniffi::DigitStyle {
+                font_name: character.font_name.clone(),
+                size: (character.size + 0.5).floor() as i32,
+            });
+        }
+    }
+    (
+        fonts.into_iter().collect(),
+        digit_styles.into_iter().collect(),
+    )
+}
+
+#[test]
+fn page_texts_matches_raw_pages() {
+    for (name, pdf) in page_text_samples() {
+        let with_bidi =
+            NativePdfDocument::from_bytes(pdf.clone(), Some(options_with_bidi(true))).expect(&name);
+        let without_bidi =
+            NativePdfDocument::from_bytes(pdf, Some(options_with_bidi(false))).expect(&name);
+        let raw_with = with_bidi.extract_raw_document().expect("raw with bidi");
+        let raw_without = without_bidi
+            .extract_raw_document()
+            .expect("raw without bidi");
+
+        for (document, raw) in [(&with_bidi, &raw_with), (&without_bidi, &raw_with)] {
+            let texts = all_page_texts(document);
+            assert_eq!(texts.len(), raw.pages.len(), "{name}: page count");
+            for ((text, raw_page), raw_plain) in
+                texts.iter().zip(&raw.pages).zip(&raw_without.pages)
+            {
+                assert_eq!(text.page_number, raw_page.page_number, "{name}");
+                assert_eq!(text.bbox, raw_page.layout_bbox, "{name}: page bbox");
+                assert_eq!(
+                    text.text_boxes.len(),
+                    raw_page.text_boxes.len(),
+                    "{name}: boxes"
+                );
+                for ((text_box, raw_box), plain_box) in text
+                    .text_boxes
+                    .iter()
+                    .zip(&raw_page.text_boxes)
+                    .zip(&raw_plain.text_boxes)
+                {
+                    assert_eq!(text_box.bbox, raw_box.bbox, "{name}: box bbox");
+                    assert_eq!(text_box.text_without_bidi, plain_box.text, "{name}");
+                    assert_eq!(text_box.lines.len(), raw_box.lines.len(), "{name}: lines");
+                    for ((line, raw_line), plain_line) in text_box
+                        .lines
+                        .iter()
+                        .zip(&raw_box.lines)
+                        .zip(&plain_box.lines)
+                    {
+                        assert_eq!(line.bbox, raw_line.bbox, "{name}: line bbox");
+                        assert_eq!(line.text_without_bidi, plain_line.text, "{name}");
+                    }
+                }
+                let (fonts, digit_styles) = expected_summary(raw_page);
+                assert_eq!(text.fonts, fonts, "{name}: fonts");
+                assert_eq!(text.digit_styles, digit_styles, "{name}: digit styles");
+            }
+        }
+
+        // `text` follows the document's own bidi option, as the raw page's does.
+        for (document, raw) in [(&with_bidi, &raw_with), (&without_bidi, &raw_without)] {
+            for (text, raw_page) in all_page_texts(document).iter().zip(&raw.pages) {
+                for (text_box, raw_box) in text.text_boxes.iter().zip(&raw_page.text_boxes) {
+                    assert_eq!(text_box.text, raw_box.text, "{name}: box text");
+                    for (line, raw_line) in text_box.lines.iter().zip(&raw_box.lines) {
+                        assert_eq!(line.text, raw_line.text, "{name}: line text");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn empty_page_yields_empty_summary() {
+    let pdf = build_minimal_pdf_with_pages(2);
+    let document = NativePdfDocument::from_bytes(pdf, None).expect("document");
+    let pages = all_page_texts(&document);
+
+    assert_eq!(
+        pages
+            .iter()
+            .map(|page| page.page_number)
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    for page in pages {
+        assert!(page.text_boxes.is_empty());
+        assert!(page.fonts.is_empty());
+        assert!(page.digit_styles.is_empty());
+    }
+}
+
+#[test]
+fn page_texts_respect_page_filters_and_cancellation() {
+    let pdf = build_minimal_pdf_with_pages(3);
+    let document = NativePdfDocument::from_bytes(
+        pdf.clone(),
+        Some(options_with_page_range(vec![2, 3], Some(1))),
+    )
+    .expect("filtered document");
+    let cursor = document.page_texts().expect("page text cursor");
+    assert_eq!(cursor.next().expect("first").expect("page").page_number, 2);
+    assert!(cursor.next().expect("end").is_none());
+
+    let cursor = {
+        let document = NativePdfDocument::from_bytes(pdf, None).expect("document");
+        document.page_texts().expect("page text cursor")
+    };
+    cursor.cancel();
+    let error = cursor.next().expect_err("cancelled cursor");
+    assert!(matches!(error, BolivarError::Cancelled));
+    assert!(cursor.next().expect("terminal cursor").is_none());
+}

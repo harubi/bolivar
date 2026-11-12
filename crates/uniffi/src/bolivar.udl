@@ -12,6 +12,32 @@ dictionary PageSummary {
     double rotate;
 };
 
+dictionary DigitStyle {
+    string font_name;
+    i32 size;
+};
+
+dictionary PageTextLine {
+    BoundingBox bbox;
+    string text;
+    string text_without_bidi;
+};
+
+dictionary PageTextBox {
+    BoundingBox bbox;
+    string text;
+    string text_without_bidi;
+    sequence<PageTextLine> lines;
+};
+
+dictionary PageText {
+    u32 page_number;
+    BoundingBox bbox;
+    sequence<PageTextBox> text_boxes;
+    sequence<string> fonts;
+    sequence<DigitStyle> digit_styles;
+};
+
 dictionary LayoutChar {
     string text;
     BoundingBox bbox;
@@ -244,6 +270,9 @@ interface NativePdfDocument {
     NativePageSummaryCursor page_summaries();
 
     [Throws=BolivarError]
+    NativePageTextCursor page_texts();
+
+    [Throws=BolivarError]
     sequence<LayoutPage> extract_layout_pages();
 
     [Throws=BolivarError]
@@ -272,6 +301,13 @@ interface NativeTableCursor {
 interface NativePageSummaryCursor {
     [Throws=BolivarError]
     PageSummary? next();
+
+    void cancel();
+};
+
+interface NativePageTextCursor {
+    [Throws=BolivarError]
+    PageText? next();
 
     void cancel();
 };

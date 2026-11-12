@@ -5,7 +5,9 @@ use bolivar_core::extract::{
 use bolivar_core::pdfdocument::PDFDocument;
 use std::sync::Arc;
 
-use crate::cursor::{NativePageSummaryCursor, NativePageTableRowsCursor, NativeTableCursor};
+use crate::cursor::{
+    NativePageSummaryCursor, NativePageTableRowsCursor, NativePageTextCursor, NativeTableCursor,
+};
 use crate::error::BolivarError;
 use crate::extract::{
     core_extract_options, extract_layout_pages_core, extract_raw_document_core,
@@ -66,6 +68,12 @@ impl NativePdfDocument {
 
     pub fn page_summaries(&self) -> Result<Arc<NativePageSummaryCursor>, BolivarError> {
         NativePageSummaryCursor::open(Arc::clone(&self.doc), self.core_options())
+    }
+
+    /// A cursor over the text boxes, lines and glyph summary of each page.
+    /// Layout runs once per page; no table detection runs.
+    pub fn page_texts(&self) -> Result<Arc<NativePageTextCursor>, BolivarError> {
+        NativePageTextCursor::open(Arc::clone(&self.doc), self.core_options())
     }
 
     pub fn extract_layout_pages(&self) -> Result<Vec<LayoutPage>, BolivarError> {

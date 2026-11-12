@@ -8,8 +8,8 @@ use bolivar_core::table::TableMetadata;
 use crate::error::BolivarError;
 use crate::extract::{TablePageContext, prepare_table_cursor, prepare_table_rows_cursor};
 use crate::types::{
-    PageSummary, PageTableRows, Table, TableOptions, summary_from_ltpage, table_from_core,
-    usize_to_u32,
+    PageSummary, PageTableRows, PageText, Table, TableOptions, page_text_from_ltpage,
+    summary_from_ltpage, table_from_core, usize_to_u32,
 };
 use bolivar_core::extract::ExtractOptions as CoreExtractOptions;
 use bolivar_core::pdfdocument::PDFDocument;
@@ -70,6 +70,74 @@ impl NativePageSummaryCursor {
     }
 
     pub fn next(&self) -> Result<Option<PageSummary>, BolivarError> {
+        self.state
+            .lock()
+            .map_err(|_| BolivarError::RuntimeError)?
+            .next()
+    }
+
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+}
+
+struct PageTextCursorState {
+    stream: Option<Stream<LTPage>>,
+}
+
+impl PageTextCursorState {
+    fn fail(&mut self, error: BolivarError) -> Result<Option<PageText>, BolivarError> {
+        self.stream.take();
+        Err(error)
+    }
+
+    fn next(&mut self) -> Result<Option<PageText>, BolivarError> {
+        let Some(stream) = self.stream.as_mut() else {
+            return Ok(None);
+        };
+        match stream.next() {
+            Some(Ok((page_index, page))) => Ok(Some(page_text_from_ltpage(page_index, &page))),
+            Some(Err(error)) => self.fail(BolivarError::from(error)),
+            None => {
+                self.stream.take();
+                Ok(None)
+            }
+        }
+    }
+}
+
+/// A closeable native cursor that yields the text and glyph summary of one
+/// page at a time.
+pub struct NativePageTextCursor {
+    cancellation: CancellationHandle,
+    state: Mutex<PageTextCursorState>,
+}
+
+impl std::fmt::Debug for NativePageTextCursor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativePageTextCursor")
+            .finish_non_exhaustive()
+    }
+}
+
+impl NativePageTextCursor {
+    pub(crate) fn open(
+        document: Arc<PDFDocument>,
+        options: CoreExtractOptions,
+    ) -> Result<Arc<Self>, BolivarError> {
+        let stream = bolivar_core::extract::extract_pages_stream_from_doc(document, options)
+            .map_err(BolivarError::from)?;
+        let cancellation = stream.cancellation_handle();
+        Ok(Arc::new(Self {
+            cancellation,
+            state: Mutex::new(PageTextCursorState {
+                stream: Some(stream),
+            }),
+        }))
+    }
+
+    pub fn next(&self) -> Result<Option<PageText>, BolivarError> {
         self.state
             .lock()
             .map_err(|_| BolivarError::RuntimeError)?
