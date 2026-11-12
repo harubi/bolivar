@@ -1,11 +1,14 @@
 (ns sa.ingenious.pdf-test
-  (:require [clojure.test :refer [deftest is run-tests testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is run-tests testing]]
             [sa.ingenious.pdf :as pdf])
   (:import [clojure.lang ExceptionInfo]
            [java.lang AutoCloseable]
+           [java.nio.file Files Path]
            [java.util Arrays Iterator]
-           [sa.ingenious.pdf BoundingBox DocumentOptions LayoutChar LayoutLine LayoutOptions
-            LayoutPage LayoutTextBox MetadataEntry PageSummary PageTableRows PdfPermissions
+           [sa.ingenious.pdf BoundingBox DigitStyle DocumentOptions LayoutChar LayoutLine LayoutOptions
+            LayoutPage LayoutTextBox MetadataEntry NativeLibrary PageSummary PageTableRows PageText
+            PageTextBox PageTextLine PdfPermissions
             PdfVersion RawCharacter RawDocument RawDocumentMetadata RawPage RawPageBoxes RawTable
             RawTableBoundingBox RawTableCell RawTextBox RawTextLine Table TableCell TableOptions]))
 
@@ -288,6 +291,73 @@
             :has-metadata-stream true
             :xmp-metadata "<x:xmpmeta/>"}
            (#'pdf/raw-document-metadata->map metadata)))))
+
+(deftest page-text-converts-to-idiomatic-clojure-data
+  (let [bbox (BoundingBox. 1.0 2.0 3.0 4.0)
+        line (PageTextLine. bbox "ab" "ba")
+        text-box (PageTextBox. bbox "ab" "ba" (one-list line))
+        page (PageText. 2 bbox (one-list text-box) ["F1" "F2"]
+                        [(DigitStyle. "F1" (int 9)) (DigitStyle. "F2" (int 11))])]
+    (is (= {:page-number 2
+            :bbox {:x0 1.0 :y0 2.0 :x1 3.0 :y1 4.0}
+            :text-boxes [{:bbox {:x0 1.0 :y0 2.0 :x1 3.0 :y1 4.0}
+                          :text "ab"
+                          :text-without-bidi "ba"
+                          :lines [{:bbox {:x0 1.0 :y0 2.0 :x1 3.0 :y1 4.0}
+                                   :text "ab"
+                                   :text-without-bidi "ba"}]}]
+            :fonts #{"F1" "F2"}
+            :digit-styles #{["F1" 9] ["F2" 11]}}
+           (#'pdf/page-text->map page)))
+    (is (every? #(instance? Long (second %))
+                (:digit-styles (#'pdf/page-text->map page))))))
+
+(defn- use-test-native-library! []
+  (let [library (.normalize (.toAbsolutePath
+                             (Path/of "natives"
+                                      (into-array String
+                                                  [(NativeLibrary/currentClassifier)
+                                                   (System/mapLibraryName NativeLibrary/LIB_NAME)]))))]
+    (is (Files/isRegularFile library (make-array java.nio.file.LinkOption 0))
+        (str "Missing test native library: " library))
+    (NativeLibrary/configureLibraryOverride (str library))))
+
+(def ^:private sample
+  "../../core/tests/fixtures/simple1.pdf")
+
+(defn- raw-glyphs [raw-page]
+  (reduce (fn [glyphs {:keys [text font-name size]}]
+            (if (str/blank? text)
+              glyphs
+              (cond-> (update glyphs :fonts conj font-name)
+                (re-find #"\p{Nd}" text)
+                (update :digit-styles conj [font-name (Math/round (double size))]))))
+          {:fonts #{} :digit-styles #{}}
+          (for [text-box (:text-boxes raw-page)
+                line     (:lines text-box)
+                character (:characters line)]
+            character)))
+
+(deftest page-texts-match-raw-pages
+  (use-test-native-library!)
+  (doseq [bidi [true false]]
+    (with-open [doc (pdf/open sample {:bidi bidi})
+                plain (pdf/open sample {:bidi false})]
+      (let [texts (with-open [cursor (pdf/page-texts doc)] (vec cursor))]
+        (is (seq texts))
+        (doseq [{:keys [page-number] :as text} texts
+                :let [raw (pdf/raw-page doc page-number)
+                      raw-plain (pdf/raw-page plain page-number)]]
+          (is (= (:layout-bbox raw) (:bbox text)))
+          (is (= (mapv #(select-keys % [:bbox :text]) (:text-boxes raw))
+                 (mapv #(select-keys % [:bbox :text]) (:text-boxes text))))
+          (is (= (mapv :text (:text-boxes raw-plain))
+                 (mapv :text-without-bidi (:text-boxes text))))
+          (is (= (for [box (:text-boxes raw) line (:lines box)] (select-keys line [:bbox :text]))
+                 (for [box (:text-boxes text) line (:lines box)] (select-keys line [:bbox :text]))))
+          (is (= (for [box (:text-boxes raw-plain) line (:lines box)] (:text line))
+                 (for [box (:text-boxes text) line (:lines box)] (:text-without-bidi line))))
+          (is (= (raw-glyphs raw) (select-keys text [:fonts :digit-styles]))))))))
 
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'sa.ingenious.pdf-test)]

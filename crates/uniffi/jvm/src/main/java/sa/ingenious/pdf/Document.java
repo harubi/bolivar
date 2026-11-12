@@ -235,6 +235,14 @@ public final class Document implements AutoCloseable {
     return translate(() -> new PageSummaryCursor(backend.pageSummaries()));
   }
 
+  /**
+   * A closeable, single-pass cursor over the text and glyph summary of each page. Layout runs once
+   * per page, and no per-character data crosses the native boundary.
+   */
+  public PageTextCursor pageTexts() throws PdfException {
+    return translate(() -> new PageTextCursor(backend.pageTexts()));
+  }
+
   public List<LayoutPage> extractLayoutPages() throws PdfException {
     return translate(backend::extractLayoutPages);
   }
