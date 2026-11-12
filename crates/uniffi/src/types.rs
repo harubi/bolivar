@@ -10,6 +10,9 @@ use bolivar_core::table::{
     TableMetadata as CoreTableMetadata,
 };
 use bolivar_core::utils::HasBBox;
+use regex::Regex;
+use std::collections::BTreeSet;
+use std::sync::LazyLock;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoundingBox {
@@ -25,6 +28,42 @@ pub struct PageSummary {
     pub text: String,
     pub bbox: BoundingBox,
     pub rotate: f64,
+}
+
+/// A font and whole size that printed at least one decimal digit.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DigitStyle {
+    pub font_name: String,
+    pub size: i32,
+}
+
+/// One text line: its box, its text as the document's bidi option gives
+/// it, and its text as a document opened without bidi gives it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageTextLine {
+    pub bbox: BoundingBox,
+    pub text: String,
+    pub text_without_bidi: String,
+}
+
+/// One text box with its lines, the texts joined as `RawTextBox` joins them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageTextBox {
+    pub bbox: BoundingBox,
+    pub text: String,
+    pub text_without_bidi: String,
+    pub lines: Vec<PageTextLine>,
+}
+
+/// The text of one page and a summary of its characters, with no
+/// per-character data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageText {
+    pub page_number: u32,
+    pub bbox: BoundingBox,
+    pub text_boxes: Vec<PageTextBox>,
+    pub fonts: Vec<String>,
+    pub digit_styles: Vec<DigitStyle>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -778,6 +817,213 @@ pub(crate) fn cache_capacity(caching: bool) -> usize {
     if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
 }
 
+/// Whether every code point of `text` is whitespace by Java's
+/// `Character.isWhitespace`: a Unicode space, line or paragraph separator
+/// other than the no-break spaces U+00A0, U+2007 and U+202F, or one of
+/// U+0009 to U+000D and U+001C to U+001F. Empty text is blank.
+pub(crate) fn java_blank(text: &str) -> bool {
+    text.chars().all(|character| {
+        matches!(
+            character,
+            '\u{0009}'..='\u{000D}'
+                | '\u{001C}'..='\u{0020}'
+                | '\u{1680}'
+                | '\u{2000}'..='\u{2006}'
+                | '\u{2008}'..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{205F}'
+                | '\u{3000}'
+        )
+    })
+}
+
+static DECIMAL_DIGIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\p{Nd}").expect("the decimal digit class compiles"));
+
+/// Whether `text` holds a decimal digit (Unicode category Nd), as Java's
+/// `\p{Nd}` finds one.
+pub(crate) fn has_decimal_digit(text: &str) -> bool {
+    if text.is_ascii() {
+        text.bytes().any(|byte| byte.is_ascii_digit())
+    } else {
+        DECIMAL_DIGIT.is_match(text)
+    }
+}
+
+/// A size rounded as Java's `Math.round` rounds it: the nearest whole
+/// number, halves toward positive infinity, NaN to zero, saturated at the
+/// `i32` range.
+pub(crate) fn java_round(size: f64) -> i32 {
+    let floor = size.floor();
+    let rounded = if size - floor >= 0.5 {
+        floor + 1.0
+    } else {
+        floor
+    };
+    // `as` saturates out-of-range values and maps NaN to zero.
+    rounded as i32
+}
+
+#[derive(Default)]
+struct GlyphSummary {
+    fonts: BTreeSet<String>,
+    digit_styles: BTreeSet<DigitStyle>,
+}
+
+impl GlyphSummary {
+    fn add(&mut self, character: &bolivar_core::layout::LTChar) {
+        let text = character.get_text();
+        if java_blank(text) {
+            return;
+        }
+        let font_name = character.fontname();
+        if !self.fonts.contains(font_name) {
+            self.fonts.insert(font_name.to_owned());
+        }
+        if has_decimal_digit(text) {
+            self.digit_styles.insert(DigitStyle {
+                font_name: font_name.to_owned(),
+                size: java_round(character.size()),
+            });
+        }
+    }
+}
+
+fn page_text_line(
+    elements: &[TextLineElement],
+    bidi_text: Option<String>,
+    bbox: BoundingBox,
+    glyphs: &mut GlyphSummary,
+) -> PageTextLine {
+    let capacity = elements
+        .iter()
+        .map(|element| match element {
+            TextLineElement::Char(character) => character.get_text().len(),
+            TextLineElement::Anno(annotation) => annotation.get_text().len(),
+        })
+        .sum();
+    let mut raw_text = String::with_capacity(capacity);
+    for element in elements {
+        match element {
+            TextLineElement::Char(character) => {
+                raw_text.push_str(character.get_text());
+                glyphs.add(character);
+            }
+            TextLineElement::Anno(annotation) => raw_text.push_str(annotation.get_text()),
+        }
+    }
+    let text_without_bidi = reorder_text_for_output(&raw_text);
+    let text = bidi_text.unwrap_or_else(|| text_without_bidi.clone());
+    PageTextLine {
+        bbox,
+        text,
+        text_without_bidi,
+    }
+}
+
+fn page_text_line_from_horizontal(
+    line: &LTTextLineHorizontal,
+    glyphs: &mut GlyphSummary,
+) -> PageTextLine {
+    page_text_line(
+        line.elements(),
+        line.bidi().then(|| line.get_text()),
+        bbox_from_rect(line.bbox()),
+        glyphs,
+    )
+}
+
+fn page_text_line_from_vertical(
+    line: &LTTextLineVertical,
+    glyphs: &mut GlyphSummary,
+) -> PageTextLine {
+    page_text_line(
+        line.elements(),
+        line.bidi().then(|| line.get_text()),
+        bbox_from_rect(line.bbox()),
+        glyphs,
+    )
+}
+
+fn page_text_box(bbox: BoundingBox, lines: Vec<PageTextLine>) -> PageTextBox {
+    let mut text = String::with_capacity(lines.iter().map(|line| line.text.len()).sum());
+    let mut text_without_bidi =
+        String::with_capacity(lines.iter().map(|line| line.text_without_bidi.len()).sum());
+    for line in &lines {
+        text.push_str(&line.text);
+        text_without_bidi.push_str(&line.text_without_bidi);
+    }
+    PageTextBox {
+        bbox,
+        text,
+        text_without_bidi,
+        lines,
+    }
+}
+
+fn page_text_box_from_text_box_type(
+    text_box: &TextBoxType,
+    glyphs: &mut GlyphSummary,
+) -> PageTextBox {
+    match text_box {
+        TextBoxType::Horizontal(text_box) => {
+            let lines = text_box
+                .iter()
+                .map(|line| page_text_line_from_horizontal(line, glyphs))
+                .collect();
+            page_text_box(bbox_from_rect(text_box.bbox()), lines)
+        }
+        TextBoxType::Vertical(text_box) => {
+            let lines = text_box
+                .iter()
+                .map(|line| page_text_line_from_vertical(line, glyphs))
+                .collect();
+            page_text_box(bbox_from_rect(text_box.bbox()), lines)
+        }
+    }
+}
+
+fn collect_page_text_boxes(
+    item: &LTItem,
+    output: &mut Vec<PageTextBox>,
+    glyphs: &mut GlyphSummary,
+) {
+    match item {
+        LTItem::TextBox(text_box) => {
+            output.push(page_text_box_from_text_box_type(text_box, glyphs))
+        }
+        LTItem::Figure(figure) => {
+            for child in figure.iter() {
+                collect_page_text_boxes(child, output, glyphs);
+            }
+        }
+        LTItem::Page(page) => {
+            for child in page.iter() {
+                collect_page_text_boxes(child, output, glyphs);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The text boxes of one laid-out page, as `RawPage` holds them, and the
+/// fonts and digit styles of its characters whose text is not blank.
+pub(crate) fn page_text_from_ltpage(page_index: usize, page: &LTPage) -> PageText {
+    let mut glyphs = GlyphSummary::default();
+    let mut text_boxes = Vec::new();
+    for item in page.iter() {
+        collect_page_text_boxes(item, &mut text_boxes, &mut glyphs);
+    }
+    PageText {
+        page_number: usize_to_u32(page_index.saturating_add(1)),
+        bbox: bbox_from_rect(page.bbox()),
+        text_boxes,
+        fonts: glyphs.fonts.into_iter().collect(),
+        digit_styles: glyphs.digit_styles.into_iter().collect(),
+    }
+}
+
 pub(crate) fn summary_from_ltpage(page: &LTPage) -> PageSummary {
     PageSummary {
         page_number: page_number(page.pageid),
@@ -918,6 +1164,140 @@ mod tests {
         assert_eq!(raw_line.raw_text, "ﺔﻴﺑﺮﻌﻟﺍ\n");
         assert_eq!(raw_line.text, "العربية\n");
         assert_eq!(raw_line.characters[0].text, "ﺔ");
+    }
+
+    #[test]
+    fn nbsp_is_not_blank() {
+        for space in ['\u{00A0}', '\u{2007}', '\u{202F}'] {
+            assert!(!java_blank(&space.to_string()), "{space:?}");
+        }
+        for space in [
+            "",
+            " ",
+            "\t",
+            "\n",
+            "\u{000B}",
+            "\u{000C}",
+            "\r",
+            "\u{001C}",
+            "\u{001F}",
+            "\u{1680}",
+            "\u{2000}",
+            "\u{2006}",
+            "\u{2008}",
+            "\u{200A}",
+            "\u{2028}",
+            "\u{2029}",
+            "\u{205F}",
+            "\u{3000}",
+            " \u{3000}\t",
+        ] {
+            assert!(java_blank(space), "{space:?}");
+        }
+        for text in ["\u{0085}", "\u{180E}", "\u{200B}", "a", " a"] {
+            assert!(!java_blank(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn arabic_indic_digit_is_a_digit() {
+        for digit in '\u{0660}'..='\u{0669}' {
+            assert!(has_decimal_digit(&digit.to_string()), "{digit:?}");
+        }
+        assert!(has_decimal_digit("\u{06F5}"));
+        assert!(has_decimal_digit("a7"));
+        assert!(has_decimal_digit("ب٣"));
+        assert!(!has_decimal_digit("abc"));
+        assert!(
+            !has_decimal_digit("\u{00BD}"),
+            "a vulgar fraction is No, not Nd"
+        );
+        assert!(
+            !has_decimal_digit("\u{2163}"),
+            "a roman numeral is Nl, not Nd"
+        );
+    }
+
+    #[test]
+    fn size_rounds_half_up() {
+        assert_eq!(java_round(8.5), 9);
+        assert_eq!(java_round(-0.5), 0);
+        assert_eq!(java_round(8.4), 8);
+        assert_eq!(java_round(-1.5), -1);
+        assert_eq!(java_round(-1.6), -2);
+        assert_eq!(java_round(0.499_999_999_999_999_94), 0);
+        assert_eq!(java_round(f64::NAN), 0);
+        assert_eq!(java_round(1e12), i32::MAX);
+    }
+
+    #[test]
+    fn page_text_summarises_visible_characters() {
+        let mut line = LTTextLineHorizontal::new(0.1);
+        for (index, (glyph, font, size)) in [
+            ("A", "F1", 10.0),
+            ("\u{00A0}", "F2", 10.0),
+            (" ", "F3", 10.0),
+            ("٣", "F4", 8.5),
+            ("7", "F1", 11.4),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let x = index as f64;
+            line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+                (x, 0.0, x + 1.0, 1.0),
+                glyph,
+                font,
+                size,
+                true,
+                1.0,
+            ))));
+        }
+        let mut glyphs = GlyphSummary::default();
+        let page_line = page_text_line_from_horizontal(&line, &mut glyphs);
+
+        assert_eq!(page_line.text, page_line.text_without_bidi);
+        assert_eq!(
+            glyphs.fonts.into_iter().collect::<Vec<_>>(),
+            vec!["F1".to_owned(), "F2".to_owned(), "F4".to_owned()]
+        );
+        assert_eq!(
+            glyphs.digit_styles.into_iter().collect::<Vec<_>>(),
+            vec![
+                DigitStyle {
+                    font_name: "F1".to_owned(),
+                    size: 11
+                },
+                DigitStyle {
+                    font_name: "F4".to_owned(),
+                    size: 9
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn page_text_line_keeps_both_texts_under_bidi() {
+        let mut line = LTTextLineHorizontal::new(0.1);
+        let visual = ["ﺔ", "ﻴ", "ﺑ", "ﺮ", "ﻌ", "ﻟ", "ﺍ"];
+        for (idx, glyph) in visual.into_iter().enumerate() {
+            line.add_element(TextLineElement::Char(Box::new(LTChar::new(
+                (idx as f64, 0.0, idx as f64 + 1.0, 1.0),
+                glyph,
+                "F",
+                10.0,
+                true,
+                1.0,
+            ))));
+        }
+        line.analyze();
+        let without = page_text_line_from_horizontal(&line, &mut GlyphSummary::default());
+        line.set_bidi(true);
+        let with = page_text_line_from_horizontal(&line, &mut GlyphSummary::default());
+
+        assert_eq!(with.text, raw_text_line_from_horizontal(&line).text);
+        assert_eq!(with.text_without_bidi, without.text);
+        assert_eq!(without.text, without.text_without_bidi);
     }
 
     #[test]

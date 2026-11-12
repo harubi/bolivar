@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 bolivar-core.workspace = true
+regex.workspace = true
 thiserror.workspace = true
 # No `cli` feature: it pulls clap and the template engine into the cdylib.
 # The generator lives in crates/uniffi-bindgen.

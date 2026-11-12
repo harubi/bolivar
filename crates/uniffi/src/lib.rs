@@ -10,15 +10,18 @@ mod extract;
 mod metadata;
 mod types;
 
-pub use cursor::{NativePageSummaryCursor, NativePageTableRowsCursor, NativeTableCursor};
+pub use cursor::{
+    NativePageSummaryCursor, NativePageTableRowsCursor, NativePageTextCursor, NativeTableCursor,
+};
 pub use document::NativePdfDocument;
 pub use error::BolivarError;
 pub use extract::{quick_extract_text, quick_extract_text_from_bytes};
 pub use types::{
-    BoundingBox, ExtractOptions, LayoutChar, LayoutLine, LayoutPage, LayoutParams, LayoutTextBox,
-    MetadataEntry, PageSummary, PageTableRows, PdfPermissions, PdfVersion, RawCharacter,
-    RawDocument, RawDocumentMetadata, RawPage, RawPageBoxes, RawTable, RawTableBoundingBox,
-    RawTableCell, RawTextBox, RawTextLine, Table, TableCell, TableOptions,
+    BoundingBox, DigitStyle, ExtractOptions, LayoutChar, LayoutLine, LayoutPage, LayoutParams,
+    LayoutTextBox, MetadataEntry, PageSummary, PageTableRows, PageText, PageTextBox, PageTextLine,
+    PdfPermissions, PdfVersion, RawCharacter, RawDocument, RawDocumentMetadata, RawPage,
+    RawPageBoxes, RawTable, RawTableBoundingBox, RawTableCell, RawTextBox, RawTextLine, Table,
+    TableCell, TableOptions,
 };
 
 pub fn bolivar_version() -> String {

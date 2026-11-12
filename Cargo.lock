@@ -350,6 +350,7 @@ version = "2.2.1"
 dependencies = [
  "bolivar-core",
  "pollster",
+ "regex",
  "thiserror 2.0.20",
  "uniffi",
 ]
