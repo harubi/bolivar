@@ -3,12 +3,16 @@ package sa.ingenious.pdf
 import kotlin.math.max
 import kotlin.math.min
 import sa.ingenious.ffi.BoundingBox as NativeBoundingBox
+import sa.ingenious.ffi.DigitStyle as NativeDigitStyle
 import sa.ingenious.ffi.LayoutChar as NativeLayoutChar
 import sa.ingenious.ffi.LayoutLine as NativeLayoutLine
 import sa.ingenious.ffi.LayoutPage as NativeLayoutPage
 import sa.ingenious.ffi.LayoutTextBox as NativeLayoutTextBox
 import sa.ingenious.ffi.MetadataEntry as NativeMetadataEntry
 import sa.ingenious.ffi.PageSummary as NativePageSummary
+import sa.ingenious.ffi.PageText as NativePageText
+import sa.ingenious.ffi.PageTextBox as NativePageTextBox
+import sa.ingenious.ffi.PageTextLine as NativePageTextLine
 import sa.ingenious.ffi.PdfPermissions as NativePdfPermissions
 import sa.ingenious.ffi.PdfVersion as NativePdfVersion
 import sa.ingenious.ffi.RawCharacter as NativeRawCharacter
@@ -50,6 +54,48 @@ data class PageSummary(
     val text: String,
     val bbox: BoundingBox,
     val rotate: Double,
+)
+
+/** A font and whole size that printed at least one decimal digit. */
+@JvmRecord
+data class DigitStyle(
+    val fontName: String,
+    val size: Int,
+)
+
+/**
+ * One text line. [text] follows the document's bidi option; [textWithoutBidi]
+ * is the text a document opened without bidi gives.
+ */
+@JvmRecord
+data class PageTextLine(
+    val bbox: BoundingBox,
+    val text: String,
+    val textWithoutBidi: String,
+)
+
+/** One text box and its lines. */
+@JvmRecord
+data class PageTextBox(
+    val bbox: BoundingBox,
+    val text: String,
+    val textWithoutBidi: String,
+    val lines: List<PageTextLine>,
+)
+
+/**
+ * The text of one page with no per-character data: its layout box, text
+ * boxes, the sorted fonts of every character whose text is not blank, and
+ * the sorted font and whole size of every such character holding a decimal
+ * digit.
+ */
+@JvmRecord
+data class PageText(
+    val pageNumber: Int,
+    val bbox: BoundingBox,
+    val textBoxes: List<PageTextBox>,
+    val fonts: List<String>,
+    val digitStyles: List<DigitStyle>,
 )
 
 @JvmRecord
@@ -332,6 +378,32 @@ internal fun NativePageSummary.toPublic(): PageSummary =
         text = text,
         bbox = bbox.toPublic(),
         rotate = rotate,
+    )
+
+internal fun NativeDigitStyle.toPublic(): DigitStyle = DigitStyle(fontName = fontName, size = size)
+
+internal fun NativePageTextLine.toPublic(): PageTextLine =
+    PageTextLine(
+        bbox = bbox.toPublic(),
+        text = text,
+        textWithoutBidi = textWithoutBidi,
+    )
+
+internal fun NativePageTextBox.toPublic(): PageTextBox =
+    PageTextBox(
+        bbox = bbox.toPublic(),
+        text = text,
+        textWithoutBidi = textWithoutBidi,
+        lines = lines.map { it.toPublic() },
+    )
+
+internal fun NativePageText.toPublic(): PageText =
+    PageText(
+        pageNumber = pageNumber.toInt(),
+        bbox = bbox.toPublic(),
+        textBoxes = textBoxes.map { it.toPublic() },
+        fonts = fonts,
+        digitStyles = digitStyles.map { it.toPublic() },
     )
 
 internal fun NativeLayoutChar.toPublic(): LayoutChar =

@@ -4,8 +4,9 @@
            [java.lang AutoCloseable]
            [java.nio.file Path]
            [java.util Iterator]
-           [sa.ingenious.pdf BoundingBox Document DocumentOptions LayoutChar LayoutLine LayoutOptions
-            LayoutPage LayoutTextBox MetadataEntry PageSummary PageTableRows PdfException PdfPermissions
+           [sa.ingenious.pdf BoundingBox DigitStyle Document DocumentOptions LayoutChar LayoutLine
+            LayoutOptions LayoutPage LayoutTextBox MetadataEntry PageSummary PageTableRows PageText
+            PageTextBox PageTextLine PdfException PdfPermissions
             PdfVersion RawCharacter RawDocument RawDocumentMetadata RawPage RawPageBoxes RawTable
             RawTableBoundingBox RawTableCell RawTextBox RawTextLine Table TableCell TableOptions]))
 
@@ -183,6 +184,27 @@
    :bbox        (bbox->map (.bbox summary))
    :rotate      (.rotate summary)})
 
+(defn- page-text-line->map [^PageTextLine line]
+  {:bbox              (bbox->map (.bbox line))
+   :text              (.text line)
+   :text-without-bidi (.textWithoutBidi line)})
+
+(defn- page-text-box->map [^PageTextBox text-box]
+  {:bbox              (bbox->map (.bbox text-box))
+   :text              (.text text-box)
+   :text-without-bidi (.textWithoutBidi text-box)
+   :lines             (mapv page-text-line->map (.lines text-box))})
+
+(defn- digit-style->tuple [^DigitStyle style]
+  [(.fontName style) (long (.size style))])
+
+(defn- page-text->map [^PageText page]
+  {:page-number  (.pageNumber page)
+   :bbox         (bbox->map (.bbox page))
+   :text-boxes   (mapv page-text-box->map (.textBoxes page))
+   :fonts        (set (.fonts page))
+   :digit-styles (into #{} (map digit-style->tuple) (.digitStyles page))})
+
 (defn- layout-page->map [^LayoutPage page]
   {:page-number (.pageNumber page)
    :bbox        (bbox->map (.bbox page))
@@ -359,6 +381,18 @@
   (mapped-cursor
    (wrap-jvm-errors #(.pageSummaries doc))
    page-summary->map))
+
+(defn page-texts
+  "Return a closeable, single-pass cursor over the text of each page. Use `with-open`.
+  Each item holds the page's layout :bbox, its :text-boxes with their :lines, and a
+  glyph summary computed natively: :fonts, the fonts of every character whose text
+  is not blank, and :digit-styles, the [font-name whole-size] of every such character
+  holding a decimal digit. Box and line :text follow the document's :bidi option;
+  :text-without-bidi is the text a document opened without bidi gives."
+  [^Document doc]
+  (mapped-cursor
+   (wrap-jvm-errors #(.pageTexts doc))
+   page-text->map))
 
 (defn layout-pages [^Document doc]
   (wrap-jvm-errors #(mapv layout-page->map (.extractLayoutPages doc))))

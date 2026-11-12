@@ -7,6 +7,10 @@ interface DocumentBackend {
 
   CursorBackend<PageSummary> pageSummaries();
 
+  default CursorBackend<PageText> pageTexts() {
+    throw new UnsupportedOperationException("pageTexts requires the native backend");
+  }
+
   List<LayoutPage> extractLayoutPages();
 
   RawDocument extractRawDocument();
