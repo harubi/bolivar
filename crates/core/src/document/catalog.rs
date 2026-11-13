@@ -522,13 +522,27 @@ impl PDFDocument {
         }
 
         // Extract catalog and info from trailer
+        let mut unreadable_root = false;
         for xref in &self.xrefs {
             if let Some(root_ref) = xref.trailer.get("Root")
                 && self.catalog.is_empty()
-                && let Ok(root_obj) = self.resolve_internal(root_ref)
-                && let Ok(dict) = root_obj.as_dict()
             {
-                self.catalog = dict.clone();
+                match self.resolve_internal(root_ref) {
+                    Ok(root_obj) => {
+                        if let Ok(dict) = root_obj.as_dict() {
+                            self.catalog = dict.clone();
+                        }
+                    }
+                    // Like pdfminer.six: a /Root object that is not in any
+                    // xref resolves to nothing, but one that exists and
+                    // cannot be read is an error.
+                    Err(_) => {
+                        if let PDFObject::Ref(root) = root_ref {
+                            unreadable_root |=
+                                self.xrefs.iter().any(|x| x.get_pos(root.objid).is_some());
+                        }
+                    }
+                }
             }
             if let Some(info_ref) = xref.trailer.get("Info")
                 && let Ok(info_obj) = self.resolve_internal(info_ref)
@@ -538,8 +552,20 @@ impl PDFDocument {
             }
         }
 
+        // pdfminer.six needs a /Root key in some trailer; a /Root that does
+        // not resolve only leaves the catalog empty. A fallback document with
+        // no trailer at all still opens, so its objects can be read.
         let has_trailer = self.xrefs.iter().any(|xref| !xref.trailer.is_empty());
-        if self.catalog.is_empty() && (has_trailer || !allow_xref_fallback) {
+        let has_root = self
+            .xrefs
+            .iter()
+            .any(|xref| xref.trailer.contains_key("Root"));
+        let missing_root = !has_root && (has_trailer || !allow_xref_fallback);
+        // An unreadable /Root still opens when the page scan finds pages, so
+        // a damaged file keeps the content Bolivar can recover.
+        let unusable_root =
+            unreadable_root && self.catalog.is_empty() && self.page_index().len() == 0;
+        if missing_root || unusable_root {
             return Err(PdfError::SyntaxError(
                 "No /Root object! - Is this really a PDF?".into(),
             ));
@@ -806,10 +832,70 @@ impl PDFDocument {
 
     /// Load xref stream (PDF 1.5+).
     fn load_xref_stream(&self, pos: usize) -> Result<XRef> {
-        // Parse the xref stream object
-        let obj = self.parse_object_at(pos, 0, false)?;
-        let stream = obj.as_stream()?;
+        let obj = match self.parse_object_at(pos, 0, false) {
+            Ok(obj) => obj,
+            Err(error) => return self.recover_xref_stream(pos).map_err(|_| error),
+        };
+        self.xref_from_stream(obj.as_stream()?)
+    }
 
+    /// Reads an xref stream the way pdfminer.six's `PDFXRefStream.load` does:
+    /// any three tokens, then the next object, which must be a stream with
+    /// `/Type /XRef`. Used only after the strict parse failed, so it changes
+    /// nothing for well-formed files (pdfminer.six #1249).
+    fn recover_xref_stream(&self, pos: usize) -> Result<XRef> {
+        use crate::parser::recovery::StackObjectReader;
+
+        let mut reader = StackObjectReader::new(self.data.as_slice(), pos);
+        for _ in 0..3 {
+            reader.next_token()?;
+        }
+        let obj = reader.next_object(|reference| {
+            self.getobj_shared(reference.objid)
+                .ok()
+                .and_then(|obj| obj.as_int().ok())
+        })?;
+        let stream = obj.as_stream()?;
+        match stream.get("Type") {
+            Some(PDFObject::Name(name)) if name == "XRef" => self.xref_from_stream(stream),
+            _ => Err(PdfError::NoValidXRef),
+        }
+    }
+
+    /// Reads the object at `pos` the way pdfminer.six's `_getobj_parse` does,
+    /// for objects the strict parser rejects: the `objid genno obj` header,
+    /// with its workaround for malformed headers, then the next object.
+    fn recover_object_at(&self, pos: usize, objid: u32) -> Result<PDFObject> {
+        use crate::parser::lexer::{Keyword, PSToken};
+        use crate::parser::recovery::StackObjectReader;
+
+        let fallback = self.xrefs.iter().any(|xref| xref.is_fallback);
+        let mut reader = StackObjectReader::new(self.data.as_slice(), pos).with_fallback(fallback);
+        let mut header_objid = reader.next_token()?.1;
+        reader.next_token()?;
+        let mut keyword = reader.next_token()?.1;
+        let wanted = PSToken::Int(i64::from(objid));
+        if header_objid != wanted {
+            let mut seen = Vec::new();
+            while keyword != PSToken::Keyword(Keyword::Obj) {
+                keyword = reader.next_token()?.1;
+                seen.push(keyword.clone());
+            }
+            if seen.len() >= 2 {
+                header_objid = seen[seen.len() - 2].clone();
+            }
+        }
+        if header_objid != wanted || keyword != PSToken::Keyword(Keyword::Obj) {
+            return Err(PdfError::ObjectNotFound(objid));
+        }
+        reader.next_object(|reference| {
+            self.getobj_shared(reference.objid)
+                .ok()
+                .and_then(|obj| obj.as_int().ok())
+        })
+    }
+
+    fn xref_from_stream(&self, stream: &PDFStream) -> Result<XRef> {
         // Get parameters
         let w = stream
             .get("W")
@@ -1394,7 +1480,6 @@ impl PDFDocument {
                 },
             );
         }
-
         // Find trailer
         if let Some(trailer_pos) = self.find_trailer() {
             let data = &self.data.as_slice()[trailer_pos..];
@@ -1537,8 +1622,12 @@ impl PDFDocument {
                         Err(_) => continue,  // Try next xref like Python does
                     }
                 } else {
-                    // Parse object at file offset - needs decryption if encrypted
-                    match self.parse_object_at(entry.offset, objid, xref.is_fallback) {
+                    // Parse object at file offset - needs decryption if encrypted.
+                    // A damaged object gets pdfminer.six's lenient reading.
+                    match self
+                        .parse_object_at(entry.offset, objid, xref.is_fallback)
+                        .or_else(|_| self.recover_object_at(entry.offset, objid))
+                    {
                         Ok(o) => (o, true),
                         Err(_) => continue, // Try next xref like Python does
                     }
@@ -2604,6 +2693,53 @@ mod tests {
         let kinds: Vec<bool> = doc.get_trailers().map(|(fallback, _)| fallback).collect();
         assert_eq!(kinds, [false]);
         assert_eq!(doc.page_count(), 1);
+    }
+
+    // pdfminer.six's sample: startxref 0 points at `2 b<%PDF-1.6`. Its xref
+    // stream reader takes any three tokens, then the stream with /Root.
+    #[test]
+    fn evil_xrefs_sample_recovers_stream_then_fallback() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../references/pdfminer.six/samples/contrib/issue-1249-evil-xrefs.pdf"
+        );
+        let doc = PDFDocument::new(std::fs::read(path).unwrap(), "").unwrap();
+        let trailers: Vec<(bool, bool)> = doc
+            .get_trailers()
+            .map(|(fallback, trailer)| (fallback, trailer.contains_key("Root")))
+            .collect();
+        assert_eq!(trailers, [(false, true), (true, false)]);
+        assert_eq!(doc.page_tree_len(), 0);
+    }
+
+    // pdfminer.six reads /Root with dict_value: a dangling reference gives an
+    // empty catalog, not "No /Root object!".
+    #[test]
+    fn dangling_root_reference_opens_with_empty_catalog() {
+        let text = String::from_utf8(build_minimal_pdf_with_pages(1)).unwrap();
+        let pdf = text.replacen("/Root 1 0 R >>", "/Root 99 0 R >>", 1);
+        let doc = PDFDocument::new_with_cache_and_fallback(pdf.into_bytes(), "", 16, false);
+        assert!(doc.unwrap().catalog.is_empty());
+    }
+
+    // pdfminer.six raises when the /Root object exists but cannot be read.
+    // Bolivar does too, unless its page scan still finds pages.
+    #[test]
+    fn unreadable_root_object_without_pages_is_an_error() {
+        let text = String::from_utf8(build_minimal_pdf_with_pages(0)).unwrap();
+        let pdf = text.replacen("1 0 obj", "1 0 oXj", 1).into_bytes();
+        let err = PDFDocument::new_with_cache_and_fallback(pdf, "", 16, false).err();
+        let message = err.expect("unreadable /Root").to_string();
+        assert!(message.contains("No /Root object"), "{message}");
+    }
+
+    #[test]
+    fn unreadable_root_object_keeps_recoverable_pages() {
+        let text = String::from_utf8(build_minimal_pdf_with_pages(2)).unwrap();
+        let pdf = text.replacen("1 0 obj", "1 0 oXj", 1).into_bytes();
+        let doc = PDFDocument::new_with_cache_and_fallback(pdf, "", 16, false).unwrap();
+        assert!(doc.catalog.is_empty());
+        assert_eq!(doc.page_tree_len(), 2);
     }
 
     // Without fallback, pdfminer.six keeps the xrefs it read before the loop.
