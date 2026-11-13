@@ -1,0 +1,21 @@
+[package]
+name = "bolivar-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "C ABI for the bolivar PDF library, read by the JVM through FFM"
+publish = false
+
+[lib]
+name = "bolivar"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Counts native allocations for benchmarks. Never enable in releases.
+count-alloc = []
+
+[dependencies]
+bolivar-core.workspace = true
+regex.workspace = true
+rustc-hash.workspace = true
