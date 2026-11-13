@@ -83,7 +83,7 @@ class _CachedTextMapGetter(Protocol):
     def cache_clear(self) -> None: ...
 
 
-# via https://git.ghostscript.com/?p=mupdf.git;a=blob;f=source/pdf/pdf-font.c;h=6322cedf2c26cfb312c0c0878d7aff97b4c7470e;hb=HEAD#l774   # noqa
+# via https://git.ghostscript.com/?p=mupdf.git;a=blob;f=source/pdf/pdf-font.c;h=6322cedf2c26cfb312c0c0878d7aff97b4c7470e;hb=HEAD#l774
 
 CP936_FONTNAMES = {
     b"\xcb\xce\xcc\xe5": "SimSun,Regular",
