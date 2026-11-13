@@ -92,6 +92,28 @@ jobs:
       - name: Gradle check
         run: ./gradlew check
         working-directory: crates/ffi/jvm
+      - name: Benchmark gate
+        run: ./gradlew benchmark
+        working-directory: crates/ffi/jvm
+
+  ffi-asan:
+    name: FFI AddressSanitizer
+    runs-on: ubuntu-24.04
+    env:
+      # Replaces the workflow-wide flags for this job only.
+      RUSTFLAGS: "-Zsanitizer=address"
+      ASAN_OPTIONS: "detect_leaks=1"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Setup Rust
+        run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: asan
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      # An explicit target keeps build scripts and proc macros uninstrumented.
+      - name: ffi tests under ASan
+        run: cargo test -p bolivar-ffi --target x86_64-unknown-linux-gnu --locked
 
   cross-platform-smoke:
     name: Cross-platform smoke (${{ matrix.os }})

@@ -1,0 +1,44 @@
+name: JVM benchmark
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  jvm-bench:
+    name: JVM wall-clock report
+    runs-on: ubuntu-24.04
+    # A report, not a gate: wall-clock numbers on shared runners are noisy.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Checkout reference PDFs
+        run: git submodule update --init --depth 1 references/pdfplumber
+      - name: Setup Java
+        uses: actions/setup-java@v6.2.0
+        with:
+          distribution: temurin
+          java-version: 25
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6.4.1
+        with:
+          cache-provider: basic
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - name: Build native library
+        run: cargo build -p bolivar-ffi --release --locked
+      - name: Install native library
+        run: |
+          mkdir -p crates/ffi/jvm/natives/linux-x86-64
+          cp target/release/libbolivar.so crates/ffi/jvm/natives/linux-x86-64/
+      - name: Benchmark
+        run: ./gradlew benchmark -PbenchDocuments="$GITHUB_WORKSPACE/references/pdfplumber/tests/pdfs/chelsea_pdta.pdf,$GITHUB_WORKSPACE/references/pdfplumber/tests/pdfs/pr-136-example.pdf"
+        working-directory: crates/ffi/jvm
