@@ -1,9 +1,9 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    kotlin("jvm") version "2.3.20"
+    kotlin("jvm") version "2.4.21"
     `java-library`
-    id("com.vanniktech.maven.publish") version "0.36.0"
+    id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
 val cargoWorkspaceVersion =
@@ -43,7 +43,7 @@ kotlin {
         jvmTarget.set(JvmTarget.JVM_21)
     }
     sourceSets {
-        val main by getting {
+        named("main") {
             kotlin.srcDir("../kotlin")
         }
     }
@@ -67,22 +67,27 @@ tasks.named<Jar>("jar") {
     }
 }
 
+// Read at configuration time: Task.project at execution time fails in Gradle 10.
+val bolivarVersion = version.toString()
+
 tasks.processResources {
-    inputs.property("bolivarVersion", project.version.toString())
+    inputs.property("bolivarVersion", bolivarVersion)
     filesMatching("bolivar-version.properties") {
-        expand("version" to project.version.toString())
+        expand("version" to bolivarVersion)
     }
 }
 
 dependencies {
-    implementation("net.java.dev.jna:jna:5.18.1")
+    implementation("net.java.dev.jna:jna:5.19.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-jdk8:1.11.0")
 
-    testImplementation("org.clojure:clojure:1.12.5")
+    testImplementation("org.clojure:clojure:1.12.6")
     testImplementation(kotlin("test"))
-    testImplementation("org.junit.jupiter:junit-jupiter-api:5.13.4")
-    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.13.4")
+    testImplementation(platform("org.junit:junit-bom:6.1.3"))
+    testImplementation("org.junit.jupiter:junit-jupiter-api")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.test {
