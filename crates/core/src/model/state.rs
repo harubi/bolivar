@@ -92,26 +92,6 @@ impl Color {
     }
 }
 
-#[cfg(test)]
-mod color_tests {
-    use super::Color;
-
-    #[test]
-    fn borrowed_components_match_owned_conversion() {
-        let colors = [
-            Color::Gray(0.5),
-            Color::Rgb(0.1, 0.2, 0.3),
-            Color::Cmyk(0.1, 0.2, 0.3, 0.4),
-            Color::PatternColored("P1".into()),
-            Color::PatternUncolored(Box::new(Color::Rgb(0.2, 0.4, 0.6)), "P2".into()),
-        ];
-
-        for color in colors {
-            assert_eq!(color.components().as_slice(), color.to_vec());
-        }
-    }
-}
-
 /// PDF Text State - manages text positioning and rendering parameters.
 ///
 /// Port of PDFTextState from pdfminer.six pdfinterp.py
@@ -268,5 +248,25 @@ impl PDFGraphicState {
 impl Default for PDFGraphicState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::Color;
+
+    #[test]
+    fn borrowed_components_match_owned_conversion() {
+        let colors = [
+            Color::Gray(0.5),
+            Color::Rgb(0.1, 0.2, 0.3),
+            Color::Cmyk(0.1, 0.2, 0.3, 0.4),
+            Color::PatternColored("P1".into()),
+            Color::PatternUncolored(Box::new(Color::Rgb(0.2, 0.4, 0.6)), "P2".into()),
+        ];
+
+        for color in colors {
+            assert_eq!(color.components().as_slice(), color.to_vec());
+        }
     }
 }

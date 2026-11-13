@@ -422,7 +422,7 @@ impl<T: HasBBox> Plane<T> {
             }
         }
 
-        if matches!(
+        matches!(
             self.dynamic_tree
                 .locate_in_envelope_intersecting_int(env, |node| {
                     if !self.alive.get(node.id).copied().unwrap_or(false) {
@@ -435,11 +435,7 @@ impl<T: HasBBox> Plane<T> {
                     ControlFlow::Continue(())
                 }),
             ControlFlow::Break(())
-        ) {
-            return true;
-        }
-
-        false
+        )
     }
 
     /// Find k-nearest neighbors to the center of the given bbox.
