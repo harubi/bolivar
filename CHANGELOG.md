@@ -1,3 +1,10 @@
+## [2.3.0](https://github.com/harubi/bolivar/compare/v2.2.1...v2.3.0) (2026-11-13)
+
+### Features
+
+* **jvm:** expose the page text cursor ([aae3427](https://github.com/harubi/bolivar/commit/aae3427ab9c81d3c0f0d39395ef673709d062927))
+* **uniffi:** add a page text cursor ([b2f0146](https://github.com/harubi/bolivar/commit/b2f0146e64aba7e260d516320239ba255faa1ee9))
+
 ## [2.2.1](https://github.com/harubi/bolivar/compare/v2.2.0...v2.2.1) (2026-08-28)
 
 ### Bug Fixes
