@@ -471,6 +471,11 @@ bench_err.log
 # Node.js (semantic-release tooling)
 node_modules/
 
+# JVM local build artifacts
+crates/ffi/jvm/.gradle/
+crates/ffi/jvm/build/
+crates/ffi/jvm/natives/
+
 # UniFFI JVM local build artifacts
 crates/uniffi/jvm/.gradle/
 crates/uniffi/jvm/.kotlin/
