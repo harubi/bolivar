@@ -281,6 +281,25 @@ pub struct PDFDocument {
     page_index: OnceLock<PageIndex>,
 }
 
+/// Skip PDF whitespace and `%` comments, like the lexer, from `pos`.
+fn skip_whitespace_and_comments(data: &[u8], mut pos: usize) -> usize {
+    while let Some(&byte) = data.get(pos) {
+        match byte {
+            b' ' | b'\t' | b'\r' | b'\n' | b'\x00' | b'\x0c' => pos += 1,
+            b'%' => {
+                while let Some(&byte) = data.get(pos) {
+                    pos += 1;
+                    if byte == b'\n' || byte == b'\r' {
+                        break;
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    pos
+}
+
 impl PDFDocument {
     #[hotpath::measure]
     fn new_with_cache_inner(
@@ -670,36 +689,38 @@ impl PDFDocument {
     }
 
     /// Load xref tables starting from given position.
+    ///
+    /// Like pdfminer.six, a circular `Prev` or `XRefStm` chain is an error.
+    /// The xrefs read before the loop stay, and `parse` appends a fallback.
     fn load_xrefs(&mut self, mut pos: usize) -> Result<()> {
         let mut visited = std::collections::HashSet::new();
 
-        while !visited.contains(&pos) {
-            visited.insert(pos);
+        loop {
+            if !visited.insert(pos) {
+                return Err(PdfError::NoValidXRef);
+            }
 
             let xref = self.load_xref_at(pos)?;
 
+            // pdfminer.six reads these with `int_value`, which gives 0 for a
+            // value that is not an integer.
+            let offset = |value: &PDFObject| value.as_int().map_or(0, |n| n as usize);
+
             // Check for XRefStm (hybrid-reference xref stream)
-            let xref_stm = xref
-                .trailer
-                .get("XRefStm")
-                .and_then(|p| p.as_int().ok())
-                .map(|n| n as usize);
+            let xref_stm = xref.trailer.get("XRefStm").map(offset);
 
             // Check for Prev pointer to previous xref
-            let prev = xref
-                .trailer
-                .get("Prev")
-                .and_then(|p| p.as_int().ok())
-                .map(|n| n as usize);
+            let prev = xref.trailer.get("Prev").map(offset);
 
             self.xrefs.push(xref);
 
-            if let Some(xref_stm_pos) = xref_stm
-                && !visited.contains(&xref_stm_pos)
-                && let Ok(xref_stm) = self.load_xref_stream(xref_stm_pos)
-            {
-                self.xrefs.push(xref_stm);
-                visited.insert(xref_stm_pos);
+            if let Some(xref_stm_pos) = xref_stm {
+                if !visited.insert(xref_stm_pos) {
+                    return Err(PdfError::NoValidXRef);
+                }
+                if let Ok(xref_stm) = self.load_xref_stream(xref_stm_pos) {
+                    self.xrefs.push(xref_stm);
+                }
             }
 
             if let Some(prev_pos) = prev {
@@ -714,6 +735,9 @@ impl PDFDocument {
 
     /// Load xref table at given position.
     fn load_xref_at(&self, pos: usize) -> Result<XRef> {
+        // Like pdfminer.six's `nexttoken`, skip whitespace and comments first:
+        // some files point startxref at the `%PDF-` header.
+        let pos = skip_whitespace_and_comments(self.data.as_slice(), pos);
         if pos >= self.data.as_slice().len() {
             return Err(PdfError::NoValidXRef);
         }
@@ -2571,6 +2595,84 @@ mod tests {
         out.extend_from_slice(b"\n%%EOF");
 
         out
+    }
+
+    /// Adds `key` to the trailer, pointing back at the document's own xref.
+    fn with_circular_trailer_key(pdf: Vec<u8>, key: &str) -> Vec<u8> {
+        const XREF: &[u8] = b"\nxref\n";
+        let xref_pos = pdf
+            .windows(XREF.len())
+            .rposition(|window| window == XREF)
+            .expect("xref table")
+            + 1;
+        let text = String::from_utf8(pdf).expect("ascii pdf");
+        let trailer = " /Root 1 0 R >>";
+        assert_eq!(text.matches(trailer).count(), 1);
+        text.replace(trailer, &format!(" /Root 1 0 R /{key} {xref_pos} >>"))
+            .into_bytes()
+    }
+
+    // pdfminer.six #1254: a circular xref chain raises PDFNoValidXRef, so the
+    // xrefs read so far stay and a fallback scan is appended after them.
+    #[test]
+    fn circular_prev_chain_appends_fallback_xref() {
+        let pdf = with_circular_trailer_key(build_minimal_pdf_with_pages(2), "Prev");
+        let doc = PDFDocument::new(pdf, "").unwrap();
+        let kinds: Vec<bool> = doc.get_trailers().map(|(fallback, _)| fallback).collect();
+        assert_eq!(kinds, [false, true]);
+        assert_eq!(doc.page_count(), 2);
+    }
+
+    #[test]
+    fn circular_xref_stream_chain_appends_fallback_xref() {
+        let pdf = with_circular_trailer_key(build_minimal_pdf_with_pages(2), "XRefStm");
+        let doc = PDFDocument::new(pdf, "").unwrap();
+        let kinds: Vec<bool> = doc.get_trailers().map(|(fallback, _)| fallback).collect();
+        assert_eq!(kinds, [false, true]);
+        assert_eq!(doc.page_count(), 2);
+    }
+
+    // pdfminer.six reads /Prev with `int_value`, so a value that is not an
+    // integer means offset 0. That is no xref here, so a fallback follows.
+    #[test]
+    fn non_integer_prev_reads_as_offset_zero() {
+        let text = String::from_utf8(build_minimal_pdf_with_pages(2)).unwrap();
+        let pdf = text.replacen("/Root 1 0 R >>", "/Root 1 0 R /Prev /Garbage >>", 1);
+        let doc = PDFDocument::new(pdf.into_bytes(), "").unwrap();
+        let kinds: Vec<bool> = doc.get_trailers().map(|(fallback, _)| fallback).collect();
+        assert_eq!(kinds, [false, true]);
+        assert_eq!(doc.page_count(), 2);
+    }
+
+    #[test]
+    fn xref_after_leading_comment_is_read() {
+        let mut pdf = build_minimal_pdf_with_pages(1);
+        const XREF: &[u8] = b"\nxref\n";
+        let xref_pos = pdf
+            .windows(XREF.len())
+            .rposition(|window| window == XREF)
+            .unwrap();
+        // Point startxref at the newline and a comment placed before "xref".
+        pdf.splice(xref_pos + 1..xref_pos + 1, b"% comment\r\n".iter().copied());
+        let text = String::from_utf8(pdf).unwrap();
+        let start = text.rfind("startxref\n").unwrap() + "startxref\n".len();
+        let end = start + text[start..].find('\n').unwrap();
+        let pdf = format!("{}{}{}", &text[..start], xref_pos, &text[end..]).into_bytes();
+
+        let doc = PDFDocument::new(pdf, "").unwrap();
+        let kinds: Vec<bool> = doc.get_trailers().map(|(fallback, _)| fallback).collect();
+        assert_eq!(kinds, [false]);
+        assert_eq!(doc.page_count(), 1);
+    }
+
+    // Without fallback, pdfminer.six keeps the xrefs it read before the loop.
+    #[test]
+    fn circular_xref_chain_without_fallback_keeps_read_xrefs() {
+        let pdf = with_circular_trailer_key(build_minimal_pdf_with_pages(2), "Prev");
+        let doc = PDFDocument::new_with_cache_and_fallback(pdf, "", 16, false).unwrap();
+        let kinds: Vec<bool> = doc.get_trailers().map(|(fallback, _)| fallback).collect();
+        assert_eq!(kinds, [false]);
+        assert_eq!(doc.page_count(), 2);
     }
 
     fn break_startxref(mut pdf: Vec<u8>) -> Vec<u8> {
