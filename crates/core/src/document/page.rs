@@ -318,6 +318,34 @@ pub(crate) struct PageRef {
     objid: u32,
     inherited: Option<Arc<InheritedNode>>,
     label: Option<String>,
+    /// Read while the page tree is walked, so `mediaboxes` needs no second
+    /// pass over every page object.
+    mediabox: Option<[f64; 4]>,
+}
+
+impl PageRef {
+    fn new(
+        objid: u32,
+        dict: &PDFDict,
+        inherited: Option<Arc<InheritedNode>>,
+        label: Option<String>,
+        doc: &PDFDocument,
+    ) -> Self {
+        let mediabox = dict
+            .get("MediaBox")
+            .or_else(|| {
+                inherited
+                    .as_deref()
+                    .and_then(InheritedNode::resolve_mediabox)
+            })
+            .and_then(|obj| PDFPage::parse_box_obj(obj, doc));
+        Self {
+            objid,
+            inherited,
+            label,
+            mediabox,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -345,26 +373,16 @@ impl PageIndex {
         self.pages.len()
     }
 
-    pub(crate) fn mediaboxes(&self, doc: &PDFDocument) -> Result<Vec<[f64; 4]>> {
-        let mut boxes = Vec::with_capacity(self.pages.len());
-        for (idx, page_ref) in self.pages.iter().enumerate() {
-            let obj = doc.getobj_shared(page_ref.objid)?;
-            let dict = obj
-                .as_ref()
-                .as_dict()
-                .map_err(|_| PdfError::SyntaxError("Page object missing dict".into()))?;
-            let mut mediabox_obj = dict.get("MediaBox");
-            if mediabox_obj.is_none()
-                && let Some(inherited) = &page_ref.inherited
-            {
-                mediabox_obj = inherited.resolve_mediabox();
-            }
-            let mediabox = mediabox_obj
-                .and_then(|obj| PDFPage::parse_box_obj(obj, doc))
-                .ok_or_else(|| PdfError::SyntaxError(format!("Page {} missing mediabox", idx)))?;
-            boxes.push(mediabox);
-        }
-        Ok(boxes)
+    pub(crate) fn mediaboxes(&self) -> Result<Vec<[f64; 4]>> {
+        self.pages
+            .iter()
+            .enumerate()
+            .map(|(idx, page_ref)| {
+                page_ref
+                    .mediabox
+                    .ok_or_else(|| PdfError::SyntaxError(format!("Page {idx} missing mediabox")))
+            })
+            .collect()
     }
 
     fn labels_iter(doc: &PDFDocument) -> Option<Box<dyn Iterator<Item = String> + '_>> {
@@ -420,11 +438,14 @@ impl PageIndex {
                     }
                 }
                 Some(PDFObject::Name(name)) if name == "Page" => {
-                    pages.push(PageRef {
+                    let label = Self::next_label(&mut labels);
+                    pages.push(PageRef::new(
                         objid,
-                        inherited: Some(parent_inherited),
-                        label: Self::next_label(&mut labels),
-                    });
+                        dict,
+                        Some(parent_inherited),
+                        label,
+                        doc,
+                    ));
                 }
                 _ => {}
             }
@@ -442,11 +463,8 @@ impl PageIndex {
                 && let Some(PDFObject::Name(type_name)) = dict.get("Type")
                 && type_name == "Page"
             {
-                pages.push(PageRef {
-                    objid,
-                    inherited: None,
-                    label: Self::next_label(&mut labels),
-                });
+                let label = Self::next_label(&mut labels);
+                pages.push(PageRef::new(objid, dict, None, label, doc));
             }
         }
         pages
