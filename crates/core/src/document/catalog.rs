@@ -1440,20 +1440,23 @@ impl PDFDocument {
             false
         };
 
+        // Accumulate the digits directly: this runs twice per object header,
+        // and a `from_utf8` plus `str::parse` round trip showed up in profiles.
         let start = pos;
-        while pos < data.len() && data[pos].is_ascii_digit() {
+        let mut num: i64 = 0;
+        while let Some(&byte) = data.get(pos)
+            && byte.is_ascii_digit()
+        {
+            num = num
+                .checked_mul(10)
+                .and_then(|n| n.checked_add(i64::from(byte - b'0')))
+                .ok_or_else(|| PdfError::SyntaxError("invalid number".into()))?;
             pos += 1;
         }
 
         if pos == start {
             return Err(PdfError::SyntaxError("expected number".into()));
         }
-
-        let num_str = std::str::from_utf8(&data[start..pos])
-            .map_err(|_| PdfError::SyntaxError("invalid number".into()))?;
-        let mut num: i64 = num_str
-            .parse()
-            .map_err(|_| PdfError::SyntaxError("invalid number".into()))?;
 
         if negative {
             num = -num;
