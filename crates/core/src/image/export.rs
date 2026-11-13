@@ -434,12 +434,14 @@ fn flate_decode_limited(data: &[u8], max_len: Option<usize>) -> Result<Vec<u8>> 
     let mut out = Vec::new();
     let mut buf = [0u8; 8192];
     loop {
-        let n = decoder
-            .read(&mut buf)
-            .map_err(|e| PdfError::DecodeError(format!("FlateDecode error: {}", e)))?;
-        if n == 0 {
-            break;
-        }
+        let n = match decoder.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            // Since flate2 1.1.10 a stream that ends early, often with only
+            // its checksum missing, is UnexpectedEof. Keep what was decoded.
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(PdfError::DecodeError(format!("FlateDecode error: {}", e))),
+        };
         if let Some(max) = max_len
             && out.len().saturating_add(n) > max
         {
@@ -702,7 +704,38 @@ impl BmpWriter {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_IMAGE_DECODED_BYTES, apply_png_predictor, expected_image_len};
+    use super::{
+        MAX_IMAGE_DECODED_BYTES, apply_png_predictor, expected_image_len, flate_decode_limited,
+    };
+    use std::io::Write;
+
+    fn zlib(data: &[u8]) -> Vec<u8> {
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    fn sample() -> Vec<u8> {
+        (0..20_000_u32).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn flate_decode_accepts_stream_without_checksum() {
+        let data = sample();
+        let mut encoded = zlib(&data);
+        encoded.truncate(encoded.len() - 4);
+        assert_eq!(flate_decode_limited(&encoded, None).unwrap(), data);
+    }
+
+    #[test]
+    fn flate_decode_keeps_prefix_of_truncated_stream() {
+        let data = sample();
+        let encoded = zlib(&data);
+        let decoded = flate_decode_limited(&encoded[..encoded.len() / 2], None).unwrap();
+        assert!(!decoded.is_empty());
+        assert!(data.starts_with(&decoded));
+    }
 
     #[test]
     fn expected_image_len_caps_large_images() {

@@ -1101,14 +1101,7 @@ impl PDFDocument {
 
         for (filter, params) in self.get_filters(stream) {
             if filter.eq_ignore_ascii_case("FlateDecode") || filter.eq_ignore_ascii_case("Fl") {
-                use std::io::Read;
-                let mut decoder = flate2::read::ZlibDecoder::new(&output[..]);
-                let mut decompressed = Vec::new();
-                if decoder.read_to_end(&mut decompressed).is_err() {
-                    // Fall back to lenient decompression for corrupted streams.
-                    decompressed = Self::decompress_corrupted(&output);
-                }
-                output = decompressed;
+                output = Self::flate_decode(&output);
             } else if filter.eq_ignore_ascii_case("LZWDecode") || filter.eq_ignore_ascii_case("LZW")
             {
                 let early_change = params
@@ -1242,6 +1235,20 @@ impl PDFDocument {
             ),
             Ok(resolved) => resolved,
             Err(_) => obj.clone(),
+        }
+    }
+
+    /// Decode a FlateDecode stream, keeping the output of a damaged stream.
+    fn flate_decode(data: &[u8]) -> Vec<u8> {
+        use std::io::{ErrorKind, Read};
+        let mut decompressed = Vec::new();
+        match flate2::read::ZlibDecoder::new(data).read_to_end(&mut decompressed) {
+            Ok(_) => decompressed,
+            // Since flate2 1.1.10 a stream that ends early, often with only
+            // its checksum missing, is UnexpectedEof. Keep what was decoded.
+            Err(error) if error.kind() == ErrorKind::UnexpectedEof => decompressed,
+            // Fall back to lenient decompression for corrupted streams.
+            Err(_) => Self::decompress_corrupted(data),
         }
     }
 
@@ -2468,6 +2475,31 @@ fn format_alpha(n: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn zlib(data: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn flate_decode_accepts_stream_without_checksum() {
+        let data: Vec<u8> = b"BT /F1 12 Tf (Hello) Tj ET\n".repeat(800);
+        let mut encoded = zlib(&data);
+        encoded.truncate(encoded.len() - 4);
+        assert_eq!(PDFDocument::flate_decode(&encoded), data);
+    }
+
+    #[test]
+    fn flate_decode_keeps_prefix_of_truncated_stream() {
+        let data: Vec<u8> = (0..20_000_u32).map(|i| (i % 251) as u8).collect();
+        let encoded = zlib(&data);
+        let decoded = PDFDocument::flate_decode(&encoded[..encoded.len() / 2]);
+        assert!(!decoded.is_empty());
+        assert!(data.starts_with(&decoded));
+    }
     use crate::document::page::{reset_page_create_count, take_page_create_count};
 
     fn build_minimal_pdf_with_pages(page_count: usize) -> Vec<u8> {
