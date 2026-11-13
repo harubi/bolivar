@@ -126,14 +126,19 @@ mod tests {
     }
 
     fn write_temp_pdf(data: &[u8]) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::time::{SystemTime, UNIX_EPOCH};
+        // Tests run in parallel threads and can read the clock in the same
+        // nanosecond, so a counter keeps each name unique.
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
         let mut path = std::env::temp_dir();
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let pid = std::process::id();
-        path.push(format!("bolivar_py_test_{pid}_{stamp}.pdf"));
+        let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+        path.push(format!("bolivar_py_test_{pid}_{stamp}_{counter}.pdf"));
         std::fs::write(&path, data).expect("write temp pdf");
         path
     }
