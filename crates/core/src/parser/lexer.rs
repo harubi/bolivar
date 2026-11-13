@@ -766,8 +766,9 @@ impl<'a> PSBaseParser<'a> {
     }
 
     /// Check if byte ends a keyword
+    /// pdfminer.six's `END_KEYWORD`: whitespace, the delimiters and `#`.
     const fn is_keyword_end(b: u8) -> bool {
-        Self::is_whitespace(b) || Self::is_delimiter(b)
+        Self::is_whitespace(b) || Self::is_delimiter(b) || b == b'#'
     }
 
     /// Skip whitespace and comments
@@ -1028,6 +1029,11 @@ impl<'a> PSBaseParser<'a> {
         while self.pos < data.len() && !Self::is_keyword_end(data[self.pos]) {
             self.pos += 1;
         }
+        // A delimiter with no token of its own (a stray `)`) is a one byte
+        // keyword, as in pdfminer.six; without this the lexer never advances.
+        if self.pos == start && start < data.len() {
+            self.pos += 1;
+        }
         let bytes = &data[start..self.pos];
 
         // Check for boolean literals
@@ -1093,23 +1099,32 @@ impl<'a> PSBaseParser<'a> {
                 Ok(PSToken::Keyword(Keyword::BraceClose))
             }
             b'+' | b'-' => {
-                // Could be number or keyword
                 if matches!(self.peek_at(1), Some(c) if c.is_ascii_digit() || c == b'.') {
                     self.parse_number()
                 } else {
-                    self.parse_keyword()
+                    // pdfminer.six reads a sign with no digits as a number,
+                    // fails to convert it, and yields no token.
+                    self.advance();
+                    return self.next_token();
                 }
             }
             b'.' => {
-                // Could be number (.5) or keyword
                 if matches!(self.peek_at(1), Some(c) if c.is_ascii_digit()) {
                     self.parse_number()
                 } else {
-                    self.parse_keyword()
+                    // Likewise a dot with no digits yields no token.
+                    self.advance();
+                    return self.next_token();
                 }
             }
             c if c.is_ascii_digit() => self.parse_number(),
-            _ => self.parse_keyword(),
+            // pdfminer.six starts a keyword only at a letter; any other byte
+            // is a one byte keyword. A wider rule regroups damaged bytes.
+            c if c.is_ascii_alphabetic() => self.parse_keyword(),
+            c => {
+                self.advance();
+                Ok(PSToken::Keyword(Keyword::from_bytes(&[c])))
+            }
         };
 
         Some(result.map(|token| (self.token_pos, token)))
@@ -1381,7 +1396,12 @@ impl<'a> ContentLexer<'a> {
             let data = self.data();
             let start = self.pos;
             let offset = Self::find_keyword_end(&data[start..]);
-            let pos = start + offset;
+            // A stray delimiter is a one byte keyword, so the lexer advances.
+            let pos = if offset == 0 && start < data.len() {
+                start + 1
+            } else {
+                start + offset
+            };
             let bytes = &data[start..pos];
             let token = if bytes == b"true" {
                 PSToken::Bool(true)
@@ -1815,6 +1835,46 @@ mod tests {
         assert_eq!(Keyword::ArrayStart.as_bytes(), b"[");
         assert_eq!(Keyword::DictEnd.as_bytes(), b">>");
         assert_eq!(Keyword::BT.as_bytes(), b"BT");
+    }
+
+    // pdfminer.six: keywords start only at a letter and end at `#`; a lone
+    // sign or dot yields no token.
+    #[test]
+    fn keywords_split_like_pdfminer() {
+        let mut p = PSBaseParser::new(b"\xff\xff ab#c - . 7");
+        let mut tokens = Vec::new();
+        while let Some(Ok((_, token))) = p.next_token() {
+            tokens.push(token);
+        }
+        let kw = |b: &[u8]| PSToken::Keyword(Keyword::from_bytes(b));
+        assert_eq!(
+            tokens,
+            [
+                kw(b"\xff"),
+                kw(b"\xff"),
+                kw(b"ab"),
+                kw(b"#"),
+                kw(b"c"),
+                PSToken::Int(7)
+            ]
+        );
+    }
+
+    #[test]
+    fn stray_delimiter_is_a_one_byte_keyword() {
+        let mut p = PSBaseParser::new(b") 1");
+        let first = p.next_token().unwrap().unwrap();
+        assert_eq!(first, (0, PSToken::Keyword(Keyword::from_bytes(b")"))));
+        assert_eq!(p.next_token().unwrap().unwrap(), (2, PSToken::Int(1)));
+        assert!(p.next_token().is_none());
+
+        let mut c = ContentLexer::new(b") 1");
+        assert_eq!(
+            c.next_token().unwrap().unwrap().1,
+            PSToken::Keyword(Keyword::from_bytes(b")"))
+        );
+        assert_eq!(c.next_token().unwrap().unwrap().1, PSToken::Int(1));
+        assert!(c.next_token().is_none());
     }
 
     #[test]
