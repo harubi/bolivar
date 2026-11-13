@@ -29,15 +29,15 @@ jobs:
     name: Release validation
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - name: Setup Rust
         run: rustup show active-toolchain
       - name: Setup Node.js
-        uses: actions/setup-node@v6.2.0
+        uses: actions/setup-node@v7.1.0
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install release tools
         run: npm ci
@@ -48,7 +48,7 @@ jobs:
     name: Rust tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
       - name: Checkout test submodules
         run: git submodule update --init --depth 1 references/pdfplumber references/tabula-java references/pdfminer.six
       - name: Setup Rust
@@ -68,14 +68,18 @@ jobs:
     name: JVM tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.1
       - name: Setup Java
-        uses: actions/setup-java@v5.2.0
+        uses: actions/setup-java@v6.2.0
         with:
           distribution: temurin
           java-version: 21
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5.0.1
+        uses: gradle/actions/setup-gradle@v6.4.1
+        with:
+          # v6's default "enhanced" cache is proprietary; using it accepts
+          # its Terms of Use. "basic" is the MIT-licensed cache.
+          cache-provider: basic
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
@@ -106,16 +110,16 @@ jobs:
           - os: macos-latest
             target: aarch64
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         id: setup-python
         with:
-          python-version: '3.13'
+          python-version: '3.14'
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - name: Build wheel
-        uses: PyO3/maturin-action@v1.50.0
+        uses: PyO3/maturin-action@v1.51.0
         with:
           target: ${{ matrix.target }}
           # --features replaces the pyproject list, so extension-module must
