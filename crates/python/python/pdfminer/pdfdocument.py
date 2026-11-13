@@ -5,6 +5,7 @@ import os
 from typing import TYPE_CHECKING, Any, Protocol
 
 from bolivar import PDFDocument as _RustPDFDocument
+from bolivar._override import override
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -38,7 +39,7 @@ def _open_rust_document(
         except Exception:
             path = None
 
-    if path and os.path.isfile(path):
+    if path is not None and os.path.isfile(path):
         try:
             return _RustPDFDocument.from_path(
                 path, password=password, caching=caching, fallback=fallback
@@ -70,7 +71,7 @@ class XRef:
 
     def __init__(
         self,
-        trailer: dict[object, object],
+        trailer: dict[str, Any],
         objids: Iterable[int] | None = None,
         fallback: bool = False,
     ) -> None:
@@ -78,7 +79,7 @@ class XRef:
         self._objids = list(objids) if objids is not None else []
         self.is_fallback = fallback
 
-    def get_trailer(self) -> dict[object, object]:
+    def get_trailer(self) -> dict[str, Any]:
         return self.trailer
 
     def get_objids(self) -> list[int]:
@@ -197,11 +198,12 @@ class PDFXRefFallback(XRef):
 
     def __init__(
         self,
-        trailer: dict[object, object] | None = None,
+        trailer: dict[str, Any] | None = None,
         objids: Iterable[int] | None = None,
     ) -> None:
         super().__init__(trailer or {}, objids=objids, fallback=True)
         self.offsets: dict[int, int] = {}
 
+    @override
     def __repr__(self) -> str:
         return f"<PDFXRefFallback: offsets={self.offsets.keys()!r}>"

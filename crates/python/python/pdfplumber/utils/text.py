@@ -860,7 +860,7 @@ def collate_line(
         if (last_x1 is not None) and (char["x0"] > (last_x1 + tolerance)):
             coll += " "
         last_x1 = char["x1"]
-        coll += char["text"]
+        coll += cast("str", char["text"])
     return coll
 
 

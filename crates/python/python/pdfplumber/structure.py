@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from re import Pattern
 from typing import (
     TYPE_CHECKING,
+    Any,
     cast,
 )
 
@@ -139,17 +140,17 @@ class PDFStructElement(Findable):
 
     def to_dict(self) -> StructElementDict:
         """Return a compacted dict representation."""
-        r = cast("StructElementDict", asdict(self))
+        r: dict[str, Any] = asdict(self)
         # Prune empty values (does not matter in which order)
-        d = deque([r])
+        d: deque[dict[str, Any]] = deque([r])
         while d:
             el = d.popleft()
             for k in list(el.keys()):
                 if el[k] is None or el[k] == [] or el[k] == {}:
                     del el[k]
             if "children" in el:
-                d.extend(cast("list[StructElementDict]", el["children"]))
-        return r
+                d.extend(el["children"])
+        return cast("StructElementDict", r)
 
 
 class StructTreeMissing(ValueError):

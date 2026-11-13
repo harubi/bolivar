@@ -34,7 +34,7 @@ def _repair(
         f"-dPDFSETTINGS=/{setting}",
     ]
 
-    if password:
+    if password is not None and password != "":
         repair_args += [f"-sPDFPassword={password}"]
 
     if isinstance(path_or_fp, (str, pathlib.Path)):
@@ -67,7 +67,7 @@ def repair(
     setting: T_repair_setting = "default",
 ) -> BytesIO | None:
     repaired = _repair(path_or_fp, password, gs_path=gs_path, setting=setting)
-    if outfile:
+    if outfile is not None and outfile != "":
         with open(outfile, "wb") as f:
             f.write(repaired.read())
         return None

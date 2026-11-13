@@ -89,9 +89,9 @@ def merge_edges(
 
     def get_group(edge: T_obj) -> tuple[str, T_num]:
         if edge["orientation"] == "h":
-            return ("h", edge["top"])
+            return ("h", cast("T_num", edge["top"]))
         else:
-            return ("v", edge["x0"])
+            return ("v", cast("T_num", edge["x0"]))
 
     if snap_x_tolerance > 0 or snap_y_tolerance > 0:
         edges = snap_edges(edges, snap_x_tolerance, snap_y_tolerance)

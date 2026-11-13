@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Protocol
 
 from bolivar._native_api import PDFStream
+from bolivar._override import override
 
 
 class _PDFDocumentLike(Protocol):
@@ -22,6 +23,7 @@ class PDFObjRef:
         self.objid = objid
         self.genno = genno
 
+    @override
     def __repr__(self) -> str:
         return f"<PDFObjRef:{self.objid}>"
 

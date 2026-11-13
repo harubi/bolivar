@@ -1,6 +1,7 @@
 import pathlib
+from collections.abc import Mapping
 from io import BufferedReader, BytesIO
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Union, cast
 
 import PIL.Image
 import PIL.ImageDraw
@@ -32,7 +33,8 @@ DEFAULT_STROKE_WIDTH = 1
 DEFAULT_RESOLUTION = 72
 
 T_color = tuple[int, int, int] | tuple[int, int, int, int] | str
-T_contains_points = tuple[T_point, ...] | list[T_point] | T_obj
+# Any mapping with x0/top/x1/bottom works; only a dict may carry "pts".
+T_contains_points = tuple[T_point, ...] | list[T_point] | T_obj | Mapping[str, Any]
 
 
 def get_page_image(
@@ -61,15 +63,19 @@ def get_page_image(
 
     pdfium_page = pdfium_doc.get_page(page_ix)
 
-    img: PIL.Image.Image = pdfium_page.render(
-        # Modifiable arguments
-        scale=resolution / 72,
-        no_smoothtext=not antialias,
-        no_smoothpath=not antialias,
-        no_smoothimage=not antialias,
-        # Non-modifiable arguments
-        prefer_bgrx=True,
-    ).to_pil()
+    # pypdfium2 leaves to_pil() unannotated; it returns a PIL.Image.Image.
+    img = cast(
+        "PIL.Image.Image",
+        pdfium_page.render(
+            # Modifiable arguments
+            scale=resolution / 72,
+            no_smoothtext=not antialias,
+            no_smoothpath=not antialias,
+            no_smoothimage=not antialias,
+            # Non-modifiable arguments
+            prefer_bgrx=True,
+        ).to_pil(),
+    )
     pdfium_doc.close()
 
     return img.convert("RGB")
