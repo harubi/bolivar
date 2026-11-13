@@ -62,20 +62,21 @@ cache-keys = [
 
 [dependency-groups]
 bench = [
-    "pytest>=9.0.2",
-    "pytest-benchmark>=5.2.3",
+    "pytest>=9.2.0",
+    "pytest-benchmark>=5.3.1",
 ]
 test = [
-    "pillow>=12.1.0",
-    "pytest>=9.0.2",
-    "pytest-cov>=7.0.0",
+    "pillow>=13.0.0",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
 ]
 typecheck = [
-    "pandas>=2.3.3",
-    "pandas-stubs>=2.3.3.251219",
-    "pypdfium2>=5.0.0",
-    "ruff>=0.15.0",
-    "ty>=0.0.16",
+    "pandas>=3.1.1",
+    "pillow>=13.0.0",
+    "pandas-stubs>=3.1.0.261029",
+    "pypdfium2>=5.15.2",
+    "ruff>=0.17.5",
+    "ty>=0.0.103",
 ]
 
 [tool.ty]
@@ -98,7 +99,8 @@ target-version = "py311"
 src = ["crates/python/python"]
 
 [tool.ruff.lint]
-extend-select = [
+# `select`, not `extend-select`: ruff 0.16 grew its defaults to 413 rules.
+select = [
     "ANN",
     "TC",
     "E",
