@@ -91,7 +91,9 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("benchmark")
+    }
     jvmArgs("--enable-native-access=ALL-UNNAMED")
     systemProperty("bolivar.test.repo", rootDir.resolve("../../..").canonicalPath)
     classpath += files(layout.buildDirectory.dir("native-libs-root"))
@@ -103,6 +105,24 @@ val testNativeResources = tasks.register<Copy>("testNativeResources") {
     into(layout.buildDirectory.dir("native-libs-root/natives"))
 }
 tasks.test { dependsOn(testNativeResources) }
+
+tasks.register<Test>("benchmark") {
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    description = "Check the binding's cost against its budget"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = tasks.test.get().classpath
+    useJUnitPlatform {
+        includeTags("benchmark")
+    }
+    dependsOn(testNativeResources)
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+    systemProperty("bolivar.test.repo", rootDir.resolve("../../..").canonicalPath)
+    systemProperty("bolivar.bench.documents", providers.gradleProperty("benchDocuments").orElse("").get())
+    testLogging {
+        showStandardStreams = true
+    }
+    outputs.upToDateWhen { false }
+}
 
 tasks.register<JavaExec>("clojureTest") {
     group = LifecycleBasePlugin.VERIFICATION_GROUP
