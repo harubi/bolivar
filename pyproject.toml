@@ -57,6 +57,7 @@ cache-keys = [
     { file = "crates/**/Cargo.toml" },
     { file = "crates/**/*.rs" },
     { file = "crates/icu/src/**/*" },
+    { file = "crates/icu/icu4c/**/*" },
 ]
 
 [dependency-groups]
