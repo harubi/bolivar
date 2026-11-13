@@ -403,9 +403,8 @@ pub(crate) fn find_intersections(
                         if mask_bits == 0 {
                             continue;
                         }
-                        for lane in 0..4 {
+                        for (lane, &v_idx) in block.ids.iter().enumerate() {
                             if mask_bits & (1u8 << lane) != 0 {
-                                let v_idx = block.ids[lane];
                                 let vertex = key_point(v_sorted[v_idx].x0, h.top);
                                 let intersection = intersections.entry(vertex).or_default();
                                 intersection.v.push(VEdgeId::from_index(v_idx));

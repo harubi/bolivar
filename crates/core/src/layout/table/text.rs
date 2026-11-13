@@ -274,15 +274,13 @@ pub fn iter_chars_to_words<'a>(
         let text = char_text(char, arena);
         if !settings.keep_blank_chars && text.chars().all(|c| c.is_whitespace()) {
             if !current.is_empty() {
-                words.push(current);
-                current = Vec::new();
+                words.push(std::mem::take(&mut current));
             }
         } else if settings.split_at_punctuation.contains(text) {
             if !current.is_empty() {
-                words.push(current);
+                words.push(std::mem::take(&mut current));
             }
             words.push(vec![char]);
-            current = Vec::new();
         } else if !current.is_empty() {
             let prev = current.last().unwrap();
             let xtol = xtr.map(|r| r * prev.size).unwrap_or(xt);
@@ -358,8 +356,7 @@ fn iter_chars_to_lines_cancellable<'a>(
         }
         let key = line_cluster_key(&char);
         if last_key.is_some_and(|last| key > last + tolerance) {
-            subclusters.push(current);
-            current = Vec::new();
+            subclusters.push(std::mem::take(&mut current));
         }
         current.push(char);
         last_key = Some(key);
@@ -890,8 +887,7 @@ fn extract_text_refs_inner(
     for word in words {
         let key = line_cluster_key(&word);
         if last_key.is_some_and(|last| key > last + tolerance) {
-            lines.push(current);
-            current = Vec::new();
+            lines.push(std::mem::take(&mut current));
         }
         current.push(word);
         last_key = Some(key);
