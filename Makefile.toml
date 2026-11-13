@@ -75,21 +75,23 @@ uv run --with pyright pyright --verifytypes pdfplumber --ignoreexternal
 uv run python scripts/check_stub_parity.py
 '''
 
-[tasks.gen-kotlin]
-description = "Build UniFFI release lib and generate Kotlin bindings"
+[tasks.jvm-test]
+description = "Build the JVM native library and run the JVM and Clojure tests"
 script = '''
 set -euo pipefail
-cargo build -p bolivar-uniffi --release
-case "$(uname -s)" in
-  Darwin) lib="target/release/libbolivar_uniffi.dylib" ;;
-  Linux) lib="target/release/libbolivar_uniffi.so" ;;
-  MINGW*|MSYS*|CYGWIN*) lib="target/release/bolivar_uniffi.dll" ;;
-  *) echo "Unsupported platform: $(uname -s)" >&2; exit 1 ;;
+cargo build -p bolivar-ffi --release
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) classifier="macos-aarch64"; lib="libbolivar.dylib" ;;
+  Darwin-x86_64) classifier="macos-x86-64"; lib="libbolivar.dylib" ;;
+  Linux-x86_64) classifier="linux-x86-64"; lib="libbolivar.so" ;;
+  Linux-aarch64) classifier="linux-aarch64"; lib="libbolivar.so" ;;
+  MINGW*|MSYS*|CYGWIN*) classifier="windows-x86-64"; lib="bolivar.dll" ;;
+  *) echo "Unsupported platform: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
 esac
-mkdir -p crates/uniffi/kotlin
-find crates/uniffi/kotlin -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-cargo run --release -p bolivar-uniffi-bindgen -- \
-  generate --library "$lib" --language kotlin --out-dir crates/uniffi/kotlin
+mkdir -p "crates/ffi/jvm/natives/$classifier"
+cp "target/release/$lib" "crates/ffi/jvm/natives/$classifier/"
+cd crates/ffi/jvm
+./gradlew check
 '''
 
 [tasks.ci]

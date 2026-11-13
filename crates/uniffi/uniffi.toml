@@ -1,4 +1,0 @@
-[bindings.kotlin]
-package_name = "sa.ingenious.ffi"
-cdylib_name = "bolivar_uniffi"
-generate_immutable_records = true
