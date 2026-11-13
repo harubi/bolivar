@@ -708,9 +708,13 @@ impl PyPDFDocument {
         Ok(pages)
     }
 
-    /// Get the total number of pages in the document.
+    /// Get the number of pages in the page tree.
+    ///
+    /// Like pdfminer.six this follows the page tree (and its fallback scan),
+    /// not the declared `/Count`, so it matches `get_page` and
+    /// `page_mediaboxes`.
     fn page_count(&self) -> usize {
-        self.inner.page_count()
+        self.inner.page_tree_len()
     }
 
     /// Get mediaboxes for all pages in the document.
