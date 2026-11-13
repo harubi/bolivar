@@ -1,3 +1,17 @@
+## [2.3.1](https://github.com/harubi/bolivar/compare/v2.3.0...v2.3.1) (2026-11-13)
+
+### Tests
+
+* **icu:** pin inverse bidi output ([ac6f0ef](https://github.com/harubi/bolivar/commit/ac6f0efbf8909a282f5247c4b32b7a7ec5676c07))
+
+### Build System
+
+* **icu:** vendor the ICU bidi subset ([1ae229e](https://github.com/harubi/bolivar/commit/1ae229e205c23d55247d983e1f9ba838ad444cfd))
+
+### Continuous Integration
+
+* drop ICU caches and vcpkg ([a854af3](https://github.com/harubi/bolivar/commit/a854af34640b63ff9365fe6b221b361f408d40ce))
+
 ## [2.3.0](https://github.com/harubi/bolivar/compare/v2.2.1...v2.3.0) (2026-11-13)
 
 ### Features
