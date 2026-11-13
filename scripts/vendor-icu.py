@@ -21,12 +21,12 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
-VERSION = "78.3"
+VERSION = "79.1"
 URL = (
     "https://github.com/unicode-org/icu/releases/download/"
     f"release-{VERSION}/icu4c-{VERSION}-sources.tgz"
 )
-SHA256 = "3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0"
+SHA256 = "06fa63ecb521048f8082f12ad988f6b678d90cbd88aafce24cbc94902b191d99"
 
 SOURCES = [
     "cmemory.cpp",
@@ -45,6 +45,20 @@ SOURCES = [
 ]
 # Headers the bridge includes directly.
 ROOT_HEADERS = ["unicode/ubidi.h", "unicode/utypes.h"]
+
+# ICU 79 added MessageFormat 2 helpers (ubidi_getMFOption, ubidi_isolate) to
+# ubidi.cpp behind U_SHOW_CPLUSPLUS_API only. They use UnicodeString, which
+# pulls in the C++ runtime, mutexes and platform code. Only i18n's
+# messageformat2.cpp calls them, so also guard them with UCONFIG_NO_MF2;
+# build.rs defines UCONFIG_NO_MF2=1. Each patch must apply exactly once.
+PATCHES = {
+    "ubidi.cpp": [
+        (
+            b"#if U_SHOW_CPLUSPLUS_API\n",
+            b"#if U_SHOW_CPLUSPLUS_API && !UCONFIG_NO_MF2\n",
+        ),
+    ],
+}
 
 REPO = Path(__file__).resolve().parent.parent
 DESTINATION = REPO / "crates/icu/icu4c"
@@ -87,6 +101,13 @@ def main() -> None:
                 if candidate in common:
                     pending.append(candidate)
                     break
+
+    for name, patches in PATCHES.items():
+        for old, new in patches:
+            count = common[name].count(old)
+            if count != 1:
+                sys.exit(f"patch for {name} matched {count} times; review it")
+            common[name] = common[name].replace(old, new)
 
     shutil.rmtree(DESTINATION, ignore_errors=True)
     for name in sorted(wanted):
