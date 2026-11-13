@@ -1,26 +1,13 @@
 (ns sa.ingenious.golden-test
   "Replay tests/jvm-golden: every case of the corpus the UniFFI binding produced must come out
   the same through the FFM Java API, after converting to the old map shapes."
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]])
-  (:import [java.util.zip GZIPInputStream]
-           [sa.ingenious.pdf BoundingBox Cursor Document LayoutOptions LayoutPage Metadata
+  (:require [clojure.test :refer [deftest is testing]]
+            [sa.ingenious.corpus :as corpus])
+  (:import [sa.ingenious.pdf BoundingBox Cursor Document LayoutOptions LayoutPage Metadata
             MetadataEntry Options PageSummary PageTableRows PageText PdfException RawPage
             RawTableBoundingBox Table TableOptions TableStrategy]))
 
 (set! *warn-on-reflection* true)
-
-(def repo (System/getProperty "bolivar.test.repo" "../../.."))
-
-(defn- corpus-files []
-  (->> (.listFiles (io/file repo "tests/jvm-golden/corpus"))
-       (filter #(.endsWith (.getName ^java.io.File %) ".edn.gz"))
-       (sort-by #(.getName ^java.io.File %))))
-
-(defn- read-case [file]
-  (with-open [r (java.io.PushbackReader. (io/reader (GZIPInputStream. (io/input-stream file))))]
-    (edn/read r)))
 
 ;; ---- options: old Clojure maps to Java records -------------------------------------------
 
@@ -209,7 +196,7 @@
    :metadata       #(metadata (.metadata d))})
 
 (defn- replay [{:keys [path opts tables]} expected]
-  (let [path (str repo "/" path)]
+  (let [path (str corpus/repo "/" path)]
     (try
       (with-open [d (Document/open ^String path (options opts))]
         (let [calls (doc-calls d)]
@@ -231,10 +218,10 @@
             (fn [ts] (mapv #(into {} (map (fn [[k v]] [k (normalise v)])) %) ts)))))
 
 (deftest corpus-matches
-  (let [files (corpus-files)]
+  (let [files (corpus/files)]
     (is (< 25 (count files)) "the corpus is present")
     (doseq [file files]
-      (let [{:keys [case results]} (read-case file)
+      (let [{:keys [case results]} (corpus/read-case file)
             expected (normalise-results results)
             actual (replay case results)]
         (testing (:id case)
