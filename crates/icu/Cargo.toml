@@ -10,4 +10,4 @@ description = "Internal static ICU4C bidi support for Bolivar"
 links = "bolivar_icu"
 
 [build-dependencies]
-cc = { version = "1.2", features = ["parallel"] }
+cc = { version = "1.11", features = ["parallel"] }

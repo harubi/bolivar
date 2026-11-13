@@ -8,7 +8,9 @@
 //! - Binary data helpers
 
 use geo_index::rtree::sort::HilbertSort;
-use geo_index::rtree::{RTree as GeoRTree, RTreeBuilder, RTreeIndex, SimpleDistanceMetric};
+use geo_index::rtree::{
+    NeighborsOptions, RTree as GeoRTree, RTreeBuilder, RTreeIndex, SimpleDistanceMetric,
+};
 use rstar::{AABB, PointDistance, RTree, RTreeObject};
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -446,15 +448,17 @@ impl<T: HasBBox> Plane<T> {
         let mut results: Vec<(usize, f64)> = Vec::with_capacity(k);
 
         if let Some(tree) = &self.static_tree {
-            let metric = CenterDistance;
-            let ids = tree.neighbors_with_simple_distance(cx, cy, Some(k), None, &metric);
-            for id in ids {
+            let neighbors = tree.neighbors_with_simple_distance(
+                cx,
+                cy,
+                NeighborsOptions::k(k),
+                &CenterDistance,
+            );
+            for (id, dist) in neighbors {
                 let id = id as usize;
                 if id >= self.static_count || !self.alive[id] {
                     continue;
                 }
-                let bbox = self.bboxes[id];
-                let dist = metric.distance_to_bbox(cx, cy, bbox.0, bbox.1, bbox.2, bbox.3);
                 results.push((id, dist));
             }
         }

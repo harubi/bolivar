@@ -23,40 +23,38 @@ byteorder = "1.5"
 bytes = "1"
 cbc = "0.2"
 flate2 = "1.1"
-html-escape = "0.2"
-hotpath = "0.24"
-indexmap = "2.12"
-itertools = "0.15"
-lazy_static = "1.5"
-md5 = "0.8.0"
+html-escape = "0.3"
+hotpath = "0.31"
+indexmap = "2.14"
+md5 = "0.8.1"
 num-traits = "0.2"
 sha2 = "0.11"
 once_cell = "1.21"
-regex = "1.12"
+regex = "1.13"
 rustc-hash = "2.1"
 smol_str = "0.3"
 thiserror = "2.0"
 unicode-normalization = "0.1"
 unicode-bidi = "0.3"
 weezl = "0.2"
-rstar = "0.13"
-ordered-float = "5.1.0"
-geo-index = "0.3.2"
-rayon = "1.11"
+rstar = "0.14"
+ordered-float = "5.5.1"
+geo-index = "0.4.0"
+rayon = "1.12"
 memmap2 = "0.9"
 stats_alloc = "0.1.10"
 stats_alloc_helper = "0.3.1"
 
 # CLI dependencies
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 
 # Python bindings
-pyo3 = { version = "0.29", features = ["experimental-inspect"] }
+pyo3 = { version = "0.30", features = ["experimental-inspect"] }
 
 # Dev dependencies
-criterion = { version = "0.8.1", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 criterion-perf-events = "0.4"
 hex = "0.4"
 perfcnt = "0.8"
