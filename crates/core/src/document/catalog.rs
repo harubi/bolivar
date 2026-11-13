@@ -2072,7 +2072,7 @@ impl PDFDocument {
 
     /// Get mediaboxes for all pages in the document.
     pub fn page_mediaboxes(&self) -> Result<Vec<[f64; 4]>> {
-        self.page_index().mediaboxes(self)
+        self.page_index().mediaboxes()
     }
 
     /// Get page labels iterator.
