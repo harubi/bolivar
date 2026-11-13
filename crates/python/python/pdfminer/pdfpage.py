@@ -158,13 +158,7 @@ class PDFPage:
                 raise exc from exc
             raise PdfminerException(exc) from exc
 
-        if page_count <= 0:
-            try:
-                from pdfplumber.utils.exceptions import PdfminerException
-            except Exception as exc:
-                raise RuntimeError("No pages found in PDF") from exc
-            raise PdfminerException("No pages found in PDF")
-
+        # Like pdfminer.six, a document without pages yields none; no error.
         for idx in range(page_count):
             try:
                 rust_page = document._rust_doc.get_page(idx)

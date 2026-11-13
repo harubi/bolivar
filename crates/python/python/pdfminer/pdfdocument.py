@@ -144,6 +144,14 @@ class PDFDocument:
         ]
         self.info = self._rust_doc.info  # List of info dicts from Rust
         self.catalog = self._rust_doc.catalog
+        has_root = any("Root" in trailer for trailer in trailers)
+        if not has_root and self._rust_doc.page_count() == 0:
+            # pdfminer.six needs a /Root in some trailer, even with fallback.
+            # The native document opens rootless data so its objects can be
+            # read, and its fallback can still find pages; keep those.
+            from .pdfparser import PDFSyntaxError
+
+            raise PDFSyntaxError("No /Root object! - Is this really a PDF?")
         self.encryption = None
         self.decipher = None
         self.is_printable = self._rust_doc.is_printable

@@ -262,9 +262,8 @@ def _apply_patch(module: ModuleType) -> bool:
             if doc is None:
                 raise RuntimeError("pdf document missing")
             self._doc: _DocLike = doc
+            # Like pdfplumber, a document without pages has an empty list.
             page_count = self._doc.page_count()
-            if page_count <= 0:
-                raise PdfminerException("PDF contains no pages")
             pages_to_parse = pdf.pages_to_parse
             if pages_to_parse is None:
                 self._page_numbers = list(range(page_count))
