@@ -414,7 +414,11 @@ class Page(Container):
 
         raw_obj = resolve_all(self.page_obj.annots)
         raw = raw_obj if isinstance(raw_obj, list) else []
-        parsed = [parse(cast("T_obj", annot)) for annot in raw]
+        # Each /Annots entry must be a dictionary; a damaged file can resolve
+        # one to something else, which pdfplumber would fail on.
+        parsed = [
+            parse(cast("T_obj", annot)) for annot in raw if isinstance(annot, dict)
+        ]
         if isinstance(self, CroppedPage):
             return self._crop_fn(parsed)
         else:
