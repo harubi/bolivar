@@ -40,6 +40,9 @@ fn main() {
         .include("icu4c/common")
         .define("U_COMMON_IMPLEMENTATION", None)
         .define("U_STATIC_IMPLEMENTATION", None)
+        // Drops the MessageFormat 2 helpers that scripts/vendor-icu.py
+        // guards in ubidi.cpp; they would pull in the C++ runtime.
+        .define("UCONFIG_NO_MF2", "1")
         // ICU's own Windows build compiles its sources as UTF-8.
         .flag_if_supported("/utf-8")
         .flag_if_supported("-fvisibility=hidden")
