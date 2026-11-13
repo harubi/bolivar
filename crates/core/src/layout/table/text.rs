@@ -32,16 +32,6 @@ pub struct TextSpan {
     pub end: usize,
 }
 
-/// Whether a line's spans could be established at all.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpanFidelity {
-    /// Every span is anchored to the word it came from.
-    Exact,
-    /// The line was reordered by a path that carries no word identity, so no
-    /// span is claimed for it rather than guessing one.
-    Unavailable,
-}
-
 const DEFAULT_X_DENSITY: f64 = 7.25;
 const DEFAULT_Y_DENSITY: f64 = 13.0;
 const CANCEL_INTERVAL: usize = 256;
