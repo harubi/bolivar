@@ -18,6 +18,8 @@ from typing import (
     overload,
 )
 
+from bolivar._override import override
+
 _Number: TypeAlias = int | float
 _PageBox: TypeAlias = tuple[_Number, ...]
 _PageGeometry: TypeAlias = tuple[_PageBox, _PageBox, float, bool]
@@ -90,13 +92,19 @@ def _mark_patched(func: Callable[..., object]) -> None:
     _set_attr(func, "_bolivar_patched", True)
 
 
+def _has_attr(target: object, name: str) -> bool:
+    # Typed as `object` so the check does not narrow `ModuleType`, whose
+    # stub `__getattr__` makes checkers treat every attribute as present.
+    return hasattr(target, name)
+
+
 def _module_from_sys(name: str) -> ModuleType | None:
     module = sys.modules.get(name)
     return module if isinstance(module, ModuleType) else None
 
 
 def _apply_patch(module: ModuleType) -> bool:
-    page_mod: object | None = getattr(module, "page", None)
+    page_mod = cast("ModuleType | None", getattr(module, "page", None))
     if page_mod is None and getattr(module, "__name__", "") == "pdfplumber.page":
         page_mod = module
         pkg = _module_from_sys("pdfplumber")
@@ -187,7 +195,7 @@ def _apply_patch(module: ModuleType) -> bool:
             pdf = page.pdf
             doc: _DocLike | None = pdf.doc if pdf else None
             if doc is None:
-                doc = getattr(page.page_obj, "doc", None)
+                doc = cast("_DocLike | None", getattr(page.page_obj, "doc", None))
             if doc is None:
                 raise PdfminerException("pdf document missing")
             rust_doc = getattr(doc, "_rust_doc", None) or doc
@@ -237,7 +245,7 @@ def _apply_patch(module: ModuleType) -> bool:
             pdf = self.pdf
             doc: _DocLike | None = pdf.doc if pdf else None
             if doc is None:
-                doc = getattr(self.page_obj, "doc", None)
+                doc = cast("_DocLike | None", getattr(self.page_obj, "doc", None))
             if doc is None:
                 return cast("_Words", _orig_extract_words(self, **kwargs))
             return _extract_words_for_page(
@@ -250,7 +258,7 @@ def _apply_patch(module: ModuleType) -> bool:
     class BolivarLazyPages(list[object]):
         def __init__(self, pdf: _PdfLike) -> None:
             self._pdf = pdf
-            doc = pdf.doc if pdf is not None else None
+            doc = pdf.doc
             if doc is None:
                 raise RuntimeError("pdf document missing")
             self._doc: _DocLike = doc
@@ -291,6 +299,7 @@ def _apply_patch(module: ModuleType) -> bool:
                 raise PdfminerException(str(e)) from e
             self._doctops = doctops
 
+        @override
         def __len__(self) -> int:
             return len(self._page_numbers)
 
@@ -300,6 +309,7 @@ def _apply_patch(module: ModuleType) -> bool:
         @overload
         def __getitem__(self, idx: SupportsIndex) -> object: ...
 
+        @override
         def __getitem__(
             self,
             idx: SupportsIndex | _SliceIndex,
@@ -337,23 +347,29 @@ def _apply_patch(module: ModuleType) -> bool:
             self._page_cache[page_index] = page
             return page
 
+        @override
         def __iter__(self) -> Iterator[object]:
             for i in range(len(self)):
                 yield self[i]
 
+        @override
         def __reversed__(self) -> Iterator[object]:
             for i in range(len(self) - 1, -1, -1):
                 yield self[i]
 
+        @override
         def __contains__(self, item: object) -> bool:
             return any(page == item for page in self)
 
+        @override
         def __repr__(self) -> str:
             return repr(list(self))
 
+        @override
         def copy(self) -> list[object]:
             return list(self)
 
+        @override
         def index(
             self,
             item: object,
@@ -366,6 +382,7 @@ def _apply_patch(module: ModuleType) -> bool:
                     return position
             raise ValueError(f"{item!r} is not in list")
 
+        @override
         def count(self, item: object) -> int:
             return sum(1 for page in self if page == item)
 
@@ -550,6 +567,7 @@ class _PdfplumberPatchLoader(importlib.abc.Loader):
     def __init__(self, loader: importlib.abc.Loader) -> None:
         self.loader = loader
 
+    @override
     def create_module(
         self,
         spec: importlib.machinery.ModuleSpec,
@@ -558,6 +576,7 @@ class _PdfplumberPatchLoader(importlib.abc.Loader):
             return self.loader.create_module(spec)
         return None
 
+    @override
     def exec_module(self, module: ModuleType) -> None:
         global _PATCH_APPLIED
         self.loader.exec_module(module)
@@ -577,6 +596,7 @@ class _PdfplumberPatchFinder(importlib.abc.MetaPathFinder):
     def __init__(self, names: Iterable[str]) -> None:
         self.names = set(names)
 
+    @override
     def find_spec(
         self,
         fullname: str,
@@ -626,7 +646,7 @@ def _remove_hook() -> None:
 
 def patch_pdfplumber() -> bool:
     module = _module_from_sys("pdfplumber")
-    if module is not None and hasattr(module, "page"):
+    if module is not None and _has_attr(module, "page"):
         return _apply_patch(module)
 
     if module is not None:

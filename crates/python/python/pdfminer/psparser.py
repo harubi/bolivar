@@ -52,10 +52,7 @@ def keyword_name(x: _T) -> _T: ...
 def keyword_name(x: object) -> object:
     if not isinstance(x, PSKeyword):
         return x
-    name = x.name
-    if isinstance(name, bytes):
-        return name.decode("utf-8", "ignore")
-    return str(name)
+    return x.name.decode("utf-8", "ignore")
 
 
 __all__ = [

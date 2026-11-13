@@ -6,6 +6,7 @@ from io import BufferedReader, BytesIO
 from types import TracebackType
 from typing import Any, ClassVar, Literal
 
+from bolivar._override import override
 from pdfminer.layout import LAParams
 from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfinterp import PDFResourceManager
@@ -182,6 +183,7 @@ class PDF(Container):
         return iter(self.pages)
 
     @property
+    @override
     def pages(self) -> SyncAsyncPages:
         if hasattr(self, "_pages"):
             return self._pages
@@ -210,6 +212,7 @@ class PDF(Container):
         return self._pages
 
     @property
+    @override
     def objects(self) -> dict[str, T_obj_list]:
         if hasattr(self, "_objects"):
             return self._objects
@@ -238,6 +241,7 @@ class PDF(Container):
         except StructTreeMissing:
             return []
 
+    @override
     def to_dict(self, object_types: list[str] | None = None) -> dict[str, Any]:
         return {
             "metadata": self.metadata,

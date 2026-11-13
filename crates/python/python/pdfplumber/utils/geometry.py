@@ -181,7 +181,7 @@ def resize_object(obj: T_obj, key: str, value: T_num) -> T_obj:
         new_items.append(("height", obj["height"] - diff))
         if "y1" in obj:
             new_items.append(("y1", obj["y1"] - diff))
-    elif key == "bottom":
+    else:  # key == "bottom", per the assert above
         assert value >= obj["top"]
         new_items.append(("height", obj["height"] + diff))
         if "y0" in obj:

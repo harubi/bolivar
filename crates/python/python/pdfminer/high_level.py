@@ -6,7 +6,7 @@ import io
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING, BinaryIO, Protocol, cast
+from typing import TYPE_CHECKING, BinaryIO, Protocol, TextIO, cast
 
 from bolivar import (
     extract_pages as _extract_pages,
@@ -47,7 +47,8 @@ PDFInput = str | os.PathLike[str] | bytes | bytearray | memoryview | BinaryIO
 
 def _resolve_input(pdf_file: PDFInput) -> str | bytes | bytearray:
     if isinstance(pdf_file, (str, os.PathLike)):
-        return os.fspath(pdf_file)
+        # os.fspath returns str or bytes, or raises TypeError.
+        return cast("str | bytes", os.fspath(pdf_file))
     if isinstance(pdf_file, bytes):
         return pdf_file
     if isinstance(pdf_file, bytearray):
@@ -164,11 +165,11 @@ def extract_text_to_fp(
         logging.getLogger().setLevel(logging.DEBUG)
 
     imagewriter = None
-    if output_dir:
+    if output_dir is not None and output_dir != "":
         imagewriter = ImageWriter(output_dir)
 
     if output_type != "text" and outfp == sys.stdout:
-        outfp = sys.stdout.buffer
+        outfp = cast("TextIO", sys.stdout).buffer
 
     page_numbers = _normalize_page_numbers(page_numbers)
     converter_outfp, effective_codec = _prepare_converter_output(
@@ -243,7 +244,7 @@ def extract_text_to_fp(
         raise PDFValueError(msg)
 
     resolved = _resolve_input(inf)
-    if output_dir:
+    if output_dir is not None and output_dir != "":
         if isinstance(resolved, str):
             pages = _extract_pages_with_images_from_path(
                 resolved,

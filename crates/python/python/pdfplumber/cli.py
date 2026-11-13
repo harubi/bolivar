@@ -4,7 +4,7 @@ import json
 import sys
 from collections import defaultdict, deque
 from itertools import chain
-from typing import Any, cast
+from typing import Any, BinaryIO, TextIO, cast
 
 from .pdf import PDF
 
@@ -23,7 +23,7 @@ def parse_page_spec(p_str: str) -> list[int]:
 def parse_args(args_raw: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser("pdfplumber")
 
-    parser.add_argument("infile", nargs="?", type=argparse.FileType("rb"))
+    parser.add_argument("infile", nargs="?")
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--structure",
@@ -65,9 +65,22 @@ def parse_args(args_raw: list[str]) -> argparse.Namespace:
     )
 
     args = parser.parse_args(args_raw)
+    args.infile = _open_infile(parser, args.infile)
     if args.pages is not None:
         args.pages = list(chain(*args.pages))
     return args
+
+
+def _open_infile(parser: argparse.ArgumentParser, path: str | None) -> BinaryIO | None:
+    """Open *path* the way ``argparse.FileType("rb")`` did, after parsing."""
+    if path is None:
+        return None
+    if path == "-":
+        return cast("TextIO", sys.stdin).buffer
+    try:
+        return open(path, "rb")
+    except OSError as e:
+        parser.error(f"argument infile: can't open '{path}': {e}")
 
 
 def add_text_to_mcids(pdf: PDF, data: list[dict[str, Any]]) -> None:
@@ -94,34 +107,39 @@ def add_text_to_mcids(pdf: PDF, data: list[dict[str, Any]]) -> None:
 
 def main(args_raw: list[str] = sys.argv[1:]) -> None:
     args = parse_args(args_raw)
-
-    with PDF.open(args.infile, pages=args.pages, laparams=args.laparams) as pdf:
-        if args.structure:
-            print(json.dumps(pdf.structure_tree, indent=args.indent))
-        elif args.structure_text:
-            tree = cast("list[dict[str, Any]]", pdf.structure_tree)
-            add_text_to_mcids(pdf, tree)
-            print(json.dumps(tree, indent=args.indent, ensure_ascii=False))
-        elif args.format == "csv":
-            pdf.to_csv(
-                sys.stdout,
-                args.types,
-                precision=args.precision,
-                include_attrs=args.include_attrs,
-                exclude_attrs=args.exclude_attrs,
-            )
-        elif args.format == "text":
-            for page in pdf.pages:
-                print(page.extract_text(layout=True))
-        else:
-            pdf.to_json(
-                sys.stdout,
-                args.types,
-                precision=args.precision,
-                include_attrs=args.include_attrs,
-                exclude_attrs=args.exclude_attrs,
-                indent=args.indent,
-            )
+    try:
+        with PDF.open(args.infile, pages=args.pages, laparams=args.laparams) as pdf:
+            if args.structure:
+                print(json.dumps(pdf.structure_tree, indent=args.indent))
+            elif args.structure_text:
+                tree = [cast("dict[str, Any]", el) for el in pdf.structure_tree]
+                add_text_to_mcids(pdf, tree)
+                print(json.dumps(tree, indent=args.indent, ensure_ascii=False))
+            elif args.format == "csv":
+                pdf.to_csv(
+                    sys.stdout,
+                    args.types,
+                    precision=args.precision,
+                    include_attrs=args.include_attrs,
+                    exclude_attrs=args.exclude_attrs,
+                )
+            elif args.format == "text":
+                for page in pdf.pages:
+                    print(page.extract_text(layout=True))
+            else:
+                pdf.to_json(
+                    sys.stdout,
+                    args.types,
+                    precision=args.precision,
+                    include_attrs=args.include_attrs,
+                    exclude_attrs=args.exclude_attrs,
+                    indent=args.indent,
+                )
+    finally:
+        # argparse.FileType never closed the file; close it unless it is stdin.
+        stdin = getattr(sys.stdin, "buffer", None)
+        if args.infile is not None and args.infile is not stdin:
+            args.infile.close()
 
 
 if __name__ == "__main__":

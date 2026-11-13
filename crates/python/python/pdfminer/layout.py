@@ -4,6 +4,7 @@
 
 import abc
 from collections.abc import Generator, Iterable, Iterator
+from functools import cached_property
 from typing import Protocol, TypeAlias, TypeGuard
 
 from bolivar._native_api import (
@@ -33,6 +34,7 @@ from bolivar._native_api import (
 from bolivar._native_api import (
     LTTextLineVertical as _RustLTTextLineVertical,
 )
+from bolivar._override import override
 
 
 class PDFGraphicState:
@@ -168,6 +170,7 @@ class LTTextContainer(LTContainer):
     def __init__(self) -> None:
         super().__init__((INF, INF, -INF, -INF))
 
+    @override
     def add(self, obj: object) -> None:
         super().add(obj)
         if not _is_bbox_obj(obj):
@@ -266,6 +269,7 @@ class LTTextLineHorizontal(LTTextLine):
         super().__init__(word_margin)
         self._x1 = INF
 
+    @override
     def find_neighbors(self, plane: Plane, ratio: float) -> list["LTTextLine"]:
         d = ratio * self.height
         objs = plane.find((self.x0, self.y0 - d, self.x1, self.y1 + d))
@@ -301,6 +305,7 @@ class LTTextLineVertical(LTTextLine):
         super().__init__(word_margin)
         self._y0 = -INF
 
+    @override
     def find_neighbors(self, plane: Plane, ratio: float) -> list["LTTextLine"]:
         d = ratio * self.width
         objs = plane.find((self.x0 - d, self.y0, self.x1 + d, self.y1))
@@ -369,40 +374,20 @@ class LTPage(LTLayoutContainer):
         self._page = page
         self.pageid = page.pageid
         self.rotate = page.rotate
-        self.bbox = page.bbox
+        self.set_bbox(page.bbox)
         self.groups = None
 
-    @property
-    def x0(self) -> float:
-        return self.bbox[0]
-
-    @property
-    def y0(self) -> float:
-        return self.bbox[1]
-
-    @property
-    def x1(self) -> float:
-        return self.bbox[2]
-
-    @property
-    def y1(self) -> float:
-        return self.bbox[3]
-
-    @property
-    def width(self) -> float:
-        return self.x1 - self.x0
-
-    @property
-    def height(self) -> float:
-        return self.y1 - self.y0
-
-    @property
+    @cached_property
+    @override
     def _objs(self) -> list[object]:
+        # Wrapped lazily on first access, then kept like a plain attribute.
         return [_wrap_rust_item(obj) for obj in self._page]
 
+    @override
     def __iter__(self) -> Generator[object, None, None]:
         yield from self._objs
 
+    @override
     def __len__(self) -> int:
         return len(self._page)
 

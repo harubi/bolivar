@@ -36,7 +36,7 @@ def make_cluster_dict(values: Iterable[T_num], tolerance: T_num) -> dict[T_num, 
     return dict(itertools.chain(*nested_tuples))
 
 
-Clusterable = TypeVar("Clusterable", T_obj, tuple[Any, ...])
+Clusterable = TypeVar("Clusterable", bound=T_obj | tuple[Any, ...])
 
 
 def cluster_objects(

@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 
 from bolivar._native_api import TagExtractor
+from bolivar._override import override
 
 _Matrix = tuple[float, float, float, float, float, float]
 
@@ -12,6 +13,7 @@ class PDFDevice:
         self.rsrcmgr = rsrcmgr
         self.ctm: _Matrix | None = None
 
+    @override
     def __repr__(self) -> str:
         return "<PDFDevice>"
 

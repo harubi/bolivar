@@ -3,10 +3,11 @@ import re
 from collections.abc import Callable, Generator, Iterable
 from functools import lru_cache
 from re import Pattern
-from typing import TYPE_CHECKING, ClassVar, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast
 from unicodedata import normalize as normalize_unicode
 from warnings import warn
 
+from bolivar._override import override
 from pdfminer.converter import PDFPageAggregator
 from pdfminer.layout import (
     LTChar,
@@ -347,18 +348,19 @@ class Page(Container):
             interpreter.process_page(self.page_obj)
         except Exception as e:
             raise PdfminerException(e) from e
-        self._layout: LTPage = device.get_result()
+        # process_page() hands the aggregator a pdfminer.layout.LTPage.
+        self._layout = cast("LTPage", device.get_result())
         return self._layout
 
     @property
     def annots(self) -> T_obj_list:
         def rotate_point(pt: tuple[float, float], r: int) -> tuple[float, float]:
             turns = r // 90
+            x, y = pt
             for i in range(turns):
-                x, y = pt
                 comp = self.width if i == turns % 2 else self.height
-                pt = (y, (comp - x))
-            return pt
+                x, y = y, comp - x
+            return (x, y)
 
         def parse(annot: T_obj) -> T_obj:
             _a, _b, _c, _d = annot["Rect"]
@@ -423,6 +425,7 @@ class Page(Container):
         return [a for a in self.annots if a["uri"] is not None]
 
     @property
+    @override
     def objects(self) -> dict[str, T_obj_list]:
         if hasattr(self, "_objects"):
             return self._objects
@@ -435,7 +438,7 @@ class Page(Container):
 
     def process_object(self, obj: object) -> T_obj:
         kind = re.sub(lt_pat, "", obj.__class__.__name__).lower()
-        attr = {}
+        attr: T_obj = {}
 
         def _normalize_color_value(value: object) -> tuple[object, ...]:
             if isinstance(value, list):
@@ -494,6 +497,7 @@ class Page(Container):
             ) -> Generator[tuple[object, list[tuple[T_num, T_num]]], None, None]:
                 for raw_segment in cast("list[object]", path or []):
                     segment = cast("list[object] | tuple[object, ...]", raw_segment)
+                    pts: list[tuple[T_num, T_num]]
                     if len(segment) == 2:
                         cmd = segment[0]
                         candidate = segment[1]
@@ -636,7 +640,7 @@ class Page(Container):
         return_chars: bool = True,
         return_groups: bool = True,
         **kwargs: object,
-    ) -> list[T_mapping_obj]:
+    ) -> list[dict[str, Any]]:
         textmap = self.get_textmap(**tuplify_list_kwargs(kwargs))
         return textmap.search(
             pattern,
@@ -743,6 +747,7 @@ class Page(Container):
             force_mediabox=force_mediabox,
         )
 
+    @override
     def to_dict(self, object_types: list[str] | None = None) -> T_mapping_obj:
         if object_types is None:
             _object_types = [*list(self.objects.keys()), "annot"]
@@ -762,6 +767,7 @@ class Page(Container):
             d[t + "s"] = getattr(self, t + "s")
         return d
 
+    @override
     def __repr__(self) -> str:
         return f"<Page:{self.page_number}>"
 
@@ -848,6 +854,7 @@ class CroppedPage(DerivedPage):
             self.bbox = crop_bbox
 
     @property
+    @override
     def objects(self) -> dict[str, T_obj_list]:
         if hasattr(self, "_objects"):
             return self._objects
@@ -868,6 +875,7 @@ class FilteredPage(DerivedPage):
         super().__init__(parent_page)
 
     @property
+    @override
     def objects(self) -> dict[str, T_obj_list]:
         if hasattr(self, "_objects"):
             return self._objects
