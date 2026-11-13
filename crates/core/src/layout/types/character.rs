@@ -350,6 +350,21 @@ impl LTChar {
         self.tag.as_deref().map(str::to_owned)
     }
 
+    /// The marked content tag, borrowed.
+    pub fn tag_str(&self) -> Option<&str> {
+        self.tag.as_deref()
+    }
+
+    /// The non-stroking colour space name, borrowed.
+    pub fn ncs_str(&self) -> Option<&str> {
+        self.ncs.as_deref()
+    }
+
+    /// The stroking colour space name, borrowed.
+    pub fn scs_str(&self) -> Option<&str> {
+        self.scs.as_deref()
+    }
+
     pub fn ncs(&self) -> Option<String> {
         self.ncs.as_deref().map(str::to_owned)
     }
@@ -412,6 +427,9 @@ mod tests {
         assert_eq!(via_new.tag(), via_builder.tag());
         assert_eq!(via_new.ncs(), via_builder.ncs());
         assert_eq!(via_new.scs(), via_builder.scs());
+        assert_eq!(via_new.tag_str(), via_builder.tag().as_deref());
+        assert_eq!(via_new.ncs_str(), via_builder.ncs().as_deref());
+        assert_eq!(via_new.scs_str(), via_builder.scs().as_deref());
         assert_eq!(via_new.bbox(), via_builder.bbox());
     }
 
@@ -474,6 +492,9 @@ mod tests {
         assert_eq!(ch.tag(), None);
         assert_eq!(ch.ncs(), None);
         assert_eq!(ch.scs(), None);
+        assert_eq!(ch.tag_str(), None);
+        assert_eq!(ch.ncs_str(), None);
+        assert_eq!(ch.scs_str(), None);
         assert_eq!(ch.non_stroking_color(), &None);
         assert_eq!(ch.stroking_color(), &None);
     }
