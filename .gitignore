@@ -480,8 +480,3 @@ crates/uniffi/jvm/.settings/
 crates/uniffi/jvm/bin/
 crates/uniffi/jvm/build/
 crates/uniffi/jvm/natives/
-
-# CI native-dependency caches. In-workspace so container builds see them
-# without an extra mount; must stay untracked for `cargo publish`.
-.icu-cache/
-.vcpkg-cache/

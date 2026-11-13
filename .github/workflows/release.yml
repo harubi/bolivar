@@ -126,17 +126,10 @@ jobs:
             runner: ubuntu-24.04
           - target: aarch64
             runner: ubuntu-24.04-arm
-    env:
-      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - uses: actions/checkout@v6.0.2
         with:
           ref: ${{ needs.resolve.outputs.tag }}
-      - name: Cache static ICU
-        uses: actions/cache@v4
-        with:
-          path: .icu-cache/*/*/install
-          key: icu-manylinux2_28-${{ matrix.target }}-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
       - name: Build abi3 wheel (CPython 3.11+)
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -144,7 +137,6 @@ jobs:
           args: --release --out dist -i /opt/python/cp311-cp311/bin/python --features pyo3/extension-module,pyo3/abi3-py311
           manylinux: 2_28
           container: quay.io/pypa/manylinux_2_28_${{ matrix.target }}
-          docker-options: -e BOLIVAR_ICU_CACHE_DIR
       - name: Build free-threaded wheel (CPython 3.14t)
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -152,7 +144,6 @@ jobs:
           args: --release --out dist -i /opt/python/cp314-cp314t/bin/python --features pyo3/extension-module
           manylinux: 2_28
           container: quay.io/pypa/manylinux_2_28_${{ matrix.target }}
-          docker-options: -e BOLIVAR_ICU_CACHE_DIR
       - name: Verify ICU is static
         run: sh scripts/verify-wheel-static-icu.sh dist
       - name: Upload wheels
@@ -176,17 +167,10 @@ jobs:
             runner: ubuntu-24.04
           - target: aarch64
             runner: ubuntu-24.04-arm
-    env:
-      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - uses: actions/checkout@v6.0.2
         with:
           ref: ${{ needs.resolve.outputs.tag }}
-      - name: Cache static ICU
-        uses: actions/cache@v4
-        with:
-          path: .icu-cache/*/*/install
-          key: icu-musllinux1_2-${{ matrix.target }}-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
       - name: Build abi3 wheel (CPython 3.11+)
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -194,7 +178,6 @@ jobs:
           args: --release --out dist -i /opt/python/cp311-cp311/bin/python --features pyo3/extension-module,pyo3/abi3-py311
           manylinux: musllinux_1_2
           container: quay.io/pypa/musllinux_1_2_${{ matrix.target }}
-          docker-options: -e BOLIVAR_ICU_CACHE_DIR
       - name: Build free-threaded wheel (CPython 3.14t)
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -202,7 +185,6 @@ jobs:
           args: --release --out dist -i /opt/python/cp314-cp314t/bin/python --features pyo3/extension-module
           manylinux: musllinux_1_2
           container: quay.io/pypa/musllinux_1_2_${{ matrix.target }}
-          docker-options: -e BOLIVAR_ICU_CACHE_DIR
       - name: Verify ICU is static
         run: sh scripts/verify-wheel-static-icu.sh dist
       - name: Upload wheels
@@ -213,7 +195,7 @@ jobs:
           compression-level: 0
           retention-days: 3
 
-  # Wheels and the cdylib share the Rust core and the vcpkg ICU build.
+  # Wheels and the cdylib share the Rust core build.
   # The two artifacts must stay disjoint: publish-pypi feeds every `wheels-*`
   # file to twine, publish-maven reads classifiers from `native-*` dir names.
   build-windows:
@@ -240,21 +222,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-x64
-      - name: Cache vcpkg binaries
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-icu-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}-${{ github.run_id }}
-          restore-keys: vcpkg-icu-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'triplets/**') }}-
-      - name: Install ICU
-        shell: pwsh
-        run: |
-          $baseline = (Get-Content "$env:GITHUB_WORKSPACE\vcpkg.json" | ConvertFrom-Json).'builtin-baseline'
-          git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --depth 1 origin $baseline
-          $env:VCPKG_BINARY_SOURCES = "clear;files,$env:GITHUB_WORKSPACE\.vcpkg-cache,readwrite"
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install --triplet x64-windows-static-md-release --host-triplet x64-windows-release --overlay-triplets "$env:GITHUB_WORKSPACE\triplets" --x-install-root "$env:VCPKG_INSTALLATION_ROOT\installed" --x-manifest-root "$env:GITHUB_WORKSPACE" --clean-after-build
-          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
-          "VCPKGRS_TRIPLET=x64-windows-static-md-release" >> $env:GITHUB_ENV
       - name: Build abi3 wheel (CPython 3.11+)
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -298,8 +265,6 @@ jobs:
             target: aarch64
             rust_target: aarch64-apple-darwin
             classifier: macos-aarch64
-    env:
-      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - uses: actions/checkout@v6.0.2
         with:
@@ -319,11 +284,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - name: Cache static ICU
-        uses: actions/cache@v4
-        with:
-          path: .icu-cache/*/*/install
-          key: icu-${{ matrix.runner }}-${{ matrix.target }}-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
       - name: Build abi3 wheel (CPython 3.11+)
         uses: PyO3/maturin-action@v1.50.0
         with:
@@ -393,8 +353,6 @@ jobs:
             target: aarch64-unknown-linux-gnu
             classifier: linux-aarch64
     runs-on: ${{ matrix.os }}
-    env:
-      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -407,11 +365,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - name: Cache static ICU
-        uses: actions/cache@v4
-        with:
-          path: .icu-cache/*/*/install
-          key: icu-native-${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
       - name: Build UniFFI cdylib
         run: cargo build -p bolivar-uniffi --release --target ${{ matrix.target }} --locked
       - name: Verify ICU is static
@@ -446,8 +399,6 @@ jobs:
       # the version job's token cannot be reused here.
       id-token: write
       contents: read
-    env:
-      BOLIVAR_ICU_CACHE_DIR: ${{ github.workspace }}/.icu-cache
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
@@ -455,12 +406,6 @@ jobs:
           ref: ${{ needs.resolve.outputs.tag }}
       - name: Setup Rust
         run: rustup show active-toolchain
-      # `cargo publish` runs a verification build, which builds ICU.
-      - name: Cache static ICU
-        uses: actions/cache@v4
-        with:
-          path: .icu-cache/*/*/install
-          key: icu-native-ubuntu-24.04-x86_64-unknown-linux-gnu-${{ hashFiles('crates/icu/build.rs', 'crates/icu/src/icu_bidi.c') }}
       - name: Authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@v1.0.3
         id: crates-auth
