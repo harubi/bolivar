@@ -311,6 +311,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bolivar-ffi"
+version = "2.3.1"
+dependencies = [
+ "bolivar-core",
+ "regex",
+ "rustc-hash",
+]
+
+[[package]]
 name = "bolivar-icu"
 version = "2.3.1"
 dependencies = [
