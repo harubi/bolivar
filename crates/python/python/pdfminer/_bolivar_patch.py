@@ -262,18 +262,26 @@ def _apply_patch(module: ModuleType) -> bool:
             if doc is None:
                 raise RuntimeError("pdf document missing")
             self._doc: _DocLike = doc
-            # Like pdfplumber, a document without pages has an empty list.
-            page_count = self._doc.page_count()
-            pages_to_parse = pdf.pages_to_parse
-            if pages_to_parse is None:
-                self._page_numbers = list(range(page_count))
-            else:
-                allowed = set(pages_to_parse)
-                self._page_numbers = [
-                    idx for idx in range(page_count) if (idx + 1) in allowed
-                ]
+            self._pages_to_parse = pdf.pages_to_parse
+            self._page_numbers_cache: list[int] | None = None
             self._page_cache: dict[int, object] = {}
             self._doctops: list[float] | None = None
+
+        @property
+        def _page_numbers(self) -> list[int]:
+            # Counting walks the whole page tree, so it waits until a length,
+            # index or iteration needs it; `pdf.pages` alone stays cheap. Like
+            # pdfplumber, a document without pages gives an empty list.
+            if self._page_numbers_cache is None:
+                page_count = self._doc.page_count()
+                if self._pages_to_parse is None:
+                    self._page_numbers_cache = list(range(page_count))
+                else:
+                    allowed = set(self._pages_to_parse)
+                    self._page_numbers_cache = [
+                        idx for idx in range(page_count) if (idx + 1) in allowed
+                    ]
+            return self._page_numbers_cache
 
         def close(self) -> None:
             for page in self._page_cache.values():
