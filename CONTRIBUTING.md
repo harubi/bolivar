@@ -1,6 +1,6 @@
 # Contributing to Bolivar
 
-Bolivar is a Rust port of `pdfminer.six` and `pdfplumber` with Python (PyO3) and JVM (UniFFI) bindings. This guide takes a fresh clone to a green test suite.
+Bolivar is a Rust port of `pdfminer.six` and `pdfplumber` with Python (PyO3) and JVM (Java 25 FFM) bindings. This guide takes a fresh clone to a green test suite.
 
 ## Prerequisites
 
@@ -39,7 +39,7 @@ cargo make test-parity   Upstream pdfminer.six and pdfplumber suites
 cargo make bench         Rust benchmarks
 cargo make fmt           Format Rust and Python
 cargo make lint          Format check, clippy, ty, ruff, pyright, stub parity
-cargo make gen-kotlin    Build UniFFI lib and generate Kotlin bindings
+cargo make jvm-test      Build the JVM native library, run JVM and Clojure tests
 cargo make ci            Lint plus all tests
 cargo make clean         Remove build artifacts
 ```
@@ -51,6 +51,7 @@ cargo make clean         Remove build artifacts
 | Rust source | `cargo make test` |
 | Rust binding code (`crates/python/src/`) | `cargo make build-py && cargo make test-py` |
 | Pure Python (`crates/python/python/`) | `uv run pytest tests/` — no rebuild needed |
+| JVM binding (`crates/ffi/`) | `cargo make jvm-test` |
 | Anything before pushing | `cargo make ci` |
 
 Pure-Python files in `crates/python/python/bolivar/`, `pdfminer/`, `pdfplumber/` import as ordinary modules. Only Rust changes need `maturin develop`.
@@ -115,7 +116,8 @@ Publishing crates, wheels, and JVM artifacts is automatic from that workflow. Th
 - `crates/core/` — Rust parsing, layout, and extraction engine.
 - `crates/cli/` — `pdf2txt`, `dumppdf`.
 - `crates/python/` — PyO3 bindings plus the `bolivar`, `pdfminer`, `pdfplumber` packages.
-- `crates/uniffi/` — UniFFI bindings plus generated Java/Kotlin/Swift.
+- `crates/ffi/` — C ABI for the JVM; `crates/ffi/jvm/` holds the Java and Clojure library.
+- `tests/jvm-golden/` — what the 2.x JVM binding returned, replayed by the JVM tests.
 - `tests/` — Python test suite.
 - `benchmarks/` — performance fixtures.
 - `samples/`, `references/` — sample PDFs and upstream parity data.
