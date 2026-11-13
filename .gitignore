@@ -475,13 +475,7 @@ node_modules/
 crates/ffi/jvm/.gradle/
 crates/ffi/jvm/build/
 crates/ffi/jvm/natives/
-
-# UniFFI JVM local build artifacts
-crates/uniffi/jvm/.gradle/
-crates/uniffi/jvm/.kotlin/
-crates/uniffi/jvm/.classpath
-crates/uniffi/jvm/.project
-crates/uniffi/jvm/.settings/
-crates/uniffi/jvm/bin/
-crates/uniffi/jvm/build/
-crates/uniffi/jvm/natives/
+crates/ffi/jvm/.classpath
+crates/ffi/jvm/.project
+crates/ffi/jvm/.settings/
+crates/ffi/jvm/bin/

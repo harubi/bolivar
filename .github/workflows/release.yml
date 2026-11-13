@@ -239,13 +239,13 @@ jobs:
           path: dist
           compression-level: 0
           retention-days: 3
-      - name: Build UniFFI cdylib
-        run: cargo build -p bolivar-uniffi --release --target x86_64-pc-windows-msvc --locked
+      - name: Build JVM native library
+        run: cargo build -p bolivar-ffi --release --target x86_64-pc-windows-msvc --locked
       - name: Upload native library
         uses: actions/upload-artifact@v7.0.2
         with:
           name: native-windows-x86-64
-          path: target/x86_64-pc-windows-msvc/release/bolivar_uniffi.dll
+          path: target/x86_64-pc-windows-msvc/release/bolivar.dll
           retention-days: 3
 
   build-macos:
@@ -303,15 +303,15 @@ jobs:
           path: dist
           compression-level: 0
           retention-days: 3
-      - name: Build UniFFI cdylib
-        run: cargo build -p bolivar-uniffi --release --target ${{ matrix.rust_target }} --locked
+      - name: Build JVM native library
+        run: cargo build -p bolivar-ffi --release --target ${{ matrix.rust_target }} --locked
       - name: Verify native lib ICU is static
-        run: sh scripts/verify-static-icu.sh target/${{ matrix.rust_target }}/release/libbolivar_uniffi.dylib
+        run: sh scripts/verify-static-icu.sh target/${{ matrix.rust_target }}/release/libbolivar.dylib
       - name: Upload native library
         uses: actions/upload-artifact@v7.0.2
         with:
           name: native-${{ matrix.classifier }}
-          path: target/${{ matrix.rust_target }}/release/libbolivar_uniffi.dylib
+          path: target/${{ matrix.rust_target }}/release/libbolivar.dylib
           retention-days: 3
 
   build-sdist:
@@ -365,25 +365,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - name: Build UniFFI cdylib
-        run: cargo build -p bolivar-uniffi --release --target ${{ matrix.target }} --locked
+      - name: Build JVM native library
+        run: cargo build -p bolivar-ffi --release --target ${{ matrix.target }} --locked
       - name: Verify ICU is static
-        run: sh scripts/verify-static-icu.sh target/${{ matrix.target }}/release/libbolivar_uniffi.so
+        run: sh scripts/verify-static-icu.sh target/${{ matrix.target }}/release/libbolivar.so
       - name: Upload native library
         uses: actions/upload-artifact@v7.0.2
         with:
           name: native-${{ matrix.classifier }}
-          path: target/${{ matrix.target }}/release/libbolivar_uniffi.so
-          retention-days: 3
-      - name: Build uniffi-bindgen
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: cargo build -p bolivar-uniffi-bindgen --release --target ${{ matrix.target }} --locked
-      - name: Upload uniffi-bindgen
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: uniffi-bindgen-tool
-          path: target/${{ matrix.target }}/release/uniffi-bindgen
+          path: target/${{ matrix.target }}/release/libbolivar.so
           retention-days: 3
 
   # The three publish jobs must keep identical `needs:` lists. v1.9.0 reached
@@ -457,7 +447,7 @@ jobs:
         uses: actions/setup-java@v6.2.0
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 25
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6.4.1
         with:
@@ -468,33 +458,24 @@ jobs:
         uses: actions/download-artifact@v8.0.2
         with:
           pattern: native-*
-          path: crates/uniffi/jvm/natives/
+          path: crates/ffi/jvm/natives/
           merge-multiple: false
       - name: Organize native libraries
         run: |
-          cd crates/uniffi/jvm/natives
+          cd crates/ffi/jvm/natives
           for dir in native-*; do
             classifier="${dir#native-}"
             mv -T "$dir" "$classifier"
           done
       - name: Verify all native libraries present
         run: |
-          cd crates/uniffi/jvm/natives
+          cd crates/ffi/jvm/natives
           for classifier in linux-x86-64 linux-aarch64 macos-x86-64 macos-aarch64 windows-x86-64; do
             [ -d "$classifier" ] || { echo "Missing $classifier"; exit 1; }
           done
-      - name: Download uniffi-bindgen
-        uses: actions/download-artifact@v8.0.2
-        with:
-          name: uniffi-bindgen-tool
-          path: .
-      - name: Generate Kotlin bindings
-        run: |
-          chmod +x uniffi-bindgen
-          ./uniffi-bindgen generate --library crates/uniffi/jvm/natives/linux-x86-64/libbolivar_uniffi.so --language kotlin --out-dir crates/uniffi/kotlin
       - name: Verify JVM package
         run: ./gradlew check
-        working-directory: crates/uniffi/jvm
+        working-directory: crates/ffi/jvm
       - name: Publish to Maven Central
         run: ./scripts/publish-maven.sh
         env:
