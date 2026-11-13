@@ -20,7 +20,6 @@ use crate::font::encoding::{DiffEntry, EncodingDB};
 use crate::model::objects::{PDFDict, PDFName, PDFObject, PDFStream};
 use crate::parser::pdf_parser::PDFParser;
 use bytes::Bytes;
-use indexmap::IndexMap;
 use memmap2::Mmap;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -73,16 +72,6 @@ fn mmap_path(path: &Path) -> Result<Mmap> {
     Ok(unsafe { Mmap::map(&source)? })
 }
 
-struct ObjectCache {
-    capacity: usize,
-    map: IndexMap<u32, Arc<PDFObject>>,
-}
-
-struct PageCache {
-    capacity: usize,
-    map: IndexMap<usize, Arc<super::page::PDFPage>>,
-}
-
 #[derive(Clone, Hash, Eq, PartialEq)]
 struct FontCacheKey {
     objid: u32,
@@ -128,78 +117,6 @@ impl FontCache {
             self.map.remove(&victim);
         }
         self.map.insert(key, font);
-    }
-}
-
-impl PageCache {
-    fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            map: IndexMap::new(),
-        }
-    }
-
-    fn get(&mut self, index: usize) -> Option<Arc<super::page::PDFPage>> {
-        if self.capacity == 0 {
-            return None;
-        }
-        let pos = self.map.get_index_of(&index)?;
-        let value = Arc::clone(self.map.get_index(pos)?.1);
-        if pos + 1 != self.map.len() {
-            self.map.move_index(pos, self.map.len() - 1);
-        }
-        Some(value)
-    }
-
-    fn insert(&mut self, index: usize, page: Arc<super::page::PDFPage>) {
-        if self.capacity == 0 {
-            return;
-        }
-        if self.map.contains_key(&index) {
-            self.map.shift_remove(&index);
-        }
-        self.map.insert(index, page);
-        if self.map.len() > self.capacity {
-            self.map.shift_remove_index(0);
-        }
-    }
-}
-impl ObjectCache {
-    fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            map: IndexMap::new(),
-        }
-    }
-
-    fn get(&mut self, objid: u32) -> Option<Arc<PDFObject>> {
-        if self.capacity == 0 {
-            return None;
-        }
-        let index = self.map.get_index_of(&objid)?;
-        let value = Arc::clone(self.map.get_index(index)?.1);
-        if index + 1 != self.map.len() {
-            self.map.move_index(index, self.map.len() - 1);
-        }
-        Some(value)
-    }
-
-    fn insert(&mut self, objid: u32, value: Arc<PDFObject>) {
-        if self.capacity == 0 {
-            return;
-        }
-        if self.map.contains_key(&objid) {
-            self.map.shift_remove(&objid);
-        }
-        self.map.insert(objid, value);
-        if self.map.len() > self.capacity {
-            self.map.shift_remove_index(0);
-        }
-    }
-
-    #[allow(dead_code)]
-    fn clear(&mut self) {
-        self.map.clear();
     }
 }
 
@@ -272,8 +189,10 @@ pub struct PDFDocument {
     xrefs: Vec<XRef>,
     catalog: PDFDict,
     info: Vec<PDFDict>,
-    cache: Mutex<ObjectCache>,
-    page_cache: Mutex<PageCache>,
+    /// Parsed objects. A sharded concurrent cache: lookups from parallel
+    /// page workers do not share one lock, and eviction is O(1).
+    cache: quick_cache::sync::Cache<u32, Arc<PDFObject>>,
+    page_cache: quick_cache::sync::Cache<usize, Arc<super::page::PDFPage>>,
     font_cache: RwLock<FontCache>,
     font_encoding_cache: Mutex<FxHashMap<u32, Arc<FxHashMap<u8, String>>>>,
     objstm_index: RwLock<Option<FxHashMap<u32, (u32, usize)>>>,
@@ -313,8 +232,8 @@ impl PDFDocument {
             xrefs: Vec::new(),
             catalog: FxHashMap::default(),
             info: Vec::new(),
-            cache: Mutex::new(ObjectCache::new(cache_capacity)),
-            page_cache: Mutex::new(PageCache::new(DEFAULT_PAGE_CACHE_CAPACITY)),
+            cache: quick_cache::sync::Cache::new(cache_capacity),
+            page_cache: quick_cache::sync::Cache::new(DEFAULT_PAGE_CACHE_CAPACITY),
             font_cache: RwLock::new(FontCache::new(
                 cache_capacity.min(DEFAULT_FONT_CACHE_CAPACITY),
             )),
@@ -452,16 +371,11 @@ impl PDFDocument {
     }
 
     pub fn cache_page(&self, index: usize, page: Arc<super::page::PDFPage>) {
-        if let Ok(mut cache) = self.page_cache.lock() {
-            cache.insert(index, page);
-        }
+        self.page_cache.insert(index, page);
     }
 
     pub fn get_cached_page(&self, index: usize) -> Option<Arc<super::page::PDFPage>> {
-        self.page_cache
-            .lock()
-            .ok()
-            .and_then(|mut cache| cache.get(index))
+        self.page_cache.get(&index)
     }
 
     #[hotpath::measure]
@@ -1600,9 +1514,7 @@ impl PDFDocument {
         let _guard = ThreadLocalGuard { objid };
 
         // Check cache first
-        if let Ok(mut cache) = self.cache.lock()
-            && let Some(obj) = cache.get(objid)
-        {
+        if let Some(obj) = self.cache.get(&objid) {
             return Ok(obj);
         }
 
@@ -1637,9 +1549,7 @@ impl PDFDocument {
                 };
 
                 let obj = Arc::new(obj);
-                if let Ok(mut cache) = self.cache.lock() {
-                    cache.insert(objid, Arc::clone(&obj));
-                }
+                self.cache.insert(objid, Arc::clone(&obj));
                 return Ok(obj);
             }
         }
@@ -1649,9 +1559,7 @@ impl PDFDocument {
             && let Ok(Some(obj)) = self.find_obj_in_objstms(objid)
         {
             let obj = Arc::new(obj);
-            if let Ok(mut cache) = self.cache.lock() {
-                cache.insert(objid, Arc::clone(&obj));
-            }
+            self.cache.insert(objid, Arc::clone(&obj));
             return Ok(obj);
         }
 
@@ -2597,6 +2505,36 @@ mod tests {
         out
     }
 
+    #[test]
+    fn read_number_parses_digits_and_rejects_overflow() {
+        let doc = PDFDocument::new(build_minimal_pdf_with_pages(1), "").unwrap();
+        assert_eq!(doc.read_number(b"12 0 obj").unwrap(), (12, 2));
+        assert_eq!(doc.read_number(b"-7x").unwrap(), (-7, 2));
+        assert_eq!(doc.read_number(b"9223372036854775807").unwrap().0, i64::MAX);
+        assert!(doc.read_number(b"9223372036854775808").is_err());
+        assert!(doc.read_number(b"obj").is_err());
+        assert!(doc.read_number(b"-").is_err());
+    }
+
+    #[test]
+    fn object_cache_with_zero_capacity_still_resolves_objects() {
+        let pdf = build_minimal_pdf_with_pages(3);
+        let doc = PDFDocument::new_with_cache_and_fallback(pdf, "", 0, true).unwrap();
+        let first = doc.getobj_shared(1).unwrap();
+        let second = doc.getobj_shared(1).unwrap();
+        assert_eq!(first, second);
+        // Nothing is kept, so each lookup parses a fresh object.
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert_eq!(doc.page_tree_len(), 3);
+    }
+
+    #[test]
+    fn object_cache_returns_the_shared_object() {
+        let doc = PDFDocument::new(build_minimal_pdf_with_pages(3), "").unwrap();
+        let first = doc.getobj_shared(1).unwrap();
+        assert!(Arc::ptr_eq(&first, &doc.getobj_shared(1).unwrap()));
+    }
+
     /// Adds `key` to the trailer, pointing back at the document's own xref.
     fn with_circular_trailer_key(pdf: Vec<u8>, key: &str) -> Vec<u8> {
         const XREF: &[u8] = b"\nxref\n";
@@ -2856,7 +2794,7 @@ mod tests {
     }
 
     #[test]
-    fn test_object_cache_lru_evicts_oldest() {
+    fn test_object_cache_evicts_beyond_capacity() {
         use std::sync::Arc;
 
         let path = format!("{}/tests/fixtures/simple1.pdf", env!("CARGO_MANIFEST_DIR"));

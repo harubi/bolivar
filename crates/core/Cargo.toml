@@ -19,7 +19,6 @@ cbc.workspace = true
 flate2.workspace = true
 html-escape.workspace = true
 hotpath.workspace = true
-indexmap.workspace = true
 lasso = "0.7"
 md5.workspace = true
 num-traits.workspace = true
@@ -38,6 +37,7 @@ geo-index.workspace = true
 rayon.workspace = true
 memmap2.workspace = true
 rustversion.workspace = true
+quick_cache = "0.7.0"
 
 [features]
 default = []
