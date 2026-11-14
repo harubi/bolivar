@@ -217,6 +217,42 @@
       (is (= :cognitect.anomalies/conflict
              (:cognitect.anomalies/category (data #(pdf/text d))))))))
 
+(def ^:private labels (str corpus/repo "/crates/core/tests/fixtures/contrib/pagelabels.pdf"))
+
+(defn- page-numbers [source] (into [] (map :page-number) source))
+
+(deftest every-source-takes-cursor-options
+  (with-open [d (pdf/open labels)]
+    (is (= [2 4] (page-numbers (pdf/pages d {:pages [2 4]}))))
+    (is (= [2 4] (page-numbers (pdf/raw-pages d {:pages [4 2 2 9]}))))
+    (is (= [1 2] (page-numbers (pdf/page-texts d {:max-pages 2}))))
+    (is (= [4 5] (page-numbers (pdf/page-summaries d {:skip 3}))))
+    (is (= [1 2] (page-numbers (pdf/table-rows d {:max-pages 2 :snap-tolerance 3}))))
+    (is (= [1 2 3 4 5] (page-numbers (pdf/page-summaries d {:read-ahead 1}))))
+    (is (= [] (page-numbers (pdf/page-summaries d {:pages []}))) "[] keeps no page")
+    (is (= [1 2 3 4 5] (page-numbers (pdf/page-summaries d {:pages nil}))) "nil leaves it unset")))
+
+(deftest a-head-and-a-skip-read-each-selected-page-once
+  (with-open [d (pdf/open labels {:pages [2 3 5]})]
+    (let [head (into [] (pdf/page-texts d {:max-pages 2}))
+          rest (into [] (pdf/page-texts d {:skip 2}))]
+      (is (= [2 3] (mapv :page-number head)))
+      (is (= [5] (mapv :page-number rest)))
+      (is (= (into [] (pdf/page-texts d)) (into head rest))))
+    (is (= [3] (page-numbers (pdf/page-summaries d {:pages [1 3 4]})))
+        "a source reads only pages the document selects")))
+
+(deftest bad-cursor-options-throw-when-the-source-is-made
+  (with-open [d (pdf/open labels)]
+    (let [key-of (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (::pdf/key (ex-data e)))))]
+      (is (= :read-ahead (key-of #(pdf/page-summaries d {:read-ahead "fast"}))))
+      (is (= :pages (key-of #(pdf/pages d {:pages [1 :two]}))))
+      (is (= :bogus (key-of #(pdf/page-texts d {:bogus 1}))))
+      (is (= :bogus (key-of #(pdf/tables d {:bogus 1}))))
+      (is (= :read-ahead (key-of #(into [] (pdf/page-summaries d {:read-ahead 0})))))
+      (is (= :skip (key-of #(into [] (pdf/page-summaries d {:skip -1})))))
+      (is (= :max-pages (key-of #(into [] (pdf/table-rows d {:max-pages 0}))))))))
+
 (deftest nil-option-values-leave-options-unset
   (is (= (pdf/extract-text simple) (pdf/extract-text simple {:password nil :max-pages nil})))
   (with-open [d (pdf/open simple)]
