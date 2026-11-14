@@ -16,6 +16,8 @@ pub mod layout;
 pub mod model;
 pub mod parser;
 pub mod simd;
+#[cfg(test)]
+mod test_support;
 pub mod utils;
 
 // Re-export table module for backwards compatibility
@@ -58,4 +60,4 @@ pub use document::security;
 pub use interp::interpreter as pdfinterp;
 
 pub use cancellation::CancellationToken;
-pub use error::{PdfError, Result};
+pub use error::{ErrorKind, InvalidSetting, PdfError, Result};

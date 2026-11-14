@@ -3,6 +3,8 @@
 //! Use `LTChar::builder()` to construct characters with optional fields.
 
 use crate::utils::{MATRIX_IDENTITY, Matrix, Rect};
+use std::sync::Arc;
+
 use smol_str::SmolStr;
 
 use super::component::LTComponent;
@@ -138,77 +140,95 @@ impl LTCharBuilder {
         LTChar {
             component: LTComponent::new(self.bbox),
             text: self.text,
-            fontname: self.fontname,
             size: self.size,
             upright: self.upright,
             adv: self.adv,
             matrix: self.matrix,
-            mcid: self.mcid,
-            tag: self.tag,
-            ncs: self.ncs,
-            scs: self.scs,
-            non_stroking_color: self.non_stroking_color,
-            stroking_color: self.stroking_color,
+            style: Arc::new(CharStyle {
+                fontname: self.fontname,
+                mcid: self.mcid,
+                tag: self.tag,
+                ncs: self.ncs,
+                scs: self.scs,
+                non_stroking_color: self.non_stroking_color,
+                stroking_color: self.stroking_color,
+            }),
         }
     }
 }
 
-/// Actual character in text with bounding box.
+/// The part of a character's state that runs of characters share: font, marked content and
+/// colours. Characters with the same state share one allocation, which keeps [`LTChar`] small
+/// and spares two colour allocations per character.
 #[derive(Debug, Clone, PartialEq)]
+pub struct CharStyle {
+    pub(crate) fontname: SmolStr,
+    /// Marked Content ID for tagged PDF accessibility
+    pub(crate) mcid: Option<i32>,
+    /// Marked Content tag (e.g., "P", "Span", "H1") for tagged PDF
+    pub(crate) tag: Option<SmolStr>,
+    /// Non-stroking colorspace name (e.g., "DeviceRGB")
+    pub(crate) ncs: Option<SmolStr>,
+    /// Stroking colorspace name (e.g., "DeviceRGB")
+    pub(crate) scs: Option<SmolStr>,
+    /// Non-stroking (fill) color
+    pub(crate) non_stroking_color: Color,
+    /// Stroking color
+    pub(crate) stroking_color: Color,
+}
+
+/// Actual character in text with bounding box.
+#[derive(Clone, PartialEq)]
 pub struct LTChar {
     component: LTComponent,
     text: SmolStr,
-    fontname: SmolStr,
     size: f64,
     upright: bool,
     adv: f64,
     /// Text rendering matrix (Tm * CTM, with per-char translation)
     matrix: Matrix,
-    /// Marked Content ID for tagged PDF accessibility
-    mcid: Option<i32>,
-    /// Marked Content tag (e.g., "P", "Span", "H1") for tagged PDF
-    tag: Option<SmolStr>,
-    /// Non-stroking colorspace name (e.g., "DeviceRGB")
-    ncs: Option<SmolStr>,
-    /// Stroking colorspace name (e.g., "DeviceRGB")
-    scs: Option<SmolStr>,
-    /// Non-stroking (fill) color
-    non_stroking_color: Color,
-    /// Stroking color
-    stroking_color: Color,
+    style: Arc<CharStyle>,
+}
+
+// Written out to keep the derived format of the flat struct this used to be.
+impl std::fmt::Debug for LTChar {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LTChar")
+            .field("component", &self.component)
+            .field("text", &self.text)
+            .field("fontname", &self.style.fontname)
+            .field("size", &self.size)
+            .field("upright", &self.upright)
+            .field("adv", &self.adv)
+            .field("matrix", &self.matrix)
+            .field("mcid", &self.style.mcid)
+            .field("tag", &self.style.tag)
+            .field("ncs", &self.style.ncs)
+            .field("scs", &self.style.scs)
+            .field("non_stroking_color", &self.style.non_stroking_color)
+            .field("stroking_color", &self.style.stroking_color)
+            .finish()
+    }
 }
 
 impl LTChar {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_arena_parts(
         bbox: Rect,
         text: &str,
-        fontname: &str,
         size: f64,
         upright: bool,
         adv: f64,
         matrix: Matrix,
-        mcid: Option<i32>,
-        tag: Option<&str>,
-        ncs: Option<&str>,
-        scs: Option<&str>,
-        non_stroking_color: Color,
-        stroking_color: Color,
+        style: Arc<CharStyle>,
     ) -> Self {
         Self {
             component: LTComponent::new(bbox),
             text: SmolStr::new(text),
-            fontname: SmolStr::new(fontname),
             size,
             upright,
             adv,
             matrix,
-            mcid,
-            tag: tag.map(SmolStr::new),
-            ncs: ncs.map(SmolStr::new),
-            scs: scs.map(SmolStr::new),
-            non_stroking_color,
-            stroking_color,
+            style,
         }
     }
 
@@ -323,7 +343,7 @@ impl LTChar {
     }
 
     pub fn fontname(&self) -> &str {
-        self.fontname.as_str()
+        self.style.fontname.as_str()
     }
 
     pub const fn size(&self) -> f64 {
@@ -342,51 +362,45 @@ impl LTChar {
         self.matrix
     }
 
-    pub const fn mcid(&self) -> Option<i32> {
-        self.mcid
+    pub fn mcid(&self) -> Option<i32> {
+        self.style.mcid
     }
 
-    pub fn tag(&self) -> Option<String> {
-        self.tag.as_deref().map(str::to_owned)
+    /// The marked content tag, if any.
+    pub fn tag(&self) -> Option<&str> {
+        self.style.tag.as_deref()
     }
 
-    /// The marked content tag, borrowed.
-    pub fn tag_str(&self) -> Option<&str> {
-        self.tag.as_deref()
-    }
-
-    /// The non-stroking colour space name, borrowed.
-    pub fn ncs_str(&self) -> Option<&str> {
-        self.ncs.as_deref()
-    }
-
-    /// The stroking colour space name, borrowed.
-    pub fn scs_str(&self) -> Option<&str> {
-        self.scs.as_deref()
-    }
-
-    pub fn ncs(&self) -> Option<String> {
-        self.ncs.as_deref().map(str::to_owned)
+    /// The non-stroking colour space name, if any.
+    pub fn ncs(&self) -> Option<&str> {
+        self.style.ncs.as_deref()
     }
 
     pub fn set_ncs(&mut self, ncs: Option<String>) {
-        self.ncs = ncs.map(SmolStr::from);
+        Arc::make_mut(&mut self.style).ncs = ncs.map(SmolStr::from);
     }
 
-    pub fn scs(&self) -> Option<String> {
-        self.scs.as_deref().map(str::to_owned)
+    /// The stroking colour space name, if any.
+    pub fn scs(&self) -> Option<&str> {
+        self.style.scs.as_deref()
     }
 
     pub fn set_scs(&mut self, scs: Option<String>) {
-        self.scs = scs.map(SmolStr::from);
+        Arc::make_mut(&mut self.style).scs = scs.map(SmolStr::from);
     }
 
-    pub const fn non_stroking_color(&self) -> &Color {
-        &self.non_stroking_color
+    pub fn non_stroking_color(&self) -> &Color {
+        &self.style.non_stroking_color
     }
 
-    pub const fn stroking_color(&self) -> &Color {
-        &self.stroking_color
+    pub fn stroking_color(&self) -> &Color {
+        &self.style.stroking_color
+    }
+
+    /// The state this character shares with others of the same font, marked content and
+    /// colours.
+    pub fn style(&self) -> &Arc<CharStyle> {
+        &self.style
     }
 }
 
@@ -427,9 +441,6 @@ mod tests {
         assert_eq!(via_new.tag(), via_builder.tag());
         assert_eq!(via_new.ncs(), via_builder.ncs());
         assert_eq!(via_new.scs(), via_builder.scs());
-        assert_eq!(via_new.tag_str(), via_builder.tag().as_deref());
-        assert_eq!(via_new.ncs_str(), via_builder.ncs().as_deref());
-        assert_eq!(via_new.scs_str(), via_builder.scs().as_deref());
         assert_eq!(via_new.bbox(), via_builder.bbox());
     }
 
@@ -492,9 +503,6 @@ mod tests {
         assert_eq!(ch.tag(), None);
         assert_eq!(ch.ncs(), None);
         assert_eq!(ch.scs(), None);
-        assert_eq!(ch.tag_str(), None);
-        assert_eq!(ch.ncs_str(), None);
-        assert_eq!(ch.scs_str(), None);
         assert_eq!(ch.non_stroking_color(), &None);
         assert_eq!(ch.stroking_color(), &None);
     }

@@ -580,9 +580,9 @@ impl PyLTChar {
             adv: c.adv(),
             matrix: c.matrix(),
             mcid: c.mcid(),
-            tag: c.tag(),
-            ncs_name: c.ncs(),
-            scs_name: c.scs(),
+            tag: c.tag().map(str::to_owned),
+            ncs_name: c.ncs().map(str::to_owned),
+            scs_name: c.scs().map(str::to_owned),
             non_stroking_color: c.non_stroking_color().clone(),
             stroking_color: c.stroking_color().clone(),
         }
@@ -1245,7 +1245,7 @@ impl PyLTRect {
             original_path,
             dashing_style: r.dashing_style.clone(),
             mcid: r.mcid(),
-            tag: r.tag(),
+            tag: r.tag().map(str::to_owned),
         }
     }
 }
@@ -1394,7 +1394,7 @@ impl PyLTLine {
             original_path,
             dashing_style: l.dashing_style.clone(),
             mcid: l.mcid(),
-            tag: l.tag(),
+            tag: l.tag().map(str::to_owned),
         }
     }
 }
@@ -1556,7 +1556,7 @@ impl PyLTCurve {
             original_path,
             dashing_style: c.dashing_style.clone(),
             mcid: c.mcid(),
-            tag: c.tag(),
+            tag: c.tag().map(str::to_owned),
         }
     }
 }

@@ -756,7 +756,7 @@ fn test_ltchar_with_marked_content() {
         .tag(Some("P".to_string()))
         .build();
     assert_eq!(char1.mcid(), Some(42));
-    assert_eq!(char1.tag(), Some("P".to_string()));
+    assert_eq!(char1.tag(), Some("P"));
 }
 
 // ============================================================================

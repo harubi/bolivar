@@ -32,6 +32,34 @@ pub const DEFAULT_CACHE_CAPACITY: usize = 1024;
 pub const DEFAULT_PAGE_CACHE_CAPACITY: usize = 64;
 const DEFAULT_FONT_CACHE_CAPACITY: usize = 256;
 
+/// The object cache capacity for a caching choice.
+pub const fn cache_capacity(caching: bool) -> usize {
+    if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
+}
+
+/// How a document is opened: its password and whether parsed objects are
+/// cached. Extraction options are separate and apply per call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenOptions {
+    pub password: String,
+    pub caching: bool,
+}
+
+impl Default for OpenOptions {
+    fn default() -> Self {
+        Self {
+            password: String::new(),
+            caching: true,
+        }
+    }
+}
+
+impl OpenOptions {
+    pub const fn cache_capacity(&self) -> usize {
+        cache_capacity(self.caching)
+    }
+}
+
 const fn is_dct_decode(name: &str) -> bool {
     name.eq_ignore_ascii_case("DCTDecode") || name.eq_ignore_ascii_case("DCT")
 }
@@ -302,6 +330,22 @@ impl PDFDocument {
             cache_capacity,
             allow_xref_fallback,
         )
+    }
+
+    /// Open a memory-mapped file, recovering a damaged cross-reference table
+    /// as pdfminer does. Keep the file unchanged while the document lives.
+    pub fn open_path(path: impl AsRef<Path>, options: &OpenOptions) -> Result<Self> {
+        Self::new_from_path_with_cache_and_fallback(
+            path,
+            &options.password,
+            options.cache_capacity(),
+            true,
+        )
+    }
+
+    /// Open owned bytes without copying them.
+    pub fn open_vec(data: Vec<u8>, options: &OpenOptions) -> Result<Self> {
+        Self::new_from_vec_with_cache(data, &options.password, options.cache_capacity())
     }
 
     /// Create a document by memory-mapping a path.
