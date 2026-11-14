@@ -2,6 +2,8 @@
 //!
 //! Contains LAParams struct for controlling layout analysis behavior.
 
+use crate::error::InvalidSetting;
+
 /// Parameters for layout analysis.
 ///
 /// Controls how characters are grouped into lines, words, and text boxes.
@@ -51,6 +53,57 @@ impl Default for LAParams {
 }
 
 impl LAParams {
+    /// Creates validated layout parameters: margins and overlap must be
+    /// finite, and `boxes_flow` must be `None` or within [-1, 1].
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        line_overlap: f64,
+        char_margin: f64,
+        line_margin: f64,
+        word_margin: f64,
+        boxes_flow: Option<f64>,
+        detect_vertical: bool,
+        all_texts: bool,
+    ) -> Result<Self, InvalidSetting> {
+        let params = Self {
+            line_overlap,
+            char_margin,
+            line_margin,
+            word_margin,
+            boxes_flow,
+            detect_vertical,
+            all_texts,
+        };
+        params.validate()?;
+        Ok(params)
+    }
+
+    /// Check every parameter; see [`Self::try_new`].
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        for (field, value) in [
+            ("line_overlap", self.line_overlap),
+            ("char_margin", self.char_margin),
+            ("line_margin", self.line_margin),
+            ("word_margin", self.word_margin),
+        ] {
+            if !value.is_finite() {
+                return Err(InvalidSetting::new(
+                    field,
+                    format!("{field} must be a finite number"),
+                ));
+            }
+        }
+        if let Some(flow) = self.boxes_flow
+            && !(flow.is_finite() && (-1.0..=1.0).contains(&flow))
+        {
+            return Err(InvalidSetting::new(
+                "boxes_flow",
+                "boxes_flow should be None, or a number between -1 and +1",
+            ));
+        }
+        Ok(())
+    }
+
     /// Creates new layout parameters with the specified values.
     ///
     /// # Panics

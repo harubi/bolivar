@@ -244,7 +244,49 @@ pub enum TextBoxType {
     Vertical(LTTextBoxVertical),
 }
 
+/// The lines of a text box of either orientation.
+pub enum TextLines<'a> {
+    Horizontal(std::slice::Iter<'a, LTTextLineHorizontal>),
+    Vertical(std::slice::Iter<'a, LTTextLineVertical>),
+}
+
+impl<'a> Iterator for TextLines<'a> {
+    type Item = &'a dyn LTTextLine;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Horizontal(lines) => lines.next().map(|line| line as &dyn LTTextLine),
+            Self::Vertical(lines) => lines.next().map(|line| line as &dyn LTTextLine),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Horizontal(lines) => lines.size_hint(),
+            Self::Vertical(lines) => lines.size_hint(),
+        }
+    }
+}
+
+impl ExactSizeIterator for TextLines<'_> {}
+
 impl TextBoxType {
+    /// The box's lines, whatever its orientation.
+    pub fn lines(&self) -> TextLines<'_> {
+        match self {
+            Self::Horizontal(b) => TextLines::Horizontal(b.lines.iter()),
+            Self::Vertical(b) => TextLines::Vertical(b.lines.iter()),
+        }
+    }
+
+    /// `lr-tb` for horizontal boxes, `tb-rl` for vertical ones.
+    pub fn writing_mode(&self) -> &'static str {
+        match self {
+            Self::Horizontal(b) => b.get_writing_mode(),
+            Self::Vertical(b) => b.get_writing_mode(),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Horizontal(b) => b.is_empty(),

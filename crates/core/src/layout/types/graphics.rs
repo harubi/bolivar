@@ -106,8 +106,8 @@ impl LTCurve {
         self.mcid
     }
 
-    pub fn tag(&self) -> Option<String> {
-        self.tag.clone()
+    pub fn tag(&self) -> Option<&str> {
+        self.tag.as_deref()
     }
 
     pub fn set_marked_content(&mut self, mcid: Option<i32>, tag: Option<String>) {

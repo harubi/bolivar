@@ -25,10 +25,28 @@ pub enum Axis {
 /// Trait for text line types.
 pub trait LTTextLine: HasBBox {
     fn word_margin(&self) -> f64;
+    /// The line's output text: bidi-reconstructed when [`Self::bidi`] is on,
+    /// otherwise [`Self::text_without_bidi`].
     fn get_text(&self) -> String;
     fn is_empty(&self) -> bool;
     fn set_bbox(&mut self, bbox: Rect);
     fn axis(&self) -> Axis;
+    /// The line's characters and annotations, in content order.
+    fn elements(&self) -> &[TextLineElement];
+    /// Whether output text is reconstructed with ICU bidi.
+    fn bidi(&self) -> bool;
+    /// Logical text and its mapping back to the source elements.
+    fn reconstructed(&self) -> ReconstructedLine;
+
+    /// Every element's text in content order, annotations included.
+    fn raw_text(&self) -> String {
+        collect_text_from_elements(self.elements())
+    }
+
+    /// The output text this line gives without bidi reconstruction.
+    fn text_without_bidi(&self) -> String {
+        reorder_text_for_output(&self.raw_text())
+    }
 }
 
 /// Element in a text line - either a character or annotation.
@@ -38,11 +56,43 @@ pub enum TextLineElement {
     Anno(LTAnno),
 }
 
-fn element_text(element: &TextLineElement) -> &str {
-    match element {
-        TextLineElement::Char(c) => c.get_text(),
-        TextLineElement::Anno(a) => a.get_text(),
+/// A borrowed line element: a character or an annotation, from an owned line or a compact
+/// layout alike.
+#[derive(Clone, Copy, Debug)]
+pub enum ElementRef<'a> {
+    Char(&'a LTChar),
+    Anno(&'a LTAnno),
+}
+
+impl<'a> ElementRef<'a> {
+    /// The element's text.
+    pub fn text(self) -> &'a str {
+        match self {
+            Self::Char(character) => character.get_text(),
+            Self::Anno(annotation) => annotation.get_text(),
+        }
     }
+
+    /// The character, if this is one.
+    pub fn as_char(self) -> Option<&'a LTChar> {
+        match self {
+            Self::Char(character) => Some(character),
+            Self::Anno(_) => None,
+        }
+    }
+}
+
+impl<'a> From<&'a TextLineElement> for ElementRef<'a> {
+    fn from(element: &'a TextLineElement) -> Self {
+        match element {
+            TextLineElement::Char(character) => Self::Char(character),
+            TextLineElement::Anno(annotation) => Self::Anno(annotation),
+        }
+    }
+}
+
+fn element_text(element: &TextLineElement) -> &str {
+    ElementRef::from(element).text()
 }
 
 fn collect_text_from_elements(elements: &[TextLineElement]) -> String {
@@ -201,6 +251,19 @@ impl LTTextLine for LTTextLineHorizontal {
         self.word_margin
     }
 
+    // The trait answers with the inherent methods, so each has one body.
+    fn elements(&self) -> &[TextLineElement] {
+        LTTextLineHorizontal::elements(self)
+    }
+
+    fn bidi(&self) -> bool {
+        LTTextLineHorizontal::bidi(self)
+    }
+
+    fn reconstructed(&self) -> ReconstructedLine {
+        LTTextLineHorizontal::reconstructed(self)
+    }
+
     fn get_text(&self) -> String {
         text_from_elements(&self.elements, Axis::Horizontal, self.bidi)
     }
@@ -341,6 +404,19 @@ impl Hash for LTTextLineVertical {
 impl LTTextLine for LTTextLineVertical {
     fn word_margin(&self) -> f64 {
         self.word_margin
+    }
+
+    // The trait answers with the inherent methods, so each has one body.
+    fn elements(&self) -> &[TextLineElement] {
+        LTTextLineVertical::elements(self)
+    }
+
+    fn bidi(&self) -> bool {
+        LTTextLineVertical::bidi(self)
+    }
+
+    fn reconstructed(&self) -> ReconstructedLine {
+        LTTextLineVertical::reconstructed(self)
     }
 
     fn get_text(&self) -> String {

@@ -58,6 +58,9 @@ pub enum PdfError {
 
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
+    /// A setting that failed validation, naming the setting.
+    #[error("invalid argument: {0}")]
+    InvalidSetting(#[from] InvalidSetting),
 
     #[error("SASLprep: {0}")]
     SaslPrepError(String),
@@ -70,6 +73,90 @@ pub enum PdfError {
 
     #[error("encryption error: {0}")]
     EncryptionError(String),
+}
+
+/// A setting that failed validation: the field, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("{message}")]
+pub struct InvalidSetting {
+    pub field: &'static str,
+    pub message: String,
+}
+
+impl InvalidSetting {
+    pub fn new(field: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            field,
+            message: message.into(),
+        }
+    }
+}
+
+/// A stable category for a [`PdfError`], for bindings that map failures to
+/// their own types. Every error has exactly one kind; adding a `PdfError`
+/// variant does not compile until it is given one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorKind {
+    /// A file or named resource does not exist.
+    NotFound,
+    PermissionDenied,
+    /// Any other input or output failure.
+    Io,
+    /// The PDF syntax is invalid.
+    Syntax,
+    /// A stream, font or character mapping could not be decoded.
+    Decode,
+    /// The document is encrypted and the password is missing or wrong.
+    Encryption,
+    /// A caller-supplied value is invalid.
+    InvalidArgument,
+    /// The document uses a feature that is not implemented.
+    Unsupported,
+    /// The caller cancelled the operation.
+    Cancelled,
+    /// An internal failure that is neither the input's nor the caller's fault.
+    Runtime,
+    /// The document is damaged beyond recovery.
+    Malformed,
+}
+
+impl PdfError {
+    /// This error's category.
+    pub fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Io(error) => match error.kind() {
+                std::io::ErrorKind::NotFound => ErrorKind::NotFound,
+                std::io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
+                _ => ErrorKind::Io,
+            },
+            Self::Cancelled => ErrorKind::Cancelled,
+            Self::SyntaxError(_) => ErrorKind::Syntax,
+            Self::DecodeError(_) => ErrorKind::Decode,
+            Self::EncryptionError(_) | Self::SaslPrepError(_) => ErrorKind::Encryption,
+            Self::InvalidArgument(_) | Self::InvalidSetting(_) => ErrorKind::InvalidArgument,
+            Self::NotImplemented(_) => ErrorKind::Unsupported,
+            Self::RuntimeError(_) | Self::NotInitialized => ErrorKind::Runtime,
+            Self::TokenError { .. }
+            | Self::UnexpectedEof
+            | Self::UnknownGlyph(_)
+            | Self::InvalidUnicode(_)
+            | Self::TypeError { .. }
+            | Self::KeyError(_)
+            | Self::ObjectNotFound(_)
+            | Self::NoValidXRef
+            | Self::NoPageLabels
+            | Self::CMapNotFound(_)
+            | Self::DestinationNotFound(_) => ErrorKind::Malformed,
+        }
+    }
+
+    /// The setting at fault, for an invalid setting.
+    pub fn field(&self) -> Option<&'static str> {
+        match self {
+            Self::InvalidSetting(setting) => Some(setting.field),
+            _ => None,
+        }
+    }
 }
 
 /// Convenience Result type alias for PdfError.

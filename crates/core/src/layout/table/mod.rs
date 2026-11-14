@@ -17,7 +17,7 @@ mod types;
 // Re-export public types
 pub use types::{
     BBox, CharObj, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableProbePolicy,
-    TableSettings, TableStrategy, TextDir, TextSettings, WordObj,
+    TableSettings, TableSettingsPatch, TableStrategy, TextDir, TextSettings, WordObj,
 };
 
 pub(crate) use clustering::bbox_overlap;

@@ -7,7 +7,7 @@ use bolivar_core::parser::{
     PDFParser as CorePDFParser, PSBaseParser as CorePSBaseParser,
     PSStackParser as CorePSStackParser,
 };
-use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
+use bolivar_core::pdfdocument::{PDFDocument, cache_capacity};
 use bolivar_core::pdftypes::{PDFDict, PDFObject, PDFStream};
 use bytes::Bytes;
 use pyo3::PyClass;
@@ -62,10 +62,6 @@ pub fn pdf_input_from_py(data: &Bound<'_, PyAny>) -> PyResult<PdfInput> {
     } else {
         Ok(PdfInput::Owned(buf.to_vec(data.py())?))
     }
-}
-
-pub(crate) const fn cache_capacity(caching: bool) -> usize {
-    if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
 }
 
 fn py_ref_object<'py, T: PyClass>(py: Python<'py>, value: &PyRef<'py, T>) -> Py<PyAny> {
@@ -1087,10 +1083,7 @@ pub fn decode_text(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<String> 
 /// Check if an object is a number.
 #[pyfunction]
 pub fn isnumber(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
-    if obj.extract::<i64>().is_ok() || obj.extract::<f64>().is_ok() {
-        return Ok(true);
-    }
-    Ok(false)
+    Ok(obj.extract::<i64>().is_ok() || obj.extract::<f64>().is_ok())
 }
 
 /// Register the document module classes with the Python module.
