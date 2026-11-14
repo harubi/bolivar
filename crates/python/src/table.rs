@@ -59,6 +59,7 @@ pub fn process_page(
             std::sync::Arc::clone(&doc.inner),
             Some(vec![page_index]),
             0,
+            None,
             no_precheck::<LTPage>,
             move |arena, page_idx, page, doc| {
                 let mut rsrcmgr = PDFResourceManager::with_caching(true);

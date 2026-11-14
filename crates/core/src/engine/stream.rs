@@ -2,6 +2,7 @@
 
 use std::any::Any;
 use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Once};
@@ -405,11 +406,18 @@ impl<R: Send + 'static> Drop for Stream<R> {
     }
 }
 
-/// Run a stream whose callbacks can check the stream cancellation token.
+/// The window a stream with this read-ahead uses.
+fn window_capacity(read_ahead: Option<NonZeroUsize>) -> usize {
+    read_ahead.map_or(DEFAULT_STREAM_WINDOW_CAPACITY, NonZeroUsize::get)
+}
+
+/// Run a stream whose callbacks can check the stream cancellation token. `read_ahead` bounds
+/// how many pages it runs ahead of its reader (see `ExtractOptions::read_ahead`).
 pub fn run_stream_cancellable<R, P, F>(
     document: Arc<PDFDocument>,
     page_numbers: Option<Vec<usize>>,
     maxpages: usize,
+    read_ahead: Option<NonZeroUsize>,
     precheck: P,
     page_work: F,
 ) -> Result<Stream<R>>
@@ -429,7 +437,7 @@ where
         document,
         page_numbers,
         maxpages,
-        DEFAULT_STREAM_WINDOW_CAPACITY,
+        window_capacity(read_ahead),
         precheck,
         page_work,
     )
@@ -522,6 +530,7 @@ pub(crate) fn run_stateful_stream<R, P, S, I, F>(
     document: Arc<PDFDocument>,
     page_numbers: Option<Vec<usize>>,
     maxpages: usize,
+    read_ahead: Option<NonZeroUsize>,
     precheck: P,
     init_state: I,
     page_work: F,
@@ -542,7 +551,7 @@ where
     run_stream_stateful_on_engine(
         StreamRuntime {
             engine: shared_engine()?,
-            window_capacity: DEFAULT_STREAM_WINDOW_CAPACITY,
+            window_capacity: window_capacity(read_ahead),
         },
         document,
         page_numbers,
@@ -595,6 +604,7 @@ pub fn run_stream<R, P, F>(
     document: Arc<PDFDocument>,
     page_numbers: Option<Vec<usize>>,
     maxpages: usize,
+    read_ahead: Option<NonZeroUsize>,
     precheck: P,
     page_work: F,
 ) -> Result<Stream<R>>
@@ -607,6 +617,7 @@ where
         document,
         page_numbers,
         maxpages,
+        read_ahead,
         move |page_index, page, document, _| precheck(page_index, page, document),
         move |arena, page_index, page, document, _| page_work(arena, page_index, page, document),
     )
