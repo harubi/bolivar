@@ -224,18 +224,23 @@ fn main() -> bolivar_core::Result<()> {
 
 Layout and raw pages carry every text box, line and character. The JVM library holds each page as columns and frees the native copy as soon as the page is read, so a 4,000-character page costs a handful of arrays, not 4,000 objects.
 
-In Java, index into a page, or materialise records that do not keep the page alive:
+In Java, a page hands out views (`TextBox`, `TextLine`, `Glyph`) that read its columns in place. Views keep their page alive; `toRecord()` and `toRecords()` copy into records that do not, and the `glyph...s()` methods copy whole columns into arrays:
 
 ```java
 try (var doc = Document.open("doc.pdf");
      var pages = doc.pages()) {
     for (LayoutPage page : pages) {
-        for (int i = 0; i < page.charCount(); i++) {
-            if (page.charX0(i) > 100) {
-                System.out.println(page.charFontName(i) + " " + page.charText(i));
+        for (TextBox box : page.textBoxes()) {
+            for (TextLine line : box.lines()) {
+                for (Glyph glyph : line.glyphs()) {
+                    if (glyph.x0() > 100) {
+                        System.out.println(glyph.fontName() + " " + glyph.text());
+                    }
+                }
             }
         }
-        List<LayoutTextBox> boxes = page.textBoxes();
+        double[] x0 = page.glyphX0s();               // one column, copied
+        List<LayoutTextBox> kept = page.toRecords(); // detached from the page
     }
 }
 ```
@@ -271,7 +276,8 @@ In Clojure, pages are map-like views: `(:chars page)`, `(:x0 char)` and `(:font-
 | `pdf/layout-pages`, `pdf/raw-document` | `pdf/pages`, `pdf/raw-pages` (reducible views) |
 | `(with-open [c (pdf/tables doc)] (doseq ...))` | `(run! f (pdf/tables doc))`; sources are not seqs |
 | `:boxes-flow nil` meant the 0.5 default | `:boxes-flow nil` turns the ordering off, as in pdfminer |
-| ex-info `:type :pdf/native-error` | `:type` names the failure, such as `:pdf/io-not-found`; `:key` names the bad option |
+| ex-info `:type :pdf/native-error` | ex-info with `:cognitect.anomalies/category`, `:sa.ingenious.pdf/error` (such as `:io-not-found`), `:sa.ingenious.pdf/code` and `:sa.ingenious.pdf/key` (the bad option) |
+| `LayoutPage.charX0(i)`, `charText(i)` | `page.glyphs()` views (`Glyph.x0()`, `text()`), or `glyphX0s()` columns |
 
 ## Async (Python)
 
