@@ -20,3 +20,15 @@ def test_text_output_exports_images_and_keeps_its_text(tmp_path: Path) -> None:
 
     assert [p.suffix for p in tmp_path.iterdir()] == [".bmp"]
     assert text == text_to_fp(None)
+
+
+def test_text_output_exports_images_from_a_stream_without_a_path(
+    tmp_path: Path,
+) -> None:
+    out = io.StringIO()
+    extract_text_to_fp(
+        io.BytesIO(DMCA.read_bytes()), out, output_dir=str(tmp_path), page_numbers=[0]
+    )
+
+    assert [p.suffix for p in tmp_path.iterdir()] == [".bmp"]
+    assert out.getvalue() == text_to_fp(None)
