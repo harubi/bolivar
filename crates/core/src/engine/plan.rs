@@ -36,16 +36,29 @@ pub fn validate_geometry_count(order: &[usize], geometry_count: usize) -> Result
     Ok(())
 }
 
-/// The pages of `page_numbers` that exist, one bit per page. Built once, it makes a selection
-/// O(pages + selection), where looking each page up in the list would be O(pages × selection).
-fn wanted_pages(page_count: usize, page_numbers: &[usize]) -> Vec<u64> {
-    let mut bits = vec![0u64; page_count.div_ceil(64)];
-    for &page_idx in page_numbers {
-        if page_idx < page_count {
-            bits[page_idx / 64] |= 1 << (page_idx % 64);
+/// The pages of a list that exist in a document, one bit per page. Built once, it makes a
+/// selection O(pages + list), where looking each page up in the list would be O(pages × list).
+pub(crate) struct PageSet {
+    bits: Vec<u64>,
+}
+
+impl PageSet {
+    /// The pages of `page_numbers` below `page_count`; the others are ignored.
+    pub(crate) fn new(page_count: usize, page_numbers: &[usize]) -> Self {
+        let mut bits = vec![0u64; page_count.div_ceil(64)];
+        for &page_idx in page_numbers {
+            if page_idx < page_count {
+                bits[page_idx / 64] |= 1 << (page_idx % 64);
+            }
         }
+        Self { bits }
     }
-    bits
+
+    pub(crate) fn contains(&self, page_idx: usize) -> bool {
+        self.bits
+            .get(page_idx / 64)
+            .is_some_and(|word| word & (1 << (page_idx % 64)) != 0)
+    }
 }
 
 fn select_pages_ref(
@@ -53,15 +66,11 @@ fn select_pages_ref(
     page_numbers: Option<&[usize]>,
     maxpages: usize,
 ) -> Vec<usize> {
-    let wanted = page_numbers.map(|nums| wanted_pages(page_count, nums));
+    let wanted = page_numbers.map(|nums| PageSet::new(page_count, nums));
     let limit = if maxpages > 0 { maxpages } else { usize::MAX };
 
     (0..page_count)
-        .filter(|&page_idx| {
-            wanted
-                .as_deref()
-                .is_none_or(|bits| bits[page_idx / 64] & (1 << (page_idx % 64)) != 0)
-        })
+        .filter(|&page_idx| wanted.as_ref().is_none_or(|set| set.contains(page_idx)))
         .take(limit)
         .collect()
 }
