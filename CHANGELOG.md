@@ -1,3 +1,47 @@
+## [3.1.0](https://github.com/harubi/bolivar/compare/v3.0.0...v3.1.0) (2026-11-14)
+
+### Features
+
+* **clojure:** take cursor options on every source ([c7263e0](https://github.com/harubi/bolivar/commit/c7263e09511e780abb4edefec67c86f735055d52))
+* **core:** bound the read ahead of each stream ([899cc0b](https://github.com/harubi/bolivar/commit/899cc0be2d20e34d9c37896e6c0c3fd1b3adfffe))
+* **core:** narrow a document selection per stream ([7240475](https://github.com/harubi/bolivar/commit/7240475c45e86bb84afba19523fcd4a7ffb0d6e6))
+* **ffi:** take page selection and read ahead per cursor ([4d18a50](https://github.com/harubi/bolivar/commit/4d18a502ffa2ccec48469a17bd0d639c835e2cd6))
+* **jvm:** add cursor options to every cursor ([c32380b](https://github.com/harubi/bolivar/commit/c32380b3360c2598ef9b021ae46583bd2e92fd41))
+* **python:** add read_ahead to extract_pages_async ([ca64d04](https://github.com/harubi/bolivar/commit/ca64d04b93311499fca9a732a67bdfbb366aa106))
+
+### Bug Fixes
+
+* **ffi:** keep table max pages inside the selection ([548e41e](https://github.com/harubi/bolivar/commit/548e41eaf17114e92f820472cdc07ed1a755da77))
+* **ffi:** name the page range in the pages error ([e3233b3](https://github.com/harubi/bolivar/commit/e3233b344bd93637d01d25c0b9e1c0139f4d8999))
+* **python:** accept only a positive int read_ahead ([e020bbf](https://github.com/harubi/bolivar/commit/e020bbfe88b290f2c6b8e1510c8959519e66190d))
+* **python:** export images from pdf2txt text output ([bd849a8](https://github.com/harubi/bolivar/commit/bd849a865bbd4700643ad5d6bd393454e7474423))
+
+### Performance Improvements
+
+* **core:** export images without layout analysis ([087014d](https://github.com/harubi/bolivar/commit/087014d22a97e245c1f0699c0a1f22d24fdced3e))
+* **core:** select pages in linear time ([58c8f58](https://github.com/harubi/bolivar/commit/58c8f58d611bcd67cc9919da94a4b41da0bd64a4))
+* **core:** skip building pages in the image export ([8c5eddb](https://github.com/harubi/bolivar/commit/8c5eddb6b9f35e561227bd3253e255d54c044e1f))
+* **python:** map the pdf2txt input by path for images ([82fdf6a](https://github.com/harubi/bolivar/commit/82fdf6a16a8a07642539c9c35dac7840b96c00ae))
+* **python:** stream pdf2txt image export ([cb1546f](https://github.com/harubi/bolivar/commit/cb1546f1f9518e9f8c5750474eeebe8b9f22e105))
+
+### Documentation
+
+* add contracts to cursor option setters ([d3f41d5](https://github.com/harubi/bolivar/commit/d3f41d55761df2e462878afa9b31cf6cd3569dca))
+* document cursor options ([b190c10](https://github.com/harubi/bolivar/commit/b190c10dca01cd5407e100afa9924fa7ffdccfee))
+
+### Code Refactoring
+
+* **clojure:** check table options once ([abfa3e9](https://github.com/harubi/bolivar/commit/abfa3e9531bda088a302b611ce2cdc18fb39ef3a))
+* **core:** share the page filter of plan and narrowing ([800daae](https://github.com/harubi/bolivar/commit/800daaebc41a15b0c6ff617c8f4dbb6b85dfe271))
+* **ffi:** drop table max pages from the abi ([faada29](https://github.com/harubi/bolivar/commit/faada299845e243da840baf474f830e2282fbec7))
+
+### Tests
+
+* **bench:** time page selection without the clone ([08278b3](https://github.com/harubi/bolivar/commit/08278b3aa174a16ac7db027eba7e6d5bc895c655))
+* **core:** bound read ahead without a timed wait ([3436773](https://github.com/harubi/bolivar/commit/3436773d4bbf52244f4513a279ea20e1aea99d7c))
+* list deliberate parity differences ([0fc78e4](https://github.com/harubi/bolivar/commit/0fc78e44012b8e1953dce02786de6c1b93c5a703))
+* pass parity node ids without globbing ([c4050c4](https://github.com/harubi/bolivar/commit/c4050c4bdf159ee37a50000cd6ea1671cf206211))
+
 ## [3.0.0](https://github.com/harubi/bolivar/compare/v2.3.1...v3.0.0) (2026-11-14)
 
 ### ⚠ BREAKING CHANGES
