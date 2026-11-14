@@ -211,37 +211,45 @@
 ;; object: raw kinds read graphics state from their RawPage. A view equals, and hashes like,
 ;; the plain map `realize` makes of it.
 
-(deftype Kind [name ks getters realize])
+;; `fns` holds each key's getter in key order; `getters` maps keys to the same functions.
+(deftype Kind [name ks fns getters realize])
 
 (defmacro ^:private defkind
   "Define a view kind. `args` binds the object and, optionally, the context; each key is read by
-  its expression. A leading `:realize` expression replaces the default copy of every entry."
+  its expression. Leading options: `:extends kind` starts from that kind's keys and getters (its
+  keys first), and `:realize expr` replaces the default copy of every entry."
   [kind-name args & body]
-  (let [[realize body] (if (= :realize (first body)) [(second body) (drop 2 body)] [nil body])
-        [obj ctx]      (if (= 2 (count args)) args [(first args) '_])
-        pairs          (partition 2 body)]
+  (let [options   (into {} (map vec) (take-while (comp #{:extends :realize} first)
+                                                 (partition 2 body)))
+        pairs     (drop (count options) (partition 2 body))
+        [obj ctx] (if (= 2 (count args)) args [(first args) '_])
+        parent    (:extends options)]
     `(def ~(vary-meta kind-name assoc :private true)
-       (Kind. '~kind-name
-              ~(mapv first pairs)
-              ~(into {} (map (fn [[k expr]] [k `(fn [~obj ~ctx] ~expr)])) pairs)
-              ~(when realize `(fn [~obj ~ctx] ~realize))))))
+       (let [ks#  (into ~(if parent `(.-ks ~(with-meta parent {:tag `Kind})) []) ~(mapv first pairs))
+             fns# (into ~(if parent `(.-fns ~(with-meta parent {:tag `Kind})) [])
+                        ~(mapv (fn [[_ expr]] `(fn [~obj ~ctx] ~expr)) pairs))]
+         (Kind. '~kind-name ks# fns# (zipmap ks# fns#)
+                ~(when-let [realize (:realize options)] `(fn [~obj ~ctx] ~realize)))))))
 
 (defprotocol ^:private Realize
   (-realize [x]))
-
-(defn realize
-  "Copy a view, and every view inside it, into plain maps and vectors that keep nothing of the
-  page alive. Other values come back unchanged."
-  [x]
-  (if (instance? sa.ingenious.pdf.Realize x) (-realize x) x))
 
 (defn view?
   "Whether `x` is a view (see `realize`)."
   [x]
   (instance? sa.ingenious.pdf.Realize x))
 
-(defn- read-entry [^Kind kind k obj ctx]
-  ((get (.-getters kind) k) obj ctx))
+(defn realize
+  "Copy a view, and every view inside it, into plain maps and vectors that keep nothing of the
+  page alive. Other values come back unchanged."
+  [x]
+  (if (view? x) (-realize x) x))
+
+(defn- entries
+  "A view's entries, in key order."
+  ^clojure.lang.PersistentVector [^Kind kind obj ctx]
+  (let [^List fns (.-fns kind)]
+    (into [] (map-indexed (fn [i k] (MapEntry/create k ((.get fns i) obj ctx)))) (.-ks kind))))
 
 (defmacro ^:private flat-map
   "A map of the given keys and values, stored flat as Clojure stores small maps: one array, no
@@ -253,26 +261,26 @@
        (PersistentArrayMap. ~arr))))
 
 (defn- copy-entries
-  "A plain map of a view's entries, each realized, without the keys in `skip`."
-  [^Kind kind obj ctx skip]
-  (let [^List ks (.-ks kind)
-        arr      (object-array (* 2 (.size ks)))
-        n        (reduce (fn [^long i k]
-                           (if (skip k)
-                             i
-                             (do (aset arr i k)
-                                 (aset arr (inc i) (realize (read-entry kind k obj ctx)))
-                                 (+ i 2))))
-                         0
-                         ks)]
-    (PersistentArrayMap. (if (== n (alength arr)) arr (java.util.Arrays/copyOf arr (int n))))))
+  "A plain map of a view's entries, each realized, in key order; a key in `overrides` takes the
+  value given there instead, as is."
+  [^Kind kind obj ctx overrides]
+  (let [^List ks  (.-ks kind)
+        ^List fns (.-fns kind)
+        n         (.size ks)
+        arr       (object-array (* 2 n))]
+    (dotimes [i n]
+      (let [k (.get ks i)]
+        (aset arr (* 2 i) k)
+        (aset arr (inc (* 2 i))
+              (if (contains? overrides k) (get overrides k) (realize ((.get fns i) obj ctx))))))
+    (PersistentArrayMap. arr)))
 
 (defn- realize-as
   "A plain map of the view of `kind` over `obj`."
   [^Kind kind obj ctx]
   (if-let [realize-kind (.-realize kind)]
     (realize-kind obj ctx)
-    (copy-entries kind obj ctx #{})))
+    (copy-entries kind obj ctx nil)))
 
 (defn- map-equiv
   "Equality with any java.util.Map, as Clojure's maps define it."
@@ -307,11 +315,12 @@
   (count [_] (count (.-ks kind)))
 
   Seqable
-  (seq [_] (seq (mapv #(MapEntry/create % (read-entry kind % obj ctx)) (.-ks kind))))
+  (seq [_] (seq (entries kind obj ctx)))
 
   IKVReduce
   (kvreduce [_ f init]
-    (reduce (fn [acc k] (f acc k (read-entry kind k obj ctx))) init (.-ks kind)))
+    (let [^List fns (.-fns kind)]
+      (reduce-kv (fn [acc i k] (f acc k ((.get fns i) obj ctx))) init (.-ks kind))))
 
   Associative
   (containsKey [_ k] (contains? (.-getters kind) k))
@@ -333,7 +342,7 @@
   (hasheq [this] (Murmur3/hashUnordered this))
 
   Iterable
-  (iterator [this] (.iterator ^Iterable (vec (seq this))))
+  (iterator [_] (.iterator (entries kind obj ctx)))
 
   IMeta
   (meta [_] metadata)
@@ -354,7 +363,7 @@
   (get [this k] (.valAt this k nil))
   (keySet [_] (java.util.LinkedHashSet. ^Collection (.-ks kind)))
   (values [this] (mapv val (seq this)))
-  (entrySet [this] (java.util.LinkedHashSet. ^Collection (vec (seq this))))
+  (entrySet [_] (java.util.LinkedHashSet. ^Collection (entries kind obj ctx)))
   (put [_ _ _] (throw (UnsupportedOperationException.)))
   (remove [_ _] (throw (UnsupportedOperationException.)))
   (putAll [_ _] (throw (UnsupportedOperationException.)))
@@ -429,7 +438,7 @@
   (hasheq [this] (Murmur3/hashOrdered this))
 
   Iterable
-  (iterator [this] (.iterator ^Iterable (vec (seq this))))
+  (iterator [_] (.iterator ^Iterable (mapv #(View. kind % ctx nil) xs)))
 
   IMeta
   (meta [_] metadata)
@@ -455,20 +464,20 @@
 
 (defn- views [kind ^List xs ctx] (Views. kind xs ctx nil))
 
-(defn- realize-layers
-  "A page's boxes, lines and glyphs as plain data, each glyph copied once: a line's :chars is a
-  subvec of the page's :chars, and a box's :lines a subvec of the page's :lines."
-  [^TextPage page ctx glyph-kind line-kind box-kind]
+(defn- realize-page
+  "A page view of `page-kind` as plain data, each glyph copied once: a line's :chars is a subvec
+  of the page's :chars, and a box's :lines a subvec of the page's :lines."
+  [page-kind ^TextPage page ctx glyph-kind line-kind box-kind]
   (let [chars (mapv #(realize-as glyph-kind % ctx) (.glyphs page))
         lines (mapv (fn [^TextLine l]
-                      (assoc (copy-entries line-kind l ctx #{:chars})
-                             :chars (subvec chars (.glyphStart l) (.glyphEnd l))))
+                      (copy-entries line-kind l ctx
+                                    {:chars (subvec chars (.glyphStart l) (.glyphEnd l))}))
                     (.lines page))
         boxes (mapv (fn [^TextBox b]
-                      (assoc (copy-entries box-kind b ctx #{:lines})
-                             :lines (subvec lines (.lineStart b) (.lineEnd b))))
+                      (copy-entries box-kind b ctx
+                                    {:lines (subvec lines (.lineStart b) (.lineEnd b))}))
                     (.textBoxes page))]
-    {:text-boxes boxes :lines lines :chars chars}))
+    (copy-entries page-kind page ctx {:text-boxes boxes :lines lines :chars chars})))
 
 (defn- bbox [^BoundingBox b]
   {:x0 (.x0 b) :y0 (.y0 b) :x1 (.x1 b) :y1 (.y1 b)})
@@ -523,8 +532,7 @@
 (declare layout-page)
 
 (defkind layout-page [^LayoutPage p]
-  :realize (merge (copy-entries layout-page p nil #{:text-boxes :lines :chars})
-                  (realize-layers p nil glyph line box))
+  :realize (realize-page layout-page p nil glyph line box)
   :page-number (.pageNumber p)
   :bbox        (bbox (.bbox p))
   :rotate      (.rotate p)
@@ -541,6 +549,7 @@
    (.glyphMatrix page i 3) (.glyphMatrix page i 4) (.glyphMatrix page i 5)])
 
 (defkind raw-glyph [^Glyph g ^RawPage page]
+  :extends glyph
   :realize (let [i (.index g)]
              (glyph-map g
                         :advance (.glyphAdvance page i)
@@ -551,15 +560,6 @@
                         :stroking-color-space (.glyphStrokingColorSpace page i)
                         :non-stroking-color (some-vec (.glyphNonStrokingColor page i))
                         :stroking-color (some-vec (.glyphStrokingColor page i))))
-  :text                     (.text g)
-  :bbox                     (bbox (.bbox g))
-  :x0                       (.x0 g)
-  :y0                       (.y0 g)
-  :x1                       (.x1 g)
-  :y1                       (.y1 g)
-  :font-name                (.fontName g)
-  :size                     (.size g)
-  :upright                  (.upright g)
   :advance                  (.glyphAdvance page (.index g))
   :matrix                   (glyph-matrix page (.index g))
   :marked-content-id        (.glyphMarkedContentId page (.index g))
@@ -582,17 +582,21 @@
   :text         (.text b)
   :lines        (views raw-line (.lines b) page))
 
+(defn- cell-map [row column row-span column-span bbox text]
+  {:row-index    row
+   :column-index column
+   :row-span     row-span
+   :column-span  column-span
+   :bbox         bbox
+   :text         text})
+
 (defn- raw-table [^RawTable t]
   {:bbox         (top-down-bbox (.bbox t))
    :row-count    (.rowCount t)
    :column-count (.columnCount t)
    :cells        (mapv (fn [^RawTableCell c]
-                         {:row-index    (.rowIndex c)
-                          :column-index (.columnIndex c)
-                          :row-span     (.rowSpan c)
-                          :column-span  (.columnSpan c)
-                          :bbox         (top-down-bbox (.bbox c))
-                          :text         (.text c)})
+                         (cell-map (.rowIndex c) (.columnIndex c) (.rowSpan c) (.columnSpan c)
+                                   (top-down-bbox (.bbox c)) (.text c)))
                        (.cells t))})
 
 (defn- page-boxes [^RawPage p]
@@ -606,8 +610,7 @@
 (declare raw-page-kind)
 
 (defkind raw-page-kind [^RawPage p]
-  :realize (merge (copy-entries raw-page-kind p nil #{:text-boxes :lines :chars})
-                  (realize-layers p p raw-glyph raw-line raw-box))
+  :realize (realize-page raw-page-kind p p raw-glyph raw-line raw-box)
   :page-index  (.pageIndex p)
   :page-number (.pageNumber p)
   :object-id   (.objectId p)
@@ -675,12 +678,8 @@
    :row-count    (.rowCount t)
    :column-count (.columnCount t)
    :cells        (mapv (fn [^TableCell c]
-                         {:row-index    (.rowIndex c)
-                          :column-index (.columnIndex c)
-                          :row-span     (.rowSpan c)
-                          :column-span  (.columnSpan c)
-                          :bbox         (bbox (.bbox c))
-                          :text         (.text c)})
+                         (cell-map (.rowIndex c) (.columnIndex c) (.rowSpan c) (.columnSpan c)
+                                   (bbox (.bbox c)) (.text c)))
                        (.cells t))})
 
 (defn- table-rows-map [^PageTableRows r]
