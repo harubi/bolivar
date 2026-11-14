@@ -233,7 +233,7 @@ public final class Document implements AutoCloseable {
       try (var arena = Arena.ofConfined()) {
         MemorySegment nativeTables =
             tables == null ? MemorySegment.NULL : NativeStructs.tableOptions(tables, arena);
-        MemorySegment cursor = Native.cursorOpen(handle, kind, nativeTables);
+        MemorySegment cursor = Native.cursorOpen(handle, kind, nativeTables, MemorySegment.NULL);
         try {
           return new Cursor<>(cursor, kind, decoder);
         } catch (RuntimeException | Error error) {

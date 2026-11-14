@@ -16,7 +16,7 @@ use bolivar::document::{
     bolivar_document_free, bolivar_document_metadata, bolivar_document_raw_page,
     bolivar_document_text, bolivar_open_buffer, bolivar_open_path,
 };
-use bolivar::options::{Options, TableOptions, opt, topt};
+use bolivar::options::{CursorOptions, Options, TableOptions, copt, opt, topt};
 use bolivar::{ABI_VERSION, bolivar_abi_version, bolivar_describe, bolivar_version};
 
 /// The live-handle counter is global, so tests run one at a time.
@@ -140,12 +140,22 @@ fn open_cursor(
     number: u32,
     tables: Option<&TableOptions>,
 ) -> Result<*mut Cursor, Failure> {
+    open_cursor_with(doc, number, tables, None)
+}
+
+fn open_cursor_with(
+    doc: *mut Document,
+    number: u32,
+    tables: Option<&TableOptions>,
+    selection: Option<&CursorOptions>,
+) -> Result<*mut Cursor, Failure> {
     let (mut cursor, mut err) = (null_mut(), ErrorOut::default());
     let status = unsafe {
         bolivar_cursor_open(
             doc,
             number,
             tables.map_or(null(), |t| t),
+            selection.map_or(null(), |c| c),
             &mut cursor,
             &mut err,
         )
@@ -167,7 +177,16 @@ fn next(cursor: *mut Cursor, number: u32) -> Result<Option<View>, Failure> {
 }
 
 fn drain(doc: *mut Document, number: u32, tables: Option<&TableOptions>) -> Vec<View> {
-    let cursor = open_cursor(doc, number, tables).unwrap();
+    drain_with(doc, number, tables, None)
+}
+
+fn drain_with(
+    doc: *mut Document,
+    number: u32,
+    tables: Option<&TableOptions>,
+    selection: Option<&CursorOptions>,
+) -> Vec<View> {
+    let cursor = open_cursor_with(doc, number, tables, selection).unwrap();
     let mut out = Vec::new();
     while let Some(view) = next(cursor, number).unwrap() {
         out.push(view);
@@ -511,6 +530,134 @@ fn table_max_pages_stays_inside_the_document_selection() {
         [1],
         "a table cursor never reads pages the document does not select"
     );
+}
+
+/// Cursor options with the given 1-based pages, skip, max pages and read-ahead.
+fn cursor_options(
+    pages: Option<&[i64]>,
+    skip: Option<i64>,
+    max_pages: Option<i64>,
+    read_ahead: Option<i64>,
+) -> CursorOptions {
+    let mut raw = CursorOptions::empty();
+    if let Some(pages) = pages {
+        raw.present |= copt::PAGES;
+        raw.pages = pages.as_ptr();
+        raw.pages_len = pages.len() as i64;
+    }
+    if let Some(skip) = skip {
+        raw.present |= copt::SKIP;
+        raw.skip = skip;
+    }
+    if let Some(max) = max_pages {
+        raw.present |= copt::MAX_PAGES;
+        raw.max_pages = max;
+    }
+    if let Some(read_ahead) = read_ahead {
+        raw.present |= copt::READ_AHEAD;
+        raw.read_ahead = read_ahead;
+    }
+    raw
+}
+
+fn page_numbers(doc: *mut Document, number: u32, selection: &CursorOptions) -> Vec<i64> {
+    drain_with(doc, number, None, Some(selection))
+        .iter()
+        .map(|v| v.int("PageNumber"))
+        .collect()
+}
+
+#[test]
+fn cursor_options_narrow_the_document_selection() {
+    let _serial = serial();
+    let document_pages = [2_i64, 3, 5];
+    let mut options = Options::empty();
+    options.present = opt::PAGES;
+    options.pages = document_pages.as_ptr();
+    options.pages_len = 3;
+    let doc = open(&fixture("contrib/pagelabels.pdf"), Some(&options)).unwrap();
+    const SUMMARY: u32 = 4;
+
+    let head = cursor_options(None, None, Some(2), Some(1));
+    let rest = cursor_options(None, Some(2), None, None);
+    assert_eq!(page_numbers(doc, SUMMARY, &head), [2, 3]);
+    assert_eq!(
+        page_numbers(doc, SUMMARY, &rest),
+        [5],
+        "head plus skip reads each page once"
+    );
+    let inside = [1_i64, 3, 4, 5];
+    assert_eq!(
+        page_numbers(
+            doc,
+            LAYOUT,
+            &cursor_options(Some(&inside), None, None, None)
+        ),
+        [3, 5],
+        "only pages the document selects"
+    );
+    let none: [i64; 0] = [];
+    assert!(page_numbers(doc, SUMMARY, &cursor_options(Some(&none), None, None, None)).is_empty());
+    unsafe { bolivar_document_free(doc) };
+}
+
+#[test]
+fn cursor_and_table_max_pages_combine() {
+    let _serial = serial();
+    let doc = open(&fixture("contrib/pagelabels.pdf"), None).unwrap();
+    let rows = |table_max: Option<i64>, cursor_max: Option<i64>| -> Vec<i64> {
+        let mut tables = TableOptions::empty();
+        if let Some(max) = table_max {
+            tables.present = topt::MAX_PAGES;
+            tables.max_pages = max;
+        }
+        let selection = cursor_options(None, None, cursor_max, None);
+        drain_with(doc, TABLE_ROWS, Some(&tables), Some(&selection))
+            .iter()
+            .map(|v| v.int("PageNumber"))
+            .collect()
+    };
+    assert_eq!(rows(Some(2), None), [1, 2]);
+    assert_eq!(rows(None, Some(3)), [1, 2, 3]);
+    assert_eq!(rows(Some(4), Some(1)), [1]);
+    assert_eq!(rows(Some(1), Some(4)), [1]);
+    unsafe { bolivar_document_free(doc) };
+}
+
+#[test]
+fn first_page_crop_stays_on_the_documents_first_page() {
+    let _serial = serial();
+    let doc = open(&fixture("contrib/pagelabels.pdf"), None).unwrap();
+    // Text strategies find a table in any text, so a crop visibly changes a page.
+    let tables = |crop: bool| {
+        let mut t = TableOptions::empty();
+        t.present = topt::VERTICAL_STRATEGY | topt::HORIZONTAL_STRATEGY;
+        t.vertical_strategy = 2;
+        t.horizontal_strategy = 2;
+        if crop {
+            t.present |= topt::FIRST_PAGE_CROP;
+            t.first_page_crop = [0.0, 0.0, 1.0, 1.0];
+        }
+        t
+    };
+    let cells = |pages: &[i64], crop: bool| -> Vec<Vec<i32>> {
+        let selection = cursor_options(Some(pages), None, None, None);
+        drain_with(doc, TABLE_ROWS, Some(&tables(crop)), Some(&selection))
+            .iter()
+            .map(|v| v.column::<i32>("CellText", Elem::I32).to_vec())
+            .collect()
+    };
+    assert_ne!(
+        cells(&[1], true),
+        cells(&[1], false),
+        "the crop applies to page 1"
+    );
+    assert_eq!(
+        cells(&[2, 3], true),
+        cells(&[2, 3], false),
+        "pages 2 and 3 never take it"
+    );
+    unsafe { bolivar_document_free(doc) };
 }
 
 #[test]

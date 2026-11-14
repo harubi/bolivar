@@ -1,8 +1,10 @@
-//! Document and table options as the JVM passes them. Parsing converts types
-//! and reads presence bits; every rule about values lives in bolivar-core
-//! (`LAParams::try_new`, `TableSettingsPatch::apply_to`).
+//! Document, table and cursor options as the JVM passes them. Parsing converts
+//! types and reads presence bits; every rule about values lives in bolivar-core
+//! (`LAParams::try_new`, `TableSettingsPatch::apply_to`, `ExtractOptions::narrowed`).
 
-use bolivar_core::extract::ExtractOptions;
+use std::num::NonZeroUsize;
+
+use bolivar_core::extract::{CursorSelection, ExtractOptions};
 use bolivar_core::layout::LAParams;
 use bolivar_core::pdfdocument::OpenOptions;
 use bolivar_core::table::{ExplicitLine, TableSettings, TableSettingsPatch, TableStrategy};
@@ -126,6 +128,30 @@ pub mod topt {
     }
 }
 
+/// Cursor options: which pages one cursor reads and how far ahead it runs. `present` holds one
+/// bit per field the caller set.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CursorOptions {
+    pub struct_size: u32,
+    pub present: u32,
+    pub skip: i64,
+    pub max_pages: i64,
+    pub read_ahead: i64,
+    pub pages: *const i64,
+    pub pages_len: i64,
+}
+
+/// Presence bits of [`CursorOptions`], exported to Java by name.
+pub mod copt {
+    bits! {
+        PAGES,
+        SKIP,
+        MAX_PAGES,
+        READ_AHEAD,
+    }
+}
+
 /// Table strategy codes, exported to Java by name.
 pub const STRATEGIES: &[(&str, TableStrategy)] = &[
     ("LINES", TableStrategy::Lines),
@@ -164,6 +190,23 @@ fn positive_count(value: i64, field: &'static str) -> FfiResult<usize> {
         ));
     }
     Ok(value as usize)
+}
+
+/// 1-based page numbers from the caller as 0-based page indexes.
+///
+/// # Safety
+/// `pages` must cover `len` values.
+unsafe fn zero_based_pages(pages: *const i64, len: i64) -> FfiResult<Vec<usize>> {
+    unsafe { slice(pages, len, "pages")? }
+        .iter()
+        .map(|&page| {
+            positive_count(page, "pages")
+                .map(|page| page - 1)
+                .map_err(|_| {
+                    FfiError::invalid("pages", "page numbers are 1-based and must be positive")
+                })
+        })
+        .collect()
 }
 
 /// Parsed document options: how to open, and how to extract.
@@ -205,22 +248,7 @@ impl DocumentOptions {
             extract.caching = open.caching;
         }
         if has(opt::PAGES) {
-            let pages = unsafe { slice(raw.pages, raw.pages_len, "pages")? };
-            extract.page_numbers = Some(
-                pages
-                    .iter()
-                    .map(|&page| {
-                        positive_count(page, "pages")
-                            .map(|page| page - 1)
-                            .map_err(|_| {
-                                FfiError::invalid(
-                                    "pages",
-                                    "page numbers are 1-based and must be positive",
-                                )
-                            })
-                    })
-                    .collect::<FfiResult<_>>()?,
-            );
+            extract.page_numbers = Some(unsafe { zero_based_pages(raw.pages, raw.pages_len)? });
         }
         if has(opt::MAX_PAGES) {
             extract.maxpages = positive_count(raw.max_pages, "max_pages")?;
@@ -384,6 +412,58 @@ impl Tables {
     }
 }
 
+/// Parsed cursor options: the pages to read and the read-ahead.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CursorArgs {
+    pub selection: CursorSelection,
+    pub read_ahead: Option<NonZeroUsize>,
+}
+
+impl CursorArgs {
+    /// Convert raw cursor options. A null pointer means all defaults. An empty page list with
+    /// its bit set selects no page.
+    ///
+    /// # Safety
+    /// `options` must be null or point to a readable `CursorOptions` whose pointers cover their
+    /// lengths.
+    pub unsafe fn from_raw(options: *const CursorOptions) -> FfiResult<Self> {
+        let mut args = Self::default();
+        let Some(raw) = (unsafe { options.as_ref() }) else {
+            return Ok(args);
+        };
+        check_header(
+            raw.struct_size,
+            size_of::<CursorOptions>(),
+            raw.present,
+            copt::ALL,
+            "cursor_options",
+        )?;
+        let has = |bit: u32| raw.present & bit != 0;
+        let positive = |value: i64, field: &'static str| {
+            positive_count(value, field).map(|n| NonZeroUsize::new(n).expect("positive"))
+        };
+
+        if has(copt::PAGES) {
+            let pages = unsafe { zero_based_pages(raw.pages, raw.pages_len)? };
+            args.selection = args.selection.pages(pages);
+        }
+        if has(copt::SKIP) {
+            let skip = usize::try_from(raw.skip)
+                .map_err(|_| FfiError::invalid("skip", "skip must not be negative"))?;
+            args.selection = args.selection.skip(skip);
+        }
+        if has(copt::MAX_PAGES) {
+            args.selection = args
+                .selection
+                .max_pages(positive(raw.max_pages, "max_pages")?);
+        }
+        if has(copt::READ_AHEAD) {
+            args.read_ahead = Some(positive(raw.read_ahead, "read_ahead")?);
+        }
+        Ok(args)
+    }
+}
+
 impl Options {
     /// All fields absent; for tests and callers that fill a few.
     pub fn empty() -> Self {
@@ -433,6 +513,21 @@ impl TableOptions {
             explicit_vertical_len: 0,
             explicit_horizontal: std::ptr::null(),
             explicit_horizontal_len: 0,
+        }
+    }
+}
+
+impl CursorOptions {
+    /// All fields absent; for tests and callers that fill a few.
+    pub fn empty() -> Self {
+        Self {
+            struct_size: size_of::<Self>() as u32,
+            present: 0,
+            skip: 0,
+            max_pages: 0,
+            read_ahead: 0,
+            pages: std::ptr::null(),
+            pages_len: 0,
         }
     }
 }
@@ -578,6 +673,76 @@ mod tests {
         let mut raw = TableOptions::empty();
         raw.present = topt::MAX_PAGES;
         assert_eq!(field(unsafe { Tables::from_raw(&raw) }), Some("max_pages"));
+    }
+
+    #[test]
+    fn null_and_empty_cursor_options_are_the_defaults() {
+        let null = unsafe { CursorArgs::from_raw(std::ptr::null()) }.unwrap();
+        let empty = unsafe { CursorArgs::from_raw(&CursorOptions::empty()) }.unwrap();
+        assert_eq!(null, CursorArgs::default());
+        assert_eq!(empty, CursorArgs::default());
+    }
+
+    #[test]
+    fn cursor_options_select_skip_limit_and_read_ahead() {
+        let pages = [3_i64, 1];
+        let mut raw = CursorOptions::empty();
+        raw.present = copt::ALL;
+        raw.pages = pages.as_ptr();
+        raw.pages_len = 2;
+        raw.skip = 1;
+        raw.max_pages = 4;
+        raw.read_ahead = 2;
+        let args = unsafe { CursorArgs::from_raw(&raw) }.unwrap();
+        let expected = CursorSelection::default()
+            .pages(vec![2, 0])
+            .skip(1)
+            .max_pages(NonZeroUsize::new(4).unwrap());
+        assert_eq!(args.selection, expected);
+        assert_eq!(args.read_ahead, NonZeroUsize::new(2));
+
+        let mut raw = CursorOptions::empty();
+        raw.present = copt::PAGES;
+        let args = unsafe { CursorArgs::from_raw(&raw) }.unwrap();
+        assert_eq!(
+            args.selection.pages,
+            Some(vec![]),
+            "a set but empty list selects nothing"
+        );
+    }
+
+    #[test]
+    fn bad_cursor_options_name_their_field() {
+        let field_of = |raw: CursorOptions| field(unsafe { CursorArgs::from_raw(&raw) });
+        let with = |present: u32, set: fn(&mut CursorOptions)| {
+            let mut raw = CursorOptions::empty();
+            raw.present = present;
+            set(&mut raw);
+            raw
+        };
+        assert_eq!(field_of(with(copt::SKIP, |r| r.skip = -1)), Some("skip"));
+        assert_eq!(
+            field_of(with(copt::MAX_PAGES, |r| r.max_pages = 0)),
+            Some("max_pages")
+        );
+        assert_eq!(
+            field_of(with(copt::READ_AHEAD, |r| r.read_ahead = 0)),
+            Some("read_ahead")
+        );
+        assert_eq!(
+            field_of(with(copt::READ_AHEAD, |r| r.read_ahead = -3)),
+            Some("read_ahead")
+        );
+        assert_eq!(field_of(with(1 << 9, |_| {})), Some("cursor_options"));
+        assert_eq!(
+            field_of(with(0, |r| r.struct_size = 8)),
+            Some("cursor_options")
+        );
+        let zero = [0_i64];
+        let mut raw = with(copt::PAGES, |_| {});
+        raw.pages = zero.as_ptr();
+        raw.pages_len = 1;
+        assert_eq!(field_of(raw), Some("pages"));
     }
 
     #[test]

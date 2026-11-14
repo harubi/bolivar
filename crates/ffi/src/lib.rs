@@ -23,10 +23,10 @@ use std::sync::OnceLock;
 
 use abi::{Code, ErrorOut, FfiError, guard, write_out};
 use batch::{BatchHeader, ColumnDesc};
-use options::{Options, TableOptions};
+use options::{CursorOptions, Options, TableOptions};
 
 /// Bumped whenever a function, struct, column or code changes meaning.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// The ABI version this library speaks.
 #[unsafe(no_mangle)]
@@ -127,6 +127,17 @@ const DESCRIPTIONS: &[(&str, Describe)] = &[
             explicit_horizontal_len,
         })
     }),
+    ("CursorOptions", || {
+        layout!(CursorOptions {
+            struct_size,
+            present,
+            skip,
+            max_pages,
+            read_ahead,
+            pages,
+            pages_len,
+        })
+    }),
     ("ErrorOut", || {
         layout!(ErrorOut {
             code,
@@ -150,6 +161,9 @@ const DESCRIPTIONS: &[(&str, Describe)] = &[
     ("TableOptionBits", || {
         named(options::topt::NAMES.iter().copied())
     }),
+    ("CursorOptionBits", || {
+        named(options::copt::NAMES.iter().copied())
+    }),
     ("TableStrategy", || {
         named(
             options::STRATEGIES
@@ -172,8 +186,8 @@ static DESCRIBED: OnceLock<Vec<String>> = OnceLock::new();
 /// A description of something the JVM mirrors by hand, as static UTF-8
 /// lines: struct layouts (`size:N`, `field:name:offset:size`) and named
 /// values (`value:NAME:N`). `name` is one of `Options`, `TableOptions`,
-/// `ErrorOut`, `BatchHeader`, `ColumnDesc`, `OptionBits`, `TableOptionBits`,
-/// `TableStrategy`, `Status`.
+/// `CursorOptions`, `ErrorOut`, `BatchHeader`, `ColumnDesc`, `OptionBits`,
+/// `TableOptionBits`, `CursorOptionBits`, `TableStrategy`, `Status`.
 ///
 /// # Safety
 /// `name` must cover `name_len` bytes; the out-pointers must be writable;
