@@ -15,6 +15,7 @@ class CursorTest {
             document.cursor(
                 Schema.Kind.SUMMARY,
                 null,
+                CursorOptions.DEFAULT,
                 (columns, out) -> {
                   throw new IllegalStateException("bad page");
                 })) {

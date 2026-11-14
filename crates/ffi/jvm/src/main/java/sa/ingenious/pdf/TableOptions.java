@@ -136,6 +136,13 @@ public record TableOptions(
       return this;
     }
 
+    /**
+     * The most pages to read. It narrows the document's selection like {@link
+     * CursorOptions#maxPages()}, and when both are set the smaller wins.
+     *
+     * @deprecated Use {@link CursorOptions.Builder#maxPages(int)}, which every cursor takes.
+     */
+    @Deprecated
     public Builder maxPages(int value) {
       maxPages = value;
       return this;
