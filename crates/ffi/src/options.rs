@@ -203,7 +203,10 @@ unsafe fn zero_based_pages(pages: *const i64, len: i64) -> FfiResult<Vec<usize>>
             positive_count(page, "pages")
                 .map(|page| page - 1)
                 .map_err(|_| {
-                    FfiError::invalid("pages", "page numbers are 1-based and must be positive")
+                    FfiError::invalid(
+                        "pages",
+                        format!("page numbers are 1-based, from 1 to {}", u32::MAX),
+                    )
                 })
         })
         .collect()
@@ -738,11 +741,19 @@ mod tests {
             field_of(with(0, |r| r.struct_size = 8)),
             Some("cursor_options")
         );
-        let zero = [0_i64];
-        let mut raw = with(copt::PAGES, |_| {});
-        raw.pages = zero.as_ptr();
-        raw.pages_len = 1;
-        assert_eq!(field_of(raw), Some("pages"));
+        for page in [0_i64, i64::from(u32::MAX) + 1] {
+            let pages = [page];
+            let mut raw = with(copt::PAGES, |_| {});
+            raw.pages = pages.as_ptr();
+            raw.pages_len = 1;
+            let error = unsafe { CursorArgs::from_raw(&raw) }.unwrap_err();
+            assert_eq!(error.field, Some("pages"));
+            assert!(
+                error.message.contains("from 1 to 4294967295"),
+                "{}",
+                error.message
+            );
+        }
     }
 
     #[test]
