@@ -35,7 +35,8 @@ args = ["run", "test:release"]
 [tasks.test-parity]
 description = "Run upstream pdfminer.six and pdfplumber parity suites"
 script = '''
-set -e
+# -f: node IDs such as test_x[1] are passed as written, never matched against files.
+set -ef
 for suite in pdfminer.six pdfplumber; do
   if find "references/$suite" -type f -name "test*.py" -print -quit | grep -q .; then
     # Deliberate differences from upstream, with their reasons: tests/parity-differences.txt.
