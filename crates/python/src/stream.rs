@@ -14,7 +14,7 @@ use bolivar_core::layout::LTPage;
 use bolivar_core::table::{TextDir, WordObj};
 use pyo3::exceptions::{PyStopAsyncIteration, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBool, PyDict};
 
 use crate::document::{PyPDFDocument, build_extract_options, open_document_from_input};
 use crate::layout::ltpage_to_py;
@@ -166,14 +166,20 @@ impl Drop for AsyncPageStream {
     }
 }
 
-/// `read_ahead` as the core option: None keeps the default, anything else must be positive.
-fn read_ahead_option(read_ahead: Option<i64>) -> PyResult<Option<NonZeroUsize>> {
+/// `read_ahead` as the core option: None keeps the default; anything else must be a positive
+/// int (not a bool), or this raises ValueError.
+fn read_ahead_option(read_ahead: Option<&Bound<'_, PyAny>>) -> PyResult<Option<NonZeroUsize>> {
+    let invalid = || PyValueError::new_err("read_ahead must be a positive integer");
     read_ahead
         .map(|value| {
-            usize::try_from(value)
+            if value.is_instance_of::<PyBool>() {
+                return Err(invalid());
+            }
+            value
+                .extract::<usize>()
                 .ok()
                 .and_then(NonZeroUsize::new)
-                .ok_or_else(|| PyValueError::new_err("read_ahead must be a positive integer"))
+                .ok_or_else(invalid)
         })
         .transpose()
 }
@@ -190,7 +196,7 @@ pub fn extract_pages_async(
     caching: bool,
     laparams: Option<&PyLAParams>,
     bidi: bool,
-    read_ahead: Option<i64>,
+    read_ahead: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<AsyncPageStream> {
     let mut options =
         build_extract_options(password, page_numbers, maxpages, caching, laparams, bidi);
