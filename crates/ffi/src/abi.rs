@@ -9,25 +9,42 @@ use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use bolivar_core::PdfError;
+use bolivar_core::{ErrorKind, InvalidSetting, PdfError};
 
-/// Status codes. Java mirrors these in `sa.ingenious.pdf.internal.Status`.
-#[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Code {
-    Ok = 0,
-    InvalidPath = 1,
-    InvalidArgument = 2,
-    IoNotFound = 3,
-    IoPermissionDenied = 4,
-    IoError = 5,
-    SyntaxError = 6,
-    EncryptionError = 7,
-    MalformedPdf = 8,
-    DecodeError = 9,
-    Cancelled = 10,
-    RuntimeError = 11,
-    Panicked = 12,
+/// Declares [`Code`] and [`Code::FAILURES`] from one list, so the names `bolivar_describe`
+/// exports cannot drift from the enum.
+macro_rules! codes {
+    ($($variant:ident = $value:literal => $name:literal),* $(,)?) => {
+        /// Status codes. Java mirrors these in `sa.ingenious.pdf.internal.Contract.Status`,
+        /// which `bolivar_describe` checks at load.
+        #[repr(i32)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum Code {
+            Ok = 0,
+            $($variant = $value),*
+        }
+
+        impl Code {
+            /// Every failure code, by the name Java gives it.
+            pub const FAILURES: &[(&str, Code)] = &[$(($name, Code::$variant)),*];
+        }
+    };
+}
+
+codes! {
+    InvalidPath = 1 => "INVALID_PATH",
+    InvalidArgument = 2 => "INVALID_ARGUMENT",
+    IoNotFound = 3 => "IO_NOT_FOUND",
+    IoPermissionDenied = 4 => "IO_PERMISSION_DENIED",
+    IoError = 5 => "IO_ERROR",
+    SyntaxError = 6 => "SYNTAX_ERROR",
+    EncryptionError = 7 => "ENCRYPTION_ERROR",
+    MalformedPdf = 8 => "MALFORMED_PDF",
+    DecodeError = 9 => "DECODE_ERROR",
+    Cancelled = 10 => "CANCELLED",
+    RuntimeError = 11 => "RUNTIME_ERROR",
+    Panicked = 12 => "PANICKED",
+    Unsupported = 13 => "UNSUPPORTED",
 }
 
 /// A failure: its code, a message, and the option field at fault, if any.
@@ -47,6 +64,8 @@ impl FfiError {
         }
     }
 
+    /// Back to a core error, for work that runs inside a core stream. Batch
+    /// building only fails on an overflow, a runtime fault.
     /// An invalid option or argument, naming the field at fault.
     pub fn invalid(field: &'static str, message: impl Into<String>) -> Self {
         Self {
@@ -59,21 +78,29 @@ impl FfiError {
 
 impl From<PdfError> for FfiError {
     fn from(error: PdfError) -> Self {
-        let code = match &error {
-            PdfError::Io(io) => match io.kind() {
-                std::io::ErrorKind::NotFound => Code::IoNotFound,
-                std::io::ErrorKind::PermissionDenied => Code::IoPermissionDenied,
-                _ => Code::IoError,
-            },
-            PdfError::DecodeError(_) => Code::DecodeError,
-            PdfError::SyntaxError(_) => Code::SyntaxError,
-            PdfError::InvalidArgument(_) => Code::InvalidArgument,
-            PdfError::EncryptionError(_) => Code::EncryptionError,
-            PdfError::Cancelled => Code::Cancelled,
-            PdfError::RuntimeError(_) => Code::RuntimeError,
-            _ => Code::MalformedPdf,
+        if let PdfError::InvalidSetting(setting) = error {
+            return setting.into();
+        }
+        let code = match error.kind() {
+            ErrorKind::NotFound => Code::IoNotFound,
+            ErrorKind::PermissionDenied => Code::IoPermissionDenied,
+            ErrorKind::Io => Code::IoError,
+            ErrorKind::Syntax => Code::SyntaxError,
+            ErrorKind::Decode => Code::DecodeError,
+            ErrorKind::Encryption => Code::EncryptionError,
+            ErrorKind::InvalidArgument => Code::InvalidArgument,
+            ErrorKind::Unsupported => Code::Unsupported,
+            ErrorKind::Cancelled => Code::Cancelled,
+            ErrorKind::Runtime => Code::RuntimeError,
+            ErrorKind::Malformed => Code::MalformedPdf,
         };
         Self::new(code, error.to_string())
+    }
+}
+
+impl From<InvalidSetting> for FfiError {
+    fn from(error: InvalidSetting) -> Self {
+        Self::invalid(error.field, error.message)
     }
 }
 
@@ -90,6 +117,19 @@ pub struct ErrorOut {
     pub field_len: i64,
     pub message: *mut u16,
     pub message_len: i64,
+}
+
+impl Default for ErrorOut {
+    fn default() -> Self {
+        Self {
+            code: 0,
+            _pad: 0,
+            field: std::ptr::null_mut(),
+            field_len: 0,
+            message: std::ptr::null_mut(),
+            message_len: 0,
+        }
+    }
 }
 
 fn leak_utf16(text: &str) -> (*mut u16, i64) {
@@ -164,11 +204,27 @@ pub unsafe fn guard(err: *mut ErrorOut, body: impl FnOnce() -> FfiResult<()>) ->
 /// `err` must be null or point to an `ErrorOut` filled by this library.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bolivar_error_free(err: *mut ErrorOut) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
+    no_unwind(|| {
         if let Some(out) = unsafe { err.as_mut() } {
             unsafe { free_error_strings(out) };
         }
-    }));
+    });
+}
+
+/// Run a function that returns nothing to C, swallowing a panic: unwinding
+/// out of `extern "C"` would abort the JVM.
+pub fn no_unwind(body: impl FnOnce()) {
+    let _ = catch_unwind(AssertUnwindSafe(body));
+}
+
+/// Free a handle from [`into_handle`]. Null is ignored; a panic in `Drop`
+/// is swallowed.
+///
+/// # Safety
+/// `ptr` must be null or a live handle of type `T`, freed once, with no call
+/// using it in progress.
+pub unsafe fn free_handle<T>(ptr: *mut T) {
+    no_unwind(|| drop(unsafe { from_handle(ptr) }));
 }
 
 // ---- pointer helpers ------------------------------------------------------
@@ -275,17 +331,6 @@ pub extern "C" fn bolivar_debug_live_handles() -> i64 {
 mod tests {
     use super::*;
 
-    fn empty_error() -> ErrorOut {
-        ErrorOut {
-            code: 0,
-            _pad: 0,
-            field: std::ptr::null_mut(),
-            field_len: 0,
-            message: std::ptr::null_mut(),
-            message_len: 0,
-        }
-    }
-
     fn message(out: &ErrorOut) -> String {
         let units = unsafe { std::slice::from_raw_parts(out.message, out.message_len as usize) };
         String::from_utf16(units).unwrap()
@@ -293,7 +338,7 @@ mod tests {
 
     #[test]
     fn guard_reports_errors_with_field() {
-        let mut out = empty_error();
+        let mut out = ErrorOut::default();
         let code = unsafe {
             guard(&mut out, || {
                 Err(FfiError::invalid("max_pages", "must be positive"))
@@ -310,7 +355,7 @@ mod tests {
 
     #[test]
     fn guard_turns_panics_into_a_status() {
-        let mut out = empty_error();
+        let mut out = ErrorOut::default();
         let code = unsafe { guard(&mut out, || panic!("boom")) };
         assert_eq!(code, Code::Panicked as i32);
         assert_eq!(message(&out), "boom");
@@ -319,7 +364,7 @@ mod tests {
 
     #[test]
     fn guard_reuses_an_error_out_without_leaking() {
-        let mut out = empty_error();
+        let mut out = ErrorOut::default();
         for _ in 0..3 {
             unsafe { guard(&mut out, || Err(FfiError::new(Code::IoError, "again"))) };
         }

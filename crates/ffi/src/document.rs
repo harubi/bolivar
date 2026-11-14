@@ -2,26 +2,25 @@
 
 use std::sync::Arc;
 
-use bolivar_core::extract::extract_text_with_document;
-use bolivar_core::pdfdocument::{DEFAULT_CACHE_CAPACITY, PDFDocument};
+use bolivar_core::extract::{
+    ExecutionPlan, ExtractOptions, extract_text_with_document, layout_tables_page,
+};
+use bolivar_core::pdfdocument::PDFDocument;
+use bolivar_core::table::TableSettings;
 
 use crate::abi::{
-    Code, ErrorOut, FfiError, FfiResult, from_handle, guard, handle_mut, handle_ref, slice,
-    write_handle, write_out,
+    Code, ErrorOut, FfiError, FfiResult, free_handle, from_handle, guard, handle_mut, handle_ref,
+    into_handle, slice, write_handle, write_out,
 };
-use crate::batch::{Batch, Builder, text};
-use crate::cursor::{CursorState, Kind};
-use crate::metadata::{metadata_batch, metadata_from_document};
-use crate::options::{DocOptions, Options, Tables};
+use crate::batch::{Batch, Builder, Built, text};
+use crate::metadata::{metadata_built, metadata_from_document};
+use crate::options::{DocumentOptions, Options};
+use crate::pages::raw_built;
 
-/// An open document and the options it was opened with.
+/// An open document and the extraction options it was opened with.
 pub struct Document {
     pub(crate) doc: Arc<PDFDocument>,
-    pub(crate) options: DocOptions,
-}
-
-fn cache_capacity(caching: bool) -> usize {
-    if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
+    pub(crate) extract: ExtractOptions,
 }
 
 fn validate_path(path: &str) -> FfiResult<()> {
@@ -32,45 +31,23 @@ fn validate_path(path: &str) -> FfiResult<()> {
 }
 
 impl Document {
-    fn open_path(path: &str, mut options: DocOptions) -> FfiResult<Self> {
-        validate_path(path)?;
-        let doc = PDFDocument::new_from_path_with_cache_and_fallback(
-            path,
-            &options.core.password,
-            cache_capacity(options.core.caching),
-            true,
-        )?;
-        // The password has done its work; do not keep it in memory.
-        options.core.password = String::new();
-        Ok(Self {
+    fn new(doc: PDFDocument, extract: ExtractOptions) -> Self {
+        Self {
             doc: Arc::new(doc),
-            options,
-        })
+            extract,
+        }
     }
 
-    fn open_bytes(bytes: Vec<u8>, mut options: DocOptions) -> FfiResult<Self> {
-        let doc = PDFDocument::new_from_vec_with_cache(
-            bytes,
-            &options.core.password,
-            cache_capacity(options.core.caching),
-        )?;
-        options.core.password = String::new();
-        Ok(Self {
-            doc: Arc::new(doc),
-            options,
-        })
+    /// The whole document's text, as UTF-8.
+    pub fn text_built(&self) -> FfiResult<Built> {
+        let value = extract_text_with_document(self.doc.as_ref(), self.extract.clone())?;
+        let mut b = Builder::new(&text::SCHEMA);
+        b.u8s(text::Col::Utf8).extend_from_slice(value.as_bytes());
+        b.finish()
     }
 
-    /// The whole document's text.
-    pub fn text_batch(&self) -> FfiResult<Batch> {
-        let value = extract_text_with_document(self.doc.as_ref(), self.options.core.clone())?;
-        let mut b = Builder::new(text::KIND, text::COLUMNS);
-        b.text(&value)?;
-        b.finish(&[])
-    }
-
-    /// One 1-based page as a raw batch.
-    pub fn raw_page_batch(&self, page_number: i64) -> FfiResult<Batch> {
+    /// One 1-based page as a raw batch, on the calling thread.
+    pub fn raw_page_built(&self, page_number: i64) -> FfiResult<Built> {
         let tree_len = self.doc.page_tree_len() as i64;
         if page_number < 1 || page_number > tree_len {
             return Err(FfiError::invalid(
@@ -78,23 +55,25 @@ impl Document {
                 format!("page_number must be within 1..={tree_len}"),
             ));
         }
-        let mut options = self.options.clone();
-        options.core.page_numbers = Some(vec![(page_number - 1) as usize]);
-        options.core.maxpages = 1;
-        let mut state = CursorState::open(Kind::Raw, &self.doc, options, Tables::default())?;
-        state
-            .next_batch()?
-            .ok_or_else(|| FfiError::invalid("page_number", "page produced no output"))
+        let index = (page_number - 1) as usize;
+        let (pdf_page, _, page, tables) = layout_tables_page(
+            &self.doc,
+            index,
+            self.extract.clone(),
+            TableSettings::default(),
+            None,
+        )?;
+        raw_built(index, &pdf_page, &page, &tables)
     }
 
     /// The declared page count and the number of pages the options select.
     pub fn counts(&self) -> (i64, i64) {
-        let selected = bolivar_core::engine::select_pages(
+        let plan = ExecutionPlan::new(
             self.doc.page_tree_len(),
-            self.options.core.page_numbers.clone(),
-            self.options.core.maxpages,
+            self.extract.page_numbers.as_deref(),
+            self.extract.maxpages,
         );
-        (self.doc.page_count() as i64, selected.len() as i64)
+        (self.doc.page_count() as i64, plan.order.len() as i64)
     }
 }
 
@@ -117,9 +96,10 @@ pub unsafe extern "C" fn bolivar_open_path(
             let bytes = slice(path, path_len, "path")?;
             let path = std::str::from_utf8(bytes)
                 .map_err(|_| FfiError::new(Code::InvalidPath, "path must be UTF-8"))?;
-            let options = DocOptions::from_raw(options)?;
-            let document = Document::open_path(path, options)?;
-            write_handle(out, "out", document)
+            validate_path(path)?;
+            let options = DocumentOptions::from_raw(options)?;
+            let doc = PDFDocument::open_path(path, &options.open)?;
+            write_handle(out, "out", Document::new(doc, options.extract))
         })
     }
 }
@@ -131,6 +111,18 @@ pub struct Buffer {
 
 fn capacity(value: i64) -> FfiResult<usize> {
     usize::try_from(value).map_err(|_| FfiError::invalid("capacity", "capacity is negative"))
+}
+
+fn fill_len(buffer: &Buffer, filled: i64) -> FfiResult<usize> {
+    let filled =
+        usize::try_from(filled).map_err(|_| FfiError::invalid("filled", "filled is negative"))?;
+    if filled > buffer.bytes.capacity() {
+        return Err(FfiError::invalid(
+            "filled",
+            "filled exceeds the buffer capacity",
+        ));
+    }
+    Ok(filled)
 }
 
 /// Allocate a buffer of at least `capacity` bytes and return where to write.
@@ -146,11 +138,13 @@ pub unsafe extern "C" fn bolivar_buffer_alloc(
 ) -> i32 {
     unsafe {
         guard(err, || {
+            if out.is_null() {
+                return Err(FfiError::invalid("out", "out pointer is null"));
+            }
             let mut buffer = Buffer {
                 bytes: Vec::with_capacity(capacity(capacity_bytes)?),
             };
-            let data = buffer.bytes.as_mut_ptr();
-            write_out(out_data, "out_data", data)?;
+            write_out(out_data, "out_data", buffer.bytes.as_mut_ptr())?;
             write_handle(out, "out", buffer)
         })
     }
@@ -184,18 +178,6 @@ pub unsafe extern "C" fn bolivar_buffer_grow(
     }
 }
 
-fn fill_len(buffer: &Buffer, filled: i64) -> FfiResult<usize> {
-    let filled =
-        usize::try_from(filled).map_err(|_| FfiError::invalid("filled", "filled is negative"))?;
-    if filled > buffer.bytes.capacity() {
-        return Err(FfiError::invalid(
-            "filled",
-            "filled exceeds the buffer capacity",
-        ));
-    }
-    Ok(filled)
-}
-
 /// Open a document from a buffer's first `filled` bytes. The buffer is
 /// consumed whether or not the open succeeds.
 ///
@@ -218,9 +200,9 @@ pub unsafe extern "C" fn bolivar_open_buffer(
             let filled = fill_len(&buffer, filled)?;
             // SAFETY: `filled` is within capacity and the caller wrote it.
             buffer.bytes.set_len(filled);
-            let options = DocOptions::from_raw(options)?;
-            let document = Document::open_bytes(std::mem::take(&mut buffer.bytes), options)?;
-            write_handle(out, "out", document)
+            let options = DocumentOptions::from_raw(options)?;
+            let doc = PDFDocument::open_vec(std::mem::take(&mut buffer.bytes), &options.open)?;
+            write_handle(out, "out", Document::new(doc, options.extract))
         })
     }
 }
@@ -231,9 +213,7 @@ pub unsafe extern "C" fn bolivar_open_buffer(
 /// `buffer` must be null or a live buffer, once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bolivar_buffer_free(buffer: *mut Buffer) {
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        drop(unsafe { from_handle(buffer) });
-    }));
+    unsafe { free_handle(buffer) }
 }
 
 /// Free a document. Cursors opened from it stay valid: each holds the
@@ -243,9 +223,7 @@ pub unsafe extern "C" fn bolivar_buffer_free(buffer: *mut Buffer) {
 /// `document` must be null or a live document with no call in progress, once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bolivar_document_free(document: *mut Document) {
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        drop(unsafe { from_handle(document) });
-    }));
+    unsafe { free_handle(document) }
 }
 
 /// Run a call that returns a batch.
@@ -253,13 +231,16 @@ unsafe fn batch_call(
     document: *const Document,
     out: *mut *mut Batch,
     err: *mut ErrorOut,
-    call: impl FnOnce(&Document) -> FfiResult<Batch>,
+    call: impl FnOnce(&Document) -> FfiResult<Built>,
 ) -> i32 {
     unsafe {
         guard(err, || {
             let document = handle_ref(document)?;
-            let batch = call(document)?;
-            write_handle(out, "out", batch)
+            if out.is_null() {
+                return Err(FfiError::invalid("out", "out pointer is null"));
+            }
+            let batch = call(document)?.into_batch();
+            write_out(out, "out", into_handle(batch))
         })
     }
 }
@@ -275,7 +256,7 @@ pub unsafe extern "C" fn bolivar_document_text(
     out: *mut *mut Batch,
     err: *mut ErrorOut,
 ) -> i32 {
-    unsafe { batch_call(document, out, err, Document::text_batch) }
+    unsafe { batch_call(document, out, err, Document::text_built) }
 }
 
 /// The document's metadata, as a metadata batch.
@@ -290,7 +271,7 @@ pub unsafe extern "C" fn bolivar_document_metadata(
 ) -> i32 {
     unsafe {
         batch_call(document, out, err, |d| {
-            metadata_batch(&metadata_from_document(&d.doc))
+            metadata_built(&metadata_from_document(&d.doc))
         })
     }
 }
@@ -306,7 +287,7 @@ pub unsafe extern "C" fn bolivar_document_raw_page(
     out: *mut *mut Batch,
     err: *mut ErrorOut,
 ) -> i32 {
-    unsafe { batch_call(document, out, err, |d| d.raw_page_batch(page_number)) }
+    unsafe { batch_call(document, out, err, |d| d.raw_page_built(page_number)) }
 }
 
 /// The declared page count and the number of pages the options select.
