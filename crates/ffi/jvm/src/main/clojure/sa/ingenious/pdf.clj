@@ -202,17 +202,17 @@
    :crop                      :box
    :first-page-crop           :box})
 
-(defn- table-options ^TableOptions [m]
-  (let [o (conform table-spec "table option" m)]
-    (TableOptions. (:vertical-strategy o) (:horizontal-strategy o)
-                   (:snap-tolerance o) (:snap-x-tolerance o) (:snap-y-tolerance o)
-                   (:join-tolerance o) (:join-x-tolerance o) (:join-y-tolerance o)
-                   (:intersection-tolerance o) (:intersection-x-tolerance o)
-                   (:intersection-y-tolerance o)
-                   (:explicit-vertical-lines o) (:explicit-horizontal-lines o)
-                   (:crop o) (:first-page-crop o)
-                   ;; :max-pages is a cursor option now, for every source.
-                   nil)))
+(defn- ->table-options
+  "TableOptions from conformed table values. :max-pages is a cursor option, for every source."
+  ^TableOptions [o]
+  (TableOptions. (:vertical-strategy o) (:horizontal-strategy o)
+                 (:snap-tolerance o) (:snap-x-tolerance o) (:snap-y-tolerance o)
+                 (:join-tolerance o) (:join-x-tolerance o) (:join-y-tolerance o)
+                 (:intersection-tolerance o) (:intersection-x-tolerance o)
+                 (:intersection-y-tolerance o)
+                 (:explicit-vertical-lines o) (:explicit-horizontal-lines o)
+                 (:crop o) (:first-page-crop o)
+                 nil))
 
 (def ^:private cursor-spec
   {:pages      :pages
@@ -220,17 +220,17 @@
    :max-pages  :int
    :read-ahead :int})
 
+(defn- ->cursor-options ^CursorOptions [o]
+  (CursorOptions. (:pages o) (:skip o) (:max-pages o) (:read-ahead o)))
+
 (defn- cursor-options ^CursorOptions [m]
-  (let [o (conform cursor-spec "cursor option" m)]
-    (CursorOptions. (:pages o) (:skip o) (:max-pages o) (:read-ahead o))))
+  (->cursor-options (conform cursor-spec "cursor option" m)))
 
 (defn- split-options
-  "A source's opts map as [table options, cursor options], each checked against its spec."
+  "A table source's opts map, checked once, as [table options, cursor options]."
   [m]
-  (when-not (or (nil? m) (map? m))
-    (invalid! nil "table option must be a map" m))
-  [(table-options (apply dissoc m (keys cursor-spec)))
-   (cursor-options (select-keys m (keys cursor-spec)))])
+  (let [o (conform (merge table-spec cursor-spec) "table option" m)]
+    [(->table-options o) (->cursor-options o)]))
 
 ;;;; Views
 ;;
