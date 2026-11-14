@@ -1793,36 +1793,48 @@ mod tests {
     }
 
     #[test]
-    fn read_ahead_bounds_the_pages_an_unread_stream_finishes() {
+    fn read_ahead_bounds_the_pages_a_stream_runs_past_its_reader() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+
+        const READ_AHEAD: usize = 2;
         let pdf = build_minimal_pdf_with_pages(6);
         let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
+        let read = Arc::new(AtomicUsize::new(0));
+        let furthest_ahead = Arc::new(AtomicUsize::new(0));
         let (finished, finished_pages) = std::sync::mpsc::channel();
         let options = ExtractOptions {
-            read_ahead: std::num::NonZeroUsize::new(2),
+            read_ahead: std::num::NonZeroUsize::new(READ_AHEAD),
             ..ExtractOptions::default()
         };
-        let stream = extract_pages_stream_with(doc, options, move |page_idx, _, _| {
-            finished.send(page_idx).expect("finish signal");
-            Ok(page_idx)
+        let stream = extract_pages_stream_with(doc, options, {
+            let (read, furthest_ahead) = (Arc::clone(&read), Arc::clone(&furthest_ahead));
+            move |page_idx, _, _| {
+                // The stream starts a page only below handed_out + READ_AHEAD, and this test's
+                // count trails handed_out by at most the one page being returned, so a page
+                // never runs more than READ_AHEAD past the count.
+                furthest_ahead.fetch_max(page_idx.saturating_sub(read.load(SeqCst)), SeqCst);
+                finished.send(()).expect("finish signal");
+                Ok(page_idx)
+            }
         })
         .unwrap();
 
-        let wait = std::time::Duration::from_secs(5);
-        let mut seen = vec![
-            finished_pages.recv_timeout(wait).expect("first page"),
-            finished_pages.recv_timeout(wait).expect("second page"),
-        ];
-        seen.sort_unstable();
-        assert_eq!(seen, vec![0, 1]);
-        assert!(
-            finished_pages
-                .recv_timeout(std::time::Duration::from_millis(200))
-                .is_err(),
-            "a third page ran with nobody reading"
-        );
+        // Let the stream run as far as it may before reading anything.
+        finished_pages.recv().expect("first page");
+        finished_pages.recv().expect("second page");
+        let pages: Vec<usize> = stream
+            .map(|r| {
+                let page = r.unwrap().1;
+                read.fetch_add(1, SeqCst);
+                page
+            })
+            .collect();
 
-        let pages: Vec<usize> = stream.map(|r| r.unwrap().1).collect();
         assert_eq!(pages, vec![0, 1, 2, 3, 4, 5]);
+        assert!(
+            furthest_ahead.load(SeqCst) <= READ_AHEAD,
+            "a page ran too far ahead"
+        );
     }
 
     #[test]
