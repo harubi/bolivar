@@ -17,5 +17,4 @@ count-alloc = []
 
 [dependencies]
 bolivar-core.workspace = true
-regex.workspace = true
 rustc-hash.workspace = true

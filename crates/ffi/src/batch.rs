@@ -2,16 +2,18 @@
 //!
 //! A batch is a header and a directory of typed columns. Java reads the
 //! header at the batch address, checks each column's element type and length,
-//! copies the columns into Java arrays, and frees the batch. Every kind starts
-//! with the same five columns ([`Common`]); the rest are declared per kind with
-//! [`schema!`], and their names are exported so Java can check it agrees.
+//! copies the columns into Java arrays, and frees the batch.
 //!
-//! Text is UTF-16 (Java's own string encoding, so no decoding on the JVM
-//! side). Ranges into the text are `i32` start/end pairs; `-1, -1` is absent.
+//! Every kind starts with five common columns: `Text` (UTF-16), `Strings` and
+//! `StringOff` (an interned string table), `Ints` and `Floats` (named scalar
+//! slots). Each kind declares its slots and columns once, in [`schema!`]; the
+//! names are exported through `bolivar_schema` so Java can check it agrees.
+//!
+//! Ranges into `Text` are `i32` start/end pairs; `-1, -1` is absent.
 
 use rustc_hash::FxHashMap;
 
-use crate::abi::{ErrorOut, FfiError, FfiResult, from_handle, guard, handle_ref, write_out};
+use crate::abi::{Code, ErrorOut, FfiError, FfiResult, free_handle, guard, write_out};
 
 pub const MAGIC: u32 = 0x424F_4C56; // "BOLV"
 
@@ -24,18 +26,6 @@ pub enum Elem {
     I64 = 3,
     U8 = 4,
     U16 = 5,
-}
-
-impl Elem {
-    const fn code(self) -> &'static str {
-        match self {
-            Self::F64 => "F64",
-            Self::I32 => "I32",
-            Self::I64 => "I64",
-            Self::U8 => "U8",
-            Self::U16 => "U16",
-        }
-    }
 }
 
 #[repr(C)]
@@ -94,19 +84,34 @@ impl Column {
     }
 }
 
-/// A finished batch. The header is the first field, so a batch pointer is a
-/// header pointer.
-#[repr(C)]
+/// A finished batch's columns. `Send`, so workers build batches in parallel;
+/// the consumer turns it into a [`Batch`].
 #[derive(Debug)]
-pub struct Batch {
-    header: BatchHeader,
-    descs: Vec<ColumnDesc>,
+pub struct Built {
+    kind: u32,
     columns: Vec<Column>,
 }
 
-impl Batch {
+impl Built {
+    /// Attach the column directory the JVM reads.
+    pub fn into_batch(self) -> Batch {
+        let descs: Vec<ColumnDesc> = self.columns.iter().map(Column::desc).collect();
+        let header = BatchHeader {
+            magic: MAGIC,
+            abi_version: crate::ABI_VERSION,
+            kind: self.kind,
+            ncols: descs.len() as u32,
+            cols: descs.as_ptr(),
+        };
+        Batch {
+            header,
+            _descs: descs,
+            columns: self.columns,
+        }
+    }
+
     pub fn kind(&self) -> u32 {
-        self.header.kind
+        self.kind
     }
 
     pub fn columns(&self) -> &[Column] {
@@ -114,32 +119,43 @@ impl Batch {
     }
 }
 
-/// Declare a batch kind: its number and its columns after the common five.
-macro_rules! schema {
-    ($module:ident, $kind:expr, [$($col:ident : $elem:ident),* $(,)?]) => {
-        pub mod $module {
-            use crate::batch::Elem;
-            pub const KIND: u32 = $kind;
-            #[allow(dead_code)]
-            #[derive(Debug, Clone, Copy)]
-            #[repr(usize)]
-            pub enum Col {
-                Text, Strings, StringOff, Ints, Floats,
-                $($col),*
-            }
-            pub const COLUMNS: &[(&str, Elem)] = &[
-                ("Text", Elem::U16), ("Strings", Elem::U16), ("StringOff", Elem::I32),
-                ("Ints", Elem::I64), ("Floats", Elem::F64),
-                $((stringify!($col), Elem::$elem)),*
-            ];
-            impl From<Col> for usize {
-                fn from(col: Col) -> usize { col as usize }
-            }
-        }
-    };
+/// A batch handed to the JVM. The header is the first field, so a batch
+/// pointer is a header pointer. The descriptors point into `columns`, whose
+/// buffers never move once built.
+#[repr(C)]
+#[derive(Debug)]
+pub struct Batch {
+    header: BatchHeader,
+    _descs: Vec<ColumnDesc>,
+    columns: Vec<Column>,
 }
 
-/// Indices of the five columns every kind starts with.
+impl Batch {
+    pub fn columns(&self) -> &[Column] {
+        &self.columns
+    }
+}
+
+/// One kind's layout: its number, scalar slots and columns.
+pub struct Kind {
+    pub number: u32,
+    pub ints: &'static [&'static str],
+    pub floats: &'static [&'static str],
+    pub ranges: &'static [&'static str],
+    pub flags: &'static [&'static str],
+    pub columns: &'static [(&'static str, Elem)],
+}
+
+/// The five columns every kind starts with.
+pub const COMMON: [(&str, Elem); 5] = [
+    ("Text", Elem::U16),
+    ("Strings", Elem::U16),
+    ("StringOff", Elem::I32),
+    ("Ints", Elem::I64),
+    ("Floats", Elem::F64),
+];
+
+/// Indices of the common columns.
 pub mod common {
     pub const TEXT: usize = 0;
     pub const STRINGS: usize = 1;
@@ -148,55 +164,171 @@ pub mod common {
     pub const FLOATS: usize = 4;
 }
 
-schema!(layout, 1, [
-    BoxBbox: F64, BoxMode: I32, BoxText: I32, BoxLines: I32,
-    LineBbox: F64, LineOrient: I32, LineText: I32, LineChars: I32,
-    CharX0: F64, CharY0: F64, CharX1: F64, CharY1: F64,
-    CharSize: F64, CharFont: I32, CharUpright: U8, CharText: I32,
-]);
+/// Declare a batch kind: its number, named scalar slots, named ranges (held
+/// in a `Ranges` column), named flag bits, and columns after the common five.
+macro_rules! schema {
+    ($module:ident, $kind:expr,
+     ints: [$($int:ident),* $(,)?],
+     floats: [$($float:ident),* $(,)?],
+     ranges: [$($range:ident),* $(,)?],
+     flags: [$($flag:ident),* $(,)?],
+     columns: [$($col:ident : $elem:ident),* $(,)?]) => {
+        pub mod $module {
+            #![allow(dead_code)]
+            use crate::batch::{Elem, Kind, COMMON};
 
-schema!(raw, 2, [
-    PageBoxes: F64, PageBoxPresent: U8,
-    BoxBbox: F64, BoxMode: I32, BoxText: I32, BoxLines: I32,
-    LineBbox: F64, LineOrient: I32, LineRawText: I32, LineText: I32, LineChars: I32,
-    CharX0: F64, CharY0: F64, CharX1: F64, CharY1: F64,
-    CharSize: F64, CharFont: I32, CharUpright: U8, CharText: I32,
+            pub const KIND: u32 = $kind;
+
+            /// Columns, by index.
+            #[derive(Debug, Clone, Copy)]
+            pub enum Col { Text, Strings, StringOff, Ints, Floats, $($col),* }
+
+            /// Slots of the `Ints` column.
+            #[derive(Debug, Clone, Copy)]
+            pub enum Int { $($int),* }
+
+            /// Slots of the `Floats` column.
+            #[derive(Debug, Clone, Copy)]
+            pub enum Float { $($float),* }
+
+            /// Named ranges in the `Ranges` column.
+            #[derive(Debug, Clone, Copy)]
+            pub enum Range { $($range),* }
+
+            /// Bits of a flags slot.
+            #[derive(Debug, Clone, Copy)]
+            pub enum Flag { $($flag),* }
+
+            const OWN: &[(&str, Elem)] = &[$((stringify!($col), Elem::$elem)),*];
+
+            pub const COLUMNS: &[(&str, Elem)] = &{
+                let mut all = [("", Elem::U8); COMMON.len() + OWN.len()];
+                let mut i = 0;
+                while i < COMMON.len() {
+                    all[i] = COMMON[i];
+                    i += 1;
+                }
+                while i < all.len() {
+                    all[i] = OWN[i - COMMON.len()];
+                    i += 1;
+                }
+                all
+            };
+
+            pub const SCHEMA: Kind = Kind {
+                number: KIND,
+                ints: &[$(stringify!($int)),*],
+                floats: &[$(stringify!($float)),*],
+                ranges: &[$(stringify!($range)),*],
+                flags: &[$(stringify!($flag)),*],
+                columns: COLUMNS,
+            };
+
+            impl From<Col> for usize {
+                fn from(col: Col) -> usize { col as usize }
+            }
+        }
+    };
+}
+
+// Layout and raw pages share their first columns, the text layer, at the same
+// positions, so one reader serves both.
+macro_rules! text_layer {
+    ($module:ident, $kind:expr, ints: $ints:tt, floats: $floats:tt, columns: [$($rest:tt)*]) => {
+        schema!($module, $kind, ints: $ints, floats: $floats, ranges: [], flags: [], columns: [
+            BoxBbox: F64, BoxMode: I32, BoxText: I32, BoxLines: I32,
+            LineBbox: F64, LineOrient: I32, LineText: I32, LineChars: I32,
+            CharX0: F64, CharY0: F64, CharX1: F64, CharY1: F64,
+            CharSize: F64, CharFont: I32, CharUpright: U8, CharText: I32,
+            $($rest)*
+        ]);
+    };
+}
+
+text_layer!(layout, 1,
+    ints: [PageNumber, TextEnd],
+    floats: [Rotate, X0, Y0, X1, Y1],
+    columns: []);
+
+text_layer!(raw, 2,
+ints: [PageIndex, ObjectId, Rotation, LabelStart, LabelEnd, TextEnd],
+floats: [UserUnit, X0, Y0, X1, Y1],
+columns: [
+    LineRawText: I32,
     CharAdvance: F64, CharMatrix: F64, CharMcid: I32,
     CharTag: I32, CharNcs: I32, CharScs: I32,
     CharNcolor: I32, CharScolor: I32, ColorPool: F64,
-    TableBbox: F64, TableShape: I32, TableCells: I32,
-    CellIndex: I32, CellBbox: F64, CellText: I32,
+    PageBoxes: F64, PageBoxPresent: U8,
+    TableBboxTopDown: F64, TableShape: I32, TableCells: I32,
+    CellIndex: I32, CellBboxTopDown: F64, CellText: I32,
 ]);
 
-schema!(page_text, 3, [
+schema!(page_text, 3,
+ints: [PageNumber],
+floats: [X0, Y0, X1, Y1],
+ranges: [],
+flags: [],
+columns: [
     BoxBbox: F64, BoxText: I32, BoxTextWithoutBidi: I32, BoxLines: I32,
     LineBbox: F64, LineText: I32, LineTextWithoutBidi: I32,
-    Fonts: I32, DigitFont: I32, DigitSize: I32,
+    GlyphFont: I32, GlyphText: I32, GlyphSize: F64,
 ]);
 
-schema!(summary, 4, []);
+schema!(summary, 4,
+    ints: [PageNumber],
+    floats: [Rotate, X0, Y0, X1, Y1],
+    ranges: [],
+    flags: [],
+    columns: []);
 
-schema!(tables, 5, [
+schema!(tables, 5,
+ints: [PageNumber],
+floats: [],
+ranges: [],
+flags: [],
+columns: [
     TableBbox: F64, TableShape: I32, TableCells: I32,
     CellIndex: I32, CellBbox: F64, CellText: I32,
 ]);
 
-schema!(table_rows, 6, [CellText: I32, RowOffsets: I32, TableOffsets: I32]);
+schema!(table_rows, 6,
+    ints: [PageNumber],
+    floats: [],
+    ranges: [],
+    flags: [],
+    columns: [CellText: I32, RowOffsets: I32, TableOffsets: I32]);
 
-schema!(metadata, 7, [Fields: I32, InfoKeys: I32, InfoValues: I32]);
+schema!(metadata, 7,
+    ints: [FileSize, PageCount, Flags],
+    floats: [],
+    ranges: [
+        Title, Author, Subject, Keywords, Creator, Producer,
+        CreationDateRaw, CreationDateIso, ModificationDateRaw, ModificationDateIso,
+        VersionHeader, VersionCatalog, Form, Xmp,
+    ],
+    flags: [
+        Encrypted, Printable, Modifiable, Extractable, Linearized,
+        Tagged, UserProperties, Suspects, HasJavascript,
+    ],
+    columns: [Ranges: I32, InfoKeys: I32, InfoValues: I32]);
 
-schema!(text, 8, []);
+schema!(text, 8,
+    ints: [],
+    floats: [],
+    ranges: [],
+    flags: [],
+    columns: [Utf8: U8]);
 
-/// Every kind's number and columns.
-pub const KINDS: &[(u32, &[(&str, Elem)])] = &[
-    (layout::KIND, layout::COLUMNS),
-    (raw::KIND, raw::COLUMNS),
-    (page_text::KIND, page_text::COLUMNS),
-    (summary::KIND, summary::COLUMNS),
-    (tables::KIND, tables::COLUMNS),
-    (table_rows::KIND, table_rows::COLUMNS),
-    (metadata::KIND, metadata::COLUMNS),
-    (text::KIND, text::COLUMNS),
+/// Every kind.
+pub const KINDS: &[&Kind] = &[
+    &layout::SCHEMA,
+    &raw::SCHEMA,
+    &page_text::SCHEMA,
+    &summary::SCHEMA,
+    &tables::SCHEMA,
+    &table_rows::SCHEMA,
+    &metadata::SCHEMA,
+    &text::SCHEMA,
 ];
 
 /// The absent range.
@@ -204,44 +336,49 @@ pub const NONE: [i32; 2] = [-1, -1];
 
 /// A count or offset as an `i32`, the width Java indexes arrays with.
 pub(crate) fn to_i32(value: usize, what: &'static str) -> FfiResult<i32> {
-    i32::try_from(value).map_err(|_| {
-        FfiError::new(
-            crate::abi::Code::RuntimeError,
-            format!("{what} exceeds i32"),
-        )
-    })
+    i32::try_from(value)
+        .map_err(|_| FfiError::new(Code::RuntimeError, format!("{what} exceeds i32")))
 }
 
 /// Builds one batch.
 ///
-/// Text has two buffers. `text` holds runs that must stay contiguous (a
-/// page's text, made of its boxes, made of its lines); `aux` holds the rest
-/// (character text, raw line text, text without bidi). On finish, `aux` is
-/// appended after `text` and every range in the `aux_columns` is shifted.
+/// `Text` holds the page's contiguous text (a page made of boxes made of
+/// lines) first; strings that cannot be ranges into it are deferred and
+/// appended after it on finish, and their ranges patched then.
 pub struct Builder {
     kind: u32,
     columns: Vec<Column>,
     text: Vec<u16>,
-    aux: Vec<u16>,
+    deferred: Vec<(usize, usize, String)>,
     strings: Vec<u16>,
     string_off: Vec<i32>,
     ids: FxHashMap<Box<str>, i32>,
     keys: Vec<Box<str>>,
-    last: [i32; 6],
+    /// The id of each ASCII character, so single-byte glyphs skip hashing.
+    ascii_ids: [i32; 128],
+    last: [i32; 8],
 }
 
 impl Builder {
-    pub fn new(kind: u32, schema: &[(&str, Elem)]) -> Self {
+    pub fn new(kind: &Kind) -> Self {
+        let mut columns: Vec<Column> = kind
+            .columns
+            .iter()
+            .map(|(_, elem)| Column::new(*elem))
+            .collect();
+        columns[common::INTS] = Column::I64(vec![0; kind.ints.len()]);
+        columns[common::FLOATS] = Column::F64(vec![0.0; kind.floats.len()]);
         Self {
-            kind,
-            columns: schema.iter().map(|(_, elem)| Column::new(*elem)).collect(),
+            kind: kind.number,
+            columns,
             text: Vec::new(),
-            aux: Vec::new(),
+            deferred: Vec::new(),
             strings: Vec::new(),
             string_off: vec![0],
             ids: FxHashMap::default(),
             keys: Vec::new(),
-            last: [-1; 6],
+            ascii_ids: [-1; 128],
+            last: [-1; 8],
         }
     }
 
@@ -259,17 +396,34 @@ impl Builder {
         }
     }
 
-    pub fn i64s(&mut self, col: impl Into<usize>) -> &mut Vec<i64> {
-        match &mut self.columns[col.into()] {
-            Column::I64(v) => v,
-            other => panic!("column is not I64: {other:?}"),
-        }
-    }
-
     pub fn u8s(&mut self, col: impl Into<usize>) -> &mut Vec<u8> {
         match &mut self.columns[col.into()] {
             Column::U8(v) => v,
             other => panic!("column is not U8: {other:?}"),
+        }
+    }
+
+    /// Set a named `Ints` slot.
+    pub fn int(&mut self, slot: usize, value: i64) {
+        match &mut self.columns[common::INTS] {
+            Column::I64(v) => v[slot] = value,
+            _ => unreachable!("Ints is always I64"),
+        }
+    }
+
+    /// Set a named `Floats` slot.
+    pub fn float(&mut self, slot: usize, value: f64) {
+        match &mut self.columns[common::FLOATS] {
+            Column::F64(v) => v[slot] = value,
+            _ => unreachable!("Floats is always F64"),
+        }
+    }
+
+    /// Set four consecutive `Floats` slots from a box.
+    pub fn float_box(&mut self, first: usize, rect: (f64, f64, f64, f64)) {
+        let [a, b, c, d]: [f64; 4] = rect.into();
+        for (offset, value) in [a, b, c, d].into_iter().enumerate() {
+            self.float(first + offset, value);
         }
     }
 
@@ -286,43 +440,39 @@ impl Builder {
         }
     }
 
-    pub fn reserve_text(&mut self, units: usize, aux_units: usize) {
+    pub fn reserve_text(&mut self, units: usize) {
         self.text.reserve(units);
-        self.aux.reserve(aux_units);
     }
 
-    /// The current end of the contiguous text, as a range bound.
+    /// The current end of the text, as a range bound.
     pub fn text_pos(&self) -> FfiResult<i32> {
         to_i32(self.text.len(), "text")
     }
 
-    /// Append to the contiguous text and return its range.
+    /// Append to the text and return its range.
     pub fn text(&mut self, value: &str) -> FfiResult<[i32; 2]> {
         let start = self.text_pos()?;
         self.text.extend(value.encode_utf16());
         Ok([start, self.text_pos()?])
     }
 
-    /// Append one UTF-16 unit to the contiguous text.
+    /// Append one UTF-16 unit to the text.
     pub fn text_unit(&mut self, unit: u16) {
         self.text.push(unit);
     }
 
-    /// The current end of the aux text, as a range bound before shifting.
-    pub fn aux_pos(&self) -> FfiResult<i32> {
-        to_i32(self.aux.len(), "aux text")
-    }
-
-    /// Append to the aux text and return its (unshifted) range.
-    pub fn aux(&mut self, value: &str) -> FfiResult<[i32; 2]> {
-        let start = self.aux_pos()?;
-        self.aux.extend(value.encode_utf16());
-        Ok([start, self.aux_pos()?])
-    }
-
-    /// Append an optional value to the contiguous text.
+    /// Append an optional value to the text.
     pub fn text_opt(&mut self, value: Option<&str>) -> FfiResult<[i32; 2]> {
         value.map_or(Ok(NONE), |value| self.text(value))
+    }
+
+    /// Push a range for `value` onto range column `col`, written after the
+    /// page's contiguous text when the batch finishes.
+    pub fn defer(&mut self, col: impl Into<usize>, value: String) {
+        let col = col.into();
+        let at = self.i32s(col).len();
+        self.i32s(col).extend(NONE);
+        self.deferred.push((col, at, value));
     }
 
     /// The id of `value` in the batch's string table. `slot` caches the last
@@ -332,18 +482,7 @@ impl Builder {
         if last >= 0 && *self.keys[last as usize] == *value {
             return Ok(last);
         }
-        let id = match self.ids.get(value) {
-            Some(&id) => id,
-            None => {
-                let id = to_i32(self.keys.len(), "string table")?;
-                self.ids.insert(value.into(), id);
-                self.keys.push(value.into());
-                self.strings.extend(value.encode_utf16());
-                self.string_off
-                    .push(to_i32(self.strings.len(), "string table")?);
-                id
-            }
-        };
+        let id = self.intern_new(value)?;
         self.last[slot] = id;
         Ok(id)
     }
@@ -353,34 +492,46 @@ impl Builder {
         value.map_or(Ok(-1), |value| self.intern(slot, value))
     }
 
-    /// Finish the batch, shifting the ranges in `aux_columns` past the
-    /// contiguous text. Absent ranges (`-1`) stay absent.
-    pub fn finish(mut self, aux_columns: &[usize]) -> FfiResult<Batch> {
-        let shift = to_i32(self.text.len(), "text")?;
-        to_i32(self.text.len() + self.aux.len(), "text")?;
-        for &col in aux_columns {
-            for value in self.i32s(col).iter_mut() {
-                if *value >= 0 {
-                    *value += shift;
-                }
+    /// Intern a glyph's text: a direct table for ASCII characters, the hash
+    /// map for anything else.
+    pub fn intern_glyph(&mut self, value: &str) -> FfiResult<i32> {
+        if let [byte] = value.as_bytes()
+            && byte.is_ascii()
+        {
+            let index = usize::from(*byte);
+            if self.ascii_ids[index] < 0 {
+                self.ascii_ids[index] = self.intern_new(value)?;
             }
+            return Ok(self.ascii_ids[index]);
         }
-        let mut text = std::mem::take(&mut self.text);
-        text.extend_from_slice(&self.aux);
-        self.columns[common::TEXT] = Column::U16(text);
+        self.intern_new(value)
+    }
+
+    fn intern_new(&mut self, value: &str) -> FfiResult<i32> {
+        if let Some(&id) = self.ids.get(value) {
+            return Ok(id);
+        }
+        let id = to_i32(self.keys.len(), "string table")?;
+        self.ids.insert(value.into(), id);
+        self.keys.push(value.into());
+        self.strings.extend(value.encode_utf16());
+        self.string_off
+            .push(to_i32(self.strings.len(), "string table")?);
+        Ok(id)
+    }
+
+    /// Finish the batch: append deferred strings after the text and patch
+    /// their ranges.
+    pub fn finish(mut self) -> FfiResult<Built> {
+        for (col, at, value) in std::mem::take(&mut self.deferred) {
+            let range = self.text(&value)?;
+            self.i32s(col)[at..at + 2].copy_from_slice(&range);
+        }
+        self.columns[common::TEXT] = Column::U16(std::mem::take(&mut self.text));
         self.columns[common::STRINGS] = Column::U16(std::mem::take(&mut self.strings));
         self.columns[common::STRING_OFF] = Column::I32(std::mem::take(&mut self.string_off));
-        let descs: Vec<ColumnDesc> = self.columns.iter().map(Column::desc).collect();
-        let header = BatchHeader {
-            magic: MAGIC,
-            abi_version: crate::ABI_VERSION,
+        Ok(Built {
             kind: self.kind,
-            ncols: descs.len() as u32,
-            cols: descs.as_ptr(),
-        };
-        Ok(Batch {
-            header,
-            descs,
             columns: self.columns,
         })
     }
@@ -392,13 +543,28 @@ impl Builder {
 /// `batch` must be null or come from this library, once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bolivar_batch_free(batch: *mut Batch) {
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        drop(unsafe { from_handle(batch) });
-    }));
+    unsafe { free_handle(batch) }
 }
 
-/// The column names and element types of a kind, as `Name:ELEM` lines.
-/// The text is static; do not free it.
+static SCHEMA_TEXT: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+fn schema_text(kind: &Kind) -> String {
+    let mut lines = Vec::new();
+    lines.extend(
+        kind.columns
+            .iter()
+            .map(|(name, elem)| format!("col:{name}:{elem:?}")),
+    );
+    lines.extend(kind.ints.iter().map(|name| format!("int:{name}")));
+    lines.extend(kind.floats.iter().map(|name| format!("float:{name}")));
+    lines.extend(kind.ranges.iter().map(|name| format!("range:{name}")));
+    lines.extend(kind.flags.iter().map(|name| format!("flag:{name}")));
+    lines.join("\n")
+}
+
+/// A kind's columns, scalar slots, named ranges and flag bits, one per line:
+/// `col:Name:ELEM`, `int:Name`, `float:Name`, `range:Name`, `flag:Name`, each
+/// group in index order. The text is static; do not free it.
 ///
 /// # Safety
 /// The out-pointers must be writable; `err` must be null or writable.
@@ -413,36 +579,14 @@ pub unsafe extern "C" fn bolivar_schema(
         guard(err, || {
             let index = KINDS
                 .iter()
-                .position(|(k, _)| *k == kind)
+                .position(|k| k.number == kind)
                 .ok_or_else(|| FfiError::invalid("kind", format!("unknown batch kind {kind}")))?;
-            let text: &'static str = SCHEMA_TEXT.get_or_init(build_schema_text)[index].as_str();
+            let text = SCHEMA_TEXT.get_or_init(|| KINDS.iter().map(|k| schema_text(k)).collect());
+            let text: &'static str = text[index].as_str();
             write_out(out_ptr, "out_ptr", text.as_ptr())?;
             write_out(out_len, "out_len", text.len() as i64)
         })
     }
-}
-
-static SCHEMA_TEXT: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-
-fn build_schema_text() -> Vec<String> {
-    KINDS
-        .iter()
-        .map(|(_, columns)| {
-            columns
-                .iter()
-                .map(|(name, elem)| format!("{name}:{}", elem.code()))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .collect()
-}
-
-/// Check a batch handle (used by tests through the C ABI).
-///
-/// # Safety
-/// `batch` must be null or a live batch.
-pub unsafe fn batch_ref<'a>(batch: *const Batch) -> FfiResult<&'a Batch> {
-    unsafe { handle_ref(batch) }
 }
 
 #[cfg(test)]
@@ -450,56 +594,66 @@ mod tests {
     use super::*;
 
     #[test]
-    fn aux_ranges_shift_past_the_contiguous_text() {
-        let mut b = Builder::new(layout::KIND, layout::COLUMNS);
+    fn deferred_strings_follow_the_text() {
+        let mut b = Builder::new(&raw::SCHEMA);
         let line = b.text("ab").unwrap();
-        let ch = b.aux("a").unwrap();
-        b.i32s(layout::Col::LineText).extend(line);
-        b.i32s(layout::Col::CharText).extend(ch);
-        b.i32s(layout::Col::CharText).extend(NONE);
-        let batch = b.finish(&[layout::Col::CharText.into()]).unwrap();
-        let Column::I32(chars) = &batch.columns()[layout::Col::CharText as usize] else {
+        b.i32s(raw::Col::LineText).extend(line);
+        b.defer(raw::Col::LineRawText, "ba".to_owned());
+        b.i32s(raw::Col::LineRawText).extend(NONE);
+        let built = b.finish().unwrap();
+        let Column::I32(raw_text) = &built.columns()[raw::Col::LineRawText as usize] else {
             panic!()
         };
-        assert_eq!(chars, &[2, 3, -1, -1]);
-        let Column::U16(text) = &batch.columns()[common::TEXT] else {
+        assert_eq!(raw_text, &[2, 4, -1, -1]);
+        let Column::U16(text) = &built.columns()[common::TEXT] else {
             panic!()
         };
-        assert_eq!(String::from_utf16(text).unwrap(), "aba");
+        assert_eq!(String::from_utf16(text).unwrap(), "abba");
     }
 
     #[test]
     fn interning_reuses_ids_and_records_offsets() {
-        let mut b = Builder::new(layout::KIND, layout::COLUMNS);
+        let mut b = Builder::new(&layout::SCHEMA);
         assert_eq!(b.intern(0, "F1").unwrap(), 0);
         assert_eq!(b.intern(0, "F1").unwrap(), 0);
         assert_eq!(b.intern(0, "F2").unwrap(), 1);
         assert_eq!(b.intern(1, "F1").unwrap(), 0);
+        assert_eq!(b.intern_glyph("a").unwrap(), 2);
+        assert_eq!(b.intern_glyph("a").unwrap(), 2);
+        assert_eq!(b.intern_glyph("F1").unwrap(), 0, "glyphs share the table");
+        assert_eq!(b.intern_glyph("é").unwrap(), 3);
         assert_eq!(b.intern_opt(2, None).unwrap(), -1);
-        let batch = b.finish(&[]).unwrap();
-        let Column::I32(off) = &batch.columns()[common::STRING_OFF] else {
+        let built = b.finish().unwrap();
+        let Column::I32(off) = &built.columns()[common::STRING_OFF] else {
             panic!()
         };
-        assert_eq!(off, &[0, 2, 4]);
+        assert_eq!(off, &[0, 2, 4, 5, 6]);
     }
 
     #[test]
-    fn headers_describe_every_column() {
-        let batch = Builder::new(raw::KIND, raw::COLUMNS).finish(&[]).unwrap();
+    fn scalar_slots_are_sized_by_the_schema() {
+        let mut b = Builder::new(&raw::SCHEMA);
+        b.int(raw::Int::TextEnd as usize, 7);
+        b.float_box(raw::Float::X0 as usize, (1.0, 2.0, 3.0, 4.0));
+        let batch = b.finish().unwrap().into_batch();
+        let Column::I64(ints) = &batch.columns()[common::INTS] else {
+            panic!()
+        };
+        assert_eq!(ints.len(), raw::SCHEMA.ints.len());
+        assert_eq!(ints[raw::Int::TextEnd as usize], 7);
         assert_eq!(batch.header.magic, MAGIC);
         assert_eq!(batch.header.ncols as usize, raw::COLUMNS.len());
-        assert_eq!(batch.descs.len(), raw::COLUMNS.len());
-        for (index, (desc, (_, elem))) in batch.descs.iter().zip(raw::COLUMNS).enumerate() {
-            assert_eq!(desc.elem, *elem as u32);
-            // The string offsets always start with 0.
-            let expected = i64::from(index == common::STRING_OFF);
-            assert_eq!(desc.len, expected);
-        }
+    }
+
+    #[test]
+    fn layout_and_raw_share_the_text_layer() {
+        let shared = layout::COLUMNS.len();
+        assert_eq!(&raw::COLUMNS[..shared], layout::COLUMNS);
     }
 
     #[test]
     fn kinds_are_unique() {
-        let mut kinds: Vec<u32> = KINDS.iter().map(|(k, _)| *k).collect();
+        let mut kinds: Vec<u32> = KINDS.iter().map(|k| k.number).collect();
         kinds.sort_unstable();
         kinds.dedup();
         assert_eq!(kinds.len(), KINDS.len());
