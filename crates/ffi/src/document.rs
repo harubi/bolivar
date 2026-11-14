@@ -9,8 +9,8 @@ use bolivar_core::pdfdocument::PDFDocument;
 use bolivar_core::table::TableSettings;
 
 use crate::abi::{
-    Code, ErrorOut, FfiError, FfiResult, free_handle, from_handle, guard, handle_mut, handle_ref,
-    into_handle, slice, write_handle, write_out,
+    Code, ErrorOut, FfiError, FfiResult, free_handle, guard, handle_mut, handle_ref, require_out,
+    slice, take_handle, write_handle, write_out,
 };
 use crate::batch::{Batch, Builder, Built, text};
 use crate::metadata::{metadata_built, metadata_from_document};
@@ -42,7 +42,8 @@ impl Document {
     pub fn text_built(&self) -> FfiResult<Built> {
         let value = extract_text_with_document(self.doc.as_ref(), self.extract.clone())?;
         let mut b = Builder::new(&text::SCHEMA);
-        b.u8s(text::Col::Utf8).extend_from_slice(value.as_bytes());
+        // Moved, not copied: the whole document's text.
+        *b.u8s(text::Col::Utf8) = value.into_bytes();
         b.finish()
     }
 
@@ -56,12 +57,11 @@ impl Document {
             ));
         }
         let index = (page_number - 1) as usize;
-        let (pdf_page, _, page, tables) = layout_tables_page(
+        let (pdf_page, page, tables) = layout_tables_page(
             &self.doc,
             index,
             self.extract.clone(),
             TableSettings::default(),
-            None,
         )?;
         raw_built(index, &pdf_page, &page, &tables)
     }
@@ -138,9 +138,7 @@ pub unsafe extern "C" fn bolivar_buffer_alloc(
 ) -> i32 {
     unsafe {
         guard(err, || {
-            if out.is_null() {
-                return Err(FfiError::invalid("out", "out pointer is null"));
-            }
+            require_out(out, "out")?;
             let mut buffer = Buffer {
                 bytes: Vec::with_capacity(capacity(capacity_bytes)?),
             };
@@ -195,8 +193,7 @@ pub unsafe extern "C" fn bolivar_open_buffer(
 ) -> i32 {
     unsafe {
         guard(err, || {
-            let mut buffer =
-                from_handle(buffer).ok_or_else(|| FfiError::invalid("handle", "handle is null"))?;
+            let mut buffer = take_handle(buffer)?;
             let filled = fill_len(&buffer, filled)?;
             // SAFETY: `filled` is within capacity and the caller wrote it.
             buffer.bytes.set_len(filled);
@@ -236,11 +233,8 @@ unsafe fn batch_call(
     unsafe {
         guard(err, || {
             let document = handle_ref(document)?;
-            if out.is_null() {
-                return Err(FfiError::invalid("out", "out pointer is null"));
-            }
-            let batch = call(document)?.into_batch();
-            write_out(out, "out", into_handle(batch))
+            require_out(out, "out")?;
+            write_handle(out, "out", call(document)?.into_batch())
         })
     }
 }

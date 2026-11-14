@@ -22,6 +22,8 @@ mod pages;
 use std::sync::OnceLock;
 
 use abi::{Code, ErrorOut, FfiError, guard, write_out};
+use batch::{BatchHeader, ColumnDesc};
+use options::{Options, TableOptions};
 
 /// Bumped whenever a function, struct, column or code changes meaning.
 pub const ABI_VERSION: u32 = 2;
@@ -76,24 +78,13 @@ fn named<T: std::fmt::Display>(
         .join("\n")
 }
 
-/// What `bolivar_describe` can describe.
-const DESCRIPTIONS: &[&str] = &[
-    "Options",
-    "TableOptions",
-    "ErrorOut",
-    "BatchHeader",
-    "ColumnDesc",
-    "OptionBits",
-    "TableOptionBits",
-    "TableStrategy",
-    "Status",
-];
+/// What `bolivar_describe` can describe, by name.
+/// Builds one description.
+type Describe = fn() -> String;
 
-fn describe(name: &str) -> Option<String> {
-    use batch::{BatchHeader, ColumnDesc};
-    use options::{Options, TableOptions};
-    Some(match name {
-        "Options" => layout!(Options {
+const DESCRIPTIONS: &[(&str, Describe)] = &[
+    ("Options", || {
+        layout!(Options {
             struct_size,
             present,
             caching,
@@ -110,8 +101,10 @@ fn describe(name: &str) -> Option<String> {
             password_len,
             pages,
             pages_len,
-        }),
-        "TableOptions" => layout!(TableOptions {
+        })
+    }),
+    ("TableOptions", || {
+        layout!(TableOptions {
             struct_size,
             present,
             vertical_strategy,
@@ -132,38 +125,47 @@ fn describe(name: &str) -> Option<String> {
             explicit_vertical_len,
             explicit_horizontal,
             explicit_horizontal_len,
-        }),
-        "ErrorOut" => layout!(ErrorOut {
+        })
+    }),
+    ("ErrorOut", || {
+        layout!(ErrorOut {
             code,
             field,
             field_len,
             message,
             message_len
-        }),
-        "BatchHeader" => layout!(BatchHeader {
+        })
+    }),
+    ("BatchHeader", || {
+        layout!(BatchHeader {
             magic,
             abi_version,
             kind,
             ncols,
             cols
-        }),
-        "ColumnDesc" => layout!(ColumnDesc { ptr, len, elem }),
-        "OptionBits" => named(options::opt::NAMES.iter().copied()),
-        "TableOptionBits" => named(options::topt::NAMES.iter().copied()),
-        "TableStrategy" => named(
+        })
+    }),
+    ("ColumnDesc", || layout!(ColumnDesc { ptr, len, elem })),
+    ("OptionBits", || named(options::opt::NAMES.iter().copied())),
+    ("TableOptionBits", || {
+        named(options::topt::NAMES.iter().copied())
+    }),
+    ("TableStrategy", || {
+        named(
             options::STRATEGIES
                 .iter()
                 .enumerate()
                 .map(|(code, (name, _))| (name, code)),
-        ),
-        "Status" => named(
+        )
+    }),
+    ("Status", || {
+        named(
             Code::FAILURES
                 .iter()
                 .map(|&(name, code)| (name, code as i32)),
-        ),
-        _ => return None,
-    })
-}
+        )
+    }),
+];
 
 static DESCRIBED: OnceLock<Vec<String>> = OnceLock::new();
 
@@ -190,12 +192,12 @@ pub unsafe extern "C" fn bolivar_describe(
                 .map_err(|_| FfiError::invalid("name", "name must be UTF-8"))?;
             let index = DESCRIPTIONS
                 .iter()
-                .position(|known| *known == name)
+                .position(|(known, _)| *known == name)
                 .ok_or_else(|| FfiError::invalid("name", format!("nothing named {name}")))?;
             let all = DESCRIBED.get_or_init(|| {
                 DESCRIPTIONS
                     .iter()
-                    .map(|n| describe(n).unwrap_or_default())
+                    .map(|(_, describe)| describe())
                     .collect()
             });
             let text: &'static str = all[index].as_str();
@@ -211,16 +213,9 @@ mod tests {
 
     #[test]
     fn every_description_exists() {
-        for name in DESCRIPTIONS {
-            assert!(
-                describe(name).is_some_and(|text| !text.is_empty()),
-                "{name}"
-            );
+        for (name, describe) in DESCRIPTIONS {
+            assert!(!describe().is_empty(), "{name}");
         }
-        assert!(
-            describe("Options")
-                .unwrap()
-                .starts_with("size:96\nfield:struct_size:0:4")
-        );
+        assert!((DESCRIPTIONS[0].1)().starts_with("size:96\nfield:struct_size:0:4"));
     }
 }

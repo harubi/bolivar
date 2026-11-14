@@ -16,7 +16,7 @@ use bolivar_core::table::{PageGeometry, TableSettings};
 
 use crate::abi::{
     Code, ErrorOut, FfiError, FfiResult, free_handle, guard, handle_ref, into_handle, no_unwind,
-    write_handle, write_out,
+    require_out, write_handle, write_out,
 };
 use crate::batch::{Batch, Built, layout, page_text, raw, summary, table_rows, tables};
 use crate::document::Document;
@@ -25,38 +25,18 @@ use crate::pages::{
     layout_built, page_text_built, raw_built, summary_built, table_rows_built, tables_built,
 };
 
-/// A cursor's work, which is also the kind of batch it yields.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Layout,
-    Raw,
-    PageText,
-    Summary,
-    Tables,
-    TableRows,
+/// Whether a cursor of `kind` (a batch kind number) reads table options; an error for a kind
+/// no cursor yields.
+fn takes_table_options(kind: u32) -> FfiResult<bool> {
+    match kind {
+        tables::KIND | table_rows::KIND => Ok(true),
+        layout::KIND | raw::KIND | page_text::KIND | summary::KIND => Ok(false),
+        _ => Err(unknown_kind(kind)),
+    }
 }
 
-impl Kind {
-    fn from_code(code: u32) -> FfiResult<Self> {
-        Ok(match code {
-            layout::KIND => Self::Layout,
-            raw::KIND => Self::Raw,
-            page_text::KIND => Self::PageText,
-            summary::KIND => Self::Summary,
-            tables::KIND => Self::Tables,
-            table_rows::KIND => Self::TableRows,
-            _ => {
-                return Err(FfiError::invalid(
-                    "kind",
-                    format!("unknown cursor kind {code}"),
-                ));
-            }
-        })
-    }
-
-    const fn takes_table_options(self) -> bool {
-        matches!(self, Self::Tables | Self::TableRows)
-    }
+fn unknown_kind(kind: u32) -> FfiError {
+    FfiError::invalid("kind", format!("unknown cursor kind {kind}"))
 }
 
 /// The geometry of each table page: pdfplumber's, with this page's crop.
@@ -74,35 +54,35 @@ fn table_geometry(crops: Crops) -> GeometrySource {
 /// so its code and field reach the caller unchanged instead of collapsing into a core error.
 type PageBatch = FfiResult<Built>;
 
-fn open_stream(kind: Kind, document: &Document, tables: Tables) -> FfiResult<Stream<PageBatch>> {
+fn open_stream(kind: u32, document: &Document, tables: Tables) -> FfiResult<Stream<PageBatch>> {
     let doc = Arc::clone(&document.doc);
     let mut options = document.extract.clone();
-    if kind.takes_table_options()
+    if matches!(kind, tables::KIND | table_rows::KIND)
         && let Some(max_pages) = tables.max_pages
     {
         options.maxpages = max_pages;
     }
     let ffi = |result: PageBatch| -> bolivar_core::Result<PageBatch> { Ok(result) };
     Ok(match kind {
-        Kind::Layout => extract_pages_stream_with(doc, options, move |index, _, page| {
+        layout::KIND => extract_pages_stream_with(doc, options, move |index, _, page| {
             ffi(layout_built(index, &page))
         })?,
-        Kind::PageText => extract_pages_stream_with(doc, options, move |index, _, page| {
+        page_text::KIND => extract_pages_stream_with(doc, options, move |index, _, page| {
             ffi(page_text_built(index, &page))
         })?,
-        Kind::Summary => extract_pages_stream_with(doc, options, move |index, _, page| {
+        summary::KIND => extract_pages_stream_with(doc, options, move |index, _, page| {
             ffi(summary_built(index, &page))
         })?,
-        Kind::Raw => extract_layout_tables_metadata_stream_with(
+        raw::KIND => extract_layout_tables_metadata_stream_with(
             doc,
             options,
             TableSettings::default(),
             GeometrySource::for_each_page(),
-            move |index, pdf_page, _, page, page_tables| {
+            move |index, pdf_page, page, page_tables| {
                 ffi(raw_built(index, pdf_page, &page, &page_tables))
             },
         )?,
-        Kind::Tables => {
+        tables::KIND => {
             let geometry = table_geometry(tables.crops);
             extract_tables_metadata_stream_with(
                 doc,
@@ -114,7 +94,7 @@ fn open_stream(kind: Kind, document: &Document, tables: Tables) -> FfiResult<Str
                 },
             )?
         }
-        Kind::TableRows => {
+        table_rows::KIND => {
             let geometry = table_geometry(tables.crops);
             extract_tables_stream_with(
                 doc,
@@ -124,6 +104,7 @@ fn open_stream(kind: Kind, document: &Document, tables: Tables) -> FfiResult<Str
                 move |index, page_tables| ffi(table_rows_built(index, page_tables)),
             )?
         }
+        _ => return Err(unknown_kind(kind)),
     })
 }
 
@@ -142,21 +123,16 @@ impl Cursor {
         let Some(stream) = guard.as_mut() else {
             return Ok(None);
         };
-        match stream.next() {
-            Some(Ok((_, Ok(built)))) => Ok(Some(built.into_batch())),
-            Some(Ok((_, Err(error)))) => {
-                *guard = None;
-                Err(error)
-            }
-            Some(Err(error)) => {
-                *guard = None;
-                Err(error.into())
-            }
-            None => {
-                *guard = None;
-                Ok(None)
-            }
+        let next = match stream.next() {
+            Some(Ok((_, built))) => built.map(Some),
+            Some(Err(error)) => Err(error.into()),
+            None => Ok(None),
+        };
+        // At its end or after an error, the cursor is finished.
+        if !matches!(next, Ok(Some(_))) {
+            *guard = None;
         }
+        next.map(|built| built.map(Built::into_batch))
     }
 }
 
@@ -177,16 +153,13 @@ pub unsafe extern "C" fn bolivar_cursor_open(
     unsafe {
         guard(err, || {
             let document = handle_ref(document)?;
-            let kind = Kind::from_code(kind)?;
-            if !kind.takes_table_options() && !table_options.is_null() {
+            if !takes_table_options(kind)? && !table_options.is_null() {
                 return Err(FfiError::invalid(
                     "table_options",
                     "table options only apply to table cursors",
                 ));
             }
-            if out.is_null() {
-                return Err(FfiError::invalid("out", "out pointer is null"));
-            }
+            require_out(out, "out")?;
             let tables = Tables::from_raw(table_options)?;
             let stream = open_stream(kind, document, tables)?;
             let cancel = stream.cancellation_handle();
@@ -217,9 +190,7 @@ pub unsafe extern "C" fn bolivar_cursor_next(
     unsafe {
         guard(err, || {
             let cursor = handle_ref(cursor)?;
-            if out.is_null() {
-                return Err(FfiError::invalid("out", "out pointer is null"));
-            }
+            require_out(out, "out")?;
             let batch = cursor.next_batch()?;
             write_out(out, "out", batch.map_or(std::ptr::null_mut(), into_handle))
         })

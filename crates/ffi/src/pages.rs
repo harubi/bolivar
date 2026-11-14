@@ -1,11 +1,14 @@
 //! Build one batch per page. Builders run on the stream's workers, so pages
 //! become batches in parallel.
 
+use std::borrow::Cow;
+use std::sync::Arc;
+
 use rustc_hash::FxHashSet;
 
 use bolivar_core::engine::PageTables;
 use bolivar_core::layout::{
-    Axis, BoxRef, ElementRef, LTChar, LTPage, LineRef, reorder_text_for_output,
+    Axis, BoxRef, CharStyle, ElementRef, LTChar, LTPage, LineRef, reorder_for_output,
 };
 use bolivar_core::pdfpage::PDFPage;
 use bolivar_core::table::{BBox as TableBBox, PageGeometry, TableMetadata};
@@ -131,13 +134,18 @@ fn write_text_layer(
 /// Write one character of the text layer. `text` may differ from the
 /// glyph's own text: under bidi it is a logical-order span.
 fn write_char(b: &mut Builder, text: &str, character: &LTChar) -> FfiResult<()> {
+    let font = b.intern(FONT, character.fontname())?;
+    write_glyph(b, text, character, font)
+}
+
+/// [`write_char`] with the font's string id already known.
+fn write_glyph(b: &mut Builder, text: &str, character: &LTChar, font: i32) -> FfiResult<()> {
     let (x0, y0, x1, y1) = character.bbox();
     b.f64s(T::CharX0).push(x0);
     b.f64s(T::CharY0).push(y0);
     b.f64s(T::CharX1).push(x1);
     b.f64s(T::CharY1).push(y1);
     b.f64s(T::CharSize).push(character.size());
-    let font = b.intern(FONT, character.fontname())?;
     b.i32s(T::CharFont).push(font);
     b.u8s(T::CharUpright).push(u8::from(character.upright()));
     let text = b.intern_glyph(text)?;
@@ -174,10 +182,10 @@ pub fn layout_built(page_index: usize, page: &LTPage) -> FfiResult<Built> {
         }
         Ok(())
     })?;
-    b.int(layout::Int::PageNumber as usize, page_number(page_index));
-    b.int(layout::Int::TextEnd as usize, i64::from(end));
-    b.float(layout::Float::Rotate as usize, page.rotate);
-    b.float_box(layout::Float::X0 as usize, page.bbox());
+    b.int(layout::Int::PageNumber, page_number(page_index));
+    b.int(layout::Int::TextEnd, i64::from(end));
+    b.float(layout::Float::Rotate, page.rotate);
+    b.float_box(layout::Float::X0, page.bbox());
     b.finish()
 }
 
@@ -230,27 +238,25 @@ fn top_down(bbox: TableBBox) -> [f64; 4] {
 
 // ---- raw -------------------------------------------------------------------
 
-/// Colours repeat character after character, so each one reuses the
-/// previous character's pool range when equal (run-length sharing).
+/// One colour column's pool ranges: a glyph with its predecessor's colour, compared by bit
+/// pattern so that -0.0 and 0.0 stay distinct, reuses its range.
 #[derive(Default)]
-struct ColorRuns {
-    last: [Option<[i32; 2]>; 2],
+struct ColorRun {
+    last: Option<[i32; 2]>,
 }
 
-impl ColorRuns {
+impl ColorRun {
     fn push(
         &mut self,
         b: &mut Builder,
-        which: usize,
         col: raw::Col,
         color: Option<&Vec<f64>>,
-    ) -> FfiResult<()> {
+    ) -> FfiResult<[i32; 2]> {
         let range = match color {
             None => NONE,
             Some(values) => {
                 let pool = b.f64s(raw::Col::ColorPool);
-                match self.last[which] {
-                    // By bit pattern, so -0.0 and 0.0 stay distinct, as the raw page promises.
+                match self.last {
                     Some([start, end])
                         if pool[start as usize..end as usize]
                             .iter()
@@ -266,15 +272,28 @@ impl ColorRuns {
                             to_i32(start, "colors")?,
                             to_i32(start + values.len(), "colors")?,
                         ];
-                        self.last[which] = Some(range);
+                        self.last = Some(range);
                         range
                     }
                 }
             }
         };
         b.i32s(col).extend(range);
-        Ok(())
+        Ok(range)
     }
+}
+
+/// What a glyph's shared style wrote: its string ids and colour ranges. The next glyph with
+/// the same style (the same `Arc`, which the page keeps alive) writes them again without a
+/// lookup; equal styles would look up the same values.
+struct StyleIds {
+    style: *const CharStyle,
+    font: i32,
+    tag: i32,
+    ncs: i32,
+    scs: i32,
+    ncolor: [i32; 2],
+    scolor: [i32; 2],
 }
 
 /// The lossless page: PDF identity, boxes, lines with raw and output text,
@@ -308,38 +327,67 @@ pub fn raw_built(
     b.reserve(&[C::CharMatrix.into()], 6 * counts.chars);
     b.reserve(&[C::LineRawText.into()], 2 * counts.lines);
 
-    let mut colors = ColorRuns::default();
+    let (mut ncolor, mut scolor) = (ColorRun::default(), ColorRun::default());
+    let mut last: Option<StyleIds> = None;
     let end = write_text_layer(&mut b, &boxes, |b, line| {
-        // Raw text is content order, annotations included. Without bidi the output text is
-        // the raw text reordered for output, so it is built from it, not collected twice.
+        // Raw text is content order, annotations included; the output text comes from it.
         let raw_text = line.raw_text();
-        let text = if line.bidi() {
-            line.text()
-        } else {
-            reorder_text_for_output(&raw_text)
-        };
+        let text = line.output_for(&raw_text);
         let range = b.text(&text)?;
         b.i32s(T::LineText).extend(range);
-        if raw_text == text {
+        let same = matches!(text, Cow::Borrowed(_)) || *text == *raw_text;
+        drop(text);
+        if same {
             b.i32s(C::LineRawText).extend(range);
         } else {
             b.defer(C::LineRawText, raw_text);
         }
         for character in line.elements().filter_map(ElementRef::as_char) {
-            write_char(b, character.get_text(), character)?;
+            let style = Arc::as_ptr(character.style());
+            let ids = match last.take() {
+                Some(ids) if ids.style == style => {
+                    write_glyph(b, character.get_text(), character, ids.font)?;
+                    b.i32s(C::CharTag).push(ids.tag);
+                    b.i32s(C::CharNcs).push(ids.ncs);
+                    b.i32s(C::CharScs).push(ids.scs);
+                    b.i32s(C::CharNcolor).extend(ids.ncolor);
+                    b.i32s(C::CharScolor).extend(ids.scolor);
+                    ids
+                }
+                _ => {
+                    let font = b.intern(FONT, character.fontname())?;
+                    write_glyph(b, character.get_text(), character, font)?;
+                    let tag = b.intern_opt(TAG, character.tag())?;
+                    b.i32s(C::CharTag).push(tag);
+                    let ncs = b.intern_opt(NCS, character.ncs())?;
+                    b.i32s(C::CharNcs).push(ncs);
+                    let scs = b.intern_opt(SCS, character.scs())?;
+                    b.i32s(C::CharScs).push(scs);
+                    StyleIds {
+                        style,
+                        font,
+                        tag,
+                        ncs,
+                        scs,
+                        ncolor: ncolor.push(
+                            b,
+                            C::CharNcolor,
+                            character.non_stroking_color().as_ref(),
+                        )?,
+                        scolor: scolor.push(
+                            b,
+                            C::CharScolor,
+                            character.stroking_color().as_ref(),
+                        )?,
+                    }
+                }
+            };
+            last = Some(ids);
             b.f64s(C::CharAdvance).push(character.adv());
             let m = character.matrix();
             b.f64s(C::CharMatrix).extend([m.0, m.1, m.2, m.3, m.4, m.5]);
             b.i32s(C::CharMcid)
                 .push(character.mcid().unwrap_or(i32::MIN));
-            let tag = b.intern_opt(TAG, character.tag())?;
-            b.i32s(C::CharTag).push(tag);
-            let ncs = b.intern_opt(NCS, character.ncs())?;
-            b.i32s(C::CharNcs).push(ncs);
-            let scs = b.intern_opt(SCS, character.scs())?;
-            b.i32s(C::CharScs).push(scs);
-            colors.push(b, 0, C::CharNcolor, character.non_stroking_color().as_ref())?;
-            colors.push(b, 1, C::CharScolor, character.stroking_color().as_ref())?;
         }
         Ok(())
     })?;
@@ -369,14 +417,14 @@ pub fn raw_built(
             b.f64s(C::PageBoxes).extend(values);
         }
     }
-    b.int(raw::Int::PageIndex as usize, page_index as i64);
-    b.int(raw::Int::ObjectId as usize, i64::from(pdf_page.pageid));
-    b.int(raw::Int::Rotation as usize, pdf_page.rotate);
-    b.int(raw::Int::LabelStart as usize, i64::from(label[0]));
-    b.int(raw::Int::LabelEnd as usize, i64::from(label[1]));
-    b.int(raw::Int::TextEnd as usize, i64::from(end));
-    b.float(raw::Float::UserUnit as usize, pdf_page.user_unit);
-    b.float_box(raw::Float::X0 as usize, page.bbox());
+    b.int(raw::Int::PageIndex, page_index as i64);
+    b.int(raw::Int::ObjectId, i64::from(pdf_page.pageid));
+    b.int(raw::Int::Rotation, pdf_page.rotate);
+    b.int(raw::Int::LabelStart, i64::from(label[0]));
+    b.int(raw::Int::LabelEnd, i64::from(label[1]));
+    b.int(raw::Int::TextEnd, i64::from(end));
+    b.float(raw::Float::UserUnit, pdf_page.user_unit);
+    b.float_box(raw::Float::X0, page.bbox());
     b.finish()
 }
 
@@ -398,15 +446,15 @@ pub fn page_text_built(page_index: usize, page: &LTPage) -> FfiResult<Built> {
         let mut plain_lines: Vec<String> = Vec::new();
         let mut all_equal = true;
         for line in text_box.lines() {
-            let without_bidi = line.text_without_bidi();
+            let raw = line.raw_text();
+            let without_bidi = reorder_for_output(&raw);
             b.f64s(C::LineBbox).extend(bbox4(line.bbox()));
-            let output = line.bidi().then(|| line.text());
-            match output {
-                Some(output) if output != without_bidi => {
+            match line.bidi().then(|| line.output_for(&raw)) {
+                Some(output) if *output != *without_bidi => {
                     let range = b.text(&output)?;
                     b.i32s(C::LineText).extend(range);
                     all_equal = false;
-                    b.defer(C::LineTextWithoutBidi, without_bidi.clone());
+                    b.defer(C::LineTextWithoutBidi, without_bidi.to_string());
                 }
                 _ => {
                     let range = b.text(&without_bidi)?;
@@ -414,6 +462,11 @@ pub fn page_text_built(page_index: usize, page: &LTPage) -> FfiResult<Built> {
                     b.i32s(C::LineTextWithoutBidi).extend(range);
                 }
             }
+            let without_bidi = match without_bidi {
+                Cow::Owned(text) => Some(text),
+                Cow::Borrowed(_) => None,
+            }
+            .unwrap_or(raw);
             for character in line.elements().filter_map(ElementRef::as_char) {
                 let font = b.intern(FONT, character.fontname())?;
                 let text = b.intern_glyph(character.get_text())?;
@@ -436,8 +489,8 @@ pub fn page_text_built(page_index: usize, page: &LTPage) -> FfiResult<Built> {
         let lines = to_i32(b.i32s(C::LineText).len() / 2, "lines")?;
         b.i32s(C::BoxLines).push(lines);
     }
-    b.int(page_text::Int::PageNumber as usize, page_number(page_index));
-    b.float_box(page_text::Float::X0 as usize, page.bbox());
+    b.int(page_text::Int::PageNumber, page_number(page_index));
+    b.float_box(page_text::Float::X0, page.bbox());
     b.finish()
 }
 
@@ -447,9 +500,9 @@ pub fn page_text_built(page_index: usize, page: &LTPage) -> FfiResult<Built> {
 pub fn summary_built(page_index: usize, page: &LTPage) -> FfiResult<Built> {
     let mut b = Builder::new(&summary::SCHEMA);
     b.text(&page.get_text())?;
-    b.int(summary::Int::PageNumber as usize, page_number(page_index));
-    b.float(summary::Float::Rotate as usize, page.rotate);
-    b.float_box(summary::Float::X0 as usize, page.bbox());
+    b.int(summary::Int::PageNumber, page_number(page_index));
+    b.float(summary::Float::Rotate, page.rotate);
+    b.float_box(summary::Float::X0, page.bbox());
     b.finish()
 }
 
@@ -474,7 +527,7 @@ pub fn tables_built(
         page_tables,
         |bbox| bbox4(bbox.to_pdf_space(geometry)),
     )?;
-    b.int(tables::Int::PageNumber as usize, page_number(page_index));
+    b.int(tables::Int::PageNumber, page_number(page_index));
     b.finish()
 }
 
@@ -498,10 +551,7 @@ pub fn table_rows_built(page_index: usize, page_tables: PageTables) -> FfiResult
         let rows = b.i32s(C::RowOffsets).len() - 1;
         b.i32s(C::TableOffsets).push(to_i32(rows, "rows")?);
     }
-    b.int(
-        table_rows::Int::PageNumber as usize,
-        page_number(page_index),
-    );
+    b.int(table_rows::Int::PageNumber, page_number(page_index));
     b.finish()
 }
 
