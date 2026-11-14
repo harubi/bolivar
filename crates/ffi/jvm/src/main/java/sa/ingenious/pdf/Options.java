@@ -1,20 +1,21 @@
 package sa.ingenious.pdf;
 
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Document options. A null field keeps the native default: no password, every page, no page
- * limit, caching on, bidi off, default layout. Values are checked when the document opens.
+ * Document options. A null field keeps the native default: no password, every page, no page limit,
+ * caching on, bidi off, default layout. Values are checked when the document opens.
  *
  * @param pages 1-based page numbers to read; pages always come in document order, each once
  */
 public record Options(
-    String password,
-    List<Integer> pages,
-    Integer maxPages,
-    Boolean caching,
-    Boolean bidi,
-    LayoutOptions layout) {
+    @Nullable String password,
+    @Nullable List<Integer> pages,
+    @Nullable Integer maxPages,
+    @Nullable Boolean caching,
+    @Nullable Boolean bidi,
+    @Nullable LayoutOptions layout) {
 
   /** All defaults. */
   public static final Options DEFAULT = new Options(null, null, null, null, null, null);
@@ -28,12 +29,12 @@ public record Options(
   }
 
   public static final class Builder {
-    private String password;
-    private List<Integer> pages;
-    private Integer maxPages;
-    private Boolean caching;
-    private Boolean bidi;
-    private LayoutOptions layout;
+    private @Nullable String password;
+    private @Nullable List<Integer> pages;
+    private @Nullable Integer maxPages;
+    private @Nullable Boolean caching;
+    private @Nullable Boolean bidi;
+    private @Nullable LayoutOptions layout;
 
     private Builder() {}
 

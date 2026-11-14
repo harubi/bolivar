@@ -1,6 +1,8 @@
 package sa.ingenious.pdf;
 
 import java.io.Serial;
+import org.jspecify.annotations.Nullable;
+import sa.ingenious.pdf.internal.Contract.Status;
 
 /**
  * A failure reported by Bolivar. Each subclass matches one native status; {@link #code()} is that
@@ -18,47 +20,53 @@ public abstract sealed class PdfException extends RuntimeException
         PdfException.DecodeError,
         PdfException.Cancelled,
         PdfException.RuntimeError,
+        PdfException.Unsupported,
         PdfException.NativeError {
   @Serial private static final long serialVersionUID = 1L;
 
   private final int code;
-  private final String field;
+  private final @Nullable String field;
 
-  PdfException(int code, String message, String field, Throwable cause) {
+  PdfException(int code, String message, @Nullable String field, @Nullable Throwable cause) {
     super(message, cause);
     this.code = code;
     this.field = field;
   }
 
-  /** The native status code: 1 to 12, as {@code crates/ffi/src/abi.rs} defines them. */
+  /** The native status code: 1 to 13, as {@code crates/ffi/src/abi.rs} defines them. */
   public int code() {
     return code;
   }
 
   /** The option field at fault, or null. */
-  public String field() {
+  public @Nullable String field() {
     return field;
   }
 
   /**
-   * The exception for a native status. Public only so the internal native layer can reach it;
-   * not meant for callers.
+   * The exception for a native status. Public only so the internal native layer can reach it; not
+   * meant for callers.
    */
-  public static PdfException of(int code, String message, String field) {
+  public static PdfException of(int code, @Nullable String message, @Nullable String field) {
     String text = message == null || message.isEmpty() ? "native error " + code : message;
-    return switch (code) {
-      case 1 -> new InvalidPath(text);
-      case 2 -> new InvalidArgument(text, field);
-      case 3 -> new IoNotFound(text);
-      case 4 -> new IoPermissionDenied(text);
-      case 5 -> new IoError(text, null);
-      case 6 -> new SyntaxError(text);
-      case 7 -> new EncryptionError(text);
-      case 8 -> new MalformedPdf(text);
-      case 9 -> new DecodeError(text);
-      case 10 -> new Cancelled(text);
-      case 11 -> new RuntimeError(text);
-      default -> new NativeError(code, text, null);
+    Status status = Status.of(code);
+    if (status == null) {
+      return new NativeError(code, text, null);
+    }
+    return switch (status) {
+      case INVALID_PATH -> new InvalidPath(text);
+      case INVALID_ARGUMENT -> new InvalidArgument(text, field);
+      case IO_NOT_FOUND -> new IoNotFound(text);
+      case IO_PERMISSION_DENIED -> new IoPermissionDenied(text);
+      case IO_ERROR -> new IoError(text, null);
+      case SYNTAX_ERROR -> new SyntaxError(text);
+      case ENCRYPTION_ERROR -> new EncryptionError(text);
+      case MALFORMED_PDF -> new MalformedPdf(text);
+      case DECODE_ERROR -> new DecodeError(text);
+      case CANCELLED -> new Cancelled(text);
+      case RUNTIME_ERROR -> new RuntimeError(text);
+      case UNSUPPORTED -> new Unsupported(text);
+      case PANICKED -> new NativeError(code, text, null);
     };
   }
 
@@ -75,7 +83,7 @@ public abstract sealed class PdfException extends RuntimeException
   public static final class InvalidArgument extends PdfException {
     @Serial private static final long serialVersionUID = 1L;
 
-    public InvalidArgument(String message, String field) {
+    public InvalidArgument(String message, @Nullable String field) {
       super(2, message, field, null);
     }
   }
@@ -99,7 +107,7 @@ public abstract sealed class PdfException extends RuntimeException
   public static final class IoError extends PdfException {
     @Serial private static final long serialVersionUID = 1L;
 
-    public IoError(String message, Throwable cause) {
+    public IoError(String message, @Nullable Throwable cause) {
       super(5, message, null, cause);
     }
   }
@@ -155,11 +163,20 @@ public abstract sealed class PdfException extends RuntimeException
     }
   }
 
+  /** The document uses a feature Bolivar does not support. */
+  public static final class Unsupported extends PdfException {
+    @Serial private static final long serialVersionUID = 1L;
+
+    public Unsupported(String message) {
+      super(13, message, null, null);
+    }
+  }
+
   /** The native library failed unexpectedly (code 12 is a caught native panic). */
   public static final class NativeError extends PdfException {
     @Serial private static final long serialVersionUID = 1L;
 
-    public NativeError(int code, String message, Throwable cause) {
+    public NativeError(int code, String message, @Nullable Throwable cause) {
       super(code, message, null, cause);
     }
   }

@@ -12,64 +12,47 @@ import java.lang.foreign.Linker;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SegmentAllocator;
-import java.lang.foreign.StructLayout;
 import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
 import java.nio.charset.StandardCharsets;
+import org.jspecify.annotations.Nullable;
 import sa.ingenious.pdf.PdfException;
 
 /**
  * The native functions, bound once through FFM. Not part of the public API.
  *
- * <p>Handles live in a holder class, so a failed load surfaces as an exception on first use
- * instead of poisoning every class that mentions this one.
+ * <p>The method handles are {@code static final} fields of a holder class, so the JIT treats them
+ * as constants, and a failed load surfaces as an exception on first use instead of poisoning every
+ * class that mentions this one. {@link #ensureLoaded} checks the ABI version, the library version,
+ * every batch schema and every hand-mirrored layout before the holder is touched.
  */
 @SuppressWarnings("restricted") // Restricted FFM calls are confined to this package.
 public final class Native {
   private Native() {}
 
   /** The ABI version this jar speaks; must equal {@code bolivar_abi_version()}. */
-  public static final int ABI_VERSION = 1;
+  public static final int ABI_VERSION = 2;
 
-  /** {@code ErrorOut}: code, padding, field (UTF-16 ptr, len), message (UTF-16 ptr, len). */
-  public static final StructLayout ERROR_OUT =
-      MemoryLayout.structLayout(
-          JAVA_INT.withName("code"),
-          JAVA_INT.withName("pad"),
-          ADDRESS.withName("field"),
-          JAVA_LONG.withName("field_len"),
-          ADDRESS.withName("message"),
-          JAVA_LONG.withName("message_len"));
+  private static final long ERR_FIELD = Contract.offset(Contract.ERROR_OUT, "field");
+  private static final long ERR_FIELD_LEN = Contract.offset(Contract.ERROR_OUT, "field_len");
+  private static final long ERR_MESSAGE = Contract.offset(Contract.ERROR_OUT, "message");
+  private static final long ERR_MESSAGE_LEN = Contract.offset(Contract.ERROR_OUT, "message_len");
 
-  /** The batch header: magic, ABI version, kind, column count, column directory. */
-  public static final StructLayout BATCH_HEADER =
-      MemoryLayout.structLayout(
-          JAVA_INT.withName("magic"),
-          JAVA_INT.withName("abi_version"),
-          JAVA_INT.withName("kind"),
-          JAVA_INT.withName("ncols"),
-          ADDRESS.withName("cols"));
-
-  /** One column directory entry: data pointer, element count, element type. */
-  public static final StructLayout COLUMN_DESC =
-      MemoryLayout.structLayout(
-          ADDRESS.withName("ptr"),
-          JAVA_LONG.withName("len"),
-          JAVA_INT.withName("elem"),
-          JAVA_INT.withName("pad"));
+  /** Room for the out-slots and the {@code ErrorOut} of any one call. */
+  private static final long FRAME_BYTES = 4 * ADDRESS.byteSize() + Contract.ERROR_OUT.byteSize();
 
   private static final class Lib {
+    private Lib() {}
 
-    static MethodHandle bind(String name, MemoryLayout result, MemoryLayout... args) {
+    static MethodHandle bind(String name, @Nullable MemoryLayout result, MemoryLayout... args) {
       return Native.bind(NativeLoader.lookup(), name, result, args);
     }
 
-    static final MethodHandle ABI = bind("bolivar_abi_version", JAVA_INT);
     static final MethodHandle VERSION = bind("bolivar_version", null, ADDRESS, ADDRESS);
     static final MethodHandle SCHEMA =
         bind("bolivar_schema", JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS);
-    static final MethodHandle STRUCT_SIZES =
-        bind("bolivar_debug_struct_sizes", JAVA_LONG, ADDRESS, JAVA_LONG);
+    static final MethodHandle DESCRIBE =
+        bind("bolivar_describe", JAVA_INT, ADDRESS, JAVA_LONG, ADDRESS, ADDRESS, ADDRESS);
     static final MethodHandle LIVE_HANDLES = bind("bolivar_debug_live_handles", JAVA_LONG);
     static final MethodHandle ERROR_FREE = bind("bolivar_error_free", null, ADDRESS);
     static final MethodHandle OPEN_PATH =
@@ -91,17 +74,16 @@ public final class Native {
     static final MethodHandle DOCUMENT_COUNTS =
         bind("bolivar_document_counts", JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
     static final MethodHandle CURSOR_OPEN =
-        bind("bolivar_cursor_open", JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
+        bind("bolivar_cursor_open", JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS);
     static final MethodHandle CURSOR_NEXT =
         bind("bolivar_cursor_next", JAVA_INT, ADDRESS, ADDRESS, ADDRESS);
-    static final MethodHandle CANCEL = bind("bolivar_cancel", null, ADDRESS);
+    static final MethodHandle CURSOR_CANCEL = bind("bolivar_cursor_cancel", null, ADDRESS);
     static final MethodHandle CURSOR_FREE = bind("bolivar_cursor_free", null, ADDRESS);
-    static final MethodHandle CANCEL_FREE = bind("bolivar_cancel_free", null, ADDRESS);
     static final MethodHandle BATCH_FREE = bind("bolivar_batch_free", null, ADDRESS);
   }
 
   private static MethodHandle bind(
-      SymbolLookup lookup, String name, MemoryLayout result, MemoryLayout... args) {
+      SymbolLookup lookup, String name, @Nullable MemoryLayout result, MemoryLayout... args) {
     var symbol =
         lookup
             .find(name)
@@ -114,8 +96,8 @@ public final class Native {
   private static volatile boolean verified;
 
   /**
-   * Load the library and check its ABI and version, once. Until it succeeds, every call retries
-   * and fails with the real cause, rather than a {@code NoClassDefFoundError}.
+   * Load the library and check that it matches this jar, once. Until that succeeds every call
+   * retries and fails with the real cause, rather than a {@code NoClassDefFoundError}.
    */
   public static void ensureLoaded() {
     if (verified) {
@@ -125,12 +107,11 @@ public final class Native {
       if (verified) {
         return;
       }
-      // Check through one-off handles, so a mismatch never poisons the handle holder and every
-      // retry reports the real cause.
-      SymbolLookup lookup = NativeLoader.lookup();
+      // The ABI is checked through a one-off handle, so a library of another ABI never
+      // initialises the holder, whose symbols it may lack.
       int abi;
       try {
-        abi = (int) bind(lookup, "bolivar_abi_version", JAVA_INT).invokeExact();
+        abi = (int) bind(NativeLoader.lookup(), "bolivar_abi_version", JAVA_INT).invokeExact();
       } catch (Throwable error) {
         throw new IllegalStateException("Cannot read the Bolivar native ABI version", error);
       }
@@ -138,35 +119,43 @@ public final class Native {
         throw new IllegalStateException(
             "Bolivar native ABI " + abi + " does not match the jar's ABI " + ABI_VERSION);
       }
-      String nativeVersion = version(bind(lookup, "bolivar_version", null, ADDRESS, ADDRESS));
+      String nativeVersion = version();
       String jarVersion = NativeLoader.jarVersion();
       if (!nativeVersion.equals(jarVersion)) {
         throw new IllegalStateException(
             "Bolivar version mismatch: JVM " + jarVersion + ", native " + nativeVersion);
       }
+      Schema.verify(Native::schema);
+      Contract.verify(Native::describe);
       verified = true;
     }
   }
 
   // ---- calls ------------------------------------------------------------------------------
 
+  /** A status-returning native call, given the {@code ErrorOut} to fill. */
   @FunctionalInterface
-  public interface Call {
+  interface Call {
     int invoke(MemorySegment err) throws Throwable;
   }
 
+  /** A native call that returns nothing. */
   @FunctionalInterface
-  public interface VoidCall {
+  interface VoidCall {
     void invoke() throws Throwable;
   }
 
-  /** Allocate a fresh, zeroed {@code ErrorOut}. */
-  public static MemorySegment errorOut(SegmentAllocator allocator) {
-    return allocator.allocate(ERROR_OUT);
+  /** Space for one call's out-slots and {@code ErrorOut}, carved from a confined arena. */
+  private static SegmentAllocator frame(Arena arena) {
+    return SegmentAllocator.slicingAllocator(arena.allocate(FRAME_BYTES, 8));
+  }
+
+  private static MemorySegment errorOut(SegmentAllocator allocator) {
+    return allocator.allocate(Contract.ERROR_OUT);
   }
 
   /** Run a status-returning call and throw {@link PdfException} on failure. */
-  public static void call(MemorySegment err, Call call) {
+  private static void call(MemorySegment err, Call call) {
     int status;
     try {
       status = call.invoke(err);
@@ -181,7 +170,7 @@ public final class Native {
   }
 
   /** Run a void native call. */
-  public static void run(VoidCall call) {
+  private static void run(VoidCall call) {
     try {
       call.invoke();
     } catch (RuntimeException | Error error) {
@@ -193,77 +182,70 @@ public final class Native {
 
   private static PdfException failure(int status, MemorySegment err) {
     try {
-      String field = utf16(err.get(ADDRESS, 8), err.get(JAVA_LONG, 16));
-      String message = utf16(err.get(ADDRESS, 24), err.get(JAVA_LONG, 32));
+      String field = utf16(err.get(ADDRESS, ERR_FIELD), err.get(JAVA_LONG, ERR_FIELD_LEN));
+      String message = utf16(err.get(ADDRESS, ERR_MESSAGE), err.get(JAVA_LONG, ERR_MESSAGE_LEN));
       return PdfException.of(status, message, field);
     } finally {
       run(() -> {
-      Lib.ERROR_FREE.invokeExact(err);
-    });
+        Lib.ERROR_FREE.invokeExact(err);
+      });
     }
   }
 
   /** Copy {@code len} UTF-16 units at {@code ptr}; null for a null pointer. */
-  public static String utf16(MemorySegment ptr, long len) {
+  private static @Nullable String utf16(MemorySegment ptr, long len) {
     if (ptr.address() == 0) {
       return null;
     }
-    char[] chars = ptr.reinterpret(Math.multiplyExact(len, 2L)).toArray(JAVA_CHAR);
-    return new String(chars);
+    return new String(ptr.reinterpret(Math.multiplyExact(len, 2L)).toArray(JAVA_CHAR));
   }
 
   /** Copy {@code len} UTF-8 bytes at {@code ptr}. */
-  public static String utf8(MemorySegment ptr, long len) {
-    byte[] bytes = ptr.reinterpret(len).toArray(JAVA_BYTE);
-    return new String(bytes, StandardCharsets.UTF_8);
+  private static String utf8(MemorySegment ptr, long len) {
+    if (len == 0) {
+      return "";
+    }
+    return new String(ptr.reinterpret(len).toArray(JAVA_BYTE), StandardCharsets.UTF_8);
   }
 
-  // ---- typed wrappers ---------------------------------------------------------------------
+  // ---- library ----------------------------------------------------------------------------
 
+  /** The native library's version. */
   public static String version() {
-    return version(Lib.VERSION);
-  }
-
-  private static String version(MethodHandle handle) {
     try (var arena = Arena.ofConfined()) {
-      var ptr = arena.allocate(ADDRESS);
-      var len = arena.allocate(JAVA_LONG);
+      var frame = frame(arena);
+      var ptr = frame.allocate(ADDRESS);
+      var len = frame.allocate(JAVA_LONG);
       run(() -> {
-        handle.invokeExact(ptr, len);
+        Lib.VERSION.invokeExact(ptr, len);
       });
       return utf8(ptr.get(ADDRESS, 0), len.get(JAVA_LONG, 0));
     }
   }
 
-  public static int abiVersion() {
-    try {
-      return (int) Lib.ABI.invokeExact();
-    } catch (Throwable error) {
-      throw new IllegalStateException(error);
-    }
-  }
-
-  /** The schema text of a batch kind: {@code Name:ELEM} lines. */
+  /** The native schema text of a batch kind. */
   public static String schema(int kind) {
     try (var arena = Arena.ofConfined()) {
-      var ptr = arena.allocate(ADDRESS);
-      var len = arena.allocate(JAVA_LONG);
-      var err = errorOut(arena);
-      call(err, e -> (int) Lib.SCHEMA.invokeExact(kind, ptr, len, e));
+      var frame = frame(arena);
+      var ptr = frame.allocate(ADDRESS);
+      var len = frame.allocate(JAVA_LONG);
+      call(errorOut(frame), e -> (int) Lib.SCHEMA.invokeExact(kind, ptr, len, e));
       return utf8(ptr.get(ADDRESS, 0), len.get(JAVA_LONG, 0));
     }
   }
 
-  /** The native sizes of Options, TableOptions, ErrorOut, BatchHeader and ColumnDesc. */
-  public static long[] structSizes() {
+  /** The native description of something this jar mirrors: a struct layout or named values. */
+  public static String describe(String name) {
     try (var arena = Arena.ofConfined()) {
-      var out = arena.allocate(JAVA_LONG, 5);
-      try {
-        long count = (long) Lib.STRUCT_SIZES.invokeExact(out, 5L);
-        return out.asSlice(0, Math.min(count, 5) * 8).toArray(JAVA_LONG);
-      } catch (Throwable error) {
-        throw new IllegalStateException(error);
-      }
+      byte[] bytes = name.getBytes(StandardCharsets.UTF_8);
+      var nameSegment = arena.allocateFrom(JAVA_BYTE, bytes);
+      var frame = frame(arena);
+      var ptr = frame.allocate(ADDRESS);
+      var len = frame.allocate(JAVA_LONG);
+      call(
+          errorOut(frame),
+          e -> (int) Lib.DESCRIBE.invokeExact(nameSegment, (long) bytes.length, ptr, len, e));
+      return utf8(ptr.get(ADDRESS, 0), len.get(JAVA_LONG, 0));
     }
   }
 
@@ -276,151 +258,182 @@ public final class Native {
     }
   }
 
+  // ---- documents --------------------------------------------------------------------------
+
+  /** Open a file by path. */
   public static MemorySegment openPath(String path, MemorySegment options) {
+    var event = Events.open();
     try (var arena = Arena.ofConfined()) {
-      var bytes = path.getBytes(StandardCharsets.UTF_8);
+      byte[] bytes = path.getBytes(StandardCharsets.UTF_8);
       var pathSegment = arena.allocateFrom(JAVA_BYTE, bytes);
-      var out = arena.allocate(ADDRESS);
-      var err = errorOut(arena);
+      var frame = frame(arena);
+      var out = frame.allocate(ADDRESS);
       call(
-          err,
-          e ->
-              (int)
-                  Lib.OPEN_PATH.invokeExact(pathSegment, (long) bytes.length, options, out, e));
+          errorOut(frame),
+          e -> (int) Lib.OPEN_PATH.invokeExact(pathSegment, (long) bytes.length, options, out, e));
       return out.get(ADDRESS, 0);
+    } finally {
+      event.end("path", 0);
     }
   }
 
   /** A Rust-owned buffer and where to write into it. */
   public record Buffer(MemorySegment handle, MemorySegment data) {}
 
+  /** Allocate a buffer of at least {@code capacity} bytes. */
   public static Buffer bufferAlloc(long capacity) {
     try (var arena = Arena.ofConfined()) {
-      var out = arena.allocate(ADDRESS);
-      var data = arena.allocate(ADDRESS);
-      var err = errorOut(arena);
-      call(err, e -> (int) Lib.BUFFER_ALLOC.invokeExact(capacity, out, data, e));
+      var frame = frame(arena);
+      var out = frame.allocate(ADDRESS);
+      var data = frame.allocate(ADDRESS);
+      call(errorOut(frame), e -> (int) Lib.BUFFER_ALLOC.invokeExact(capacity, out, data, e));
       return new Buffer(out.get(ADDRESS, 0), data.get(ADDRESS, 0).reinterpret(capacity));
     }
   }
 
+  /** Grow a buffer whose first {@code filled} bytes are written; the data may move. */
   public static Buffer bufferGrow(MemorySegment buffer, long filled, long capacity) {
     try (var arena = Arena.ofConfined()) {
-      var data = arena.allocate(ADDRESS);
-      var err = errorOut(arena);
-      call(err, e -> (int) Lib.BUFFER_GROW.invokeExact(buffer, filled, capacity, data, e));
+      var frame = frame(arena);
+      var data = frame.allocate(ADDRESS);
+      call(
+          errorOut(frame),
+          e -> (int) Lib.BUFFER_GROW.invokeExact(buffer, filled, capacity, data, e));
       return new Buffer(buffer, data.get(ADDRESS, 0).reinterpret(capacity));
     }
   }
 
   /** Open a buffer's first {@code filled} bytes. Consumes the buffer, even on failure. */
   public static MemorySegment openBuffer(MemorySegment buffer, long filled, MemorySegment options) {
+    var event = Events.open();
     try (var arena = Arena.ofConfined()) {
-      var out = arena.allocate(ADDRESS);
-      var err = errorOut(arena);
-      call(err, e -> (int) Lib.OPEN_BUFFER.invokeExact(buffer, filled, options, out, e));
+      var frame = frame(arena);
+      var out = frame.allocate(ADDRESS);
+      call(
+          errorOut(frame), e -> (int) Lib.OPEN_BUFFER.invokeExact(buffer, filled, options, out, e));
       return out.get(ADDRESS, 0);
+    } finally {
+      event.end("buffer", filled);
     }
   }
 
+  /** Free a buffer that was never opened. */
   public static void bufferFree(MemorySegment buffer) {
     run(() -> {
       Lib.BUFFER_FREE.invokeExact(buffer);
     });
   }
 
+  /** Free a document. */
   public static void documentFree(MemorySegment document) {
     run(() -> {
       Lib.DOCUMENT_FREE.invokeExact(document);
     });
   }
 
-  /** A batch-returning document call; reads and frees the batch. */
-  private static Columns documentBatch(MethodHandle handle, MemorySegment document, int kind) {
+  /** Read and free the batch an out-slot holds, recording an event. */
+  private static Columns batch(Events.BatchSpan event, MemorySegment out, Schema.Kind kind) {
+    Columns columns = Columns.readAndFree(out.get(ADDRESS, 0), kind);
+    event.end(kind.name(), columns.elements());
+    return columns;
+  }
+
+  /** The whole document's text, as a text batch. */
+  public static Columns documentText(MemorySegment document) {
+    var event = Events.batch();
     try (var arena = Arena.ofConfined()) {
-      var out = arena.allocate(ADDRESS);
-      var err = errorOut(arena);
-      call(err, e -> (int) handle.invokeExact(document, out, e));
-      return Columns.readAndFree(out.get(ADDRESS, 0), kind);
+      var frame = frame(arena);
+      var out = frame.allocate(ADDRESS);
+      call(errorOut(frame), e -> (int) Lib.DOCUMENT_TEXT.invokeExact(document, out, e));
+      return batch(event, out, Schema.Kind.TEXT);
     }
   }
 
-  public static Columns documentText(MemorySegment document) {
-    return documentBatch(Lib.DOCUMENT_TEXT, document, Schema.TEXT);
-  }
-
+  /** The document's metadata, as a metadata batch. */
   public static Columns documentMetadata(MemorySegment document) {
-    return documentBatch(Lib.DOCUMENT_METADATA, document, Schema.METADATA);
+    var event = Events.batch();
+    try (var arena = Arena.ofConfined()) {
+      var frame = frame(arena);
+      var out = frame.allocate(ADDRESS);
+      call(errorOut(frame), e -> (int) Lib.DOCUMENT_METADATA.invokeExact(document, out, e));
+      return batch(event, out, Schema.Kind.METADATA);
+    }
   }
 
+  /** One 1-based page, as a raw batch. */
   public static Columns documentRawPage(MemorySegment document, long pageNumber) {
+    var event = Events.batch();
     try (var arena = Arena.ofConfined()) {
-      var out = arena.allocate(ADDRESS);
-      var err = errorOut(arena);
-      call(err, e -> (int) Lib.DOCUMENT_RAW_PAGE.invokeExact(document, pageNumber, out, e));
-      return Columns.readAndFree(out.get(ADDRESS, 0), Schema.RAW);
+      var frame = frame(arena);
+      var out = frame.allocate(ADDRESS);
+      call(
+          errorOut(frame),
+          e -> (int) Lib.DOCUMENT_RAW_PAGE.invokeExact(document, pageNumber, out, e));
+      return batch(event, out, Schema.Kind.RAW);
     }
   }
 
   /** The declared page count and the number of pages the options select. */
   public static long[] documentCounts(MemorySegment document) {
     try (var arena = Arena.ofConfined()) {
-      var declared = arena.allocate(JAVA_LONG);
-      var selected = arena.allocate(JAVA_LONG);
-      var err = errorOut(arena);
-      call(err, e -> (int) Lib.DOCUMENT_COUNTS.invokeExact(document, declared, selected, e));
+      var frame = frame(arena);
+      var declared = frame.allocate(JAVA_LONG);
+      var selected = frame.allocate(JAVA_LONG);
+      call(
+          errorOut(frame),
+          e -> (int) Lib.DOCUMENT_COUNTS.invokeExact(document, declared, selected, e));
       return new long[] {declared.get(JAVA_LONG, 0), selected.get(JAVA_LONG, 0)};
     }
   }
 
-  /** A cursor and the handle that cancels it. */
-  public record CursorHandles(MemorySegment cursor, MemorySegment cancel) {}
+  // ---- cursors ----------------------------------------------------------------------------
 
-  public static CursorHandles cursorOpen(
-      MemorySegment document, int kind, MemorySegment tableOptions) {
+  /** Open a cursor of {@code kind} over a document. */
+  public static MemorySegment cursorOpen(
+      MemorySegment document, Schema.Kind kind, MemorySegment tableOptions) {
+    int number = kind.number();
     try (var arena = Arena.ofConfined()) {
-      var out = arena.allocate(ADDRESS);
-      var cancel = arena.allocate(ADDRESS);
-      var err = errorOut(arena);
+      var frame = frame(arena);
+      var out = frame.allocate(ADDRESS);
       call(
-          err,
-          e -> (int) Lib.CURSOR_OPEN.invokeExact(document, kind, tableOptions, out, cancel, e));
-      return new CursorHandles(out.get(ADDRESS, 0), cancel.get(ADDRESS, 0));
+          errorOut(frame),
+          e -> (int) Lib.CURSOR_OPEN.invokeExact(document, number, tableOptions, out, e));
+      return out.get(ADDRESS, 0);
     }
   }
 
   /**
-   * The next batch of a cursor, or null at the end. {@code scratch} holds an out-pointer slot
-   * followed by an {@code ErrorOut}, reused across calls under the cursor's lock.
+   * Per-cursor scratch: an out-slot and an {@code ErrorOut}, reused by every {@link #cursorNext}
+   * call of one cursor. Its arena is automatic: closing a shared arena per cursor would cost a
+   * JVM-wide handshake, and calls may come from different threads.
    */
-  public static Columns cursorNext(MemorySegment cursor, MemorySegment scratch, int kind) {
-    var out = scratch.asSlice(0, ADDRESS.byteSize());
-    var err = scratch.asSlice(ADDRESS.byteSize(), ERROR_OUT.byteSize());
-    call(err, e -> (int) Lib.CURSOR_NEXT.invokeExact(cursor, out, e));
-    MemorySegment batch = out.get(ADDRESS, 0);
-    return batch.address() == 0 ? null : Columns.readAndFree(batch, kind);
+  public record Scratch(MemorySegment out, MemorySegment err) {
+    public static Scratch allocate() {
+      var allocator = SegmentAllocator.slicingAllocator(Arena.ofAuto().allocate(FRAME_BYTES, 8));
+      return new Scratch(allocator.allocate(ADDRESS), errorOut(allocator));
+    }
   }
 
-  /** Scratch space for {@link #cursorNext}. */
-  public static MemorySegment cursorScratch(SegmentAllocator allocator) {
-    return allocator.allocate(ADDRESS.byteSize() + ERROR_OUT.byteSize(), 8);
+  /** The next batch of a cursor, or null at its end. One call at a time per scratch. */
+  public static @Nullable Columns cursorNext(
+      MemorySegment cursor, Scratch scratch, Schema.Kind kind) {
+    var event = Events.batch();
+    MemorySegment out = scratch.out();
+    call(scratch.err(), e -> (int) Lib.CURSOR_NEXT.invokeExact(cursor, out, e));
+    return out.get(ADDRESS, 0).address() == 0 ? null : batch(event, out, kind);
   }
 
-  public static void cancel(MemorySegment cancel) {
+  /** Ask a cursor to stop. Safe beside a running {@link #cursorNext}. */
+  public static void cursorCancel(MemorySegment cursor) {
     run(() -> {
-      Lib.CANCEL.invokeExact(cancel);
+      Lib.CURSOR_CANCEL.invokeExact(cursor);
     });
   }
 
+  /** Free a cursor. */
   public static void cursorFree(MemorySegment cursor) {
     run(() -> {
       Lib.CURSOR_FREE.invokeExact(cursor);
-    });
-  }
-
-  public static void cancelFree(MemorySegment cancel) {
-    run(() -> {
-      Lib.CANCEL_FREE.invokeExact(cancel);
     });
   }
 

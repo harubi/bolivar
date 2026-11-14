@@ -5,61 +5,40 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.ref.Cleaner;
 import java.lang.ref.Reference;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Function;
+import org.jspecify.annotations.Nullable;
 import sa.ingenious.pdf.internal.Native;
 import sa.ingenious.pdf.internal.NativeLoader;
+import sa.ingenious.pdf.internal.NativeResource;
 import sa.ingenious.pdf.internal.Schema;
 
 /**
- * An open PDF document. Use it in try-with-resources; a document that is never closed is freed by
- * a {@link Cleaner}.
+ * An open PDF document. Use it in try-with-resources; a document that is never closed is freed by a
+ * {@link java.lang.ref.Cleaner}.
  *
  * <p>Calls may come from several threads at once. {@link #close()} waits for calls in progress.
- * Cursors keep working after their document closes; a file opened by path stays mapped (and
- * locked, on Windows) until they close too.
+ * Cursors keep working after their document closes; a file opened by path stays mapped (and locked,
+ * on Windows) until they close too.
  *
  * <p>The JVM must allow native access: pass {@code --enable-native-access=ALL-UNNAMED}, or the
  * module name {@code sa.ingenious.bolivar} on the module path.
  */
 public final class Document implements AutoCloseable {
   private static final long INITIAL_STREAM_BUFFER = 1 << 16;
+  private static final long MAX_READ = 1 << 30;
 
-  private static final class State implements Runnable {
-    private final MemorySegment handle;
-    private final AtomicBoolean freed = new AtomicBoolean();
-
-    State(MemorySegment handle) {
-      this.handle = handle;
-    }
-
-    @Override
-    public void run() {
-      if (freed.compareAndSet(false, true)) {
-        Native.documentFree(handle);
-      }
-    }
-  }
-
-  private final State state;
-  private final Cleaner.Cleanable cleanable;
-  private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-  private boolean closed;
+  private final NativeResource resource;
 
   private Document(MemorySegment handle) {
-    this.state = new State(handle);
-    this.cleanable = Cursor.CLEANER.register(this, state);
+    this.resource = new NativeResource(this, handle, Native::documentFree);
   }
 
-  // ---- opening --------------------------------------------------------------------------------
+  // ---- opening ------------------------------------------------------------------------------
 
   /** Open a file by path. The file is memory-mapped: keep it unchanged while it is open. */
   public static Document open(String path) {
@@ -102,8 +81,8 @@ public final class Document implements AutoCloseable {
   }
 
   /**
-   * Open PDF bytes held in a memory segment. They are copied once, so the segment may be freed
-   * as soon as this returns.
+   * Open PDF bytes held in a memory segment. They are copied once, so the segment may be freed as
+   * soon as this returns.
    */
   public static Document open(MemorySegment bytes, Options options) {
     Objects.requireNonNull(bytes, "bytes");
@@ -137,7 +116,9 @@ public final class Document implements AutoCloseable {
               Native.bufferGrow(
                   buffer.handle(), filled, Math.multiplyExact(buffer.data().byteSize(), 2L));
         }
-        int read = channel.read(buffer.data().asSlice(filled).asByteBuffer());
+        // A ByteBuffer holds at most Integer.MAX_VALUE bytes, so read in bounded chunks.
+        long room = Math.min(buffer.data().byteSize() - filled, MAX_READ);
+        int read = channel.read(buffer.data().asSlice(filled, room).asByteBuffer());
         if (read < 0) {
           break;
         }
@@ -146,7 +127,7 @@ public final class Document implements AutoCloseable {
       owned = false;
       return new Document(Native.openBuffer(buffer.handle(), filled, nativeOptions));
     } catch (IOException error) {
-      throw new PdfException.IoError(error.getMessage(), error);
+      throw new PdfException.IoError(String.valueOf(error.getMessage()), error);
     } finally {
       if (owned) {
         Native.bufferFree(buffer.handle());
@@ -171,7 +152,7 @@ public final class Document implements AutoCloseable {
     }
   }
 
-  // ---- one-shot conveniences ------------------------------------------------------------------
+  // ---- one-shot conveniences ----------------------------------------------------------------
 
   /** Open, extract the whole text, and close. */
   public static String extractText(String path) {
@@ -196,6 +177,10 @@ public final class Document implements AutoCloseable {
     return extractText(file.getPath(), Options.DEFAULT);
   }
 
+  public static String extractText(File file, Options options) {
+    return extractText(file.getPath(), options);
+  }
+
   public static String extractText(byte[] bytes) {
     return extractText(bytes, Options.DEFAULT);
   }
@@ -207,7 +192,11 @@ public final class Document implements AutoCloseable {
   }
 
   public static String extractText(InputStream stream) {
-    try (var document = open(stream)) {
+    return extractText(stream, Options.DEFAULT);
+  }
+
+  public static String extractText(InputStream stream, Options options) {
+    try (var document = open(stream, options)) {
       return document.text();
     }
   }
@@ -223,31 +212,37 @@ public final class Document implements AutoCloseable {
     return NativeLoader.jarVersion();
   }
 
-  // ---- reads ----------------------------------------------------------------------------------
+  // ---- reads --------------------------------------------------------------------------------
 
   private <R> R read(Function<MemorySegment, R> call) {
-    lock.readLock().lock();
+    long stamp = resource.acquire();
+    if (stamp == 0) {
+      throw new IllegalStateException("The document is closed");
+    }
     try {
-      if (closed) {
-        throw new IllegalStateException("The document is closed");
-      }
-      return call.apply(state.handle);
+      return call.apply(resource.handle());
     } finally {
-      lock.readLock().unlock();
+      resource.release(stamp);
       Reference.reachabilityFence(this);
     }
   }
 
   /** Package-private for tests that need their own decoder. */
-  <T> Cursor<T> cursor(int kind, MemorySegment tableOptions, Cursor.Decoder<T> decoder) {
-    return read(handle -> new Cursor<>(Native.cursorOpen(handle, kind, tableOptions), kind, decoder));
-  }
-
-  private <T> Cursor<T> tableCursor(
-      int kind, TableOptions options, Cursor.Decoder<T> decoder) {
-    try (var arena = Arena.ofConfined()) {
-      return cursor(kind, NativeStructs.tableOptions(options, arena), decoder);
-    }
+  <T> Cursor<T> cursor(Schema.Kind kind, @Nullable TableOptions tables, Cursor.Decoder<T> decoder) {
+    return read(handle -> {
+      try (var arena = Arena.ofConfined()) {
+        MemorySegment nativeTables =
+            tables == null ? MemorySegment.NULL : NativeStructs.tableOptions(tables, arena);
+        MemorySegment cursor = Native.cursorOpen(handle, kind, nativeTables);
+        try {
+          return new Cursor<>(cursor, kind, decoder);
+        } catch (RuntimeException | Error error) {
+          // Not yet owned by a Cursor, so nothing else would free it.
+          Native.cursorFree(cursor);
+          throw error;
+        }
+      }
+    });
   }
 
   /** The whole document's text, pages separated by form feeds. */
@@ -276,21 +271,24 @@ public final class Document implements AutoCloseable {
 
   /** The laid-out pages, one at a time. */
   public Cursor<LayoutPage> pages() {
-    return cursor(Schema.LAYOUT, MemorySegment.NULL, (columns, out) -> out.accept(new LayoutPage(columns)));
+    return cursor(Schema.Kind.LAYOUT, null, (c, out) -> out.accept(new LayoutPage(c)));
   }
 
   /** Every page with nothing dropped, one at a time. */
   public Cursor<RawPage> rawPages() {
-    return cursor(Schema.RAW, MemorySegment.NULL, (columns, out) -> out.accept(new RawPage(columns)));
+    return cursor(Schema.Kind.RAW, null, (c, out) -> out.accept(new RawPage(c)));
   }
 
-  /** The text and glyph summary of each page; no per-character data crosses from native. */
+  /**
+   * The text, fonts and digit styles of each page. Only distinct (font, text, size) glyphs cross
+   * from native code, not every glyph.
+   */
   public Cursor<PageText> pageTexts() {
-    return cursor(Schema.PAGE_TEXT, MemorySegment.NULL, (columns, out) -> out.accept(Decode.pageText(columns)));
+    return cursor(Schema.Kind.PAGE_TEXT, null, (c, out) -> out.accept(Decode.pageText(c)));
   }
 
   public Cursor<PageSummary> pageSummaries() {
-    return cursor(Schema.SUMMARY, MemorySegment.NULL, (columns, out) -> out.accept(Decode.summary(columns)));
+    return cursor(Schema.Kind.SUMMARY, null, (c, out) -> out.accept(Decode.summary(c)));
   }
 
   public Cursor<Table> tables() {
@@ -299,10 +297,7 @@ public final class Document implements AutoCloseable {
 
   /** Every table of every page, one at a time. */
   public Cursor<Table> tables(TableOptions options) {
-    return tableCursor(Schema.TABLES, options, (columns, out) -> {
-      List<Table> tables = Decode.tables(columns);
-      tables.forEach(out);
-    });
+    return this.<Table>cursor(Schema.Kind.TABLES, options, Decode::tables);
   }
 
   public Cursor<PageTableRows> tableRows() {
@@ -311,20 +306,15 @@ public final class Document implements AutoCloseable {
 
   /** The raw table rows of each page, as the pdfplumber-compatible pipeline emits them. */
   public Cursor<PageTableRows> tableRows(TableOptions options) {
-    return tableCursor(Schema.TABLE_ROWS, options, (columns, out) -> out.accept(Decode.tableRows(columns)));
+    return cursor(Schema.Kind.TABLE_ROWS, options, (c, out) -> out.accept(Decode.tableRows(c)));
   }
 
   /** Free the document once calls in progress finish. Idempotent. */
   @Override
   public void close() {
-    lock.writeLock().lock();
     try {
-      if (!closed) {
-        closed = true;
-        cleanable.clean();
-      }
+      resource.close();
     } finally {
-      lock.writeLock().unlock();
       Reference.reachabilityFence(this);
     }
   }

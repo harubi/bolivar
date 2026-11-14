@@ -1,154 +1,235 @@
 package sa.ingenious.pdf;
 
-import java.util.ArrayList;
-import java.util.Arrays;
+import java.nio.charset.StandardCharsets;
+import java.util.Comparator;
 import java.util.List;
+import java.util.TreeSet;
+import java.util.function.Consumer;
+import org.jspecify.annotations.Nullable;
 import sa.ingenious.pdf.internal.Columns;
 import sa.ingenious.pdf.internal.Schema;
+import sa.ingenious.pdf.internal.Schema.Metadata.FlagBit;
+import sa.ingenious.pdf.internal.Schema.Metadata.RangeSlot;
 
 /** Turns the small batch kinds into records. */
+// Metadata range ordinals index the native Ranges column; Schema.verify checks the order.
+@SuppressWarnings("EnumOrdinal")
 final class Decode {
   private Decode() {}
 
   static String text(Columns c) {
-    return c.text();
+    return new String(c.u8(Schema.Text.Col.Utf8), StandardCharsets.UTF_8);
+  }
+
+  private static String range(Columns c, Schema.Col column, int index) {
+    String text = c.range(column, index);
+    if (text == null) {
+      throw new IllegalStateException(column + " " + index + " is absent");
+    }
+    return text;
   }
 
   static PageSummary summary(Columns c) {
-    long[] ints = c.i64(Schema.Summary.Ints);
-    double[] floats = c.f64(Schema.Summary.Floats);
+    char[] text = c.text();
     return new PageSummary(
-        Math.toIntExact(ints[0]),
-        c.range((int) ints[1], (int) ints[2]),
-        new BoundingBox(floats[1], floats[2], floats[3], floats[4]),
-        floats[0]);
+        Math.toIntExact(c.integer(Schema.Summary.IntSlot.PageNumber)),
+        new String(text),
+        new BoundingBox(
+            c.real(Schema.Summary.FloatSlot.X0),
+            c.real(Schema.Summary.FloatSlot.Y0),
+            c.real(Schema.Summary.FloatSlot.X1),
+            c.real(Schema.Summary.FloatSlot.Y1)),
+        c.real(Schema.Summary.FloatSlot.Rotate));
+  }
+
+  // ---- page text --------------------------------------------------------------------------
+
+  /** Strings in code point order, as Rust's {@code BTreeSet<String>} sorts them. */
+  static final Comparator<String> CODE_POINT_ORDER =
+      (a, b) -> {
+        int i = 0;
+        int j = 0;
+        while (i < a.length() && j < b.length()) {
+          int x = a.codePointAt(i);
+          int y = b.codePointAt(j);
+          if (x != y) {
+            return Integer.compare(x, y);
+          }
+          i += Character.charCount(x);
+          j += Character.charCount(y);
+        }
+        return Integer.compare(a.length() - i, b.length() - j);
+      };
+
+  private static final Comparator<DigitStyle> DIGIT_ORDER =
+      Comparator.comparing(DigitStyle::fontName, CODE_POINT_ORDER)
+          .thenComparingInt(DigitStyle::size);
+
+  /** Whether {@code text} holds a decimal digit (Unicode category Nd). */
+  static boolean hasDecimalDigit(String text) {
+    for (int i = 0; i < text.length(); ) {
+      int cp = text.codePointAt(i);
+      if (Character.getType(cp) == Character.DECIMAL_DIGIT_NUMBER) {
+        return true;
+      }
+      i += Character.charCount(cp);
+    }
+    return false;
+  }
+
+  /** A glyph size as a whole number: {@link Math#round(double)}, saturated to the int range. */
+  static int wholeSize(double size) {
+    long rounded = Math.round(size);
+    return (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, rounded));
   }
 
   static PageText pageText(Columns c) {
-    double[] boxBbox = c.f64(Schema.PageText.BoxBbox);
-    int[] boxLines = c.i32(Schema.PageText.BoxLines);
-    double[] lineBbox = c.f64(Schema.PageText.LineBbox);
-    List<PageTextBox> boxes = new ArrayList<>(boxLines.length - 1);
-    for (int b = 0; b < boxLines.length - 1; b++) {
-      List<PageTextLine> lines = new ArrayList<>(boxLines[b + 1] - boxLines[b]);
-      for (int l = boxLines[b]; l < boxLines[b + 1]; l++) {
-        lines.add(
+    double[] boxBbox = c.f64(Schema.PageText.Col.BoxBbox);
+    int[] boxLines = c.i32(Schema.PageText.Col.BoxLines);
+    double[] lineBbox = c.f64(Schema.PageText.Col.LineBbox);
+    PageTextBox[] boxes = new PageTextBox[Math.max(boxLines.length - 1, 0)];
+    for (int b = 0; b < boxes.length; b++) {
+      PageTextLine[] lines = new PageTextLine[boxLines[b + 1] - boxLines[b]];
+      for (int l = 0; l < lines.length; l++) {
+        int line = boxLines[b] + l;
+        lines[l] =
             new PageTextLine(
-                LayoutPage.box(lineBbox, l),
-                c.range(Schema.PageText.LineText, l),
-                c.range(Schema.PageText.LineTextWithoutBidi, l)));
+                TextLayer.box(lineBbox, line),
+                range(c, Schema.PageText.Col.LineText, line),
+                range(c, Schema.PageText.Col.LineTextWithoutBidi, line));
       }
-      boxes.add(
+      boxes[b] =
           new PageTextBox(
-              LayoutPage.box(boxBbox, b),
-              c.range(Schema.PageText.BoxText, b),
-              c.range(Schema.PageText.BoxTextWithoutBidi, b),
-              List.copyOf(lines)));
+              TextLayer.box(boxBbox, b),
+              range(c, Schema.PageText.Col.BoxText, b),
+              range(c, Schema.PageText.Col.BoxTextWithoutBidi, b),
+              TextLayer.wrap(lines));
     }
-    List<String> fonts =
-        Arrays.stream(c.i32(Schema.PageText.Fonts)).mapToObj(c::string).toList();
-    int[] digitFont = c.i32(Schema.PageText.DigitFont);
-    int[] digitSize = c.i32(Schema.PageText.DigitSize);
-    List<DigitStyle> digits = new ArrayList<>(digitFont.length);
-    for (int i = 0; i < digitFont.length; i++) {
-      digits.add(new DigitStyle(c.string(digitFont[i]), digitSize[i]));
+    // Fonts of every glyph whose text is not blank, and the font and whole size of every such
+    // glyph holding a decimal digit. Native code ships each distinct (font, text, size) once.
+    String[] strings = c.strings();
+    int[] glyphFont = c.i32(Schema.PageText.Col.GlyphFont);
+    int[] glyphText = c.i32(Schema.PageText.Col.GlyphText);
+    double[] glyphSize = c.f64(Schema.PageText.Col.GlyphSize);
+    TreeSet<String> fonts = new TreeSet<>(CODE_POINT_ORDER);
+    TreeSet<DigitStyle> digits = new TreeSet<>(DIGIT_ORDER);
+    for (int g = 0; g < glyphFont.length; g++) {
+      String text = strings[glyphText[g]];
+      if (text.isBlank()) {
+        continue;
+      }
+      String font = strings[glyphFont[g]];
+      fonts.add(font);
+      if (hasDecimalDigit(text)) {
+        digits.add(new DigitStyle(font, wholeSize(glyphSize[g])));
+      }
     }
-    double[] floats = c.f64(Schema.PageText.Floats);
     return new PageText(
-        Math.toIntExact(c.i64(Schema.PageText.Ints)[0]),
-        new BoundingBox(floats[0], floats[1], floats[2], floats[3]),
-        List.copyOf(boxes),
-        fonts,
+        Math.toIntExact(c.integer(Schema.PageText.IntSlot.PageNumber)),
+        new BoundingBox(
+            c.real(Schema.PageText.FloatSlot.X0),
+            c.real(Schema.PageText.FloatSlot.Y0),
+            c.real(Schema.PageText.FloatSlot.X1),
+            c.real(Schema.PageText.FloatSlot.Y1)),
+        TextLayer.wrap(boxes),
+        List.copyOf(fonts),
         List.copyOf(digits));
   }
 
-  static List<Table> tables(Columns c) {
-    int pageNumber = Math.toIntExact(c.i64(Schema.Tables.Ints)[0]);
-    double[] tableBbox = c.f64(Schema.Tables.TableBbox);
-    int[] shape = c.i32(Schema.Tables.TableShape);
-    int[] cellOffsets = c.i32(Schema.Tables.TableCells);
-    int[] index = c.i32(Schema.Tables.CellIndex);
-    double[] cellBbox = c.f64(Schema.Tables.CellBbox);
-    List<Table> tables = new ArrayList<>(shape.length / 2);
+  // ---- tables -----------------------------------------------------------------------------
+
+  /** Each table of one page batch, in order. */
+  static void tables(Columns c, Consumer<? super Table> out) {
+    int pageNumber = Math.toIntExact(c.integer(Schema.Tables.IntSlot.PageNumber));
+    double[] tableBbox = c.f64(Schema.Tables.Col.TableBbox);
+    int[] shape = c.i32(Schema.Tables.Col.TableShape);
+    int[] cellOffsets = c.i32(Schema.Tables.Col.TableCells);
+    int[] index = c.i32(Schema.Tables.Col.CellIndex);
+    double[] cellBbox = c.f64(Schema.Tables.Col.CellBbox);
     for (int t = 0; t < shape.length / 2; t++) {
-      List<TableCell> cells = new ArrayList<>(cellOffsets[t + 1] - cellOffsets[t]);
-      for (int i = cellOffsets[t]; i < cellOffsets[t + 1]; i++) {
-        cells.add(
+      TableCell[] cells = new TableCell[cellOffsets[t + 1] - cellOffsets[t]];
+      for (int k = 0; k < cells.length; k++) {
+        int i = cellOffsets[t] + k;
+        cells[k] =
             new TableCell(
                 index[4 * i],
                 index[4 * i + 1],
                 index[4 * i + 2],
                 index[4 * i + 3],
-                LayoutPage.box(cellBbox, i),
-                c.range(Schema.Tables.CellText, i)));
+                TextLayer.box(cellBbox, i),
+                range(c, Schema.Tables.Col.CellText, i));
       }
-      tables.add(
+      out.accept(
           new Table(
               pageNumber,
-              LayoutPage.box(tableBbox, t),
+              TextLayer.box(tableBbox, t),
               shape[2 * t],
               shape[2 * t + 1],
-              List.copyOf(cells)));
+              TextLayer.wrap(cells)));
     }
-    return tables;
   }
 
   static PageTableRows tableRows(Columns c) {
-    int[] ranges = c.i32(Schema.TableRows.CellText);
-    String[] cells = new String[ranges.length / 2];
+    int[] ranges = c.i32(Schema.TableRows.Col.CellText);
+    @Nullable String[] cells = new String[ranges.length / 2];
     for (int i = 0; i < cells.length; i++) {
       cells[i] = c.range(ranges[2 * i], ranges[2 * i + 1]);
     }
     return new PageTableRows(
-        Math.toIntExact(c.i64(Schema.TableRows.Ints)[0]),
+        Math.toIntExact(c.integer(Schema.TableRows.IntSlot.PageNumber)),
         cells,
-        c.i32(Schema.TableRows.RowOffsets),
-        c.i32(Schema.TableRows.TableOffsets));
+        c.i32(Schema.TableRows.Col.RowOffsets),
+        c.i32(Schema.TableRows.Col.TableOffsets));
   }
 
-  // Flag bits of the metadata batch, as `metadata::flags`.
-  private static boolean bit(long flags, int bit) {
-    return (flags & (1L << bit)) != 0;
-  }
+  // ---- metadata ---------------------------------------------------------------------------
 
   static Metadata metadata(Columns c) {
-    long[] ints = c.i64(Schema.Metadata.Ints);
-    String[] f = new String[15];
-    for (int i = 0; i < f.length; i++) {
-      f[i] = c.range(Schema.Metadata.Fields, i);
+    RangeSlot[] slots = RangeSlot.values();
+    @Nullable String[] f = new String[slots.length];
+    for (RangeSlot slot : slots) {
+      f[slot.ordinal()] = c.range(Schema.Metadata.Col.Ranges, slot.ordinal());
     }
-    int entries = c.i32(Schema.Metadata.InfoKeys).length / 2;
-    List<MetadataEntry> info = new ArrayList<>(entries);
+    int entries = c.i32(Schema.Metadata.Col.InfoKeys).length / 2;
+    MetadataEntry[] info = new MetadataEntry[entries];
     for (int i = 0; i < entries; i++) {
-      info.add(
+      info[i] =
           new MetadataEntry(
-              c.range(Schema.Metadata.InfoKeys, i), c.range(Schema.Metadata.InfoValues, i)));
+              range(c, Schema.Metadata.Col.InfoKeys, i),
+              range(c, Schema.Metadata.Col.InfoValues, i));
     }
-    long flags = ints[2];
+    long flags = c.integer(Schema.Metadata.IntSlot.Flags);
+    String header = f[RangeSlot.VersionHeader.ordinal()];
+    String catalog = f[RangeSlot.VersionCatalog.ordinal()];
+    String xmp = f[RangeSlot.Xmp.ordinal()];
+    String form = f[RangeSlot.Form.ordinal()];
     return new Metadata(
-        List.copyOf(info),
-        f[0],
-        f[1],
-        f[2],
-        f[3],
-        f[4],
-        f[5],
-        f[6],
-        f[7],
-        f[8],
-        f[9],
-        new PdfVersion(f[10], f[11], f[12]),
-        ints[0],
-        Math.toIntExact(ints[1]),
-        bit(flags, 0),
-        new PdfPermissions(bit(flags, 1), bit(flags, 2), bit(flags, 3)),
-        bit(flags, 4),
-        bit(flags, 5),
-        bit(flags, 6),
-        bit(flags, 7),
-        f[13],
-        bit(flags, 8),
-        bit(flags, 9),
-        f[14]);
+        TextLayer.wrap(info),
+        f[RangeSlot.Title.ordinal()],
+        f[RangeSlot.Author.ordinal()],
+        f[RangeSlot.Subject.ordinal()],
+        f[RangeSlot.Keywords.ordinal()],
+        f[RangeSlot.Creator.ordinal()],
+        f[RangeSlot.Producer.ordinal()],
+        f[RangeSlot.CreationDateRaw.ordinal()],
+        f[RangeSlot.CreationDateIso.ordinal()],
+        f[RangeSlot.ModificationDateRaw.ordinal()],
+        f[RangeSlot.ModificationDateIso.ordinal()],
+        new PdfVersion(header, catalog, catalog != null ? catalog : header),
+        c.integer(Schema.Metadata.IntSlot.FileSize),
+        Math.toIntExact(c.integer(Schema.Metadata.IntSlot.PageCount)),
+        FlagBit.Encrypted.in(flags),
+        new PdfPermissions(
+            FlagBit.Printable.in(flags),
+            FlagBit.Modifiable.in(flags),
+            FlagBit.Extractable.in(flags)),
+        FlagBit.Linearized.in(flags),
+        FlagBit.Tagged.in(flags),
+        FlagBit.UserProperties.in(flags),
+        FlagBit.Suspects.in(flags),
+        form == null ? "none" : form,
+        FlagBit.HasJavascript.in(flags),
+        xmp != null,
+        xmp);
   }
 }

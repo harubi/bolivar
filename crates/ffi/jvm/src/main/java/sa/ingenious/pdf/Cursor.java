@@ -1,139 +1,116 @@
 package sa.ingenious.pdf;
 
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
-import java.lang.ref.Cleaner;
 import java.lang.ref.Reference;
 import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Spliterator;
 import java.util.Spliterators;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
+import org.jspecify.annotations.Nullable;
 import sa.ingenious.pdf.internal.Columns;
 import sa.ingenious.pdf.internal.Native;
+import sa.ingenious.pdf.internal.NativeResource;
+import sa.ingenious.pdf.internal.Schema;
 
 /**
  * A closeable, single-pass cursor that reads one page at a time from native code. Use it in
- * try-with-resources; a cursor that is never closed is freed by a {@link Cleaner}.
+ * try-with-resources; a cursor that is never closed is freed by a {@link java.lang.ref.Cleaner}.
  *
- * <p>One thread at a time may iterate; {@link #cancel()} and {@link #close()} may be called from
- * any thread. A native call holds its carrier thread while it runs, so a virtual thread blocked
- * in {@link #hasNext()} pins one carrier.
+ * <p>Iteration is serialized: {@link #hasNext()} and {@link #next()} share one monitor, so threads
+ * that share a cursor take turns, each item going to exactly one of them. {@link #cancel()} and
+ * {@link #close()} stay outside that monitor and may be called from any thread, at any time. A
+ * native call holds its carrier thread while it runs, so a virtual thread blocked in {@link
+ * #hasNext()} pins one carrier.
+ *
+ * <p>It is both the iterator and its own {@link Iterable}, so it works in a for-each loop; being
+ * single-pass, {@link #iterator()} returns this cursor, not a fresh pass.
+ *
+ * @param <T> the item type
  */
+@SuppressWarnings("IterableAndIterator") // Single-pass by design; see above.
 public final class Cursor<T> implements Iterator<T>, Iterable<T>, AutoCloseable {
-  static final Cleaner CLEANER = Cleaner.create();
-
   /** Turns one batch into zero or more items. */
   @FunctionalInterface
   interface Decoder<T> {
     void decode(Columns columns, Consumer<? super T> out);
   }
 
-  /** Native resources, freed by {@link #close()} or the cleaner; never refers to the cursor. */
-  private static final class State implements Runnable {
-    // An automatic arena: closing a shared one would cost a JVM-wide handshake per cursor.
-    private final MemorySegment scratch = Native.cursorScratch(Arena.ofAuto());
-    private final MemorySegment cancel;
-    private MemorySegment cursor;
-    private final AtomicBoolean released = new AtomicBoolean();
-
-    State(Native.CursorHandles handles) {
-      cursor = handles.cursor();
-      cancel = handles.cancel();
-    }
-
-    /** Free the cursor. Caller holds the cursor's monitor, or the cursor is unreachable. */
-    void freeCursor() {
-      if (cursor != null) {
-        Native.cursorFree(cursor);
-        cursor = null;
-      }
-    }
-
-    @Override
-    public void run() {
-      if (released.compareAndSet(false, true)) {
-        freeCursor();
-        Native.cancelFree(cancel);
-      }
-    }
-  }
-
-  private final int kind;
+  private final NativeResource resource;
+  private final Schema.Kind kind;
   private final Decoder<T> decoder;
-  private final State state;
-  private final Cleaner.Cleanable cleanable;
+  private final Native.Scratch scratch = Native.Scratch.allocate();
   private final ArrayDeque<T> buffered = new ArrayDeque<>();
-  private final AtomicBoolean closing = new AtomicBoolean();
-  private final AtomicInteger cancelsInFlight = new AtomicInteger();
-  private volatile boolean closed;
+  private volatile boolean closing;
   private boolean exhausted;
 
-  Cursor(Native.CursorHandles handles, int kind, Decoder<T> decoder) {
+  Cursor(MemorySegment handle, Schema.Kind kind, Decoder<T> decoder) {
+    this.resource = new NativeResource(this, handle, Native::cursorFree);
     this.kind = kind;
     this.decoder = decoder;
-    this.state = new State(handles);
-    this.cleanable = CLEANER.register(this, state);
   }
 
+  private @Nullable Columns nextBatch() {
+    long stamp = resource.acquire();
+    if (stamp == 0) {
+      return null;
+    }
+    try {
+      return Native.cursorNext(resource.handle(), scratch, kind);
+    } catch (PdfException.Cancelled cancelled) {
+      if (closing) {
+        return null;
+      }
+      throw cancelled;
+    } finally {
+      resource.release(stamp);
+      Reference.reachabilityFence(this);
+    }
+  }
+
+  // Synchronized: native calls share one scratch out-slot and ErrorOut, and `buffered` is a
+  // plain deque. Two threads iterating at once would otherwise read the same batch and free it
+  // twice.
   @Override
-  public boolean hasNext() {
-    synchronized (this) {
+  public synchronized boolean hasNext() {
+    // Items already read stay deliverable after a close, so a true hasNext() always lets next()
+    // succeed; only reading more stops.
+    while (buffered.isEmpty()) {
+      if (exhausted || closing) {
+        return false;
+      }
+      Columns columns;
       try {
-        while (buffered.isEmpty()) {
-          if (closed || exhausted) {
-            return false;
-          }
-          Columns columns;
-          try {
-            columns = Native.cursorNext(state.cursor, state.scratch, kind);
-          } catch (PdfException.Cancelled cancelled) {
-            exhausted = true;
-            state.freeCursor();
-            if (closed) {
-              return false;
-            }
-            throw cancelled;
-          } catch (RuntimeException error) {
-            exhausted = true;
-            state.freeCursor();
-            throw error;
-          }
-          if (columns == null) {
-            exhausted = true;
-            state.freeCursor();
-            return false;
-          }
-          try {
-            decoder.decode(columns, buffered::add);
-          } catch (RuntimeException error) {
-            // The batch is gone; going on would skip its page without a word.
-            exhausted = true;
-            buffered.clear();
-            state.freeCursor();
-            throw error;
-          }
-        }
-        return true;
-      } finally {
-        Reference.reachabilityFence(this);
+        columns = nextBatch();
+      } catch (RuntimeException error) {
+        exhausted = true;
+        throw error;
+      }
+      if (columns == null) {
+        exhausted = true;
+        return false;
+      }
+      try {
+        decoder.decode(columns, buffered::add);
+      } catch (RuntimeException error) {
+        // The batch is gone; going on would skip its page without a word.
+        exhausted = true;
+        buffered.clear();
+        throw error;
       }
     }
+    return true;
   }
 
   @Override
-  public T next() {
-    synchronized (this) {
-      if (!hasNext()) {
-        throw new NoSuchElementException("The cursor has no more items");
-      }
-      return buffered.poll();
+  public synchronized T next() {
+    if (!hasNext()) {
+      throw new NoSuchElementException("The cursor has no more items");
     }
+    return buffered.removeFirst();
   }
 
   @Override
@@ -154,36 +131,30 @@ public final class Cursor<T> implements Iterator<T>, Iterable<T>, AutoCloseable 
    * PdfException.Cancelled}. Safe from any thread, and after close.
    */
   public void cancel() {
-    cancelsInFlight.incrementAndGet();
+    long stamp = resource.acquire();
+    if (stamp == 0) {
+      return;
+    }
     try {
-      // Read after the increment: close() frees the handle only once this count drains.
-      if (!closed) {
-        Native.cancel(state.cancel);
-      }
+      Native.cursorCancel(resource.handle());
     } finally {
-      cancelsInFlight.decrementAndGet();
+      resource.release(stamp);
       Reference.reachabilityFence(this);
     }
   }
 
-  /** Cancel any work in progress, wait for it to stop, and free the native cursor. */
+  /**
+   * Stop any work in progress, wait for it, and free the native cursor. Iteration then ends
+   * quietly. Idempotent.
+   */
   @Override
   public void close() {
-    if (!closing.compareAndSet(false, true)) {
-      return;
-    }
+    // Closing first, so a reader woken by the cancel sees a close, not a Cancelled; the cancel
+    // comes before the exclusive lease, so close never waits out a whole page.
+    closing = true;
     try {
-      // Closed first: a reader woken by the cancel must see a close, not a Cancelled.
-      closed = true;
-      Native.cancel(state.cancel);
-      synchronized (this) {
-        state.freeCursor();
-        buffered.clear();
-      }
-      while (cancelsInFlight.get() != 0) {
-        Thread.onSpinWait();
-      }
-      cleanable.clean();
+      cancel();
+      resource.close();
     } finally {
       Reference.reachabilityFence(this);
     }

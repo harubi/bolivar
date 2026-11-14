@@ -1,23 +1,24 @@
 package sa.ingenious.pdf;
 
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Canonical and raw document metadata. {@code documentInfo} holds every info entry, sorted by
- * key; {@code form} is {@code none}, {@code acroform} or {@code xfa}.
+ * Canonical and raw document metadata. {@code documentInfo} holds every info entry, sorted by key;
+ * {@code form} is {@code none}, {@code acroform} or {@code xfa}.
  */
 public record Metadata(
     List<MetadataEntry> documentInfo,
-    String title,
-    String author,
-    String subject,
-    String keywords,
-    String creator,
-    String producer,
-    String creationDateRaw,
-    String creationDateIso,
-    String modificationDateRaw,
-    String modificationDateIso,
+    @Nullable String title,
+    @Nullable String author,
+    @Nullable String subject,
+    @Nullable String keywords,
+    @Nullable String creator,
+    @Nullable String producer,
+    @Nullable String creationDateRaw,
+    @Nullable String creationDateIso,
+    @Nullable String modificationDateRaw,
+    @Nullable String modificationDateIso,
     PdfVersion version,
     long fileSizeBytes,
     int pageCount,
@@ -30,4 +31,4 @@ public record Metadata(
     String form,
     boolean hasJavascript,
     boolean hasMetadataStream,
-    String xmpMetadata) {}
+    @Nullable String xmpMetadata) {}

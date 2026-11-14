@@ -5,215 +5,224 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import static sa.ingenious.pdf.internal.Contract.OPTIONS;
+import static sa.ingenious.pdf.internal.Contract.TABLE_OPTIONS;
+import static sa.ingenious.pdf.internal.Contract.offset;
 
 import java.lang.foreign.Arena;
-import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
-import java.lang.foreign.StructLayout;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
+import sa.ingenious.pdf.internal.Contract.OptionBit;
+import sa.ingenious.pdf.internal.Contract.TableOptionBit;
 
-/** Writes options into the native {@code #[repr(C)]} structs of {@code crates/ffi/src/options.rs}. */
+/**
+ * Writes options into the native {@code #[repr(C)]} structs of {@code crates/ffi/src/options.rs}.
+ * Only types and presence are settled here; the native side checks every value.
+ */
+// TableStrategy ordinals are the native strategy codes; Contract.verify checks them at load.
+@SuppressWarnings("EnumOrdinal")
 final class NativeStructs {
   private NativeStructs() {}
 
-  static final StructLayout OPTIONS =
-      MemoryLayout.structLayout(
-          JAVA_INT.withName("struct_size"),
-          JAVA_INT.withName("present"),
-          JAVA_BYTE.withName("caching"),
-          JAVA_BYTE.withName("bidi"),
-          JAVA_BYTE.withName("detect_vertical"),
-          JAVA_BYTE.withName("all_texts"),
-          JAVA_INT.withName("pad"),
-          JAVA_LONG.withName("max_pages"),
-          JAVA_DOUBLE.withName("line_overlap"),
-          JAVA_DOUBLE.withName("char_margin"),
-          JAVA_DOUBLE.withName("line_margin"),
-          JAVA_DOUBLE.withName("word_margin"),
-          JAVA_DOUBLE.withName("boxes_flow"),
-          ADDRESS.withName("password"),
-          JAVA_LONG.withName("password_len"),
-          ADDRESS.withName("pages"),
-          JAVA_LONG.withName("pages_len"));
+  private static final long STRUCT_SIZE = offset(OPTIONS, "struct_size");
+  private static final long PRESENT = offset(OPTIONS, "present");
+  private static final long CACHING = offset(OPTIONS, "caching");
+  private static final long BIDI = offset(OPTIONS, "bidi");
+  private static final long DETECT_VERTICAL = offset(OPTIONS, "detect_vertical");
+  private static final long ALL_TEXTS = offset(OPTIONS, "all_texts");
+  private static final long MAX_PAGES = offset(OPTIONS, "max_pages");
+  private static final long LINE_OVERLAP = offset(OPTIONS, "line_overlap");
+  private static final long CHAR_MARGIN = offset(OPTIONS, "char_margin");
+  private static final long LINE_MARGIN = offset(OPTIONS, "line_margin");
+  private static final long WORD_MARGIN = offset(OPTIONS, "word_margin");
+  private static final long BOXES_FLOW = offset(OPTIONS, "boxes_flow");
+  private static final long PASSWORD = offset(OPTIONS, "password");
+  private static final long PASSWORD_LEN = offset(OPTIONS, "password_len");
+  private static final long PAGES = offset(OPTIONS, "pages");
+  private static final long PAGES_LEN = offset(OPTIONS, "pages_len");
 
-  static final StructLayout TABLE_OPTIONS =
-      MemoryLayout.structLayout(
-          JAVA_INT.withName("struct_size"),
-          JAVA_INT.withName("present"),
-          JAVA_INT.withName("vertical_strategy"),
-          JAVA_INT.withName("horizontal_strategy"),
-          JAVA_DOUBLE.withName("snap"),
-          JAVA_DOUBLE.withName("snap_x"),
-          JAVA_DOUBLE.withName("snap_y"),
-          JAVA_DOUBLE.withName("join"),
-          JAVA_DOUBLE.withName("join_x"),
-          JAVA_DOUBLE.withName("join_y"),
-          JAVA_DOUBLE.withName("intersection"),
-          JAVA_DOUBLE.withName("intersection_x"),
-          JAVA_DOUBLE.withName("intersection_y"),
-          MemoryLayout.sequenceLayout(4, JAVA_DOUBLE).withName("crop"),
-          MemoryLayout.sequenceLayout(4, JAVA_DOUBLE).withName("first_page_crop"),
-          JAVA_LONG.withName("max_pages"),
-          ADDRESS.withName("explicit_vertical"),
-          JAVA_LONG.withName("explicit_vertical_len"),
-          ADDRESS.withName("explicit_horizontal"),
-          JAVA_LONG.withName("explicit_horizontal_len"));
-
-  // Presence bits, as `options::opt` and `options::topt`.
-  private static final int PASSWORD = 1;
-  private static final int PAGES = 1 << 1;
-  private static final int MAX_PAGES = 1 << 2;
-  private static final int CACHING = 1 << 3;
-  private static final int BIDI = 1 << 4;
-  private static final int LINE_OVERLAP = 1 << 5;
-  private static final int CHAR_MARGIN = 1 << 6;
-  private static final int LINE_MARGIN = 1 << 7;
-  private static final int WORD_MARGIN = 1 << 8;
-  private static final int BOXES_FLOW = 1 << 9;
-  private static final int BOXES_FLOW_NONE = 1 << 10;
-  private static final int DETECT_VERTICAL = 1 << 11;
-  private static final int ALL_TEXTS = 1 << 12;
-
-  private static long offset(StructLayout layout, String name) {
-    return layout.byteOffset(MemoryLayout.PathElement.groupElement(name));
-  }
+  private static final long T_STRUCT_SIZE = offset(TABLE_OPTIONS, "struct_size");
+  private static final long T_PRESENT = offset(TABLE_OPTIONS, "present");
+  private static final long T_VERTICAL = offset(TABLE_OPTIONS, "vertical_strategy");
+  private static final long T_HORIZONTAL = offset(TABLE_OPTIONS, "horizontal_strategy");
+  private static final long T_SNAP = offset(TABLE_OPTIONS, "snap");
+  private static final long T_CROP = offset(TABLE_OPTIONS, "crop");
+  private static final long T_FIRST_PAGE_CROP = offset(TABLE_OPTIONS, "first_page_crop");
+  private static final long T_MAX_PAGES = offset(TABLE_OPTIONS, "max_pages");
+  private static final long T_VERTICAL_LINES = offset(TABLE_OPTIONS, "explicit_vertical");
+  private static final long T_VERTICAL_LINES_LEN = offset(TABLE_OPTIONS, "explicit_vertical_len");
+  private static final long T_HORIZONTAL_LINES = offset(TABLE_OPTIONS, "explicit_horizontal");
+  private static final long T_HORIZONTAL_LINES_LEN =
+      offset(TABLE_OPTIONS, "explicit_horizontal_len");
 
   private static byte flag(boolean value) {
     return (byte) (value ? 1 : 0);
   }
 
   /** The native options, or {@code NULL} when every field is the default. */
-  static MemorySegment options(Options options, Arena arena) {
+  static MemorySegment options(@Nullable Options options, Arena arena) {
     if (options == null || options.equals(Options.DEFAULT)) {
       return MemorySegment.NULL;
     }
     var s = arena.allocate(OPTIONS);
     int present = 0;
-    if (options.password() != null) {
-      byte[] bytes = options.password().getBytes(StandardCharsets.UTF_8);
-      s.set(ADDRESS, offset(OPTIONS, "password"), arena.allocateFrom(JAVA_BYTE, bytes));
-      s.set(JAVA_LONG, offset(OPTIONS, "password_len"), bytes.length);
-      present |= PASSWORD;
+    String password = options.password();
+    if (password != null) {
+      byte[] bytes = password.getBytes(StandardCharsets.UTF_8);
+      s.set(ADDRESS, PASSWORD, arena.allocateFrom(JAVA_BYTE, bytes));
+      s.set(JAVA_LONG, PASSWORD_LEN, bytes.length);
+      present |= OptionBit.PASSWORD.mask();
     }
-    if (options.pages() != null) {
-      long[] pages = options.pages().stream().mapToLong(Integer::longValue).toArray();
-      if (pages.length > 0) {
-        s.set(ADDRESS, offset(OPTIONS, "pages"), arena.allocateFrom(JAVA_LONG, pages));
+    List<Integer> pages = options.pages();
+    if (pages != null) {
+      long[] values = new long[pages.size()];
+      for (int i = 0; i < values.length; i++) {
+        values[i] = pages.get(i);
       }
-      s.set(JAVA_LONG, offset(OPTIONS, "pages_len"), pages.length);
-      present |= PAGES;
+      if (values.length > 0) {
+        s.set(ADDRESS, PAGES, arena.allocateFrom(JAVA_LONG, values));
+      }
+      s.set(JAVA_LONG, PAGES_LEN, values.length);
+      present |= OptionBit.PAGES.mask();
     }
-    if (options.maxPages() != null) {
-      s.set(JAVA_LONG, offset(OPTIONS, "max_pages"), options.maxPages());
-      present |= MAX_PAGES;
+    Integer maxPages = options.maxPages();
+    if (maxPages != null) {
+      s.set(JAVA_LONG, MAX_PAGES, maxPages);
+      present |= OptionBit.MAX_PAGES.mask();
     }
-    if (options.caching() != null) {
-      s.set(JAVA_BYTE, offset(OPTIONS, "caching"), flag(options.caching()));
-      present |= CACHING;
-    }
-    if (options.bidi() != null) {
-      s.set(JAVA_BYTE, offset(OPTIONS, "bidi"), flag(options.bidi()));
-      present |= BIDI;
-    }
+    present |= setFlag(s, CACHING, options.caching(), OptionBit.CACHING);
+    present |= setFlag(s, BIDI, options.bidi(), OptionBit.BIDI);
     LayoutOptions layout = options.layout();
     if (layout != null) {
-      present |= setDouble(s, "line_overlap", layout.lineOverlap(), LINE_OVERLAP);
-      present |= setDouble(s, "char_margin", layout.charMargin(), CHAR_MARGIN);
-      present |= setDouble(s, "line_margin", layout.lineMargin(), LINE_MARGIN);
-      present |= setDouble(s, "word_margin", layout.wordMargin(), WORD_MARGIN);
-      present |= setDouble(s, "boxes_flow", layout.boxesFlow(), BOXES_FLOW);
+      present |= setDouble(s, LINE_OVERLAP, layout.lineOverlap(), OptionBit.LINE_OVERLAP);
+      present |= setDouble(s, CHAR_MARGIN, layout.charMargin(), OptionBit.CHAR_MARGIN);
+      present |= setDouble(s, LINE_MARGIN, layout.lineMargin(), OptionBit.LINE_MARGIN);
+      present |= setDouble(s, WORD_MARGIN, layout.wordMargin(), OptionBit.WORD_MARGIN);
+      present |= setDouble(s, BOXES_FLOW, layout.boxesFlow(), OptionBit.BOXES_FLOW);
       if (layout.boxesFlowDisabled()) {
-        present |= BOXES_FLOW_NONE;
+        present |= OptionBit.BOXES_FLOW_NONE.mask();
       }
-      if (layout.detectVertical() != null) {
-        s.set(JAVA_BYTE, offset(OPTIONS, "detect_vertical"), flag(layout.detectVertical()));
-        present |= DETECT_VERTICAL;
-      }
-      if (layout.allTexts() != null) {
-        s.set(JAVA_BYTE, offset(OPTIONS, "all_texts"), flag(layout.allTexts()));
-        present |= ALL_TEXTS;
-      }
+      present |= setFlag(s, DETECT_VERTICAL, layout.detectVertical(), OptionBit.DETECT_VERTICAL);
+      present |= setFlag(s, ALL_TEXTS, layout.allTexts(), OptionBit.ALL_TEXTS);
     }
-    s.set(JAVA_INT, offset(OPTIONS, "struct_size"), (int) OPTIONS.byteSize());
-    s.set(JAVA_INT, offset(OPTIONS, "present"), present);
+    s.set(JAVA_INT, STRUCT_SIZE, (int) OPTIONS.byteSize());
+    s.set(JAVA_INT, PRESENT, present);
     return s;
   }
 
-  private static int setDouble(MemorySegment s, String name, Double value, int bit) {
+  private static int setFlag(MemorySegment s, long offset, @Nullable Boolean value, OptionBit bit) {
     if (value == null) {
       return 0;
     }
-    s.set(JAVA_DOUBLE, offset(OPTIONS, name), value);
-    return bit;
+    s.set(JAVA_BYTE, offset, flag(value));
+    return bit.mask();
+  }
+
+  private static int setDouble(
+      MemorySegment s, long offset, @Nullable Double value, OptionBit bit) {
+    if (value == null) {
+      return 0;
+    }
+    s.set(JAVA_DOUBLE, offset, value);
+    return bit.mask();
   }
 
   /** The native table options, or {@code NULL} for the defaults. */
-  static MemorySegment tableOptions(TableOptions options, Arena arena) {
+  static MemorySegment tableOptions(@Nullable TableOptions options, Arena arena) {
     if (options == null || options.equals(TableOptions.DEFAULT)) {
       return MemorySegment.NULL;
     }
     var s = arena.allocate(TABLE_OPTIONS);
     int present = 0;
-    if (options.verticalStrategy() != null) {
-      s.set(JAVA_INT, offset(TABLE_OPTIONS, "vertical_strategy"), options.verticalStrategy().ordinal());
-      present |= 1;
+    TableStrategy vertical = options.verticalStrategy();
+    if (vertical != null) {
+      s.set(JAVA_INT, T_VERTICAL, vertical.ordinal());
+      present |= TableOptionBit.VERTICAL_STRATEGY.mask();
     }
-    if (options.horizontalStrategy() != null) {
-      s.set(
-          JAVA_INT,
-          offset(TABLE_OPTIONS, "horizontal_strategy"),
-          options.horizontalStrategy().ordinal());
-      present |= 1 << 1;
+    TableStrategy horizontal = options.horizontalStrategy();
+    if (horizontal != null) {
+      s.set(JAVA_INT, T_HORIZONTAL, horizontal.ordinal());
+      present |= TableOptionBit.HORIZONTAL_STRATEGY.mask();
     }
-    Double[] tolerances = {
-      options.snapTolerance(), options.snapXTolerance(), options.snapYTolerance(),
-      options.joinTolerance(), options.joinXTolerance(), options.joinYTolerance(),
-      options.intersectionTolerance(), options.intersectionXTolerance(),
+    // The nine tolerances sit in order from `snap`, as their bits do from SNAP.
+    @Nullable Double[] tolerances = {
+      options.snapTolerance(),
+      options.snapXTolerance(),
+      options.snapYTolerance(),
+      options.joinTolerance(),
+      options.joinXTolerance(),
+      options.joinYTolerance(),
+      options.intersectionTolerance(),
+      options.intersectionXTolerance(),
       options.intersectionYTolerance(),
     };
-    long first = offset(TABLE_OPTIONS, "snap");
     for (int i = 0; i < tolerances.length; i++) {
-      if (tolerances[i] != null) {
-        s.set(JAVA_DOUBLE, first + 8L * i, tolerances[i]);
-        present |= 1 << (2 + i);
+      Double tolerance = tolerances[i];
+      if (tolerance != null) {
+        s.set(JAVA_DOUBLE, T_SNAP + 8L * i, tolerance);
+        present |= TableOptionBit.SNAP.mask() << i;
       }
     }
-    present |= lines(s, arena, "explicit_vertical", options.explicitVerticalLines(), 1 << 11);
-    present |= lines(s, arena, "explicit_horizontal", options.explicitHorizontalLines(), 1 << 12);
-    present |= crop(s, "crop", options.crop(), 1 << 13);
-    present |= crop(s, "first_page_crop", options.firstPageCrop(), 1 << 14);
-    if (options.maxPages() != null) {
-      s.set(JAVA_LONG, offset(TABLE_OPTIONS, "max_pages"), options.maxPages());
-      present |= 1 << 15;
+    present |=
+        lines(
+            s,
+            arena,
+            T_VERTICAL_LINES,
+            T_VERTICAL_LINES_LEN,
+            options.explicitVerticalLines(),
+            TableOptionBit.EXPLICIT_VERTICAL);
+    present |=
+        lines(
+            s,
+            arena,
+            T_HORIZONTAL_LINES,
+            T_HORIZONTAL_LINES_LEN,
+            options.explicitHorizontalLines(),
+            TableOptionBit.EXPLICIT_HORIZONTAL);
+    present |= crop(s, T_CROP, options.crop(), TableOptionBit.CROP);
+    present |= crop(s, T_FIRST_PAGE_CROP, options.firstPageCrop(), TableOptionBit.FIRST_PAGE_CROP);
+    Integer maxPages = options.maxPages();
+    if (maxPages != null) {
+      s.set(JAVA_LONG, T_MAX_PAGES, maxPages);
+      present |= TableOptionBit.MAX_PAGES.mask();
     }
-    s.set(JAVA_INT, offset(TABLE_OPTIONS, "struct_size"), (int) TABLE_OPTIONS.byteSize());
-    s.set(JAVA_INT, offset(TABLE_OPTIONS, "present"), present);
+    s.set(JAVA_INT, T_STRUCT_SIZE, (int) TABLE_OPTIONS.byteSize());
+    s.set(JAVA_INT, T_PRESENT, present);
     return s;
   }
 
   private static int lines(
-      MemorySegment s, Arena arena, String name, List<Double> lines, int bit) {
+      MemorySegment s,
+      Arena arena,
+      long pointer,
+      long length,
+      @Nullable List<Double> lines,
+      TableOptionBit bit) {
     if (lines == null) {
       return 0;
     }
-    double[] values = lines.stream().mapToDouble(Double::doubleValue).toArray();
-    if (values.length > 0) {
-      s.set(ADDRESS, offset(TABLE_OPTIONS, name), arena.allocateFrom(JAVA_DOUBLE, values));
+    double[] values = new double[lines.size()];
+    for (int i = 0; i < values.length; i++) {
+      values[i] = lines.get(i);
     }
-    s.set(JAVA_LONG, offset(TABLE_OPTIONS, name + "_len"), values.length);
-    return bit;
+    if (values.length > 0) {
+      s.set(ADDRESS, pointer, arena.allocateFrom(JAVA_DOUBLE, values));
+    }
+    s.set(JAVA_LONG, length, values.length);
+    return bit.mask();
   }
 
-  private static int crop(MemorySegment s, String name, BoundingBox box, int bit) {
+  private static int crop(
+      MemorySegment s, long base, @Nullable BoundingBox box, TableOptionBit bit) {
     if (box == null) {
       return 0;
     }
-    long base = offset(TABLE_OPTIONS, name);
     s.set(JAVA_DOUBLE, base, box.x0());
     s.set(JAVA_DOUBLE, base + 8, box.y0());
     s.set(JAVA_DOUBLE, base + 16, box.x1());
     s.set(JAVA_DOUBLE, base + 24, box.y1());
-    return bit;
+    return bit.mask();
   }
 }

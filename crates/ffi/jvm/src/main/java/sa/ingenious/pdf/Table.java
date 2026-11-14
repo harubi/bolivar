@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.jspecify.annotations.Nullable;
 
 /** A table and its cells; boxes are in PDF space. */
 public record Table(
@@ -18,7 +19,7 @@ public record Table(
   }
 
   /** The cell starting at a row and column, or null. */
-  public TableCell cell(int rowIndex, int columnIndex) {
+  public @Nullable TableCell cell(int rowIndex, int columnIndex) {
     for (TableCell cell : cells) {
       if (cell.rowIndex() == rowIndex && cell.columnIndex() == columnIndex) {
         return cell;
@@ -51,11 +52,10 @@ public record Table(
   /** The grid as CSV with every value quoted. */
   public String toCsv() {
     return toGrid().stream()
-        .map(
-            row ->
-                row.stream()
-                    .map(value -> "\"" + value.replace("\"", "\"\"") + "\"")
-                    .collect(Collectors.joining(",")))
+        .map(row ->
+            row.stream()
+                .map(value -> "\"" + value.replace("\"", "\"\"") + "\"")
+                .collect(Collectors.joining(",")))
         .collect(Collectors.joining("\n"));
   }
 }

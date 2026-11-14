@@ -33,15 +33,18 @@ class BenchmarkGateTest {
       (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
 
   private static long fastest(LongSupplier run) {
+    // Each result is used, so the JIT cannot drop the work.
+    long total = 0;
     for (int i = 0; i < 3; i++) {
-      run.getAsLong();
+      total += run.getAsLong();
     }
     long[] times = new long[RUNS];
     for (int i = 0; i < RUNS; i++) {
       long start = System.nanoTime();
-      run.getAsLong();
+      total += run.getAsLong();
       times[i] = System.nanoTime() - start;
     }
+    assertTrue(total > 0, "every run reads something");
     return Arrays.stream(times).min().orElseThrow();
   }
 
@@ -63,7 +66,7 @@ class BenchmarkGateTest {
     try (var document = Document.open(DOCUMENT);
         var pages = document.pages()) {
       while (pages.hasNext()) {
-        chars += pages.next().charCount();
+        chars += pages.next().glyphCount();
       }
     }
     return chars;
@@ -74,7 +77,7 @@ class BenchmarkGateTest {
     try (var document = Document.open(DOCUMENT);
         var pages = document.rawPages()) {
       while (pages.hasNext()) {
-        chars += pages.next().charCount();
+        chars += pages.next().glyphCount();
       }
     }
     return chars;
@@ -92,43 +95,38 @@ class BenchmarkGateTest {
     System.out.printf(
         "benchmark: %d chars; text %.1f ms, layout %.1f ms (x%.2f), raw %.1f ms;"
             + " layout %.1f B/char, raw %.1f B/char%n",
-        chars,
-        textNanos / 1e6,
-        layoutNanos / 1e6,
-        ratio,
-        rawNanos / 1e6,
-        layoutBytes,
-        rawBytes);
+        chars, textNanos / 1e6, layoutNanos / 1e6, ratio, rawNanos / 1e6, layoutBytes, rawBytes);
     assertTrue(ratio <= MAX_LAYOUT_TO_TEXT, "layout/text " + ratio);
     assertTrue(layoutBytes <= MAX_LAYOUT_BYTES_PER_CHAR, "layout B/char " + layoutBytes);
     assertTrue(rawBytes <= MAX_RAW_BYTES_PER_CHAR, "raw B/char " + rawBytes);
   }
 
   /**
-   * Wall-clock report, without gates, for the documents named in {@code
-   * -Dbolivar.bench.documents} (comma separated). The nightly workflow passes larger reference
-   * PDFs here.
+   * Wall-clock report, without gates, for the documents named in {@code -Dbolivar.bench.documents}
+   * (comma separated). The nightly workflow passes larger reference PDFs here.
    */
   @Test
   void reportExtraDocuments() {
     String documents = System.getProperty("bolivar.bench.documents", "");
     Assumptions.assumeFalse(documents.isBlank(), "no extra documents");
-    for (String path : documents.split(",")) {
-      LongSupplier text = () -> {
-        try (var document = Document.open(path)) {
-          return document.text().length();
-        }
-      };
-      LongSupplier layout = () -> {
-        long chars = 0;
-        try (var document = Document.open(path);
-            var pages = document.pages()) {
-          while (pages.hasNext()) {
-            chars += pages.next().charCount();
-          }
-        }
-        return chars;
-      };
+    for (String path : documents.split(",", -1)) {
+      LongSupplier text =
+          () -> {
+            try (var document = Document.open(path)) {
+              return document.text().length();
+            }
+          };
+      LongSupplier layout =
+          () -> {
+            long chars = 0;
+            try (var document = Document.open(path);
+                var pages = document.pages()) {
+              while (pages.hasNext()) {
+                chars += pages.next().glyphCount();
+              }
+            }
+            return chars;
+          };
       System.out.printf(
           "report: %s; text %.1f ms, layout %.1f ms%n",
           path, fastest(text) / 1e6, fastest(layout) / 1e6);

@@ -1,24 +1,30 @@
 package sa.ingenious.pdf.internal;
 
+import static sa.ingenious.pdf.internal.Schema.Elem.F64;
+import static sa.ingenious.pdf.internal.Schema.Elem.I32;
+import static sa.ingenious.pdf.internal.Schema.Elem.I64;
+import static sa.ingenious.pdf.internal.Schema.Elem.U16;
+import static sa.ingenious.pdf.internal.Schema.Elem.U8;
+
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.function.IntFunction;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Batch kinds and their columns, mirroring {@code crates/ffi/src/batch.rs}. A column's index is
- * its enum ordinal. {@code NativeContractTest} checks every kind against the native schema text.
+ * Batch kinds, mirroring {@code crates/ffi/src/batch.rs}: each kind's columns, its named slots in
+ * the {@code Ints} and {@code Floats} columns, its named ranges and its flag bits. An entry's index
+ * is its enum ordinal.
+ *
+ * <p>{@link #verify} checks every kind against the native {@code bolivar_schema} text when the
+ * library loads, so a mismatch fails at once, with the first line that differs.
  */
+// Ordinals are the ABI's indices by design: each enum mirrors a Rust declaration in order, and
+// verify() checks the order against the native library.
+@SuppressWarnings("EnumOrdinal")
 public final class Schema {
   private Schema() {}
-
-  public static final int LAYOUT = 1;
-  public static final int RAW = 2;
-  public static final int PAGE_TEXT = 3;
-  public static final int SUMMARY = 4;
-  public static final int TABLES = 5;
-  public static final int TABLE_ROWS = 6;
-  public static final int METADATA = 7;
-  public static final int TEXT = 8;
 
   /** Column element types, as {@code batch::Elem}. */
   public enum Elem {
@@ -28,24 +34,31 @@ public final class Schema {
     U8(4),
     U16(5);
 
-    final int code;
+    private final int code;
 
     Elem(int code) {
       this.code = code;
     }
 
+    private static final @Nullable Elem[] BY_CODE = {null, F64, I32, I64, U8, U16};
+
+    /** The element type with this native code. */
     static Elem of(int code) {
-      for (Elem elem : values()) {
-        if (elem.code == code) {
-          return elem;
-        }
+      Elem elem = code > 0 && code < BY_CODE.length ? BY_CODE[code] : null;
+      if (elem == null || elem.code != code) {
+        throw new IllegalStateException("unknown column element type " + code);
       }
-      throw new IllegalStateException("unknown column element type " + code);
+      return elem;
     }
   }
 
-  /** A column of some kind; implemented by the per-kind enums. */
-  public interface Column {
+  /** A column of some batch kind; the per-kind {@code Col} enums implement it. */
+  public interface Col {
+    /** The column's position in its batch. */
+    default int index() {
+      return ordinal();
+    }
+
     int ordinal();
 
     String name();
@@ -53,170 +66,519 @@ public final class Schema {
     Elem elem();
   }
 
-  public enum Layout implements Column {
-    Text(Elem.U16), Strings(Elem.U16), StringOff(Elem.I32), Ints(Elem.I64), Floats(Elem.F64),
-    BoxBbox(Elem.F64), BoxMode(Elem.I32), BoxText(Elem.I32), BoxLines(Elem.I32),
-    LineBbox(Elem.F64), LineOrient(Elem.I32), LineText(Elem.I32), LineChars(Elem.I32),
-    CharX0(Elem.F64), CharY0(Elem.F64), CharX1(Elem.F64), CharY1(Elem.F64),
-    CharSize(Elem.F64), CharFont(Elem.I32), CharUpright(Elem.U8), CharText(Elem.I32);
+  /** Indices of the five columns every kind starts with. */
+  static final int TEXT = 0;
 
-    private final Elem elem;
+  static final int STRINGS = 1;
+  static final int STRING_OFF = 2;
+  static final int INTS = 3;
+  static final int FLOATS = 4;
 
-    Layout(Elem elem) {
-      this.elem = elem;
+  /** The layout page. Raw pages share its columns at the same positions. */
+  public static final class Layout {
+    private Layout() {}
+
+    public enum Col implements Schema.Col {
+      Text(U16),
+      Strings(U16),
+      StringOff(I32),
+      Ints(I64),
+      Floats(F64),
+      BoxBbox(F64),
+      BoxMode(I32),
+      BoxText(I32),
+      BoxLines(I32),
+      LineBbox(F64),
+      LineOrient(I32),
+      LineText(I32),
+      LineChars(I32),
+      CharX0(F64),
+      CharY0(F64),
+      CharX1(F64),
+      CharY1(F64),
+      CharSize(F64),
+      CharFont(I32),
+      CharUpright(U8),
+      CharText(I32);
+
+      private final Elem elem;
+
+      Col(Elem elem) {
+        this.elem = elem;
+      }
+
+      @Override
+      public Elem elem() {
+        return elem;
+      }
     }
 
-    @Override
-    public Elem elem() {
-      return elem;
-    }
-  }
-
-  public enum Raw implements Column {
-    Text(Elem.U16), Strings(Elem.U16), StringOff(Elem.I32), Ints(Elem.I64), Floats(Elem.F64),
-    PageBoxes(Elem.F64), PageBoxPresent(Elem.U8),
-    BoxBbox(Elem.F64), BoxMode(Elem.I32), BoxText(Elem.I32), BoxLines(Elem.I32),
-    LineBbox(Elem.F64), LineOrient(Elem.I32), LineRawText(Elem.I32), LineText(Elem.I32),
-    LineChars(Elem.I32),
-    CharX0(Elem.F64), CharY0(Elem.F64), CharX1(Elem.F64), CharY1(Elem.F64),
-    CharSize(Elem.F64), CharFont(Elem.I32), CharUpright(Elem.U8), CharText(Elem.I32),
-    CharAdvance(Elem.F64), CharMatrix(Elem.F64), CharMcid(Elem.I32),
-    CharTag(Elem.I32), CharNcs(Elem.I32), CharScs(Elem.I32),
-    CharNcolor(Elem.I32), CharScolor(Elem.I32), ColorPool(Elem.F64),
-    TableBbox(Elem.F64), TableShape(Elem.I32), TableCells(Elem.I32),
-    CellIndex(Elem.I32), CellBbox(Elem.F64), CellText(Elem.I32);
-
-    private final Elem elem;
-
-    Raw(Elem elem) {
-      this.elem = elem;
+    public enum IntSlot {
+      PageNumber,
+      TextEnd
     }
 
-    @Override
-    public Elem elem() {
-      return elem;
-    }
-  }
-
-  public enum PageText implements Column {
-    Text(Elem.U16), Strings(Elem.U16), StringOff(Elem.I32), Ints(Elem.I64), Floats(Elem.F64),
-    BoxBbox(Elem.F64), BoxText(Elem.I32), BoxTextWithoutBidi(Elem.I32), BoxLines(Elem.I32),
-    LineBbox(Elem.F64), LineText(Elem.I32), LineTextWithoutBidi(Elem.I32),
-    Fonts(Elem.I32), DigitFont(Elem.I32), DigitSize(Elem.I32);
-
-    private final Elem elem;
-
-    PageText(Elem elem) {
-      this.elem = elem;
-    }
-
-    @Override
-    public Elem elem() {
-      return elem;
+    public enum FloatSlot {
+      Rotate,
+      X0,
+      Y0,
+      X1,
+      Y1
     }
   }
 
-  public enum Summary implements Column {
-    Text(Elem.U16), Strings(Elem.U16), StringOff(Elem.I32), Ints(Elem.I64), Floats(Elem.F64);
+  /** The raw page: the layout columns, then raw-only ones. */
+  public static final class Raw {
+    private Raw() {}
 
-    private final Elem elem;
+    /**
+     * The raw-only columns, which follow {@link Layout.Col}: a raw batch is a layout batch with
+     * more columns, so one reader serves the text layer of both.
+     */
+    public enum Col implements Schema.Col {
+      LineRawText(I32),
+      CharAdvance(F64),
+      CharMatrix(F64),
+      CharMcid(I32),
+      CharTag(I32),
+      CharNcs(I32),
+      CharScs(I32),
+      CharNcolor(I32),
+      CharScolor(I32),
+      ColorPool(F64),
+      PageBoxes(F64),
+      PageBoxPresent(U8),
+      TableBboxTopDown(F64),
+      TableShape(I32),
+      TableCells(I32),
+      CellIndex(I32),
+      CellBboxTopDown(F64),
+      CellText(I32);
 
-    Summary(Elem elem) {
-      this.elem = elem;
+      private static final int SHARED = Layout.Col.values().length;
+
+      private final Elem elem;
+
+      Col(Elem elem) {
+        this.elem = elem;
+      }
+
+      @Override
+      public int index() {
+        return SHARED + ordinal();
+      }
+
+      @Override
+      public Elem elem() {
+        return elem;
+      }
     }
 
-    @Override
-    public Elem elem() {
-      return elem;
-    }
-  }
-
-  public enum Tables implements Column {
-    Text(Elem.U16), Strings(Elem.U16), StringOff(Elem.I32), Ints(Elem.I64), Floats(Elem.F64),
-    TableBbox(Elem.F64), TableShape(Elem.I32), TableCells(Elem.I32),
-    CellIndex(Elem.I32), CellBbox(Elem.F64), CellText(Elem.I32);
-
-    private final Elem elem;
-
-    Tables(Elem elem) {
-      this.elem = elem;
+    public enum IntSlot {
+      PageIndex,
+      ObjectId,
+      Rotation,
+      LabelStart,
+      LabelEnd,
+      TextEnd
     }
 
-    @Override
-    public Elem elem() {
-      return elem;
-    }
-  }
-
-  public enum TableRows implements Column {
-    Text(Elem.U16), Strings(Elem.U16), StringOff(Elem.I32), Ints(Elem.I64), Floats(Elem.F64),
-    CellText(Elem.I32), RowOffsets(Elem.I32), TableOffsets(Elem.I32);
-
-    private final Elem elem;
-
-    TableRows(Elem elem) {
-      this.elem = elem;
-    }
-
-    @Override
-    public Elem elem() {
-      return elem;
-    }
-  }
-
-  public enum Metadata implements Column {
-    Text(Elem.U16), Strings(Elem.U16), StringOff(Elem.I32), Ints(Elem.I64), Floats(Elem.F64),
-    Fields(Elem.I32), InfoKeys(Elem.I32), InfoValues(Elem.I32);
-
-    private final Elem elem;
-
-    Metadata(Elem elem) {
-      this.elem = elem;
-    }
-
-    @Override
-    public Elem elem() {
-      return elem;
-    }
-  }
-
-  public enum Text implements Column {
-    Text(Elem.U16), Strings(Elem.U16), StringOff(Elem.I32), Ints(Elem.I64), Floats(Elem.F64);
-
-    private final Elem elem;
-
-    Text(Elem elem) {
-      this.elem = elem;
-    }
-
-    @Override
-    public Elem elem() {
-      return elem;
+    public enum FloatSlot {
+      UserUnit,
+      X0,
+      Y0,
+      X1,
+      Y1
     }
   }
 
-  /** Every kind number with its columns. */
-  public static Column[] columns(int kind) {
-    return switch (kind) {
-      case LAYOUT -> Layout.values();
-      case RAW -> Raw.values();
-      case PAGE_TEXT -> PageText.values();
-      case SUMMARY -> Summary.values();
-      case TABLES -> Tables.values();
-      case TABLE_ROWS -> TableRows.values();
-      case METADATA -> Metadata.values();
-      case TEXT -> Text.values();
-      default -> throw new IllegalArgumentException("unknown batch kind " + kind);
-    };
+  /** A page's text with and without bidi, and its distinct glyphs. */
+  public static final class PageText {
+    private PageText() {}
+
+    public enum Col implements Schema.Col {
+      Text(U16),
+      Strings(U16),
+      StringOff(I32),
+      Ints(I64),
+      Floats(F64),
+      BoxBbox(F64),
+      BoxText(I32),
+      BoxTextWithoutBidi(I32),
+      BoxLines(I32),
+      LineBbox(F64),
+      LineText(I32),
+      LineTextWithoutBidi(I32),
+      GlyphFont(I32),
+      GlyphText(I32),
+      GlyphSize(F64);
+
+      private final Elem elem;
+
+      Col(Elem elem) {
+        this.elem = elem;
+      }
+
+      @Override
+      public Elem elem() {
+        return elem;
+      }
+    }
+
+    public enum IntSlot {
+      PageNumber
+    }
+
+    public enum FloatSlot {
+      X0,
+      Y0,
+      X1,
+      Y1
+    }
   }
 
-  public static final List<Integer> KINDS =
-      List.of(LAYOUT, RAW, PAGE_TEXT, SUMMARY, TABLES, TABLE_ROWS, METADATA, TEXT);
+  /** A page's number, box, rotation and text. */
+  public static final class Summary {
+    private Summary() {}
 
-  /** The schema text this jar expects for a kind, in the native format. */
-  public static String text(int kind) {
-    return Arrays.stream(columns(kind))
-        .map(column -> column.name() + ":" + column.elem().name())
-        .collect(Collectors.joining("\n"));
+    public enum Col implements Schema.Col {
+      Text(U16),
+      Strings(U16),
+      StringOff(I32),
+      Ints(I64),
+      Floats(F64);
+
+      private final Elem elem;
+
+      Col(Elem elem) {
+        this.elem = elem;
+      }
+
+      @Override
+      public Elem elem() {
+        return elem;
+      }
+    }
+
+    public enum IntSlot {
+      PageNumber
+    }
+
+    public enum FloatSlot {
+      Rotate,
+      X0,
+      Y0,
+      X1,
+      Y1
+    }
+  }
+
+  /** A page's tables, with boxes in PDF space. */
+  public static final class Tables {
+    private Tables() {}
+
+    public enum Col implements Schema.Col {
+      Text(U16),
+      Strings(U16),
+      StringOff(I32),
+      Ints(I64),
+      Floats(F64),
+      TableBbox(F64),
+      TableShape(I32),
+      TableCells(I32),
+      CellIndex(I32),
+      CellBbox(F64),
+      CellText(I32);
+
+      private final Elem elem;
+
+      Col(Elem elem) {
+        this.elem = elem;
+      }
+
+      @Override
+      public Elem elem() {
+        return elem;
+      }
+    }
+
+    public enum IntSlot {
+      PageNumber
+    }
+  }
+
+  /** A page's raw table rows. */
+  public static final class TableRows {
+    private TableRows() {}
+
+    public enum Col implements Schema.Col {
+      Text(U16),
+      Strings(U16),
+      StringOff(I32),
+      Ints(I64),
+      Floats(F64),
+      CellText(I32),
+      RowOffsets(I32),
+      TableOffsets(I32);
+
+      private final Elem elem;
+
+      Col(Elem elem) {
+        this.elem = elem;
+      }
+
+      @Override
+      public Elem elem() {
+        return elem;
+      }
+    }
+
+    public enum IntSlot {
+      PageNumber
+    }
+  }
+
+  /** Document metadata. */
+  public static final class Metadata {
+    private Metadata() {}
+
+    public enum Col implements Schema.Col {
+      Text(U16),
+      Strings(U16),
+      StringOff(I32),
+      Ints(I64),
+      Floats(F64),
+      Ranges(I32),
+      InfoKeys(I32),
+      InfoValues(I32);
+
+      private final Elem elem;
+
+      Col(Elem elem) {
+        this.elem = elem;
+      }
+
+      @Override
+      public Elem elem() {
+        return elem;
+      }
+    }
+
+    public enum IntSlot {
+      FileSize,
+      PageCount,
+      Flags
+    }
+
+    public enum RangeSlot {
+      Title,
+      Author,
+      Subject,
+      Keywords,
+      Creator,
+      Producer,
+      CreationDateRaw,
+      CreationDateIso,
+      ModificationDateRaw,
+      ModificationDateIso,
+      VersionHeader,
+      VersionCatalog,
+      Form,
+      Xmp
+    }
+
+    /** Bits of the {@code Flags} slot. */
+    public enum FlagBit {
+      Encrypted,
+      Printable,
+      Modifiable,
+      Extractable,
+      Linearized,
+      Tagged,
+      UserProperties,
+      Suspects,
+      HasJavascript;
+
+      /** Whether this bit is set in {@code flags}. */
+      public boolean in(long flags) {
+        return (flags & (1L << ordinal())) != 0;
+      }
+    }
+  }
+
+  /** The whole document's text, as UTF-8. */
+  public static final class Text {
+    private Text() {}
+
+    public enum Col implements Schema.Col {
+      Text(U16),
+      Strings(U16),
+      StringOff(I32),
+      Ints(I64),
+      Floats(F64),
+      Utf8(U8);
+
+      private final Elem elem;
+
+      Col(Elem elem) {
+        this.elem = elem;
+      }
+
+      @Override
+      public Elem elem() {
+        return elem;
+      }
+    }
+  }
+
+  private static final Enum<?>[] NONE = {};
+
+  /** Every batch kind with its native number. */
+  // The lists are List.of, so unmodifiable; the checker only trusts Guava's types.
+  @SuppressWarnings("ImmutableEnumChecker")
+  public enum Kind {
+    LAYOUT(1, Layout.Col.values(), Layout.IntSlot.values(), Layout.FloatSlot.values(), NONE, NONE),
+    RAW(
+        2,
+        concat(Layout.Col.values(), Raw.Col.values()),
+        Raw.IntSlot.values(),
+        Raw.FloatSlot.values(),
+        NONE,
+        NONE),
+    PAGE_TEXT(
+        3,
+        PageText.Col.values(),
+        PageText.IntSlot.values(),
+        PageText.FloatSlot.values(),
+        NONE,
+        NONE),
+    SUMMARY(
+        4, Summary.Col.values(), Summary.IntSlot.values(), Summary.FloatSlot.values(), NONE, NONE),
+    TABLES(5, Tables.Col.values(), Tables.IntSlot.values(), NONE, NONE, NONE),
+    TABLE_ROWS(6, TableRows.Col.values(), TableRows.IntSlot.values(), NONE, NONE, NONE),
+    METADATA(
+        7,
+        Metadata.Col.values(),
+        Metadata.IntSlot.values(),
+        NONE,
+        Metadata.RangeSlot.values(),
+        Metadata.FlagBit.values()),
+    TEXT(8, Text.Col.values(), NONE, NONE, NONE, NONE);
+
+    private final int number;
+    private final List<Col> columns;
+    private final List<Enum<?>> ints;
+    private final List<Enum<?>> floats;
+    private final List<Enum<?>> ranges;
+    private final List<Enum<?>> flags;
+    private final @Nullable Class<?> intType;
+    private final @Nullable Class<?> floatType;
+
+    Kind(
+        int number,
+        Col[] columns,
+        Enum<?>[] ints,
+        Enum<?>[] floats,
+        Enum<?>[] ranges,
+        Enum<?>[] flags) {
+      this.number = number;
+      this.columns = List.of(columns);
+      this.ints = List.of(ints);
+      this.floats = List.of(floats);
+      this.ranges = List.of(ranges);
+      this.flags = List.of(flags);
+      this.intType = ints.length == 0 ? null : ints[0].getDeclaringClass();
+      this.floatType = floats.length == 0 ? null : floats[0].getDeclaringClass();
+    }
+
+    private static Col[] concat(Col[] first, Col[] second) {
+      Col[] all = Arrays.copyOf(first, first.length + second.length, Col[].class);
+      System.arraycopy(second, 0, all, first.length, second.length);
+      return all;
+    }
+
+    /** Throw unless {@code slot} is one of this kind's {@code Ints} slots. */
+    int intSlot(Enum<?> slot) {
+      return slot(slot, intType, "int");
+    }
+
+    /** Throw unless {@code slot} is one of this kind's {@code Floats} slots. */
+    int floatSlot(Enum<?> slot) {
+      return slot(slot, floatType, "float");
+    }
+
+    private int slot(Enum<?> slot, @Nullable Class<?> type, String what) {
+      if (slot.getDeclaringClass() != type) {
+        throw new IllegalArgumentException(
+            slot.getDeclaringClass().getName()
+                + "."
+                + slot
+                + " is not a "
+                + what
+                + " slot of "
+                + this);
+      }
+      return slot.ordinal();
+    }
+
+    /** The native kind number. */
+    public int number() {
+      return number;
+    }
+
+    /** The number of columns. */
+    int columnCount() {
+      return columns.size();
+    }
+
+    /** The column at {@code index}. */
+    Col column(int index) {
+      return columns.get(index);
+    }
+
+    /** The number of {@code Ints} slots. */
+    int intCount() {
+      return ints.size();
+    }
+
+    /** The number of {@code Floats} slots. */
+    int floatCount() {
+      return floats.size();
+    }
+
+    /** The schema text this jar expects, in {@code bolivar_schema}'s format. */
+    public String expected() {
+      List<String> lines = new ArrayList<>();
+      for (Col column : columns) {
+        lines.add("col:" + column.name() + ":" + column.elem().name());
+      }
+      add(lines, "int:", ints);
+      add(lines, "float:", floats);
+      add(lines, "range:", ranges);
+      add(lines, "flag:", flags);
+      return String.join("\n", lines);
+    }
+
+    private static void add(List<String> lines, String prefix, List<Enum<?>> names) {
+      for (Enum<?> name : names) {
+        lines.add(prefix + name.name());
+      }
+    }
+  }
+
+  /**
+   * Check every kind against the native schema text. The raw kind's expected text is the layout
+   * columns followed by the raw-only ones, so this also checks that native raw batches start with
+   * the layout columns.
+   *
+   * @throws IllegalStateException naming the first line that differs
+   */
+  public static void verify(IntFunction<String> nativeSchema) {
+    for (Kind kind : Kind.values()) {
+      Contract.require(
+          "batch kind " + kind.number + " (" + kind + ")",
+          kind.expected(),
+          nativeSchema.apply(kind.number));
+    }
   }
 }

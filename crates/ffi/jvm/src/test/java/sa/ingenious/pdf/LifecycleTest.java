@@ -49,26 +49,62 @@ class LifecycleTest {
       var firstPage = new CountDownLatch(1);
       var pool = Executors.newSingleThreadExecutor();
       Future<Integer> reader =
-          pool.submit(
-              () -> {
-                int count = 0;
-                try {
-                  while (pages.hasNext()) {
-                    pages.next();
-                    count++;
-                    firstPage.countDown();
-                  }
-                } catch (PdfException.Cancelled cancelled) {
-                  return -count;
-                }
-                return count;
-              });
+          pool.submit(() -> {
+            int count = 0;
+            try {
+              while (pages.hasNext()) {
+                pages.next();
+                count++;
+                firstPage.countDown();
+              }
+            } catch (PdfException.Cancelled cancelled) {
+              return -count;
+            }
+            return count;
+          });
       assertTrue(firstPage.await(30, TimeUnit.SECONDS));
       pages.cancel();
       int result = reader.get(30, TimeUnit.SECONDS);
       // Either the cursor reported the cancel, or it had already read every page.
       assertTrue(result < 0 || result == document.pageCount(), "result " + result);
       pool.shutdown();
+    }
+    awaitHandles(before);
+  }
+
+  @Test
+  void threadsSharingACursorTakeTurns() throws Exception {
+    long before = Native.liveHandles();
+    for (int round = 0; round < 20; round++) {
+      try (var document = Document.open(BIG);
+          var pages = document.pages()) {
+        var seen = java.util.concurrent.ConcurrentHashMap.<Integer>newKeySet();
+        var taken = new AtomicInteger();
+        try (var pool = Executors.newVirtualThreadPerTaskExecutor()) {
+          List<Future<?>> readers = new ArrayList<>();
+          for (int t = 0; t < 8; t++) {
+            readers.add(
+                pool.submit(() -> {
+                  while (true) {
+                    LayoutPage page;
+                    try {
+                      page = pages.next();
+                    } catch (java.util.NoSuchElementException done) {
+                      return null;
+                    }
+                    taken.incrementAndGet();
+                    seen.add(page.pageNumber());
+                  }
+                }));
+          }
+          for (Future<?> reader : readers) {
+            reader.get(60, TimeUnit.SECONDS);
+          }
+        }
+        // Every page went to exactly one thread.
+        assertEquals(document.pageCount(), taken.get());
+        assertEquals(document.pageCount(), seen.size());
+      }
     }
     awaitHandles(before);
   }
@@ -85,13 +121,12 @@ class LifecycleTest {
         List<Future<?>> cancellers = new ArrayList<>();
         for (int t = 0; t < 3; t++) {
           cancellers.add(
-              pool.submit(
-                  () -> {
-                    running.countDown();
-                    while (!stop.get()) {
-                      pages.cancel();
-                    }
-                  }));
+              pool.submit(() -> {
+                running.countDown();
+                while (!stop.get()) {
+                  pages.cancel();
+                }
+              }));
         }
         assertTrue(running.await(10, TimeUnit.SECONDS));
         pages.close();
@@ -112,16 +147,15 @@ class LifecycleTest {
       var started = new CountDownLatch(1);
       var pool = Executors.newSingleThreadExecutor();
       Future<Integer> reader =
-          pool.submit(
-              () -> {
-                int count = 0;
-                while (pages.hasNext()) {
-                  pages.next();
-                  count++;
-                  started.countDown();
-                }
-                return count;
-              });
+          pool.submit(() -> {
+            int count = 0;
+            while (pages.hasNext()) {
+              pages.next();
+              count++;
+              started.countDown();
+            }
+            return count;
+          });
       assertTrue(started.await(30, TimeUnit.SECONDS));
       pages.close();
       // A close ends iteration quietly, not with Cancelled.
@@ -142,22 +176,21 @@ class LifecycleTest {
       List<Future<?>> readers = new ArrayList<>();
       for (int t = 0; t < 3; t++) {
         readers.add(
-            pool.submit(
-                () -> {
-                  for (int i = 0; i < 20; i++) {
-                    if (i == 1) {
-                      reading.countDown();
-                    }
-                    try {
-                      assertTrue(document.text().contains("Hello"));
-                      completed.incrementAndGet();
-                    } catch (IllegalStateException closed) {
-                      return;
-                    } catch (RuntimeException other) {
-                      failures.incrementAndGet();
-                    }
-                  }
-                }));
+            pool.submit(() -> {
+              for (int i = 0; i < 20; i++) {
+                if (i == 1) {
+                  reading.countDown();
+                }
+                try {
+                  assertTrue(document.text().contains("Hello"));
+                  completed.incrementAndGet();
+                } catch (IllegalStateException closed) {
+                  return;
+                } catch (RuntimeException other) {
+                  failures.incrementAndGet();
+                }
+              }
+            }));
       }
       // Close while every reader is mid-loop: each has finished at least one call.
       assertTrue(reading.await(30, TimeUnit.SECONDS));
@@ -202,18 +235,17 @@ class LifecycleTest {
     var stop = new AtomicBoolean();
     Thread collector =
         Thread.ofPlatform()
-            .start(
-                () -> {
-                  while (!stop.get()) {
-                    System.gc();
-                    // Back-to-back full collections would starve the test thread.
-                    try {
-                      Thread.sleep(1);
-                    } catch (InterruptedException interrupted) {
-                      return;
-                    }
-                  }
-                });
+            .start(() -> {
+              while (!stop.get()) {
+                System.gc();
+                // Back-to-back full collections would starve the test thread.
+                try {
+                  Thread.sleep(1);
+                } catch (InterruptedException interrupted) {
+                  return;
+                }
+              }
+            });
     try {
       for (int i = 0; i < 300; i++) {
         // The document is unreachable as soon as text() starts; the fence keeps it alive.
@@ -247,14 +279,13 @@ class LifecycleTest {
       List<Future<String>> results = new ArrayList<>();
       for (int i = 0; i < 200; i++) {
         results.add(
-            executor.submit(
-                () -> {
-                  try (var document = Document.open(SMALL);
-                      var pages = document.pages()) {
-                    pages.next();
-                    return document.text();
-                  }
-                }));
+            executor.submit(() -> {
+              try (var document = Document.open(SMALL);
+                  var pages = document.pages()) {
+                pages.next();
+                return document.text();
+              }
+            }));
       }
       for (Future<String> result : results) {
         try {
