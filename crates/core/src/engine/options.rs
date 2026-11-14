@@ -74,18 +74,21 @@ pub struct CursorSelection {
 }
 
 impl CursorSelection {
+    /// Keep only these zero-indexed pages; missing ones are ignored and repeats count once.
     #[must_use]
     pub fn pages(mut self, pages: Vec<usize>) -> Self {
         self.pages = Some(pages);
         self
     }
 
+    /// Pass over this many of the kept pages first; past the end, no page is left.
     #[must_use]
     pub const fn skip(mut self, skip: usize) -> Self {
         self.skip = skip;
         self
     }
 
+    /// Read at most this many pages after the skip.
     #[must_use]
     pub const fn max_pages(mut self, max_pages: NonZeroUsize) -> Self {
         self.max_pages = Some(max_pages);
