@@ -228,12 +228,18 @@ public final class Document implements AutoCloseable {
   }
 
   /** Package-private for tests that need their own decoder. */
-  <T> Cursor<T> cursor(Schema.Kind kind, @Nullable TableOptions tables, Cursor.Decoder<T> decoder) {
+  <T> Cursor<T> cursor(
+      Schema.Kind kind,
+      @Nullable TableOptions tables,
+      CursorOptions selection,
+      Cursor.Decoder<T> decoder) {
+    Objects.requireNonNull(selection, "selection");
     return read(handle -> {
       try (var arena = Arena.ofConfined()) {
         MemorySegment nativeTables =
             tables == null ? MemorySegment.NULL : NativeStructs.tableOptions(tables, arena);
-        MemorySegment cursor = Native.cursorOpen(handle, kind, nativeTables, MemorySegment.NULL);
+        MemorySegment nativeSelection = NativeStructs.cursorOptions(selection, arena);
+        MemorySegment cursor = Native.cursorOpen(handle, kind, nativeTables, nativeSelection);
         try {
           return new Cursor<>(cursor, kind, decoder);
         } catch (RuntimeException | Error error) {
@@ -254,12 +260,12 @@ public final class Document implements AutoCloseable {
     return read(handle -> Decode.metadata(Native.documentMetadata(handle)));
   }
 
-  /** The pages in the file, as the document declares them. */
+  /** The pages in the file, as the document declares them in its page tree count. */
   public int declaredPageCount() {
     return read(handle -> Math.toIntExact(Native.documentCounts(handle)[0]));
   }
 
-  /** The pages this document's options select. */
+  /** The pages this document's options select; every cursor reads within these. */
   public int pageCount() {
     return read(handle -> Math.toIntExact(Native.documentCounts(handle)[1]));
   }
@@ -271,12 +277,25 @@ public final class Document implements AutoCloseable {
 
   /** The laid-out pages, one at a time. */
   public Cursor<LayoutPage> pages() {
-    return cursor(Schema.Kind.LAYOUT, null, (c, out) -> out.accept(new LayoutPage(c)));
+    return pages(CursorOptions.DEFAULT);
+  }
+
+  /**
+   * The laid-out pages that {@code selection} picks, one at a time. Throws {@link
+   * PdfException.InvalidArgument} naming the field for a bad selection.
+   */
+  public Cursor<LayoutPage> pages(CursorOptions selection) {
+    return cursor(Schema.Kind.LAYOUT, null, selection, (c, out) -> out.accept(new LayoutPage(c)));
   }
 
   /** Every page with nothing dropped, one at a time. */
   public Cursor<RawPage> rawPages() {
-    return cursor(Schema.Kind.RAW, null, (c, out) -> out.accept(new RawPage(c)));
+    return rawPages(CursorOptions.DEFAULT);
+  }
+
+  /** The pages {@code selection} picks, with nothing dropped, one at a time. */
+  public Cursor<RawPage> rawPages(CursorOptions selection) {
+    return cursor(Schema.Kind.RAW, null, selection, (c, out) -> out.accept(new RawPage(c)));
   }
 
   /**
@@ -284,11 +303,22 @@ public final class Document implements AutoCloseable {
    * from native code, not every glyph.
    */
   public Cursor<PageText> pageTexts() {
-    return cursor(Schema.Kind.PAGE_TEXT, null, (c, out) -> out.accept(Decode.pageText(c)));
+    return pageTexts(CursorOptions.DEFAULT);
+  }
+
+  /** The text, fonts and digit styles of the pages {@code selection} picks. */
+  public Cursor<PageText> pageTexts(CursorOptions selection) {
+    return cursor(
+        Schema.Kind.PAGE_TEXT, null, selection, (c, out) -> out.accept(Decode.pageText(c)));
   }
 
   public Cursor<PageSummary> pageSummaries() {
-    return cursor(Schema.Kind.SUMMARY, null, (c, out) -> out.accept(Decode.summary(c)));
+    return pageSummaries(CursorOptions.DEFAULT);
+  }
+
+  /** A summary of each page {@code selection} picks. */
+  public Cursor<PageSummary> pageSummaries(CursorOptions selection) {
+    return cursor(Schema.Kind.SUMMARY, null, selection, (c, out) -> out.accept(Decode.summary(c)));
   }
 
   public Cursor<Table> tables() {
@@ -297,7 +327,12 @@ public final class Document implements AutoCloseable {
 
   /** Every table of every page, one at a time. */
   public Cursor<Table> tables(TableOptions options) {
-    return this.<Table>cursor(Schema.Kind.TABLES, options, Decode::tables);
+    return tables(options, CursorOptions.DEFAULT);
+  }
+
+  /** Every table of the pages {@code selection} picks, one at a time. */
+  public Cursor<Table> tables(TableOptions options, CursorOptions selection) {
+    return this.<Table>cursor(Schema.Kind.TABLES, options, selection, Decode::tables);
   }
 
   public Cursor<PageTableRows> tableRows() {
@@ -306,7 +341,13 @@ public final class Document implements AutoCloseable {
 
   /** The raw table rows of each page, as the pdfplumber-compatible pipeline emits them. */
   public Cursor<PageTableRows> tableRows(TableOptions options) {
-    return cursor(Schema.Kind.TABLE_ROWS, options, (c, out) -> out.accept(Decode.tableRows(c)));
+    return tableRows(options, CursorOptions.DEFAULT);
+  }
+
+  /** The raw table rows of the pages {@code selection} picks. */
+  public Cursor<PageTableRows> tableRows(TableOptions options, CursorOptions selection) {
+    return cursor(
+        Schema.Kind.TABLE_ROWS, options, selection, (c, out) -> out.accept(Decode.tableRows(c)));
   }
 
   /** Free the document once calls in progress finish. Idempotent. */

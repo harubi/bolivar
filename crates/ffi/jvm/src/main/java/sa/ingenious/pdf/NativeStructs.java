@@ -5,6 +5,7 @@ import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
+import static sa.ingenious.pdf.internal.Contract.CURSOR_OPTIONS;
 import static sa.ingenious.pdf.internal.Contract.OPTIONS;
 import static sa.ingenious.pdf.internal.Contract.TABLE_OPTIONS;
 import static sa.ingenious.pdf.internal.Contract.offset;
@@ -15,6 +16,7 @@ import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
+import sa.ingenious.pdf.internal.Contract.CursorOptionBit;
 import sa.ingenious.pdf.internal.Contract.OptionBit;
 import sa.ingenious.pdf.internal.Contract.TableOptionBit;
 
@@ -56,6 +58,14 @@ final class NativeStructs {
   private static final long T_HORIZONTAL_LINES = offset(TABLE_OPTIONS, "explicit_horizontal");
   private static final long T_HORIZONTAL_LINES_LEN =
       offset(TABLE_OPTIONS, "explicit_horizontal_len");
+
+  private static final long C_STRUCT_SIZE = offset(CURSOR_OPTIONS, "struct_size");
+  private static final long C_PRESENT = offset(CURSOR_OPTIONS, "present");
+  private static final long C_SKIP = offset(CURSOR_OPTIONS, "skip");
+  private static final long C_MAX_PAGES = offset(CURSOR_OPTIONS, "max_pages");
+  private static final long C_READ_AHEAD = offset(CURSOR_OPTIONS, "read_ahead");
+  private static final long C_PAGES = offset(CURSOR_OPTIONS, "pages");
+  private static final long C_PAGES_LEN = offset(CURSOR_OPTIONS, "pages_len");
 
   /** The native options, or {@code NULL} when every field is the default. */
   static MemorySegment options(@Nullable Options options, Arena arena) {
@@ -206,6 +216,31 @@ final class NativeStructs {
     present |= setLong(s, T_MAX_PAGES, options.maxPages(), TableOptionBit.MAX_PAGES.mask());
     s.set(JAVA_INT, T_STRUCT_SIZE, (int) TABLE_OPTIONS.byteSize());
     s.set(JAVA_INT, T_PRESENT, present);
+    return s;
+  }
+
+  /**
+   * The native cursor options, or {@code NULL} for the defaults, so a plain cursor allocates none.
+   */
+  static MemorySegment cursorOptions(@Nullable CursorOptions options, Arena arena) {
+    if (options == null || options.equals(CursorOptions.DEFAULT)) {
+      return MemorySegment.NULL;
+    }
+    var s = arena.allocate(CURSOR_OPTIONS);
+    int present =
+        setArray(
+            s,
+            arena,
+            C_PAGES,
+            C_PAGES_LEN,
+            options.pages(),
+            JAVA_LONG,
+            CursorOptionBit.PAGES.mask());
+    present |= setLong(s, C_SKIP, options.skip(), CursorOptionBit.SKIP.mask());
+    present |= setLong(s, C_MAX_PAGES, options.maxPages(), CursorOptionBit.MAX_PAGES.mask());
+    present |= setLong(s, C_READ_AHEAD, options.readAhead(), CursorOptionBit.READ_AHEAD.mask());
+    s.set(JAVA_INT, C_STRUCT_SIZE, (int) CURSOR_OPTIONS.byteSize());
+    s.set(JAVA_INT, C_PRESENT, present);
     return s;
   }
 

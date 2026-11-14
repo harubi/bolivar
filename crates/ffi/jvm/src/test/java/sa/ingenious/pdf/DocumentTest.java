@@ -151,6 +151,77 @@ class DocumentTest {
     }
   }
 
+  private static <T> List<Integer> numbers(
+      Cursor<T> cursor, java.util.function.ToIntFunction<T> page) {
+    try (cursor) {
+      List<Integer> numbers = new ArrayList<>();
+      cursor.forEachRemaining(item -> numbers.add(page.applyAsInt(item)));
+      return numbers;
+    }
+  }
+
+  @Test
+  void cursorOptionsPickPagesOnEveryCursor() {
+    var twoAndFour = CursorOptions.builder().pages(2, 4).build();
+    var firstTwo = CursorOptions.builder().maxPages(2).build();
+    var lastTwo = CursorOptions.builder().skip(3).build();
+    try (var document = Document.open(LABELS)) {
+      assertEquals(List.of(2, 4), numbers(document.pages(twoAndFour), LayoutPage::pageNumber));
+      assertEquals(List.of(2, 4), numbers(document.rawPages(twoAndFour), RawPage::pageNumber));
+      assertEquals(List.of(1, 2), numbers(document.pageTexts(firstTwo), PageText::pageNumber));
+      assertEquals(
+          List.of(4, 5), numbers(document.pageSummaries(lastTwo), PageSummary::pageNumber));
+      assertEquals(
+          List.of(1, 2),
+          numbers(document.tableRows(TableOptions.DEFAULT, firstTwo), PageTableRows::pageNumber));
+      var readAhead = CursorOptions.builder().readAhead(1).build();
+      assertEquals(
+          List.of(1, 2, 3, 4, 5),
+          numbers(document.pageSummaries(readAhead), PageSummary::pageNumber));
+    }
+  }
+
+  @Test
+  void aHeadAndASkipReadEachSelectedPageOnce() {
+    var selected = Options.builder().pages(2, 3, 5).build();
+    try (var document = Document.open(LABELS, selected)) {
+      var head = CursorOptions.builder().maxPages(2).build();
+      var rest = CursorOptions.builder().skip(2).build();
+      assertEquals(List.of(2, 3), numbers(document.pageSummaries(head), PageSummary::pageNumber));
+      assertEquals(List.of(5), numbers(document.pageSummaries(rest), PageSummary::pageNumber));
+      var outside = CursorOptions.builder().pages(1, 3, 4).build();
+      assertEquals(
+          List.of(3),
+          numbers(document.pageSummaries(outside), PageSummary::pageNumber),
+          "a cursor reads only pages the document selects");
+    }
+  }
+
+  @Test
+  void anEmptyPageListReadsNothing() {
+    var none = CursorOptions.builder().pages(List.of()).build();
+    try (var document = Document.open(LABELS)) {
+      assertEquals(List.of(), numbers(document.pageSummaries(none), PageSummary::pageNumber));
+    }
+  }
+
+  @Test
+  void badCursorOptionsNameTheirField() {
+    try (var document = Document.open(LABELS)) {
+      for (var bad :
+          List.of(
+              java.util.Map.entry("read_ahead", CursorOptions.builder().readAhead(0).build()),
+              java.util.Map.entry("skip", CursorOptions.builder().skip(-1).build()),
+              java.util.Map.entry("max_pages", CursorOptions.builder().maxPages(0).build()),
+              java.util.Map.entry("pages", CursorOptions.builder().pages(0).build()))) {
+        var error =
+            assertThrows(
+                PdfException.InvalidArgument.class, () -> document.pageSummaries(bad.getValue()));
+        assertEquals(bad.getKey(), error.field());
+      }
+    }
+  }
+
   @Test
   void cursorsYieldEveryShape() {
     try (var document = Document.open(NICS)) {
