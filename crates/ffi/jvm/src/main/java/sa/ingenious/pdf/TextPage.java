@@ -31,7 +31,7 @@ public abstract sealed class TextPage permits LayoutPage, RawPage {
 
   /** The page's text boxes, made on demand. */
   public final List<TextBox> textBoxes() {
-    return TextLayer.list(0, layer.boxCount(), layer::box);
+    return new IndexedList<>(0, layer.boxCount(), layer::box);
   }
 
   public final int lineCount() {
@@ -44,7 +44,7 @@ public abstract sealed class TextPage permits LayoutPage, RawPage {
 
   /** Every line of the page, made on demand. */
   public final List<TextLine> lines() {
-    return TextLayer.list(0, layer.lineCount(), layer::line);
+    return new IndexedList<>(0, layer.lineCount(), layer::line);
   }
 
   public final int glyphCount() {
@@ -57,7 +57,7 @@ public abstract sealed class TextPage permits LayoutPage, RawPage {
 
   /** Every glyph of the page, made on demand. */
   public final List<Glyph> glyphs() {
-    return TextLayer.list(0, layer.glyphCount(), layer::glyph);
+    return new IndexedList<>(0, layer.glyphCount(), layer::glyph);
   }
 
   /** The text boxes, copied into records that do not keep the page alive. */

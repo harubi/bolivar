@@ -75,7 +75,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public InvalidPath(String message) {
-      super(1, message, null, null);
+      super(Status.INVALID_PATH.code(), message, null, null);
     }
   }
 
@@ -84,7 +84,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public InvalidArgument(String message, @Nullable String field) {
-      super(2, message, field, null);
+      super(Status.INVALID_ARGUMENT.code(), message, field, null);
     }
   }
 
@@ -92,7 +92,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public IoNotFound(String message) {
-      super(3, message, null, null);
+      super(Status.IO_NOT_FOUND.code(), message, null, null);
     }
   }
 
@@ -100,7 +100,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public IoPermissionDenied(String message) {
-      super(4, message, null, null);
+      super(Status.IO_PERMISSION_DENIED.code(), message, null, null);
     }
   }
 
@@ -108,7 +108,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public IoError(String message, @Nullable Throwable cause) {
-      super(5, message, null, cause);
+      super(Status.IO_ERROR.code(), message, null, cause);
     }
   }
 
@@ -116,7 +116,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public SyntaxError(String message) {
-      super(6, message, null, null);
+      super(Status.SYNTAX_ERROR.code(), message, null, null);
     }
   }
 
@@ -125,7 +125,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public EncryptionError(String message) {
-      super(7, message, null, null);
+      super(Status.ENCRYPTION_ERROR.code(), message, null, null);
     }
   }
 
@@ -134,7 +134,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public MalformedPdf(String message) {
-      super(8, message, null, null);
+      super(Status.MALFORMED_PDF.code(), message, null, null);
     }
   }
 
@@ -142,7 +142,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public DecodeError(String message) {
-      super(9, message, null, null);
+      super(Status.DECODE_ERROR.code(), message, null, null);
     }
   }
 
@@ -151,7 +151,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public Cancelled(String message) {
-      super(10, message, null, null);
+      super(Status.CANCELLED.code(), message, null, null);
     }
   }
 
@@ -159,7 +159,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public RuntimeError(String message) {
-      super(11, message, null, null);
+      super(Status.RUNTIME_ERROR.code(), message, null, null);
     }
   }
 
@@ -168,7 +168,7 @@ public abstract sealed class PdfException extends RuntimeException
     @Serial private static final long serialVersionUID = 1L;
 
     public Unsupported(String message) {
-      super(13, message, null, null);
+      super(Status.UNSUPPORTED.code(), message, null, null);
     }
   }
 

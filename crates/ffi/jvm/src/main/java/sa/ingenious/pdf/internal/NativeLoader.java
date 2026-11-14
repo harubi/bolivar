@@ -79,10 +79,8 @@ public final class NativeLoader {
       }
       return path;
     }
-    String classifier = currentClassifier();
-    String resource = resourcePath(classifier);
     try {
-      return extract(resource, resource.substring(resource.lastIndexOf('/') + 1));
+      return extract(resourcePath(currentClassifier()), System.mapLibraryName(LIB_NAME));
     } catch (IOException error) {
       throw new UncheckedIOException("Cannot extract the Bolivar native library", error);
     }

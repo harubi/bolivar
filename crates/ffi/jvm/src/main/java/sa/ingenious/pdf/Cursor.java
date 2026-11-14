@@ -82,21 +82,15 @@ public final class Cursor<T> implements Iterator<T>, Iterable<T>, AutoCloseable 
       if (exhausted || closing) {
         return false;
       }
-      Columns columns;
       try {
-        columns = nextBatch();
-      } catch (RuntimeException error) {
-        exhausted = true;
-        throw error;
-      }
-      if (columns == null) {
-        exhausted = true;
-        return false;
-      }
-      try {
+        Columns columns = nextBatch();
+        if (columns == null) {
+          exhausted = true;
+          return false;
+        }
         decoder.decode(columns, buffered::add);
       } catch (RuntimeException error) {
-        // The batch is gone; going on would skip its page without a word.
+        // A failed batch is gone; going on would skip its page without a word.
         exhausted = true;
         buffered.clear();
         throw error;

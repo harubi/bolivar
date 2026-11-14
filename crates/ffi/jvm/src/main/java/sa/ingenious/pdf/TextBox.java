@@ -51,7 +51,7 @@ public final class TextBox {
 
   /** The box's lines, made on demand. */
   public List<TextLine> lines() {
-    return TextLayer.list(lineStart(), lineEnd(), layer::line);
+    return new IndexedList<>(lineStart(), lineEnd(), layer::line);
   }
 
   /** A copy that does not keep the page alive. */

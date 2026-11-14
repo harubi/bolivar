@@ -2,9 +2,11 @@ package sa.ingenious.pdf;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.TreeSet;
 import java.util.function.Consumer;
+import java.util.function.IntFunction;
 import org.jspecify.annotations.Nullable;
 import sa.ingenious.pdf.internal.Columns;
 import sa.ingenious.pdf.internal.Schema;
@@ -29,16 +31,20 @@ final class Decode {
     return text;
   }
 
+  /** The text without bidi: the output text itself when native code gave both one range. */
+  private static String withoutBidi(
+      Columns c, Schema.Col output, Schema.Col plain, int index, String outputText) {
+    return TextLayer.sameRange(c.i32(output), c.i32(plain), index)
+        ? outputText
+        : range(c, plain, index);
+  }
+
   static PageSummary summary(Columns c) {
     char[] text = c.text();
     return new PageSummary(
         Math.toIntExact(c.integer(Schema.Summary.IntSlot.PageNumber)),
         new String(text),
-        new BoundingBox(
-            c.real(Schema.Summary.FloatSlot.X0),
-            c.real(Schema.Summary.FloatSlot.Y0),
-            c.real(Schema.Summary.FloatSlot.X1),
-            c.real(Schema.Summary.FloatSlot.Y1)),
+        c.box(Schema.Summary.FloatSlot.X0),
         c.real(Schema.Summary.FloatSlot.Rotate));
   }
 
@@ -92,17 +98,25 @@ final class Decode {
       PageTextLine[] lines = new PageTextLine[boxLines[b + 1] - boxLines[b]];
       for (int l = 0; l < lines.length; l++) {
         int line = boxLines[b] + l;
+        String text = range(c, Schema.PageText.Col.LineText, line);
         lines[l] =
             new PageTextLine(
                 TextLayer.box(lineBbox, line),
-                range(c, Schema.PageText.Col.LineText, line),
-                range(c, Schema.PageText.Col.LineTextWithoutBidi, line));
+                text,
+                withoutBidi(
+                    c,
+                    Schema.PageText.Col.LineText,
+                    Schema.PageText.Col.LineTextWithoutBidi,
+                    line,
+                    text));
       }
+      String text = range(c, Schema.PageText.Col.BoxText, b);
       boxes[b] =
           new PageTextBox(
               TextLayer.box(boxBbox, b),
-              range(c, Schema.PageText.Col.BoxText, b),
-              range(c, Schema.PageText.Col.BoxTextWithoutBidi, b),
+              text,
+              withoutBidi(
+                  c, Schema.PageText.Col.BoxText, Schema.PageText.Col.BoxTextWithoutBidi, b, text),
               TextLayer.wrap(lines));
     }
     // Fonts of every glyph whose text is not blank, and the font and whole size of every such
@@ -113,24 +127,29 @@ final class Decode {
     double[] glyphSize = c.f64(Schema.PageText.Col.GlyphSize);
     TreeSet<String> fonts = new TreeSet<>(CODE_POINT_ORDER);
     TreeSet<DigitStyle> digits = new TreeSet<>(DIGIT_ORDER);
+    // A page has few fonts: sort each once, keyed by its string id, not once per glyph.
+    boolean[] seenFont = new boolean[strings.length];
+    HashSet<Long> seenDigit = new HashSet<>();
     for (int g = 0; g < glyphFont.length; g++) {
       String text = strings[glyphText[g]];
       if (text.isBlank()) {
         continue;
       }
-      String font = strings[glyphFont[g]];
-      fonts.add(font);
+      int font = glyphFont[g];
+      if (!seenFont[font]) {
+        seenFont[font] = true;
+        fonts.add(strings[font]);
+      }
       if (hasDecimalDigit(text)) {
-        digits.add(new DigitStyle(font, wholeSize(glyphSize[g])));
+        int size = wholeSize(glyphSize[g]);
+        if (seenDigit.add(((long) font << 32) | (size & 0xFFFF_FFFFL))) {
+          digits.add(new DigitStyle(strings[font], size));
+        }
       }
     }
     return new PageText(
         Math.toIntExact(c.integer(Schema.PageText.IntSlot.PageNumber)),
-        new BoundingBox(
-            c.real(Schema.PageText.FloatSlot.X0),
-            c.real(Schema.PageText.FloatSlot.Y0),
-            c.real(Schema.PageText.FloatSlot.X1),
-            c.real(Schema.PageText.FloatSlot.Y1)),
+        c.box(Schema.PageText.FloatSlot.X0),
         TextLayer.wrap(boxes),
         List.copyOf(fonts),
         List.copyOf(digits));
@@ -138,42 +157,67 @@ final class Decode {
 
   // ---- tables -----------------------------------------------------------------------------
 
+  /** Makes the {@code i}th cell of a page. */
+  @FunctionalInterface
+  interface CellMaker<C> {
+    C cell(int i, int row, int column, int rowSpan, int columnSpan);
+  }
+
+  /** Makes the {@code t}th table of a page from its cells. */
+  @FunctionalInterface
+  interface TableMaker<C, T> {
+    T table(int t, int rows, int columns, List<C> cells);
+  }
+
+  /**
+   * Walk a page's table columns, as native code writes them for table and raw batches alike: (rows,
+   * columns) per table, cell offsets per table, and four index entries per cell.
+   */
+  static <C, T> void tables(
+      int[] shape,
+      int[] cellOffsets,
+      int[] index,
+      IntFunction<C[]> newCells,
+      CellMaker<C> cell,
+      TableMaker<C, T> table,
+      Consumer<? super T> out) {
+    for (int t = 0; t < shape.length / 2; t++) {
+      C[] cells = newCells.apply(cellOffsets[t + 1] - cellOffsets[t]);
+      for (int k = 0; k < cells.length; k++) {
+        int i = cellOffsets[t] + k;
+        cells[k] = cell.cell(i, index[4 * i], index[4 * i + 1], index[4 * i + 2], index[4 * i + 3]);
+      }
+      out.accept(table.table(t, shape[2 * t], shape[2 * t + 1], TextLayer.wrap(cells)));
+    }
+  }
+
   /** Each table of one page batch, in order. */
   static void tables(Columns c, Consumer<? super Table> out) {
     int pageNumber = Math.toIntExact(c.integer(Schema.Tables.IntSlot.PageNumber));
     double[] tableBbox = c.f64(Schema.Tables.Col.TableBbox);
-    int[] shape = c.i32(Schema.Tables.Col.TableShape);
-    int[] cellOffsets = c.i32(Schema.Tables.Col.TableCells);
-    int[] index = c.i32(Schema.Tables.Col.CellIndex);
     double[] cellBbox = c.f64(Schema.Tables.Col.CellBbox);
-    for (int t = 0; t < shape.length / 2; t++) {
-      TableCell[] cells = new TableCell[cellOffsets[t + 1] - cellOffsets[t]];
-      for (int k = 0; k < cells.length; k++) {
-        int i = cellOffsets[t] + k;
-        cells[k] =
+    tables(
+        c.i32(Schema.Tables.Col.TableShape),
+        c.i32(Schema.Tables.Col.TableCells),
+        c.i32(Schema.Tables.Col.CellIndex),
+        TableCell[]::new,
+        (i, row, column, rowSpan, columnSpan) ->
             new TableCell(
-                index[4 * i],
-                index[4 * i + 1],
-                index[4 * i + 2],
-                index[4 * i + 3],
+                row,
+                column,
+                rowSpan,
+                columnSpan,
                 TextLayer.box(cellBbox, i),
-                range(c, Schema.Tables.Col.CellText, i));
-      }
-      out.accept(
-          new Table(
-              pageNumber,
-              TextLayer.box(tableBbox, t),
-              shape[2 * t],
-              shape[2 * t + 1],
-              TextLayer.wrap(cells)));
-    }
+                range(c, Schema.Tables.Col.CellText, i)),
+        (t, rows, columns, cells) ->
+            new Table(pageNumber, TextLayer.box(tableBbox, t), rows, columns, cells),
+        out);
   }
 
   static PageTableRows tableRows(Columns c) {
-    int[] ranges = c.i32(Schema.TableRows.Col.CellText);
-    @Nullable String[] cells = new String[ranges.length / 2];
+    @Nullable String[] cells = new String[c.i32(Schema.TableRows.Col.CellText).length / 2];
     for (int i = 0; i < cells.length; i++) {
-      cells[i] = c.range(ranges[2 * i], ranges[2 * i + 1]);
+      cells[i] = c.range(Schema.TableRows.Col.CellText, i);
     }
     return new PageTableRows(
         Math.toIntExact(c.integer(Schema.TableRows.IntSlot.PageNumber)),
@@ -185,11 +229,6 @@ final class Decode {
   // ---- metadata ---------------------------------------------------------------------------
 
   static Metadata metadata(Columns c) {
-    RangeSlot[] slots = RangeSlot.values();
-    @Nullable String[] f = new String[slots.length];
-    for (RangeSlot slot : slots) {
-      f[slot.ordinal()] = c.range(Schema.Metadata.Col.Ranges, slot.ordinal());
-    }
     int entries = c.i32(Schema.Metadata.Col.InfoKeys).length / 2;
     MetadataEntry[] info = new MetadataEntry[entries];
     for (int i = 0; i < entries; i++) {
@@ -199,22 +238,21 @@ final class Decode {
               range(c, Schema.Metadata.Col.InfoValues, i));
     }
     long flags = c.integer(Schema.Metadata.IntSlot.Flags);
-    String header = f[RangeSlot.VersionHeader.ordinal()];
-    String catalog = f[RangeSlot.VersionCatalog.ordinal()];
-    String xmp = f[RangeSlot.Xmp.ordinal()];
-    String form = f[RangeSlot.Form.ordinal()];
+    String header = field(c, RangeSlot.VersionHeader);
+    String catalog = field(c, RangeSlot.VersionCatalog);
+    String xmp = field(c, RangeSlot.Xmp);
     return new Metadata(
         TextLayer.wrap(info),
-        f[RangeSlot.Title.ordinal()],
-        f[RangeSlot.Author.ordinal()],
-        f[RangeSlot.Subject.ordinal()],
-        f[RangeSlot.Keywords.ordinal()],
-        f[RangeSlot.Creator.ordinal()],
-        f[RangeSlot.Producer.ordinal()],
-        f[RangeSlot.CreationDateRaw.ordinal()],
-        f[RangeSlot.CreationDateIso.ordinal()],
-        f[RangeSlot.ModificationDateRaw.ordinal()],
-        f[RangeSlot.ModificationDateIso.ordinal()],
+        field(c, RangeSlot.Title),
+        field(c, RangeSlot.Author),
+        field(c, RangeSlot.Subject),
+        field(c, RangeSlot.Keywords),
+        field(c, RangeSlot.Creator),
+        field(c, RangeSlot.Producer),
+        field(c, RangeSlot.CreationDateRaw),
+        field(c, RangeSlot.CreationDateIso),
+        field(c, RangeSlot.ModificationDateRaw),
+        field(c, RangeSlot.ModificationDateIso),
         new PdfVersion(header, catalog, catalog != null ? catalog : header),
         c.integer(Schema.Metadata.IntSlot.FileSize),
         Math.toIntExact(c.integer(Schema.Metadata.IntSlot.PageCount)),
@@ -227,9 +265,15 @@ final class Decode {
         FlagBit.Tagged.in(flags),
         FlagBit.UserProperties.in(flags),
         FlagBit.Suspects.in(flags),
-        form == null ? "none" : form,
+        // Native code always writes the form type.
+        range(c, Schema.Metadata.Col.Ranges, RangeSlot.Form.ordinal()),
         FlagBit.HasJavascript.in(flags),
         xmp != null,
         xmp);
+  }
+
+  /** One named metadata range, or null when absent. */
+  private static @Nullable String field(Columns c, RangeSlot slot) {
+    return c.range(Schema.Metadata.Col.Ranges, slot.ordinal());
   }
 }

@@ -1,7 +1,6 @@
 package sa.ingenious.pdf;
 
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.IntStream;
@@ -26,8 +25,7 @@ public final class PageTableRows {
   /** Takes ownership of the arrays without copying them. */
   PageTableRows(int pageNumber, @Nullable String[] cells, int[] rowOffsets, int[] tableOffsets) {
     this.pageNumber = pageNumber;
-    this.cells =
-        Collections.<@Nullable String>unmodifiableList(Arrays.<@Nullable String>asList(cells));
+    this.cells = TextLayer.<@Nullable String>wrap(cells);
     this.rowOffsets = rowOffsets;
     this.tableOffsets = tableOffsets;
   }

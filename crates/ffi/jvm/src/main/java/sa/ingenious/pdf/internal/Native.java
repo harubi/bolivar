@@ -145,6 +145,19 @@ public final class Native {
     void invoke() throws Throwable;
   }
 
+  /** A status-returning call that writes one out-pointer, given that slot and the ErrorOut. */
+  @FunctionalInterface
+  interface OutCall {
+    int invoke(MemorySegment out, MemorySegment err) throws Throwable;
+  }
+
+  /** A call that writes static UTF-8 text as a pointer and a length. */
+  @FunctionalInterface
+  interface TextCall {
+    int invoke(Arena arena, MemorySegment ptr, MemorySegment len, MemorySegment err)
+        throws Throwable;
+  }
+
   /** Space for one call's out-slots and {@code ErrorOut}, carved from a confined arena. */
   private static SegmentAllocator frame(Arena arena) {
     return SegmentAllocator.slicingAllocator(arena.allocate(FRAME_BYTES, 8));
@@ -159,10 +172,8 @@ public final class Native {
     int status;
     try {
       status = call.invoke(err);
-    } catch (RuntimeException | Error error) {
-      throw error;
     } catch (Throwable error) {
-      throw new IllegalStateException("native call failed", error);
+      throw rethrow(error);
     }
     if (status != 0) {
       throw failure(status, err);
@@ -173,10 +184,40 @@ public final class Native {
   private static void run(VoidCall call) {
     try {
       call.invoke();
-    } catch (RuntimeException | Error error) {
-      throw error;
     } catch (Throwable error) {
-      throw new IllegalStateException("native call failed", error);
+      throw rethrow(error);
+    }
+  }
+
+  /** {@code error} as an unchecked exception to throw: itself, or wrapped when checked. */
+  private static RuntimeException rethrow(Throwable error) {
+    if (error instanceof Error fatal) {
+      throw fatal;
+    }
+    return error instanceof RuntimeException unchecked
+        ? unchecked
+        : new IllegalStateException("native call failed", error);
+  }
+
+  /** Run a call that writes static UTF-8 text, and copy the text. */
+  private static String text(TextCall call) {
+    try (var arena = Arena.ofConfined()) {
+      var frame = frame(arena);
+      var ptr = frame.allocate(ADDRESS);
+      var len = frame.allocate(JAVA_LONG);
+      call(errorOut(frame), e -> call.invoke(arena, ptr, len, e));
+      return utf8(ptr.get(ADDRESS, 0), len.get(JAVA_LONG, 0));
+    }
+  }
+
+  /** Run a call that returns a batch of {@code kind}, recording an event, and read the batch. */
+  private static Columns batch(Schema.Kind kind, OutCall call) {
+    var event = Events.batch();
+    try (var arena = Arena.ofConfined()) {
+      var frame = frame(arena);
+      var out = frame.allocate(ADDRESS);
+      call(errorOut(frame), e -> call.invoke(out, e));
+      return batch(event, out, kind);
     }
   }
 
@@ -212,41 +253,24 @@ public final class Native {
 
   /** The native library's version. */
   public static String version() {
-    try (var arena = Arena.ofConfined()) {
-      var frame = frame(arena);
-      var ptr = frame.allocate(ADDRESS);
-      var len = frame.allocate(JAVA_LONG);
-      run(() -> {
-        Lib.VERSION.invokeExact(ptr, len);
-      });
-      return utf8(ptr.get(ADDRESS, 0), len.get(JAVA_LONG, 0));
-    }
+    return text((arena, ptr, len, e) -> {
+      Lib.VERSION.invokeExact(ptr, len);
+      return 0;
+    });
   }
 
   /** The native schema text of a batch kind. */
   public static String schema(int kind) {
-    try (var arena = Arena.ofConfined()) {
-      var frame = frame(arena);
-      var ptr = frame.allocate(ADDRESS);
-      var len = frame.allocate(JAVA_LONG);
-      call(errorOut(frame), e -> (int) Lib.SCHEMA.invokeExact(kind, ptr, len, e));
-      return utf8(ptr.get(ADDRESS, 0), len.get(JAVA_LONG, 0));
-    }
+    return text((arena, ptr, len, e) -> (int) Lib.SCHEMA.invokeExact(kind, ptr, len, e));
   }
 
   /** The native description of something this jar mirrors: a struct layout or named values. */
   public static String describe(String name) {
-    try (var arena = Arena.ofConfined()) {
-      byte[] bytes = name.getBytes(StandardCharsets.UTF_8);
-      var nameSegment = arena.allocateFrom(JAVA_BYTE, bytes);
-      var frame = frame(arena);
-      var ptr = frame.allocate(ADDRESS);
-      var len = frame.allocate(JAVA_LONG);
-      call(
-          errorOut(frame),
-          e -> (int) Lib.DESCRIBE.invokeExact(nameSegment, (long) bytes.length, ptr, len, e));
-      return utf8(ptr.get(ADDRESS, 0), len.get(JAVA_LONG, 0));
-    }
+    byte[] bytes = name.getBytes(StandardCharsets.UTF_8);
+    return text((arena, ptr, len, e) ->
+        (int)
+            Lib.DESCRIBE.invokeExact(
+                arena.allocateFrom(JAVA_BYTE, bytes), (long) bytes.length, ptr, len, e));
   }
 
   /** Live native handles of every kind; for leak tests. */
@@ -254,7 +278,7 @@ public final class Native {
     try {
       return (long) Lib.LIVE_HANDLES.invokeExact();
     } catch (Throwable error) {
-      throw new IllegalStateException(error);
+      throw rethrow(error);
     }
   }
 
@@ -340,37 +364,22 @@ public final class Native {
 
   /** The whole document's text, as a text batch. */
   public static Columns documentText(MemorySegment document) {
-    var event = Events.batch();
-    try (var arena = Arena.ofConfined()) {
-      var frame = frame(arena);
-      var out = frame.allocate(ADDRESS);
-      call(errorOut(frame), e -> (int) Lib.DOCUMENT_TEXT.invokeExact(document, out, e));
-      return batch(event, out, Schema.Kind.TEXT);
-    }
+    return batch(
+        Schema.Kind.TEXT, (out, e) -> (int) Lib.DOCUMENT_TEXT.invokeExact(document, out, e));
   }
 
   /** The document's metadata, as a metadata batch. */
   public static Columns documentMetadata(MemorySegment document) {
-    var event = Events.batch();
-    try (var arena = Arena.ofConfined()) {
-      var frame = frame(arena);
-      var out = frame.allocate(ADDRESS);
-      call(errorOut(frame), e -> (int) Lib.DOCUMENT_METADATA.invokeExact(document, out, e));
-      return batch(event, out, Schema.Kind.METADATA);
-    }
+    return batch(
+        Schema.Kind.METADATA,
+        (out, e) -> (int) Lib.DOCUMENT_METADATA.invokeExact(document, out, e));
   }
 
   /** One 1-based page, as a raw batch. */
   public static Columns documentRawPage(MemorySegment document, long pageNumber) {
-    var event = Events.batch();
-    try (var arena = Arena.ofConfined()) {
-      var frame = frame(arena);
-      var out = frame.allocate(ADDRESS);
-      call(
-          errorOut(frame),
-          e -> (int) Lib.DOCUMENT_RAW_PAGE.invokeExact(document, pageNumber, out, e));
-      return batch(event, out, Schema.Kind.RAW);
-    }
+    return batch(
+        Schema.Kind.RAW,
+        (out, e) -> (int) Lib.DOCUMENT_RAW_PAGE.invokeExact(document, pageNumber, out, e));
   }
 
   /** The declared page count and the number of pages the options select. */

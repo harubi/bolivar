@@ -11,6 +11,7 @@ import static sa.ingenious.pdf.internal.Contract.offset;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
@@ -47,7 +48,6 @@ final class NativeStructs {
   private static final long T_PRESENT = offset(TABLE_OPTIONS, "present");
   private static final long T_VERTICAL = offset(TABLE_OPTIONS, "vertical_strategy");
   private static final long T_HORIZONTAL = offset(TABLE_OPTIONS, "horizontal_strategy");
-  private static final long T_SNAP = offset(TABLE_OPTIONS, "snap");
   private static final long T_CROP = offset(TABLE_OPTIONS, "crop");
   private static final long T_FIRST_PAGE_CROP = offset(TABLE_OPTIONS, "first_page_crop");
   private static final long T_MAX_PAGES = offset(TABLE_OPTIONS, "max_pages");
@@ -56,10 +56,6 @@ final class NativeStructs {
   private static final long T_HORIZONTAL_LINES = offset(TABLE_OPTIONS, "explicit_horizontal");
   private static final long T_HORIZONTAL_LINES_LEN =
       offset(TABLE_OPTIONS, "explicit_horizontal_len");
-
-  private static byte flag(boolean value) {
-    return (byte) (value ? 1 : 0);
-  }
 
   /** The native options, or {@code NULL} when every field is the default. */
   static MemorySegment options(@Nullable Options options, Arena arena) {
@@ -75,58 +71,85 @@ final class NativeStructs {
       s.set(JAVA_LONG, PASSWORD_LEN, bytes.length);
       present |= OptionBit.PASSWORD.mask();
     }
-    List<Integer> pages = options.pages();
-    if (pages != null) {
-      long[] values = new long[pages.size()];
-      for (int i = 0; i < values.length; i++) {
-        values[i] = pages.get(i);
-      }
-      if (values.length > 0) {
-        s.set(ADDRESS, PAGES, arena.allocateFrom(JAVA_LONG, values));
-      }
-      s.set(JAVA_LONG, PAGES_LEN, values.length);
-      present |= OptionBit.PAGES.mask();
-    }
-    Integer maxPages = options.maxPages();
-    if (maxPages != null) {
-      s.set(JAVA_LONG, MAX_PAGES, maxPages);
-      present |= OptionBit.MAX_PAGES.mask();
-    }
-    present |= setFlag(s, CACHING, options.caching(), OptionBit.CACHING);
-    present |= setFlag(s, BIDI, options.bidi(), OptionBit.BIDI);
+    present |=
+        setArray(s, arena, PAGES, PAGES_LEN, options.pages(), JAVA_LONG, OptionBit.PAGES.mask());
+    present |= setLong(s, MAX_PAGES, options.maxPages(), OptionBit.MAX_PAGES.mask());
+    present |= setFlag(s, CACHING, options.caching(), OptionBit.CACHING.mask());
+    present |= setFlag(s, BIDI, options.bidi(), OptionBit.BIDI.mask());
     LayoutOptions layout = options.layout();
     if (layout != null) {
-      present |= setDouble(s, LINE_OVERLAP, layout.lineOverlap(), OptionBit.LINE_OVERLAP);
-      present |= setDouble(s, CHAR_MARGIN, layout.charMargin(), OptionBit.CHAR_MARGIN);
-      present |= setDouble(s, LINE_MARGIN, layout.lineMargin(), OptionBit.LINE_MARGIN);
-      present |= setDouble(s, WORD_MARGIN, layout.wordMargin(), OptionBit.WORD_MARGIN);
-      present |= setDouble(s, BOXES_FLOW, layout.boxesFlow(), OptionBit.BOXES_FLOW);
+      present |= setDouble(s, LINE_OVERLAP, layout.lineOverlap(), OptionBit.LINE_OVERLAP.mask());
+      present |= setDouble(s, CHAR_MARGIN, layout.charMargin(), OptionBit.CHAR_MARGIN.mask());
+      present |= setDouble(s, LINE_MARGIN, layout.lineMargin(), OptionBit.LINE_MARGIN.mask());
+      present |= setDouble(s, WORD_MARGIN, layout.wordMargin(), OptionBit.WORD_MARGIN.mask());
+      present |= setDouble(s, BOXES_FLOW, layout.boxesFlow(), OptionBit.BOXES_FLOW.mask());
       if (layout.boxesFlowDisabled()) {
         present |= OptionBit.BOXES_FLOW_NONE.mask();
       }
-      present |= setFlag(s, DETECT_VERTICAL, layout.detectVertical(), OptionBit.DETECT_VERTICAL);
-      present |= setFlag(s, ALL_TEXTS, layout.allTexts(), OptionBit.ALL_TEXTS);
+      present |=
+          setFlag(s, DETECT_VERTICAL, layout.detectVertical(), OptionBit.DETECT_VERTICAL.mask());
+      present |= setFlag(s, ALL_TEXTS, layout.allTexts(), OptionBit.ALL_TEXTS.mask());
     }
     s.set(JAVA_INT, STRUCT_SIZE, (int) OPTIONS.byteSize());
     s.set(JAVA_INT, PRESENT, present);
     return s;
   }
 
-  private static int setFlag(MemorySegment s, long offset, @Nullable Boolean value, OptionBit bit) {
+  // Each setter writes a present value and returns its presence bit, or writes nothing and
+  // returns 0.
+
+  private static int setFlag(MemorySegment s, long offset, @Nullable Boolean value, int bit) {
     if (value == null) {
       return 0;
     }
-    s.set(JAVA_BYTE, offset, flag(value));
-    return bit.mask();
+    s.set(JAVA_BYTE, offset, (byte) (value ? 1 : 0));
+    return bit;
   }
 
-  private static int setDouble(
-      MemorySegment s, long offset, @Nullable Double value, OptionBit bit) {
+  private static int setDouble(MemorySegment s, long offset, @Nullable Double value, int bit) {
     if (value == null) {
       return 0;
     }
     s.set(JAVA_DOUBLE, offset, value);
-    return bit.mask();
+    return bit;
+  }
+
+  private static int setLong(MemorySegment s, long offset, @Nullable Integer value, int bit) {
+    if (value == null) {
+      return 0;
+    }
+    s.set(JAVA_LONG, offset, value);
+    return bit;
+  }
+
+  /**
+   * A pointer and length pair. An empty array leaves the pointer {@code NULL}, as the native side
+   * expects; {@code layout} is {@code JAVA_LONG} or {@code JAVA_DOUBLE}.
+   */
+  private static int setArray(
+      MemorySegment s,
+      Arena arena,
+      long pointer,
+      long length,
+      @Nullable List<? extends Number> values,
+      ValueLayout layout,
+      int bit) {
+    if (values == null) {
+      return 0;
+    }
+    if (!values.isEmpty()) {
+      MemorySegment array = arena.allocate(layout, values.size());
+      for (int i = 0; i < values.size(); i++) {
+        if (layout instanceof ValueLayout.OfLong) {
+          array.setAtIndex(JAVA_LONG, i, values.get(i).longValue());
+        } else {
+          array.setAtIndex(JAVA_DOUBLE, i, values.get(i).doubleValue());
+        }
+      }
+      s.set(ADDRESS, pointer, array);
+    }
+    s.set(JAVA_LONG, length, values.size());
+    return bit;
   }
 
   /** The native table options, or {@code NULL} for the defaults. */
@@ -146,72 +169,50 @@ final class NativeStructs {
       s.set(JAVA_INT, T_HORIZONTAL, horizontal.ordinal());
       present |= TableOptionBit.HORIZONTAL_STRATEGY.mask();
     }
-    // The nine tolerances sit in order from `snap`, as their bits do from SNAP.
-    @Nullable Double[] tolerances = {
-      options.snapTolerance(),
-      options.snapXTolerance(),
-      options.snapYTolerance(),
-      options.joinTolerance(),
-      options.joinXTolerance(),
-      options.joinYTolerance(),
-      options.intersectionTolerance(),
-      options.intersectionXTolerance(),
-      options.intersectionYTolerance(),
-    };
-    for (int i = 0; i < tolerances.length; i++) {
-      Double tolerance = tolerances[i];
-      if (tolerance != null) {
-        s.set(JAVA_DOUBLE, T_SNAP + 8L * i, tolerance);
-        present |= TableOptionBit.SNAP.mask() << i;
-      }
-    }
+    present |= tolerance(s, "snap", options.snapTolerance(), TableOptionBit.SNAP);
+    present |= tolerance(s, "snap_x", options.snapXTolerance(), TableOptionBit.SNAP_X);
+    present |= tolerance(s, "snap_y", options.snapYTolerance(), TableOptionBit.SNAP_Y);
+    present |= tolerance(s, "join", options.joinTolerance(), TableOptionBit.JOIN);
+    present |= tolerance(s, "join_x", options.joinXTolerance(), TableOptionBit.JOIN_X);
+    present |= tolerance(s, "join_y", options.joinYTolerance(), TableOptionBit.JOIN_Y);
     present |=
-        lines(
+        tolerance(s, "intersection", options.intersectionTolerance(), TableOptionBit.INTERSECTION);
+    present |=
+        tolerance(
+            s, "intersection_x", options.intersectionXTolerance(), TableOptionBit.INTERSECTION_X);
+    present |=
+        tolerance(
+            s, "intersection_y", options.intersectionYTolerance(), TableOptionBit.INTERSECTION_Y);
+    present |=
+        setArray(
             s,
             arena,
             T_VERTICAL_LINES,
             T_VERTICAL_LINES_LEN,
             options.explicitVerticalLines(),
-            TableOptionBit.EXPLICIT_VERTICAL);
+            JAVA_DOUBLE,
+            TableOptionBit.EXPLICIT_VERTICAL.mask());
     present |=
-        lines(
+        setArray(
             s,
             arena,
             T_HORIZONTAL_LINES,
             T_HORIZONTAL_LINES_LEN,
             options.explicitHorizontalLines(),
-            TableOptionBit.EXPLICIT_HORIZONTAL);
+            JAVA_DOUBLE,
+            TableOptionBit.EXPLICIT_HORIZONTAL.mask());
     present |= crop(s, T_CROP, options.crop(), TableOptionBit.CROP);
     present |= crop(s, T_FIRST_PAGE_CROP, options.firstPageCrop(), TableOptionBit.FIRST_PAGE_CROP);
-    Integer maxPages = options.maxPages();
-    if (maxPages != null) {
-      s.set(JAVA_LONG, T_MAX_PAGES, maxPages);
-      present |= TableOptionBit.MAX_PAGES.mask();
-    }
+    present |= setLong(s, T_MAX_PAGES, options.maxPages(), TableOptionBit.MAX_PAGES.mask());
     s.set(JAVA_INT, T_STRUCT_SIZE, (int) TABLE_OPTIONS.byteSize());
     s.set(JAVA_INT, T_PRESENT, present);
     return s;
   }
 
-  private static int lines(
-      MemorySegment s,
-      Arena arena,
-      long pointer,
-      long length,
-      @Nullable List<Double> lines,
-      TableOptionBit bit) {
-    if (lines == null) {
-      return 0;
-    }
-    double[] values = new double[lines.size()];
-    for (int i = 0; i < values.length; i++) {
-      values[i] = lines.get(i);
-    }
-    if (values.length > 0) {
-      s.set(ADDRESS, pointer, arena.allocateFrom(JAVA_DOUBLE, values));
-    }
-    s.set(JAVA_LONG, length, values.length);
-    return bit.mask();
+  /** A tolerance, by its field's name in the native struct. */
+  private static int tolerance(
+      MemorySegment s, String field, @Nullable Double value, TableOptionBit bit) {
+    return setDouble(s, offset(TABLE_OPTIONS, field), value, bit.mask());
   }
 
   private static int crop(

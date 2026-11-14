@@ -4,7 +4,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.IntFunction;
 import org.jspecify.annotations.Nullable;
 import sa.ingenious.pdf.internal.Columns;
 import sa.ingenious.pdf.internal.Schema.Layout.Col;
@@ -71,6 +70,16 @@ final class TextLayer {
     return new String(text, start, ranges[2 * index + 1] - start);
   }
 
+  /** An interned string, or null for a negative id. */
+  @Nullable String string(int id) {
+    return id < 0 ? null : strings[id];
+  }
+
+  /** Whether the {@code index}th ranges of two range columns are the same span. */
+  static boolean sameRange(int[] a, int[] b, int index) {
+    return a[2 * index] == b[2 * index] && a[2 * index + 1] == b[2 * index + 1];
+  }
+
   String pageText() {
     return new String(text, 0, textEnd);
   }
@@ -100,12 +109,7 @@ final class TextLayer {
   }
 
   /** An unmodifiable list over {@code items}, without copying them. */
-  static <T> List<T> wrap(T[] items) {
+  static <T extends @Nullable Object> List<T> wrap(T[] items) {
     return Collections.unmodifiableList(Arrays.asList(items));
-  }
-
-  /** An unmodifiable list of the items from {@code from} to {@code to}, made on demand. */
-  static <T> List<T> list(int from, int to, IntFunction<T> item) {
-    return new IndexedList<>(from, to, item);
   }
 }
