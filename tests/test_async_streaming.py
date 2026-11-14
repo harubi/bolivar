@@ -147,3 +147,22 @@ def test_extract_pages_async_raises_error_then_stops_after_underlying_stream_fai
             await anext(stream)
 
     asyncio.run(run())
+
+
+def test_extract_pages_async_read_ahead_reads_every_page():
+    from bolivar import extract_pages_async
+
+    pdf_data = build_minimal_pdf_with_pages(4)
+
+    async def collect_pages() -> list[int]:
+        return [page.pageid async for page in extract_pages_async(pdf_data, read_ahead=1)]
+
+    assert asyncio.run(collect_pages()) == [1, 2, 3, 4]
+
+
+@pytest.mark.parametrize("read_ahead", [0, -1])
+def test_extract_pages_async_rejects_a_read_ahead_below_one(read_ahead: int):
+    from bolivar import extract_pages_async
+
+    with pytest.raises(ValueError, match="read_ahead must be a positive integer"):
+        extract_pages_async(build_minimal_pdf_with_pages(1), read_ahead=read_ahead)

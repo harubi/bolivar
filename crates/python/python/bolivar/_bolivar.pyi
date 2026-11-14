@@ -841,6 +841,7 @@ def extract_pages_async(
     caching: bool = True,
     laparams: LAParams | None = None,
     bidi: bool = False,
+    read_ahead: int | None = None,
 ) -> _AsyncPageStream: ...
 
 class _AsyncPageStream:

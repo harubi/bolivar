@@ -1,5 +1,6 @@
 //! Async streaming bindings for Python.
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
@@ -165,9 +166,22 @@ impl Drop for AsyncPageStream {
     }
 }
 
-/// Extract pages asynchronously from PDF bytes.
+/// `read_ahead` as the core option: None keeps the default, anything else must be positive.
+fn read_ahead_option(read_ahead: Option<i64>) -> PyResult<Option<NonZeroUsize>> {
+    read_ahead
+        .map(|value| {
+            usize::try_from(value)
+                .ok()
+                .and_then(NonZeroUsize::new)
+                .ok_or_else(|| PyValueError::new_err("read_ahead must be a positive integer"))
+        })
+        .transpose()
+}
+
+/// Extract pages asynchronously from PDF bytes. `read_ahead` bounds how many pages run ahead
+/// of the reader, and with it the parallelism and the pages held in memory; None keeps 50.
 #[pyfunction]
-#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, bidi = false))]
+#[pyo3(signature = (data, password = "", page_numbers = None, maxpages = 0, caching = true, laparams = None, bidi = false, read_ahead = None))]
 pub fn extract_pages_async(
     data: &Bound<'_, PyAny>,
     password: &str,
@@ -176,8 +190,11 @@ pub fn extract_pages_async(
     caching: bool,
     laparams: Option<&PyLAParams>,
     bidi: bool,
+    read_ahead: Option<i64>,
 ) -> PyResult<AsyncPageStream> {
-    let options = build_extract_options(password, page_numbers, maxpages, caching, laparams, bidi);
+    let mut options =
+        build_extract_options(password, page_numbers, maxpages, caching, laparams, bidi);
+    options.read_ahead = read_ahead_option(read_ahead)?;
     let doc = open_document_from_input(data.py(), data, password, caching, true)?;
     let stream = core_extract_pages_stream_from_doc(doc, options)
         .map_err(|e| PyValueError::new_err(format!("Failed to extract pages: {e}")))?;
