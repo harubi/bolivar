@@ -1,235 +1,322 @@
 (ns sa.ingenious.pdf
   "PDF text, layout and tables from Clojure.
 
-  Open a document with `open` (use `with-open`). Page sources such as `pages` and `tables` are
-  reducible: they read one page at a time from native code inside `reduce`, `transduce`, `into`,
-  `run!` or `eduction`, and always free the native cursor, even on `reduced` or an exception.
-  They are not seqs: `doseq`, `seq` and `first` do not apply to them.
+  Open a document with `open` and close it with `with-open`:
 
-  Layout and raw pages arrive as views: map-like values over the page's columns, so a 4,000
-  character page costs a handful of arrays, not 4,000 maps. A view (or any view inside it) keeps
-  its whole page alive; call `realize` to copy what you keep into plain maps.
+      (with-open [doc (pdf/open \"report.pdf\")]
+        (into [] (map :text) (pdf/pages doc)))
 
-  Failures throw `ex-info` with `:type` such as `:pdf/io-not-found` or `:pdf/invalid-argument`,
-  `:code` (the native status) and `:key` (the option at fault, when one is).
+  Sources (`pages`, `raw-pages`, `page-texts`, `page-summaries`, `tables`, `table-rows`) are
+  reducible, not seqs. They read one page at a time inside `reduce`, `transduce`, `into`, `run!`
+  or `eduction`, and free their native cursor when the reduction ends, however it ends.
+
+  Layout and raw pages are views: read-only maps over the page's columns, so a page of 4,000
+  characters costs a few arrays, not 4,000 maps. A view keeps its whole page alive. To keep data
+  past the page, copy it with `realize` (or `clojure.datafy/datafy`).
+
+  Failures throw `ex-info` with:
+    :cognitect.anomalies/category  e.g. :cognitect.anomalies/not-found
+    :cognitect.anomalies/message   the message
+    ::error                        e.g. :io-not-found, :invalid-argument
+    ::code                         the native status, when there is one
+    ::key                          the option at fault, when there is one
 
   The JVM must allow native access: `--enable-native-access=ALL-UNNAMED`."
-  (:require [clojure.string :as str])
-  (:import [clojure.lang Associative Counted IFn IHashEq IKeywordLookup ILookup ILookupThunk
-            IPersistentCollection IPersistentMap IReduce IReduceInit Indexed Keyword MapEntry
-            MapEquivalence
-            Murmur3 Reduced Seqable Sequential]
+  (:require [clojure.core.protocols :as protocols]
+            [clojure.string :as str])
+  (:import [clojure.lang Associative Counted IFn IHashEq IKVReduce IKeywordLookup ILookup
+            ILookupThunk IMeta IObj IPersistentCollection IPersistentMap IReduce IReduceInit
+            IPersistentVector Indexed MapEntry MapEquivalence Murmur3 PersistentArrayMap Seqable
+            Sequential]
            [java.io File InputStream]
            [java.nio.file Path]
-           [java.util Iterator NoSuchElementException]
-           [sa.ingenious.pdf BoundingBox Cursor Document LayoutOptions LayoutPage Metadata
-            MetadataEntry Options PageSummary PageTableRows PageText PdfException RawPage
-            RawTable RawTableBoundingBox Table TableOptions TableStrategy]))
+           [java.util Collection List]
+           [sa.ingenious.pdf BoundingBox Cursor DigitStyle Document Glyph LayoutOptions LayoutPage
+            Metadata MetadataEntry Options PageSummary PageTableRows PageText PageTextBox
+            PageTextLine PdfException RawPage RawTable RawTableBoundingBox RawTableCell Table
+            TableCell TableOptions TableStrategy TextBox TextLine TextPage]))
 
 (set! *warn-on-reflection* true)
 
-;; ---- errors --------------------------------------------------------------------------------
+;;;; Errors
 
-(defn- kebab [s]
-  (-> s
-      (str/replace #"([a-z0-9])([A-Z])" "$1-$2")
-      (str/replace "_" "-")
-      str/lower-case))
+(def ^:private failures
+  "Each Java failure, by class name, as its ::error and anomaly category."
+  {"InvalidPath"        [:invalid-path         :cognitect.anomalies/incorrect]
+   "InvalidArgument"    [:invalid-argument     :cognitect.anomalies/incorrect]
+   "IoNotFound"         [:io-not-found         :cognitect.anomalies/not-found]
+   "IoPermissionDenied" [:io-permission-denied :cognitect.anomalies/forbidden]
+   "IoError"            [:io-error             :cognitect.anomalies/fault]
+   "SyntaxError"        [:syntax-error         :cognitect.anomalies/incorrect]
+   "EncryptionError"    [:encryption-error     :cognitect.anomalies/forbidden]
+   "MalformedPdf"       [:malformed-pdf        :cognitect.anomalies/incorrect]
+   "DecodeError"        [:decode-error         :cognitect.anomalies/incorrect]
+   "Cancelled"          [:cancelled            :cognitect.anomalies/interrupted]
+   "RuntimeError"       [:runtime-error        :cognitect.anomalies/fault]
+   "Unsupported"        [:unsupported          :cognitect.anomalies/unsupported]
+   "NativeError"        [:native-error         :cognitect.anomalies/fault]})
 
-(defn- fail!
-  ([message data] (throw (ex-info message data)))
-  ([message data cause] (throw (ex-info message data cause))))
+(defn- anomaly [error category message]
+  {::error                       error
+   :cognitect.anomalies/category category
+   :cognitect.anomalies/message  message})
 
-(defn- invalid! [key message value]
-  (fail! message {:type :pdf/invalid-argument :key key :value value}))
+(defn- invalid!
+  "Throw for a bad argument from Clojure, before any native call."
+  [key message value]
+  (throw (ex-info message (assoc (anomaly :invalid-argument :cognitect.anomalies/incorrect message)
+                                 ::key key
+                                 ::value value))))
+
+(defn- option-key
+  "A native option name (`snap_tolerance`) as its Clojure key (`:snap-tolerance`)."
+  [field]
+  (keyword (str/replace field "_" "-")))
 
 (defn- translate
-  "The ex-info for a Java failure, or nil when it is not one of ours."
+  "The ex-info for a Bolivar failure, or nil for any other exception."
   [^Throwable e]
-  (cond
-    (instance? PdfException e)
-    (let [^PdfException e e]
+  (condp instance? e
+    PdfException
+    (let [^PdfException e e
+          [error category] (failures (.getSimpleName (class e))
+                                     [:native-error :cognitect.anomalies/fault])]
       (ex-info (.getMessage e)
-               (cond-> {:type (keyword "pdf" (kebab (.getSimpleName (class e))))
-                        :code (.code e)}
-                 (.field e) (assoc :key (keyword (kebab (.field e)))))
+               (cond-> (assoc (anomaly error category (.getMessage e)) ::code (.code e))
+                 (.field e) (assoc ::key (option-key (.field e))))
                e))
-    (instance? IllegalStateException e)
-    (ex-info (.getMessage e) {:type :pdf/illegal-state} e)))
 
-(defmacro ^:private translating
-  "Run body, rethrowing Bolivar's Java failures as ex-info."
+    ;; A closed document, or a jar and native library from different builds.
+    IllegalStateException
+    (ex-info (.getMessage e) (anomaly :illegal-state :cognitect.anomalies/conflict (.getMessage e)) e)
+
+    nil))
+
+(defmacro ^:private bolivar
+  "Run a Bolivar call, rethrowing its failures as ex-info. Wrap Bolivar calls only, so that a
+  caller's own exceptions pass through unchanged."
   [& body]
   `(try
      ~@body
      (catch clojure.lang.ExceptionInfo e# (throw e#))
-     (catch RuntimeException e#
-       (throw (or (translate e#) e#)))))
+     (catch RuntimeException e# (throw (or (translate e#) e#)))))
 
-;; ---- options -------------------------------------------------------------------------------
+;;;; Options
+;;
+;; Each option map has a spec: key -> type. `conform` checks keys and types and drops nil values
+;; (nil leaves an option unset). Native code checks the values themselves and names the option
+;; at fault, which arrives as ::key.
 
-(def ^:private option-keys #{:password :pages :max-pages :caching :layout :bidi})
-(def ^:private layout-keys
-  #{:line-overlap :char-margin :line-margin :word-margin :boxes-flow :detect-vertical :all-texts})
-(def ^:private table-keys
-  #{:vertical-strategy :horizontal-strategy
-    :snap-tolerance :snap-x-tolerance :snap-y-tolerance
-    :join-tolerance :join-x-tolerance :join-y-tolerance
-    :intersection-tolerance :intersection-x-tolerance :intersection-y-tolerance
-    :explicit-vertical-lines :explicit-horizontal-lines
-    :crop :first-page-crop :max-pages})
+(declare layout-options)
 
-(defn- check-map! [m what]
+(defn- int32? [v]
+  (and (integer? v) (<= Integer/MIN_VALUE v Integer/MAX_VALUE)))
+
+(defn- coerce
+  "`v` as the Java value an option of type `type` takes."
+  [type key v]
+  (letfn [(want [what] (invalid! key (str key " must be " what) v))]
+    (case type
+      :string   (if (string? v) v (want "a string"))
+      :boolean  (if (boolean? v) v (want "true or false"))
+      :int      (if (int32? v) (Integer/valueOf (int v)) (want "an integer"))
+      :number   (if (number? v) (Double/valueOf (double v)) (want "a number"))
+      :pages    (if (and (sequential? v) (every? int32? v))
+                  (mapv #(Integer/valueOf (int %)) v)
+                  (want "a sequence of 1-based page numbers"))
+      :numbers  (if (and (sequential? v) (every? number? v))
+                  (mapv #(Double/valueOf (double %)) v)
+                  (want "a sequence of numbers"))
+      :box      (if (and (sequential? v) (= 4 (count v)) (every? number? v))
+                  (let [[x0 y0 x1 y1] (map double v)] (BoundingBox. x0 y0 x1 y1))
+                  (want "[x0 y0 x1 y1]"))
+      :strategy (if (or (keyword? v) (string? v))
+                  (try (TableStrategy/parse (str/replace (name v) "-" "_"))
+                       (catch IllegalArgumentException e (invalid! key (.getMessage e) v)))
+                  (want "a keyword such as :lines"))
+      :layout   (layout-options v))))
+
+(defn- conform
+  "Check map `m` against `spec`. The result holds Java values, and no nils."
+  [spec what m]
   (when-not (or (nil? m) (map? m))
-    (invalid! nil (str what " must be a map") m)))
+    (invalid! nil (str what " must be a map") m))
+  (reduce-kv (fn [out k v]
+               (let [type (or (spec k) (invalid! k (str "Unknown " what " " k) m))]
+                 (cond-> out (some? v) (assoc k (coerce type k v)))))
+             {}
+             m))
 
-(defn- check-keys! [m allowed what]
-  (when-let [unknown (seq (remove allowed (keys m)))]
-    (invalid! (first unknown) (str "Unknown " what " " (pr-str (vec unknown))) m)))
-
-(defn- int-value ^long [key v]
-  (when-not (and (integer? v) (<= Integer/MIN_VALUE v Integer/MAX_VALUE))
-    (invalid! key (str key " must be an integer") v))
-  (long v))
-
-(defn- number-value ^double [key v]
-  (when-not (number? v) (invalid! key (str key " must be a number") v))
-  (double v))
-
-(defn- bool-value [key v]
-  (when-not (boolean? v) (invalid! key (str key " must be true or false") v))
-  v)
+(def ^:private layout-spec
+  {:line-overlap    :number
+   :char-margin     :number
+   :line-margin     :number
+   :word-margin     :number
+   :boxes-flow      :number
+   :detect-vertical :boolean
+   :all-texts       :boolean})
 
 (defn- layout-options ^LayoutOptions [m]
-  (check-map! m ":layout")
-  (check-keys! m layout-keys "layout option")
-  (let [b (LayoutOptions/builder)]
-    (when (contains? m :line-overlap) (.lineOverlap b (number-value :line-overlap (:line-overlap m))))
-    (when (contains? m :char-margin) (.charMargin b (number-value :char-margin (:char-margin m))))
-    (when (contains? m :line-margin) (.lineMargin b (number-value :line-margin (:line-margin m))))
-    (when (contains? m :word-margin) (.wordMargin b (number-value :word-margin (:word-margin m))))
-    (when (contains? m :boxes-flow)
-      (if-some [flow (:boxes-flow m)]
-        (.boxesFlow b (number-value :boxes-flow flow))
-        (.disableBoxesFlow b)))
-    (when (contains? m :detect-vertical)
-      (.detectVertical b (boolean (bool-value :detect-vertical (:detect-vertical m)))))
-    (when (contains? m :all-texts)
-      (.allTexts b (boolean (bool-value :all-texts (:all-texts m)))))
-    (.build b)))
+  (let [o (conform layout-spec "layout option" m)]
+    (LayoutOptions. (:line-overlap o) (:char-margin o) (:line-margin o) (:word-margin o)
+                    (:boxes-flow o)
+                    ;; An explicit nil :boxes-flow turns box ordering off, as in pdfminer.
+                    (and (contains? m :boxes-flow) (nil? (:boxes-flow m)))
+                    (:detect-vertical o) (:all-texts o))))
+
+(def ^:private document-spec
+  {:password  :string
+   :pages     :pages
+   :max-pages :int
+   :caching   :boolean
+   :bidi      :boolean
+   :layout    :layout})
 
 (defn- options ^Options [m]
-  (check-map! m "options")
-  (if (empty? m)
-    Options/DEFAULT
-    (do
-      (check-keys! m option-keys "option")
-      (let [b (Options/builder)]
-        (when-some [password (:password m)]
-          (when-not (string? password) (invalid! :password ":password must be a string" password))
-          (.password b ^String password))
-        (when (contains? m :pages)
-          (let [pages (:pages m)]
-            (when-not (sequential? pages)
-              (invalid! :pages ":pages must be a sequence of 1-based page numbers" pages))
-            (.pages b ^java.util.List (mapv #(Integer/valueOf (int (int-value :pages %))) pages))))
-        (when (contains? m :max-pages) (.maxPages b (int (int-value :max-pages (:max-pages m)))))
-        (when (contains? m :caching) (.caching b (boolean (bool-value :caching (:caching m)))))
-        (when (contains? m :bidi) (.bidi b (boolean (bool-value :bidi (:bidi m)))))
-        (when (contains? m :layout) (.layout b (layout-options (:layout m))))
-        (.build b)))))
+  (let [o (conform document-spec "option" m)]
+    (Options. (:password o) (:pages o) (:max-pages o) (:caching o) (:bidi o) (:layout o))))
 
-(defn- strategy ^TableStrategy [key v]
-  (let [value (cond (keyword? v) (str/replace (name v) "-" "_")
-                    (string? v) v
-                    :else (invalid! key (str key " must be a keyword or string") v))]
-    (try (TableStrategy/parse value)
-         (catch IllegalArgumentException e (invalid! key (.getMessage e) v)))))
-
-(defn- crop ^BoundingBox [key v]
-  (when-not (and (sequential? v) (= 4 (count v)) (every? number? v))
-    (invalid! key (str key " must be [x0 y0 x1 y1]") v))
-  (let [[x0 y0 x1 y1] v]
-    (BoundingBox. (double x0) (double y0) (double x1) (double y1))))
-
-(defn- lines ^java.util.List [key v]
-  (when-not (and (sequential? v) (every? number? v))
-    (invalid! key (str key " must be a sequence of numbers") v))
-  (mapv double v))
+(def ^:private table-spec
+  {:vertical-strategy         :strategy
+   :horizontal-strategy       :strategy
+   :snap-tolerance            :number
+   :snap-x-tolerance          :number
+   :snap-y-tolerance          :number
+   :join-tolerance            :number
+   :join-x-tolerance          :number
+   :join-y-tolerance          :number
+   :intersection-tolerance    :number
+   :intersection-x-tolerance  :number
+   :intersection-y-tolerance  :number
+   :explicit-vertical-lines   :numbers
+   :explicit-horizontal-lines :numbers
+   :crop                      :box
+   :first-page-crop           :box
+   :max-pages                 :int})
 
 (defn- table-options ^TableOptions [m]
-  (check-map! m "table options")
-  (if (empty? m)
-    TableOptions/DEFAULT
-    (do
-      (check-keys! m table-keys "table option")
-      (let [b (TableOptions/builder)
-            num (fn [k] (number-value k (get m k)))]
-        (when-some [v (:vertical-strategy m)] (.verticalStrategy b (strategy :vertical-strategy v)))
-        (when-some [v (:horizontal-strategy m)] (.horizontalStrategy b (strategy :horizontal-strategy v)))
-        (when (some? (:snap-tolerance m)) (.snapTolerance b (num :snap-tolerance)))
-        (when (some? (:snap-x-tolerance m)) (.snapXTolerance b (num :snap-x-tolerance)))
-        (when (some? (:snap-y-tolerance m)) (.snapYTolerance b (num :snap-y-tolerance)))
-        (when (some? (:join-tolerance m)) (.joinTolerance b (num :join-tolerance)))
-        (when (some? (:join-x-tolerance m)) (.joinXTolerance b (num :join-x-tolerance)))
-        (when (some? (:join-y-tolerance m)) (.joinYTolerance b (num :join-y-tolerance)))
-        (when (some? (:intersection-tolerance m)) (.intersectionTolerance b (num :intersection-tolerance)))
-        (when (some? (:intersection-x-tolerance m)) (.intersectionXTolerance b (num :intersection-x-tolerance)))
-        (when (some? (:intersection-y-tolerance m)) (.intersectionYTolerance b (num :intersection-y-tolerance)))
-        (when-some [v (:explicit-vertical-lines m)]
-          (.explicitVerticalLines b (lines :explicit-vertical-lines v)))
-        (when-some [v (:explicit-horizontal-lines m)]
-          (.explicitHorizontalLines b (lines :explicit-horizontal-lines v)))
-        (when-some [v (:crop m)] (.crop b (crop :crop v)))
-        (when-some [v (:first-page-crop m)] (.firstPageCrop b (crop :first-page-crop v)))
-        (when (some? (:max-pages m)) (.maxPages b (int (int-value :max-pages (:max-pages m)))))
-        (.build b)))))
+  (let [o (conform table-spec "table option" m)]
+    (TableOptions. (:vertical-strategy o) (:horizontal-strategy o)
+                   (:snap-tolerance o) (:snap-x-tolerance o) (:snap-y-tolerance o)
+                   (:join-tolerance o) (:join-x-tolerance o) (:join-y-tolerance o)
+                   (:intersection-tolerance o) (:intersection-x-tolerance o)
+                   (:intersection-y-tolerance o)
+                   (:explicit-vertical-lines o) (:explicit-horizontal-lines o)
+                   (:crop o) (:first-page-crop o) (:max-pages o))))
 
-;; ---- views ---------------------------------------------------------------------------------
+;;;; Views
+;;
+;; A view is a read-only map over one object of a page: a glyph, line, box or the page itself.
+;; Its kind lists the keys and how to read each one. `ctx` is what a kind needs besides the
+;; object: raw kinds read graphics state from their RawPage. A view equals, and hashes like,
+;; the plain map `realize` makes of it.
 
-(def ^:private missing (Object.))
+(deftype Kind [name ks getters realize])
 
-(declare realize)
+(defmacro ^:private defkind
+  "Define a view kind. `args` binds the object and, optionally, the context; each key is read by
+  its expression. A leading `:realize` expression replaces the default copy of every entry."
+  [kind-name args & body]
+  (let [[realize body] (if (= :realize (first body)) [(second body) (drop 2 body)] [nil body])
+        [obj ctx]      (if (= 2 (count args)) args [(first args) '_])
+        pairs          (partition 2 body)]
+    `(def ~(vary-meta kind-name assoc :private true)
+       (Kind. '~kind-name
+              ~(mapv first pairs)
+              ~(into {} (map (fn [[k expr]] [k `(fn [~obj ~ctx] ~expr)])) pairs)
+              ~(when realize `(fn [~obj ~ctx] ~realize))))))
 
-(defn- map-equiv [m o]
+(defprotocol ^:private Realize
+  (-realize [x]))
+
+(defn realize
+  "Copy a view, and every view inside it, into plain maps and vectors that keep nothing of the
+  page alive. Other values come back unchanged."
+  [x]
+  (if (instance? sa.ingenious.pdf.Realize x) (-realize x) x))
+
+(defn view?
+  "Whether `x` is a view (see `realize`)."
+  [x]
+  (instance? sa.ingenious.pdf.Realize x))
+
+(defn- read-entry [^Kind kind k obj ctx]
+  ((get (.-getters kind) k) obj ctx))
+
+(defmacro ^:private flat-map
+  "A map of the given keys and values, stored flat as Clojure stores small maps: one array, no
+  hashing. Lookups scan it, which beats a hash trie at these sizes."
+  [& kvs]
+  (let [arr (gensym "arr")]
+    `(let [~arr (object-array ~(count kvs))]
+       ~@(map-indexed (fn [i form] `(aset ~arr ~i (clojure.lang.RT/box ~form))) kvs)
+       (PersistentArrayMap. ~arr))))
+
+(defn- copy-entries
+  "A plain map of a view's entries, each realized, without the keys in `skip`."
+  [^Kind kind obj ctx skip]
+  (let [^List ks (.-ks kind)
+        arr      (object-array (* 2 (.size ks)))
+        n        (reduce (fn [^long i k]
+                           (if (skip k)
+                             i
+                             (do (aset arr i k)
+                                 (aset arr (inc i) (realize (read-entry kind k obj ctx)))
+                                 (+ i 2))))
+                         0
+                         ks)]
+    (PersistentArrayMap. (if (== n (alength arr)) arr (java.util.Arrays/copyOf arr (int n))))))
+
+(defn- realize-as
+  "A plain map of the view of `kind` over `obj`."
+  [^Kind kind obj ctx]
+  (if-let [realize-kind (.-realize kind)]
+    (realize-kind obj ctx)
+    (copy-entries kind obj ctx #{})))
+
+(defn- map-equiv
+  "Equality with any java.util.Map, as Clojure's maps define it."
+  [m o]
   (and (instance? java.util.Map o)
-       (= (count m) (.size ^java.util.Map o))
-       (every? (fn [^MapEntry e]
-                 (let [^java.util.Map o o]
-                   (and (.containsKey o (.key e))
-                        (= (.val e) (.get o (.key e))))))
-               (seq m))))
+       (let [^java.util.Map o o]
+         (and (= (count m) (.size o))
+              (every? (fn [[k v]] (and (.containsKey o k) (= v (.get o k)))) m)))))
 
-(deftype RowView [kind ^IFn lookup keys]
-  ;; `lookup` returns the value of a key, or `missing`. `keys` is shared by every row of a kind.
+(deftype View [^Kind kind obj ctx metadata]
   ILookup
-  (valAt [_ k] (let [v (.invoke lookup k)] (if (identical? v missing) nil v)))
-  (valAt [_ k nf] (let [v (.invoke lookup k)] (if (identical? v missing) nf v)))
+  (valAt [this k] (.valAt this k nil))
+  (valAt [_ k not-found]
+    (if-let [getter (get (.-getters kind) k)] (getter obj ctx) not-found))
 
   IKeywordLookup
-  (getLookupThunk [this k]
-    ;; Every RowView answers every key (nil when absent), so the class alone qualifies.
-    (let [c (class this)]
+  (getLookupThunk [_ k]
+    ;; `(:text glyph)` finds the getter for :text once per call site, for views of this kind.
+    (when-let [getter (get (.-getters kind) k)]
       (reify ILookupThunk
         (get [thunk target]
-          (if (instance? c target)
-            (.valAt ^ILookup target k)
+          (if (and (instance? View target) (identical? kind (.-kind ^View target)))
+            (getter (.-obj ^View target) (.-ctx ^View target))
             thunk)))))
 
   IFn
-  (invoke [this k] (.valAt this k))
-  (invoke [this k nf] (.valAt this k nf))
+  (invoke [this k] (.valAt this k nil))
+  (invoke [this k not-found] (.valAt this k not-found))
   (applyTo [this args] (clojure.lang.AFn/applyToHelper this args))
 
   Counted
-  (count [_] (count keys))
+  (count [_] (count (.-ks kind)))
+
+  Seqable
+  (seq [_] (seq (mapv #(MapEntry/create % (read-entry kind % obj ctx)) (.-ks kind))))
+
+  IKVReduce
+  (kvreduce [_ f init]
+    (reduce (fn [acc k] (f acc k (read-entry kind k obj ctx))) init (.-ks kind)))
 
   Associative
-  (containsKey [_ k] (not (identical? (.invoke lookup k) missing)))
-  (entryAt [_ k] (let [v (.invoke lookup k)] (when-not (identical? v missing) (MapEntry/create k v))))
+  (containsKey [_ k] (contains? (.-getters kind) k))
+  (entryAt [this k] (when (.containsKey this k) (MapEntry/create k (.valAt this k nil))))
   (assoc [this k v] (assoc (realize this) k v))
-
-  MapEquivalence
 
   IPersistentMap
   (assocEx [this k v] (.assocEx ^IPersistentMap (realize this) k v))
@@ -240,23 +327,34 @@
   (empty [_] {})
   (equiv [this o] (map-equiv this o))
 
-  Seqable
-  (seq [_] (seq (map (fn [k] (MapEntry/create k (.invoke lookup k))) keys)))
-
-  Iterable
-  (iterator [this] (let [^Iterable s (or (seq this) ())] (.iterator s)))
+  MapEquivalence
 
   IHashEq
   (hasheq [this] (Murmur3/hashUnordered this))
 
+  Iterable
+  (iterator [this] (.iterator ^Iterable (vec (seq this))))
+
+  IMeta
+  (meta [_] metadata)
+
+  IObj
+  (withMeta [_ m] (View. kind obj ctx m))
+
+  Realize
+  (-realize [_] (cond-> (realize-as kind obj ctx) metadata (with-meta metadata)))
+
+  protocols/Datafiable
+  (datafy [this] (realize this))
+
   java.util.Map
-  (size [_] (count keys))
-  (isEmpty [_] (empty? keys))
+  (size [_] (count (.-ks kind)))
+  (isEmpty [_] (empty? (.-ks kind)))
   (containsValue [this v] (boolean (some #(= v (val %)) (seq this))))
-  (get [this k] (.valAt this k))
-  (keySet [_] (java.util.LinkedHashSet. ^java.util.Collection keys))
+  (get [this k] (.valAt this k nil))
+  (keySet [_] (java.util.LinkedHashSet. ^Collection (.-ks kind)))
   (values [this] (mapv val (seq this)))
-  (entrySet [this] (java.util.LinkedHashSet. ^java.util.Collection (vec (seq this))))
+  (entrySet [this] (java.util.LinkedHashSet. ^Collection (vec (seq this))))
   (put [_ _ _] (throw (UnsupportedOperationException.)))
   (remove [_ _] (throw (UnsupportedOperationException.)))
   (putAll [_ _] (throw (UnsupportedOperationException.)))
@@ -267,339 +365,396 @@
   (hashCode [this] (clojure.lang.APersistentMap/mapHash this))
   (toString [this] (pr-str this)))
 
-(declare reduce-from)
+(defn- index-of
+  "`k` as an index into `n` items, or nil, as Clojure's vectors read keys."
+  [k ^long n]
+  (when (clojure.lang.Util/isInteger k)
+    (let [i (long k)]
+      (when (< -1 i n) i))))
 
-(deftype IndexedView [^long n ^IFn item]
-  ;; An immutable, lazily built sequence of `n` items; `item` maps an index to its item.
+(deftype Views [^Kind kind ^List xs ctx metadata]
+  ;; A read-only vector of views of `kind`, one per element of the Java list `xs`. It reads as
+  ;; a vector does (get, get-in, contains?, subvec, peek, rseq); changing it realizes it.
   Counted
-  (count [_] n)
+  (count [_] (.size xs))
 
   Indexed
-  (nth [_ i] (if (and (<= 0 i) (< i n)) (.invoke item i) (throw (IndexOutOfBoundsException. (str i)))))
-  (nth [_ i nf] (if (and (<= 0 i) (< i n)) (.invoke item i) nf))
+  (nth [_ i] (View. kind (.get xs i) ctx nil))
+  (nth [this i not-found] (if (< -1 i (.size xs)) (.nth this i) not-found))
+
+  ILookup
+  (valAt [this k] (.valAt this k nil))
+  (valAt [this k not-found]
+    (if-some [i (index-of k (.size xs))] (.nth this (int i)) not-found))
+
+  IFn
+  (invoke [this i] (.nth this (int i)))
+  (applyTo [this args] (clojure.lang.AFn/applyToHelper this args))
+
+  IPersistentVector
+  (length [_] (.size xs))
+  (assocN [this i v] (assoc (realize this) i v))
+  (containsKey [_ k] (some? (index-of k (.size xs))))
+  (entryAt [this k]
+    (when-some [i (index-of k (.size xs))] (MapEntry/create k (.nth this (int i)))))
+  (assoc [this k v] (assoc (realize this) k v))
+  (peek [this] (when-not (.isEmpty xs) (.nth this (dec (.size xs)))))
+  (pop [this] (pop (realize this)))
+  (rseq [this]
+    (when-not (.isEmpty xs)
+      (map #(.nth this (int %)) (range (dec (.size xs)) -1 -1))))
 
   Sequential
 
   Seqable
-  (seq [_] (when (pos? n) (map #(.invoke item %) (range n))))
+  (seq [_] (seq (mapv #(View. kind % ctx nil) xs)))
 
   IReduceInit
   (reduce [_ f init]
-    (loop [i 0 acc init]
-      (cond
-        (instance? Reduced acc) @acc
-        (== i n) acc
-        :else (recur (inc i) (f acc (.invoke item i))))))
+    (reduce (fn [acc x] (f acc (View. kind x ctx nil))) init xs))
 
   IReduce
   (reduce [this f]
-    (if (zero? n)
-      (f)
-      (reduce-from this f (.invoke item 0) 1)))
+    (if (.isEmpty xs) (f) (reduce f (seq this))))
 
   IPersistentCollection
-  (cons [this o] (conj (vec this) o))
+  (cons [this o] (conj (realize this) o))
   (empty [_] [])
   (equiv [this o]
-    (and (or (sequential? o) (instance? java.util.List o))
-         (= n (count o))
+    (and (or (sequential? o) (instance? List o))
+         (= (.size xs) (count o))
          (= (seq this) (seq o))))
-
-  Iterable
-  (iterator [this] (let [^Iterable s (or (seq this) ())] (.iterator s)))
 
   IHashEq
   (hasheq [this] (Murmur3/hashOrdered this))
 
+  Iterable
+  (iterator [this] (.iterator ^Iterable (vec (seq this))))
+
+  IMeta
+  (meta [_] metadata)
+
+  IObj
+  (withMeta [_ m] (Views. kind xs ctx m))
+
+  Realize
+  (-realize [this] (cond-> (into [] (map realize) this) metadata (with-meta metadata)))
+
+  protocols/Datafiable
+  (datafy [this] (realize this))
+
   Object
   (equals [this o] (.equiv this o))
-  (hashCode [this] (clojure.lang.Util/hash (vec this)))
+  (hashCode [this] (.hashCode ^Object (realize this)))
   (toString [this] (pr-str this)))
 
-(defmethod print-method RowView [v ^java.io.Writer w]
-  (print-method (into {} (seq v)) w))
+(defmethod print-method View [v ^java.io.Writer w]
+  ;; In the kind's key order, as `realize` makes it.
+  (print-method (apply array-map (mapcat identity v)) w))
+(defmethod print-method Views [v ^java.io.Writer w] (print-method (vec v) w))
 
-(defmethod print-method IndexedView [v ^java.io.Writer w]
-  (print-method (vec v) w))
+(defn- views [kind ^List xs ctx] (Views. kind xs ctx nil))
 
-(defn- reduce-from [^IndexedView v f init ^long start]
-  (loop [i start acc init]
-    (cond
-      (instance? Reduced acc) @acc
-      (== i (.-n v)) acc
-      :else (recur (inc i) (f acc (.invoke ^IFn (.-item v) i))))))
+(defn- realize-layers
+  "A page's boxes, lines and glyphs as plain data, each glyph copied once: a line's :chars is a
+  subvec of the page's :chars, and a box's :lines a subvec of the page's :lines."
+  [^TextPage page ctx glyph-kind line-kind box-kind]
+  (let [chars (mapv #(realize-as glyph-kind % ctx) (.glyphs page))
+        lines (mapv (fn [^TextLine l]
+                      (assoc (copy-entries line-kind l ctx #{:chars})
+                             :chars (subvec chars (.glyphStart l) (.glyphEnd l))))
+                    (.lines page))
+        boxes (mapv (fn [^TextBox b]
+                      (assoc (copy-entries box-kind b ctx #{:lines})
+                             :lines (subvec lines (.lineStart b) (.lineEnd b))))
+                    (.textBoxes page))]
+    {:text-boxes boxes :lines lines :chars chars}))
 
-(defn- indexed ^IndexedView [^long start ^long end item]
-  (IndexedView. (- end start) (fn [^long i] (item (+ start i)))))
-
-(defn- bbox-map [^BoundingBox b]
+(defn- bbox [^BoundingBox b]
   {:x0 (.x0 b) :y0 (.y0 b) :x1 (.x1 b) :y1 (.y1 b)})
 
-(def ^:private char-keys [:text :bbox :x0 :y0 :x1 :y1 :font-name :size :upright])
-(def ^:private line-keys [:bbox :orientation :text :chars])
-(def ^:private box-keys [:bbox :writing-mode :text :lines])
-(def ^:private page-keys [:page-number :bbox :rotate :text :text-boxes :lines :chars])
-
-(defn- layout-char [^LayoutPage p ^long i]
-  (RowView. ::char
-            (fn [k]
-              (case k
-                :text (.charText p i)
-                :x0 (.charX0 p i)
-                :y0 (.charY0 p i)
-                :x1 (.charX1 p i)
-                :y1 (.charY1 p i)
-                :bbox {:x0 (.charX0 p i) :y0 (.charY0 p i) :x1 (.charX1 p i) :y1 (.charY1 p i)}
-                :font-name (.charFontName p i)
-                :size (.charSize p i)
-                :upright (.charUpright p i)
-                missing))
-            char-keys))
-
-(defn- layout-line [^LayoutPage p ^long l]
-  (RowView. ::line
-            (fn [k]
-              (case k
-                :bbox (bbox-map (.lineBbox p l))
-                :orientation (.lineOrientation p l)
-                :text (.lineText p l)
-                :chars (indexed (.lineCharStart p l) (.lineCharEnd p l) #(layout-char p %))
-                missing))
-            line-keys))
-
-(defn- layout-box [^LayoutPage p ^long b]
-  (RowView. ::box
-            (fn [k]
-              (case k
-                :bbox (bbox-map (.textBoxBbox p b))
-                :writing-mode (.textBoxWritingMode p b)
-                :text (.textBoxText p b)
-                :lines (indexed (.textBoxLineStart p b) (.textBoxLineEnd p b) #(layout-line p %))
-                missing))
-            box-keys))
-
-(defn- layout-page [^LayoutPage p]
-  (RowView. ::page
-            (fn [k]
-              (case k
-                :page-number (.pageNumber p)
-                :bbox (bbox-map (.bbox p))
-                :rotate (.rotate p)
-                :text (.text p)
-                :text-boxes (indexed 0 (.textBoxCount p) #(layout-box p %))
-                :lines (indexed 0 (.lineCount p) #(layout-line p %))
-                :chars (indexed 0 (.charCount p) #(layout-char p %))
-                ::page p
-                missing))
-            page-keys))
-
-(def ^:private raw-char-keys
-  [:text :bbox :x0 :y0 :x1 :y1 :font-name :size :upright :advance :matrix :marked-content-id
-   :tag :non-stroking-color-space :stroking-color-space :non-stroking-color :stroking-color])
-(def ^:private raw-line-keys [:bbox :orientation :raw-text :text :chars])
-(def ^:private raw-page-keys
-  [:page-index :page-number :object-id :label :rotation :user-unit :boxes :layout-bbox :text
-   :text-boxes :lines :chars :tables])
+(defn- top-down-bbox [^RawTableBoundingBox b]
+  {:x0 (.x0 b) :top (.top b) :x1 (.x1 b) :bottom (.bottom b)})
 
 (defn- some-vec [xs] (some-> xs vec))
 
-(defn- raw-char [^RawPage p ^long i]
-  (RowView. ::raw-char
-            (fn [k]
-              (case k
-                :text (.charText p i)
-                :x0 (.charX0 p i)
-                :y0 (.charY0 p i)
-                :x1 (.charX1 p i)
-                :y1 (.charY1 p i)
-                :bbox {:x0 (.charX0 p i) :y0 (.charY0 p i) :x1 (.charX1 p i) :y1 (.charY1 p i)}
-                :font-name (.charFontName p i)
-                :size (.charSize p i)
-                :upright (.charUpright p i)
-                :advance (.charAdvance p i)
-                :matrix (mapv #(.charMatrix p i (int %)) (range 6))
-                :marked-content-id (.charMarkedContentId p i)
-                :tag (.charTag p i)
-                :non-stroking-color-space (.charNonStrokingColorSpace p i)
-                :stroking-color-space (.charStrokingColorSpace p i)
-                :non-stroking-color (some-vec (.charNonStrokingColor p i))
-                :stroking-color (some-vec (.charStrokingColor p i))
-                missing))
-            raw-char-keys))
+;;; Layout pages: boxes of lines of glyphs.
 
-(defn- raw-line [^RawPage p ^long l]
-  (RowView. ::raw-line
-            (fn [k]
-              (case k
-                :bbox (bbox-map (.lineBbox p l))
-                :orientation (.lineOrientation p l)
-                :raw-text (.lineRawText p l)
-                :text (.lineText p l)
-                :chars (indexed (.lineCharStart p l) (.lineCharEnd p l) #(raw-char p %))
-                missing))
-            raw-line-keys))
+(defmacro ^:private glyph-map
+  "The realized entries every glyph has, each coordinate boxed once and shared with :bbox, then
+  `more` entries."
+  [g & more]
+  `(let [x0# (Double/valueOf (.x0 ~g))
+         y0# (Double/valueOf (.y0 ~g))
+         x1# (Double/valueOf (.x1 ~g))
+         y1# (Double/valueOf (.y1 ~g))]
+     (flat-map :text (.text ~g)
+               :bbox (flat-map :x0 x0# :y0 y0# :x1 x1# :y1 y1#)
+               :x0 x0# :y0 y0# :x1 x1# :y1 y1#
+               :font-name (.fontName ~g)
+               :size (.size ~g)
+               :upright (.upright ~g)
+               ~@more)))
 
-(defn- raw-box [^RawPage p ^long b]
-  (RowView. ::raw-box
-            (fn [k]
-              (case k
-                :bbox (bbox-map (.textBoxBbox p b))
-                :writing-mode (.textBoxWritingMode p b)
-                :text (.textBoxText p b)
-                :lines (indexed (.textBoxLineStart p b) (.textBoxLineEnd p b) #(raw-line p %))
-                missing))
-            box-keys))
+(defkind glyph [^Glyph g]
+  :realize (glyph-map g)
+  :text      (.text g)
+  :bbox      (bbox (.bbox g))
+  :x0        (.x0 g)
+  :y0        (.y0 g)
+  :x1        (.x1 g)
+  :y1        (.y1 g)
+  :font-name (.fontName g)
+  :size      (.size g)
+  :upright   (.upright g))
 
-(defn- raw-table-bbox [^RawTableBoundingBox b]
-  {:x0 (.x0 b) :top (.top b) :x1 (.x1 b) :bottom (.bottom b)})
+(defkind line [^TextLine l]
+  :bbox        (bbox (.bbox l))
+  :orientation (.orientation l)
+  :text        (.text l)
+  :chars       (views glyph (.glyphs l) nil))
+
+(defkind box [^TextBox b]
+  :bbox         (bbox (.bbox b))
+  :writing-mode (.writingMode b)
+  :text         (.text b)
+  :lines        (views line (.lines b) nil))
+
+(declare layout-page)
+
+(defkind layout-page [^LayoutPage p]
+  :realize (merge (copy-entries layout-page p nil #{:text-boxes :lines :chars})
+                  (realize-layers p nil glyph line box))
+  :page-number (.pageNumber p)
+  :bbox        (bbox (.bbox p))
+  :rotate      (.rotate p)
+  :text        (.text p)
+  :text-boxes  (views box (.textBoxes p) nil)
+  :lines       (views line (.lines p) nil)
+  :chars       (views glyph (.glyphs p) nil))
+
+;;; Raw pages: the same layers, plus each glyph's graphics state, each line's raw text, the
+;;; page's PDF identity and its tables. The context of every raw kind is the RawPage.
+
+(defn- glyph-matrix [^RawPage page ^long i]
+  [(.glyphMatrix page i 0) (.glyphMatrix page i 1) (.glyphMatrix page i 2)
+   (.glyphMatrix page i 3) (.glyphMatrix page i 4) (.glyphMatrix page i 5)])
+
+(defkind raw-glyph [^Glyph g ^RawPage page]
+  :realize (let [i (.index g)]
+             (glyph-map g
+                        :advance (.glyphAdvance page i)
+                        :matrix (glyph-matrix page i)
+                        :marked-content-id (.glyphMarkedContentId page i)
+                        :tag (.glyphTag page i)
+                        :non-stroking-color-space (.glyphNonStrokingColorSpace page i)
+                        :stroking-color-space (.glyphStrokingColorSpace page i)
+                        :non-stroking-color (some-vec (.glyphNonStrokingColor page i))
+                        :stroking-color (some-vec (.glyphStrokingColor page i))))
+  :text                     (.text g)
+  :bbox                     (bbox (.bbox g))
+  :x0                       (.x0 g)
+  :y0                       (.y0 g)
+  :x1                       (.x1 g)
+  :y1                       (.y1 g)
+  :font-name                (.fontName g)
+  :size                     (.size g)
+  :upright                  (.upright g)
+  :advance                  (.glyphAdvance page (.index g))
+  :matrix                   (glyph-matrix page (.index g))
+  :marked-content-id        (.glyphMarkedContentId page (.index g))
+  :tag                      (.glyphTag page (.index g))
+  :non-stroking-color-space (.glyphNonStrokingColorSpace page (.index g))
+  :stroking-color-space     (.glyphStrokingColorSpace page (.index g))
+  :non-stroking-color       (some-vec (.glyphNonStrokingColor page (.index g)))
+  :stroking-color           (some-vec (.glyphStrokingColor page (.index g))))
+
+(defkind raw-line [^TextLine l page]
+  :bbox        (bbox (.bbox l))
+  :orientation (.orientation l)
+  :raw-text    (.rawText l)
+  :text        (.text l)
+  :chars       (views raw-glyph (.glyphs l) page))
+
+(defkind raw-box [^TextBox b page]
+  :bbox         (bbox (.bbox b))
+  :writing-mode (.writingMode b)
+  :text         (.text b)
+  :lines        (views raw-line (.lines b) page))
 
 (defn- raw-table [^RawTable t]
-  {:bbox (raw-table-bbox (.bbox t))
-   :row-count (.rowCount t)
+  {:bbox         (top-down-bbox (.bbox t))
+   :row-count    (.rowCount t)
    :column-count (.columnCount t)
-   :cells (mapv (fn [^sa.ingenious.pdf.RawTableCell c]
-                  {:row-index (.rowIndex c) :column-index (.columnIndex c)
-                   :row-span (.rowSpan c) :column-span (.columnSpan c)
-                   :bbox (raw-table-bbox (.bbox c)) :text (.text c)})
-                (.cells t))})
+   :cells        (mapv (fn [^RawTableCell c]
+                         {:row-index    (.rowIndex c)
+                          :column-index (.columnIndex c)
+                          :row-span     (.rowSpan c)
+                          :column-span  (.columnSpan c)
+                          :bbox         (top-down-bbox (.bbox c))
+                          :text         (.text c)})
+                       (.cells t))})
 
-(defn- raw-page-view [^RawPage p]
-  (RowView. ::raw-page
-            (fn [k]
-              (case k
-                :page-index (.pageIndex p)
-                :page-number (.pageNumber p)
-                :object-id (.objectId p)
-                :label (.label p)
-                :rotation (.rotation p)
-                :user-unit (.userUnit p)
-                :boxes (let [b (.boxes p)]
-                         {:media (some-vec (.media b)) :crop (some-vec (.crop b))
-                          :bleed (some-vec (.bleed b)) :trim (some-vec (.trim b))
-                          :art (some-vec (.art b))})
-                :layout-bbox (bbox-map (.layoutBbox p))
-                :text (.text p)
-                :text-boxes (indexed 0 (.textBoxCount p) #(raw-box p %))
-                :lines (indexed 0 (.lineCount p) #(raw-line p %))
-                :chars (indexed 0 (.charCount p) #(raw-char p %))
-                :tables (mapv raw-table (.tables p))
-                ::page p
-                missing))
-            raw-page-keys))
+(defn- page-boxes [^RawPage p]
+  (let [b (.boxes p)]
+    {:media (some-vec (.media b))
+     :crop  (some-vec (.crop b))
+     :bleed (some-vec (.bleed b))
+     :trim  (some-vec (.trim b))
+     :art   (some-vec (.art b))}))
 
-(defn realize
-  "Copy a view, and every view inside it, into plain maps and vectors. The result keeps nothing
-  native or columnar alive. Other values pass through unchanged."
-  [x]
-  (cond
-    (instance? RowView x) (into {} (map (fn [[k v]] [k (realize v)])) (seq x))
-    (instance? IndexedView x) (into [] (map realize) x)
-    (map? x) (into {} (map (fn [[k v]] [k (realize v)])) x)
-    (vector? x) (mapv realize x)
-    :else x))
+(declare raw-page-kind)
 
-(defn view?
-  "Whether x is a view over page columns (see `realize`)."
-  [x]
-  (or (instance? RowView x) (instance? IndexedView x)))
+(defkind raw-page-kind [^RawPage p]
+  :realize (merge (copy-entries raw-page-kind p nil #{:text-boxes :lines :chars})
+                  (realize-layers p p raw-glyph raw-line raw-box))
+  :page-index  (.pageIndex p)
+  :page-number (.pageNumber p)
+  :object-id   (.objectId p)
+  :label       (.label p)
+  :rotation    (.rotation p)
+  :user-unit   (.userUnit p)
+  :boxes       (page-boxes p)
+  :layout-bbox (bbox (.layoutBbox p))
+  :text        (.text p)
+  :text-boxes  (views raw-box (.textBoxes p) p)
+  :lines       (views raw-line (.lines p) p)
+  :chars       (views raw-glyph (.glyphs p) p)
+  :tables      (mapv raw-table (.tables p)))
+
+(defn java-page
+  "The Java page (`LayoutPage` or `RawPage`) a page view reads."
+  [page]
+  (if (and (instance? View page) (#{layout-page raw-page-kind} (.-kind ^View page)))
+    (.-obj ^View page)
+    (invalid! nil "java-page takes a page from pages, raw-pages or raw-page" page)))
 
 (defn columns
-  "A layout or raw page's character columns as fresh arrays: doubles for :x0 :y0 :x1 :y1 :size,
-  strings for :font-name and :text."
+  "A page's glyph columns as fresh arrays: doubles for :x0 :y0 :x1 :y1 :size (and :advance on
+  raw pages), booleans for :upright, strings for :font-name and :text."
   [page]
-  (let [p (get page ::page)]
-    (cond
-      (instance? LayoutPage p)
-      (let [^LayoutPage p p]
-        {:x0 (.charX0s p) :y0 (.charY0s p) :x1 (.charX1s p) :y1 (.charY1s p)
-         :size (.charSizes p) :font-name (.charFontNames p)
-         :text (into-array String (map #(.charText p (int %)) (range (.charCount p))))})
-      (instance? RawPage p)
-      (let [^RawPage p p]
-        {:x0 (.charX0s p) :y0 (.charY0s p) :x1 (.charX1s p) :y1 (.charY1s p)
-         :size (.charSizes p) :advance (.charAdvances p) :font-name (.charFontNames p)
-         :text (into-array String (map #(.charText p (int %)) (range (.charCount p))))})
-      :else (fail! "columns takes a page from `pages` or `raw-pages`"
-                   {:type :pdf/invalid-argument :value page}))))
+  (let [^TextPage p (java-page page)]
+    (cond-> {:x0        (.glyphX0s p)
+             :y0        (.glyphY0s p)
+             :x1        (.glyphX1s p)
+             :y1        (.glyphY1s p)
+             :size      (.glyphSizes p)
+             :upright   (.glyphUprights p)
+             :font-name (.glyphFontNames p)
+             :text      (.glyphTexts p)}
+      (instance? RawPage p) (assoc :advance (.glyphAdvances ^RawPage p)))))
 
-;; ---- small records as plain maps -----------------------------------------------------------
+;;;; Small results, as plain maps
 
 (defn- page-text-map [^PageText p]
-  {:page-number (.pageNumber p)
-   :bbox (bbox-map (.bbox p))
-   :text-boxes (mapv (fn [^sa.ingenious.pdf.PageTextBox b]
-                       {:bbox (bbox-map (.bbox b)) :text (.text b) :text-without-bidi (.textWithoutBidi b)
-                        :lines (mapv (fn [^sa.ingenious.pdf.PageTextLine l]
-                                       {:bbox (bbox-map (.bbox l)) :text (.text l)
-                                        :text-without-bidi (.textWithoutBidi l)})
-                                     (.lines b))})
-                     (.textBoxes p))
-   :fonts (set (.fonts p))
-   :digit-styles (into #{} (map (fn [^sa.ingenious.pdf.DigitStyle s] [(.fontName s) (long (.size s))]))
+  {:page-number  (.pageNumber p)
+   :bbox         (bbox (.bbox p))
+   :text-boxes   (mapv (fn [^PageTextBox b]
+                         {:bbox              (bbox (.bbox b))
+                          :text              (.text b)
+                          :text-without-bidi (.textWithoutBidi b)
+                          :lines             (mapv (fn [^PageTextLine l]
+                                                     {:bbox              (bbox (.bbox l))
+                                                      :text              (.text l)
+                                                      :text-without-bidi (.textWithoutBidi l)})
+                                                   (.lines b))})
+                       (.textBoxes p))
+   :fonts        (set (.fonts p))
+   :digit-styles (into #{} (map (fn [^DigitStyle s] [(.fontName s) (long (.size s))]))
                        (.digitStyles p))})
 
 (defn- summary-map [^PageSummary s]
-  {:page-number (.pageNumber s) :text (.text s) :bbox (bbox-map (.bbox s)) :rotate (.rotate s)})
+  {:page-number (.pageNumber s)
+   :text        (.text s)
+   :bbox        (bbox (.bbox s))
+   :rotate      (.rotate s)})
 
 (defn- table-map [^Table t]
-  {:page-number (.pageNumber t)
-   :bbox (bbox-map (.bbox t))
-   :row-count (.rowCount t)
+  {:page-number  (.pageNumber t)
+   :bbox         (bbox (.bbox t))
+   :row-count    (.rowCount t)
    :column-count (.columnCount t)
-   :cells (mapv (fn [^sa.ingenious.pdf.TableCell c]
-                  {:row-index (.rowIndex c) :column-index (.columnIndex c)
-                   :row-span (.rowSpan c) :column-span (.columnSpan c)
-                   :bbox (bbox-map (.bbox c)) :text (.text c)})
-                (.cells t))})
+   :cells        (mapv (fn [^TableCell c]
+                         {:row-index    (.rowIndex c)
+                          :column-index (.columnIndex c)
+                          :row-span     (.rowSpan c)
+                          :column-span  (.columnSpan c)
+                          :bbox         (bbox (.bbox c))
+                          :text         (.text c)})
+                       (.cells t))})
 
 (defn- table-rows-map [^PageTableRows r]
-  {:page-number (.pageNumber r)
-   :cells (vec (.cells r))
-   :row-offsets (vec (.rowOffsets r))
+  {:page-number   (.pageNumber r)
+   :cells         (vec (.cells r))
+   :row-offsets   (vec (.rowOffsets r))
    :table-offsets (vec (.tableOffsets r))})
 
 (defn- metadata-map [^Metadata m]
-  (let [v (.version m) p (.permissions m)]
-    {:document-info (into {} (map (fn [^MetadataEntry e] [(.key e) (.value e)])) (.documentInfo m))
-     :title (.title m) :author (.author m) :subject (.subject m) :keywords (.keywords m)
-     :creator (.creator m) :producer (.producer m)
-     :creation-date-raw (.creationDateRaw m) :creation-date-iso (.creationDateIso m)
-     :modification-date-raw (.modificationDateRaw m) :modification-date-iso (.modificationDateIso m)
-     :version {:header (.header v) :catalog (.catalog v) :effective (.effective v)}
-     :file-size-bytes (.fileSizeBytes m) :page-count (.pageCount m) :encrypted (.encrypted m)
-     :permissions {:printable (.printable p) :modifiable (.modifiable p) :extractable (.extractable p)}
-     :linearized (.linearized m) :tagged (.tagged m) :user-properties (.userProperties m)
-     :suspects (.suspects m) :form (.form m) :has-javascript (.hasJavascript m)
-     :has-metadata-stream (.hasMetadataStream m) :xmp-metadata (.xmpMetadata m)}))
+  (let [v (.version m)
+        p (.permissions m)]
+    {:document-info         (into {} (map (fn [^MetadataEntry e] [(.key e) (.value e)]))
+                                  (.documentInfo m))
+     :title                 (.title m)
+     :author                (.author m)
+     :subject               (.subject m)
+     :keywords              (.keywords m)
+     :creator               (.creator m)
+     :producer              (.producer m)
+     :creation-date-raw     (.creationDateRaw m)
+     :creation-date-iso     (.creationDateIso m)
+     :modification-date-raw (.modificationDateRaw m)
+     :modification-date-iso (.modificationDateIso m)
+     :version               {:header    (.header v)
+                             :catalog   (.catalog v)
+                             :effective (.effective v)}
+     :file-size-bytes       (.fileSizeBytes m)
+     :page-count            (.pageCount m)
+     :encrypted             (.encrypted m)
+     :permissions           {:printable   (.printable p)
+                             :modifiable  (.modifiable p)
+                             :extractable (.extractable p)}
+     :linearized            (.linearized m)
+     :tagged                (.tagged m)
+     :user-properties       (.userProperties m)
+     :suspects              (.suspects m)
+     :form                  (.form m)
+     :has-javascript        (.hasJavascript m)
+     :has-metadata-stream   (.hasMetadataStream m)
+     :xmp-metadata          (.xmpMetadata m)}))
 
-;; ---- documents -----------------------------------------------------------------------------
+;;;; Documents
 
 (defn open
-  "Open a PDF and return a document; close it with `with-open`. `source` is a path string,
-  java.nio.file.Path, java.io.File, java.io.InputStream (read to its end and closed) or byte
-  array. A file is memory-mapped: keep it unchanged while the document is open.
+  "Open a PDF; close it with `with-open`. `source` is a path string, java.nio.file.Path,
+  java.io.File, java.io.InputStream (read to its end, then closed) or byte array. A file is
+  memory-mapped: keep it unchanged while the document is open.
 
-  `opts` keys: :password, :pages (1-based page numbers), :max-pages, :caching, :bidi, and
-  :layout with :line-overlap :char-margin :line-margin :word-margin :boxes-flow (nil turns the
-  ordering off) :detect-vertical :all-texts."
+  `opts` (a nil value leaves an option unset):
+    :password   the password
+    :pages      the 1-based page numbers to read
+    :max-pages  read at most this many pages
+    :caching    cache decoded objects (default true)
+    :bidi       reorder right-to-left text
+    :layout     {:line-overlap :char-margin :line-margin :word-margin :detect-vertical
+                 :all-texts :boxes-flow}; an explicit nil :boxes-flow turns box ordering off"
   (^Document [source] (open source nil))
   (^Document [source opts]
    (let [o (options opts)]
-     (translating
-      (cond
-        (string? source) (Document/open ^String source o)
-        (instance? Path source) (Document/open ^Path source o)
-        (instance? File source) (Document/open ^File source o)
-        (instance? InputStream source) (Document/open ^InputStream source o)
-        (bytes? source) (Document/open ^bytes source o)
-        :else (fail! "Unsupported source; expected a path string, Path, File, InputStream or byte array"
-                     {:type :pdf/invalid-argument :key :source
-                      :value (some-> source class .getName)}))))))
+     (bolivar
+      (condp instance? source
+        String      (Document/open ^String source o)
+        Path        (Document/open ^Path source o)
+        File        (Document/open ^File source o)
+        InputStream (Document/open ^InputStream source o)
+        (if (bytes? source)
+          (Document/open ^bytes source o)
+          (invalid! :source "source must be a path, File, InputStream or byte array"
+                    (some-> source class .getName))))))))
 
 (defn text
-  "The whole document's text, pages separated by form feeds."
+  "The document's text, pages separated by form feeds."
   [^Document doc]
-  (translating (.text doc)))
+  (bolivar (.text doc)))
 
 (defn extract-text
   "Open `source`, read its text, and close it."
@@ -609,94 +764,101 @@
      (text doc))))
 
 (defn metadata
-  "Canonical and raw document metadata, as a map."
+  "The document's metadata, as a map."
   [^Document doc]
-  (translating (metadata-map (.metadata doc))))
+  (bolivar (metadata-map (.metadata doc))))
 
 (defn page-count
   "The number of pages the document's options select."
   [^Document doc]
-  (translating (.pageCount doc)))
+  (bolivar (.pageCount doc)))
 
 (defn declared-page-count
   "The number of pages the file declares."
   [^Document doc]
-  (translating (.declaredPageCount doc)))
+  (bolivar (.declaredPageCount doc)))
 
 (defn raw-page
-  "One 1-based page with nothing dropped, as a view."
+  "One 1-based page, with nothing dropped, as a view."
   [^Document doc page-number]
-  (translating (raw-page-view (.rawPage doc (int (int-value :page-number page-number))))))
+  (let [^Integer n (coerce :int :page-number page-number)]
+    (View. raw-page-kind (bolivar (.rawPage doc (.intValue n))) nil nil)))
 
 (defn version
   "The Bolivar version."
   []
-  (translating (Document/version)))
+  (bolivar (Document/version)))
 
 (defn- source
-  "A reducible over a cursor that `open-cursor` opens. The cursor opens and closes inside each
-  reduction, so the source may be reduced more than once."
-  [open-cursor item]
-  ;; Only Bolivar's own calls are translated; whatever `f` throws passes through untouched.
+  "A reducible over the cursor `open-cursor` opens. Each reduction opens its own cursor and closes
+  it at the end, so a source can be reduced again."
+  [what open-cursor item]
   (letfn [(run [f init]
-            (let [^Cursor cursor (translating (open-cursor))]
+            (let [^Cursor cursor (bolivar (open-cursor))]
               (try
                 (loop [acc init]
                   (cond
-                    (reduced? acc) @acc
-                    (translating (.hasNext cursor)) (recur (f acc (item (translating (.next cursor)))))
-                    :else acc))
+                    (reduced? acc)              @acc
+                    (bolivar (.hasNext cursor)) (recur (f acc (item (bolivar (.next cursor)))))
+                    :else                       acc))
                 (finally (.close cursor)))))]
     (reify
       IReduceInit
       (reduce [_ f init] (run f init))
+
       IReduce
       (reduce [_ f]
-        (let [none (Object.)
+        (let [none   (Object.)
               result (run (fn [acc x] (if (identical? acc none) x (f acc x))) none)]
-          (if (identical? result none) (f) result))))))
+          (if (identical? result none) (f) result)))
+
+      Object
+      (toString [_]
+        (str "#<sa.ingenious.pdf/" what
+             ": reducible, not a seq; use into, transduce, run!, reduce or eduction>")))))
 
 (defn pages
-  "The laid-out pages, as views with :page-number :bbox :rotate :text :text-boxes, and every
-  :lines and :chars of the page. Boxes hold :lines, lines hold :chars; characters have :text
-  :bbox :x0 :y0 :x1 :y1 :font-name :size :upright."
+  "The laid-out pages, as views. A page has :page-number :bbox :rotate :text :text-boxes, and all
+  its :lines and :chars. Boxes hold :lines, and lines hold :chars; a char has :text :bbox :x0
+  :y0 :x1 :y1 :font-name :size :upright."
   [^Document doc]
-  (source #(.pages doc) layout-page))
+  (source "pages" #(.pages doc) #(View. layout-page % nil nil)))
 
 (defn raw-pages
-  "Every page with nothing dropped, as views: PDF identity and :boxes, :text-boxes, :lines with
-  :raw-text, :chars with their graphics state, and :tables in pdfplumber space."
+  "Every page with nothing dropped, as views: the page's PDF identity and :boxes, its
+  :text-boxes, :lines with :raw-text, :chars with their graphics state, and :tables in
+  pdfplumber's top-down space."
   [^Document doc]
-  (source #(.rawPages doc) raw-page-view))
+  (source "raw-pages" #(.rawPages doc) #(View. raw-page-kind % nil nil)))
 
 (defn page-texts
   "Each page's boxes and lines with :text and :text-without-bidi, its :fonts, and the
-  :digit-styles [font whole-size] of its digits. Plain maps; no per-character data."
+  :digit-styles [font whole-size] of its digits."
   [^Document doc]
-  (source #(.pageTexts doc) page-text-map))
+  (source "page-texts" #(.pageTexts doc) page-text-map))
 
 (defn page-summaries
-  "Each page's :page-number :text :bbox :rotate, as plain maps."
+  "Each page's :page-number :text :bbox :rotate."
   [^Document doc]
-  (source #(.pageSummaries doc) summary-map))
+  (source "page-summaries" #(.pageSummaries doc) summary-map))
 
 (defn tables
-  "Every table of every page, as plain maps with :page-number :bbox :row-count :column-count
-  and :cells. `opts` uses pdfplumber's vocabulary: :vertical-strategy and
-  :horizontal-strategy (:lines :lines-strict :text :explicit), :snap-tolerance
-  :join-tolerance :intersection-tolerance and their -x-/-y- forms,
-  :explicit-vertical-lines :explicit-horizontal-lines, :crop and :first-page-crop as
-  [x0 y0 x1 y1], and :max-pages."
+  "Every table of every page, with :page-number :bbox :row-count :column-count :cells.
+
+  `opts` uses pdfplumber's names: :vertical-strategy and :horizontal-strategy (:lines
+  :lines-strict :text :explicit); :snap-tolerance, :join-tolerance, :intersection-tolerance and
+  their -x- and -y- forms; :explicit-vertical-lines and :explicit-horizontal-lines; :crop and
+  :first-page-crop as [x0 y0 x1 y1]; :max-pages."
   ([doc] (tables doc nil))
   ([^Document doc opts]
    (let [o (table-options opts)]
-     (source #(.tables doc o) table-map))))
+     (source "tables" #(.tables doc o) table-map))))
 
 (defn table-rows
-  "The raw table rows of each page, exactly as the pdfplumber-compatible pipeline emits them:
-  :cells (nil for an empty cell), :row-offsets into cells and :table-offsets into rows. Takes
-  the same options as `tables`."
+  "Each page's raw table rows, as the pdfplumber-compatible pipeline emits them: :cells (nil for
+  an empty cell), :row-offsets into the cells, :table-offsets into the rows. Takes the options of
+  `tables`."
   ([doc] (table-rows doc nil))
   ([^Document doc opts]
    (let [o (table-options opts)]
-     (source #(.tableRows doc o) table-rows-map))))
+     (source "table-rows" #(.tableRows doc o) table-rows-map))))

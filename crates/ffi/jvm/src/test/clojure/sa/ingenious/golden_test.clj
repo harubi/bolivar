@@ -1,6 +1,7 @@
 (ns sa.ingenious.golden-test
   "Replay tests/jvm-golden: every case of the corpus the UniFFI binding produced must come out
-  the same through the FFM Java API, after converting to the old map shapes."
+  the same through the FFM Java API, after converting to the old map shapes. Layout and raw pages
+  go through their records (`toRecords`, `rawTextBoxes`), which the page views build."
   (:require [clojure.test :refer [deftest is testing]]
             [sa.ingenious.corpus :as corpus])
   (:import [sa.ingenious.pdf BoundingBox Cursor Document LayoutOptions LayoutPage Metadata
@@ -68,7 +69,7 @@
    :rotate      (.rotate p)
    :text        (.text p)
    :text-boxes
-   (vec (for [^sa.ingenious.pdf.LayoutTextBox b (.textBoxes p)]
+   (vec (for [^sa.ingenious.pdf.LayoutTextBox b (.toRecords p)]
           {:bbox (bbox (.bbox b)) :writing-mode (.writingMode b) :text (.text b)
            :lines (vec (for [^sa.ingenious.pdf.LayoutLine l (.lines b)]
                          {:bbox (bbox (.bbox l)) :orientation (.orientation l) :text (.text l)
@@ -91,7 +92,7 @@
      :layout-bbox (bbox (.layoutBbox p))
      :text        (.text p)
      :text-boxes
-     (vec (for [^sa.ingenious.pdf.RawTextBox b (.textBoxes p)]
+     (vec (for [^sa.ingenious.pdf.RawTextBox b (.rawTextBoxes p)]
             {:bbox (bbox (.bbox b)) :writing-mode (.writingMode b) :text (.text b)
              :lines (vec (for [^sa.ingenious.pdf.RawTextLine l (.lines b)]
                            {:bbox (bbox (.bbox l)) :orientation (.orientation l)

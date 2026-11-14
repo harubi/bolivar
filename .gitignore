@@ -479,3 +479,6 @@ crates/ffi/jvm/.classpath
 crates/ffi/jvm/.project
 crates/ffi/jvm/.settings/
 crates/ffi/jvm/bin/
+crates/ffi/jvm/.cpcache/
+crates/ffi/jvm/.clj-kondo/.cache/
+crates/ffi/jvm/.lsp/

@@ -1,5 +1,6 @@
 (ns sa.ingenious.pdf-test
-  (:require [clojure.string :as str]
+  (:require [clojure.datafy :refer [datafy]]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [sa.ingenious.corpus :as corpus]
             [sa.ingenious.pdf :as pdf])
@@ -46,11 +47,13 @@
                                         ls))))
                       boxes)))))
 
-(defn- old-error->type [{:keys [error cause]}]
+(defn- old-error->type
+  "The ::pdf/error the new API reports where the old one failed."
+  [{:keys [error cause]}]
   (cond
-    (= error :pdf/invalid-options) :pdf/invalid-argument
-    cause (keyword "pdf" (-> cause (str/replace #"([a-z])([A-Z])" "$1-$2") str/lower-case))
-    :else error))
+    (= error :pdf/invalid-options) :invalid-argument
+    cause (keyword (-> cause (str/replace #"([a-z])([A-Z])" "$1-$2") str/lower-case))
+    :else (keyword (name error))))
 
 (defn- normalise [v]
   (if (and (map? v) (contains? v :error) (contains? v :cause))
@@ -58,7 +61,7 @@
     v))
 
 (defn- attempt [f]
-  (try (f) (catch clojure.lang.ExceptionInfo e {:error (:type (ex-data e))})))
+  (try (f) (catch clojure.lang.ExceptionInfo e {:error (::pdf/error (ex-data e))})))
 
 (defn- table-opts [m]
   ;; The old API took strategies as strings; the new one takes keywords or strings.
@@ -85,7 +88,7 @@
                   {:tables (attempt #(into [] (pdf/tables d (table-opts t))))
                    :table-rows (attempt #(into [] (pdf/table-rows d (table-opts t))))})
                 tables)})))
-    (catch clojure.lang.ExceptionInfo e {:open {:error (:type (ex-data e))}})))
+    (catch clojure.lang.ExceptionInfo e {:open {:error (::pdf/error (ex-data e))}})))
 
 (defn- normalise-results [results]
   (cond-> (into {} (map (fn [[k v]] [k (normalise v)])) results)
@@ -133,6 +136,12 @@
       (is (= 1 (get {plain 1} ch)))
       (is (= (:chars page) (pdf/realize (:chars page))))
       (is (= #{:text :bbox :x0 :y0 :x1 :y1 :font-name :size :upright} (set (keys ch))))
+      (is (= (count ch) (reduce-kv (fn [n _ _] (inc n)) 0 ch)))
+      (is (= :x0 (reduce-kv (fn [_ k _] (reduced k)) nil (select-keys ch [:x0]))))
+      (is (= {:a 1} (meta (with-meta ch {:a 1}))))
+      (is (= plain (with-meta ch {:a 1})) "metadata does not change equality")
+      (is (= plain (datafy ch)))
+      (is (= (into {} ch) plain))
       (is (= (:x0 ch) (get-in ch [:bbox :x0])))
       (is (nil? (:nope ch)))
       (is (= :d (get ch :nope :d)))
@@ -145,12 +154,30 @@
         (is (= (:x0 ch) (aget ^doubles (:x0 cols) 0)))
         (is (= (:text ch) (aget ^"[Ljava.lang.String;" (:text cols) 0)))))))
 
+(deftest view-collections-read-as-vectors
+  ;; :chars, :lines and :text-boxes answer what their realized vectors answer.
+  (with-open [d (pdf/open nics)]
+    (let [page (first (into [] (pdf/pages d)))
+          chars (:chars page)
+          plain (pdf/realize chars)]
+      (is (vector? chars))
+      (is (= (get-in plain [0 :x0]) (get-in page [:chars 0 :x0])))
+      (is (contains? chars 0))
+      (is (not (contains? chars (count chars))))
+      (is (nil? (get chars -1)))
+      (is (= (subvec plain 1 3) (subvec chars 1 3)))
+      (is (= (peek plain) (peek chars)))
+      (is (= (peek plain) (first (rseq chars))))
+      (is (= (pop plain) (pop chars)))
+      (is (= (assoc plain 0 :z) (assoc chars 0 :z)))
+      (is (= (hash plain) (hash chars))))))
+
 (defn- realise-first-char
   "A weak reference to a page and a realised copy of its first character."
   []
   (with-open [d (pdf/open nics)]
     (let [page (first (into [] (pdf/pages d)))]
-      [(WeakReference. (get page ::pdf/page)) (pdf/realize (nth (:chars page) 0))])))
+      [(WeakReference. (pdf/java-page page)) (pdf/realize (nth (:chars page) 0))])))
 
 (deftest realize-detaches-from-the-page
   (let [[^WeakReference ref kept] (realise-first-char)]
@@ -163,23 +190,65 @@
     (is (nil? (.get ref)) "a realised value does not pin its page")
     (is (= "S" (:text kept)))))
 
-(deftest errors-are-ex-info-with-type-code-and-key
-  (let [data (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))]
-    (is (= {:type :pdf/io-not-found :code 3} (data #(pdf/open "nope.pdf"))))
-    (is (= :max-pages (:key (data #(pdf/open simple {:max-pages 0})))))
-    (is (= :pages (:key (data #(pdf/open simple {:pages [0]})))))
-    (is (= :bogus (:key (data #(pdf/open simple {:bogus 1})))))
-    (is (= :caching (:key (data #(pdf/open simple {:caching "yes"})))))
-    (is (= :vertical-strategy (:key (data #(pdf/tables nil {:vertical-strategy :sideways})))))
-    (is (= :pdf/encryption-error
-           (:type (data #(pdf/open (str corpus/repo "/crates/core/tests/fixtures/encryption/rc4-40.pdf")
-                                   {:password "bar"})))))
+(deftest errors-are-anomalies-with-error-code-and-key
+  (let [data (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
+        error (comp ::pdf/error data)
+        key (comp ::pdf/key data)]
+    (let [d (data #(pdf/open "nope.pdf"))]
+      (is (= :io-not-found (::pdf/error d)))
+      (is (= :cognitect.anomalies/not-found (:cognitect.anomalies/category d)))
+      (is (= 3 (::pdf/code d)))
+      (is (string? (:cognitect.anomalies/message d))))
+    (is (= :max-pages (key #(pdf/open simple {:max-pages 0}))))
+    (is (= :pages (key #(pdf/open simple {:pages [0]}))))
+    (is (= :bogus (key #(pdf/open simple {:bogus 1}))))
+    (is (= :caching (key #(pdf/open simple {:caching "yes"}))))
+    (is (= :line-margin (key #(pdf/open simple {:layout {:line-margin "wide"}}))))
+    (is (= :vertical-strategy (key #(pdf/tables nil {:vertical-strategy :sideways}))))
+    (is (= :encryption-error
+           (error #(pdf/open (str corpus/repo "/crates/core/tests/fixtures/encryption/rc4-40.pdf")
+                             {:password "bar"}))))
     (with-open [d (pdf/open simple)]
-      (is (= :snap-tolerance (:key (data #(into [] (pdf/tables d {:snap-tolerance -1}))))))
-      (is (= :page-number (:key (data #(pdf/raw-page d 0))))))
+      (is (= :snap-tolerance (key #(into [] (pdf/tables d {:snap-tolerance -1})))))
+      (is (= :page-number (key #(pdf/raw-page d 0)))))
     (let [d (pdf/open simple)]
       (.close d)
-      (is (= :pdf/illegal-state (:type (data #(pdf/text d))))))))
+      (is (= :illegal-state (error #(pdf/text d))))
+      (is (= :cognitect.anomalies/conflict
+             (:cognitect.anomalies/category (data #(pdf/text d))))))))
+
+(deftest nil-option-values-leave-options-unset
+  (is (= (pdf/extract-text simple) (pdf/extract-text simple {:password nil :max-pages nil})))
+  (with-open [d (pdf/open simple)]
+    (is (= (into [] (pdf/tables d)) (into [] (pdf/tables d {:snap-tolerance nil}))))))
+
+(deftest realized-pages-share-their-characters
+  (with-open [d (pdf/open nics)]
+    (let [page (pdf/realize (first (into [] (pdf/pages d))))
+          line (first (:lines page))
+          box (first (:text-boxes page))]
+      (is (not (pdf/view? page)))
+      (is (identical? (first (:chars page)) (first (:chars line))))
+      (is (identical? (first (:lines page)) (first (:lines box))))
+      (is (= (:lines page) (mapcat :lines (:text-boxes page)))))))
+
+(deftest keyword-lookup-sites-handle-views-and-maps
+  ;; One call site sees views of two types and plain maps, so its cached thunk must fall back.
+  (with-open [d (pdf/open nics)]
+    (let [page (first (into [] (pdf/pages d)))
+          values [(nth (:chars page) 0) (first (:lines page)) {:text "plain"} page
+                  (nth (:chars page) 1)]
+          texts (mapv (fn [v] (:text v)) values)]
+      (is (= [(:text (pdf/realize (nth (:chars page) 0)))
+              (:text (pdf/realize (first (:lines page))))
+              "plain"
+              (:text page)
+              (:text (pdf/realize (nth (:chars page) 1)))]
+             texts)))))
+
+(deftest sources-say-what-they-are
+  (with-open [d (pdf/open simple)]
+    (is (re-find #"reducible, not a seq" (str (pdf/pages d))))))
 
 (deftest boxes-flow-nil-turns-ordering-off
   (let [paper (str corpus/repo "/crates/core/tests/fixtures/nonfree/naacl06-shinyama.pdf")

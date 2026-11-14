@@ -2,7 +2,11 @@
   "Run every Clojure test namespace; exit non-zero on any failure or error."
   (:require [clojure.test :as t]))
 
-(def namespaces '[sa.ingenious.golden-test sa.ingenious.pdf-test])
+(def namespaces
+  '[sa.ingenious.golden-test
+    sa.ingenious.pdf-test
+    sa.ingenious.pdf-properties-test
+    sa.ingenious.pdf-budget-test])
 
 (defn -main [& _]
   (apply require namespaces)

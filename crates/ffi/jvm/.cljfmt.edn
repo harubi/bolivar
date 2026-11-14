@@ -1,0 +1,2 @@
+{:extra-indents {clojure.test.check.properties/for-all [[:block 1]]
+                 clojure.test.check.generators/let     [[:block 1]]}}
