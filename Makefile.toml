@@ -38,9 +38,13 @@ script = '''
 set -e
 for suite in pdfminer.six pdfplumber; do
   if find "references/$suite" -type f -name "test*.py" -print -quit | grep -q .; then
+    # Deliberate differences from upstream, with their reasons: tests/parity-differences.txt.
+    # Node IDs hold no spaces, so the list splits into arguments as written.
+    deselect=$(awk -v suite="$suite" '$1 == suite { printf "--deselect %s ", $2 }' \
+      tests/parity-differences.txt)
     PYTHONPATH="crates/python/python:references/$suite" \
       uv run --with pytest --with pytest-cov --with pandas --with pypdfium2 \
-      -m pytest "references/$suite/"
+      -m pytest "references/$suite/" $deselect
   else
     echo "Skipping $suite: references/$suite missing tests (run git submodule update --init)"
   fi

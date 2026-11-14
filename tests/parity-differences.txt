@@ -1,0 +1,9 @@
+# Upstream parity tests that Bolivar fails on purpose. `cargo make test-parity` deselects each
+# one. A line holds the suite (a directory under references/) and the test's node ID within it.
+# Give every entry the reason, and the Bolivar test that pins its behavior.
+
+# A hex string with an odd number of digits: Bolivar pads the last digit with 0, as ISO 32000
+# 7.3.4.3 says and other readers do ('5' is 0x50); pdfminer reads it alone ('5' is 0x05).
+# Pinned by decode_hex_string_pads_odd_nibble_on_right in crates/core/src/parser/lexer.rs.
+pdfminer.six tests/test_pdfminer_psparser.py::TestPSBaseParser::test_1
+pdfminer.six tests/test_pdfminer_psparser.py::TestPSBaseParser::test_2
