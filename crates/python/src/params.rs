@@ -4,8 +4,8 @@
 //! for table and text extraction settings.
 
 use bolivar_core::table::{
-    BBox, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TableStrategy, TextDir,
-    TextSettings,
+    BBox, EdgeObj, ExplicitLine, Orientation, PageGeometry, TableSettings, TableSettingsPatch,
+    TableStrategy, TextDir, TextSettings,
 };
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -374,39 +374,6 @@ pub fn parse_table_settings(
         })
     }
 
-    fn extract_non_negative_f64(value: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
-        let parsed: f64 = value.extract()?;
-        if parsed < 0.0 {
-            return Err(PyValueError::new_err(format!(
-                "Table setting '{name}' cannot be negative"
-            )));
-        }
-        Ok(parsed)
-    }
-
-    fn extract_non_negative_usize(value: &Bound<'_, PyAny>, name: &str) -> PyResult<usize> {
-        let parsed: isize = value.extract()?;
-        if parsed < 0 {
-            return Err(PyValueError::new_err(format!(
-                "Table setting '{name}' cannot be negative"
-            )));
-        }
-        Ok(parsed as usize)
-    }
-
-    fn validate_explicit_lines(
-        strategy: TableStrategy,
-        line_count: usize,
-        orientation: &str,
-    ) -> PyResult<()> {
-        if strategy == TableStrategy::Explicit && line_count < 2 {
-            return Err(PyValueError::new_err(format!(
-                "If {orientation}_strategy == 'explicit', explicit_{orientation}_lines must be specified as a list/tuple of two or more floats/ints."
-            )));
-        }
-        Ok(())
-    }
-
     let mut settings = TableSettings::default();
     let Some(obj) = table_settings else {
         return Ok(settings);
@@ -420,105 +387,86 @@ pub fn parse_table_settings(
         .map_err(|_| PyValueError::new_err("table_settings must be a dict when provided"))?;
 
     let mut text_settings = settings.text_settings.clone();
+    // Collected first and resolved once, so an axis tolerance wins over the
+    // general one whatever order the dict holds them in, as in pdfplumber.
+    let mut patch = TableSettingsPatch::default();
+    // Every `text_` key goes into one dict, applied once after the loop, as pdfplumber's
+    // `TableSettings.resolve` builds `text_settings`: a general `text_tolerance` then fills only
+    // the axes no `text_x_tolerance` or `text_y_tolerance` set, whatever the dict order.
+    let text_dict = PyDict::new(py);
+    // Strategies are checked after the tolerances and counts, as pdfplumber checks them.
+    let mut vertical_strategy = None;
+    let mut horizontal_strategy = None;
 
     for (k, v) in dict.iter() {
         let key: String = k.extract()?;
         if let Some(stripped) = key.strip_prefix("text_") {
-            let tmp = PyDict::new(py);
-            tmp.set_item(stripped, v)?;
-            apply_text_settings_from_dict(&mut text_settings, &tmp)?;
+            text_dict.set_item(stripped, v)?;
             continue;
         }
 
         match key.as_str() {
-            "vertical_strategy" => {
-                settings.vertical_strategy = parse_table_strategy(&v, "vertical")?;
-            }
-            "horizontal_strategy" => {
-                settings.horizontal_strategy = parse_table_strategy(&v, "horizontal")?;
-            }
+            "vertical_strategy" => vertical_strategy = Some(v),
+            "horizontal_strategy" => horizontal_strategy = Some(v),
             "snap_tolerance" => {
-                let val = extract_non_negative_f64(&v, "snap_tolerance")?;
-                settings.snap_x_tolerance = val;
-                settings.snap_y_tolerance = val;
+                patch.snap_tolerance = Some(v.extract()?);
             }
             "snap_x_tolerance" => {
-                settings.snap_x_tolerance = extract_non_negative_f64(&v, "snap_x_tolerance")?;
+                patch.snap_x_tolerance = Some(v.extract()?);
             }
             "snap_y_tolerance" => {
-                settings.snap_y_tolerance = extract_non_negative_f64(&v, "snap_y_tolerance")?;
+                patch.snap_y_tolerance = Some(v.extract()?);
             }
             "join_tolerance" => {
-                let val = extract_non_negative_f64(&v, "join_tolerance")?;
-                settings.join_x_tolerance = val;
-                settings.join_y_tolerance = val;
+                patch.join_tolerance = Some(v.extract()?);
             }
             "join_x_tolerance" => {
-                settings.join_x_tolerance = extract_non_negative_f64(&v, "join_x_tolerance")?;
+                patch.join_x_tolerance = Some(v.extract()?);
             }
             "join_y_tolerance" => {
-                settings.join_y_tolerance = extract_non_negative_f64(&v, "join_y_tolerance")?;
+                patch.join_y_tolerance = Some(v.extract()?);
             }
             "edge_min_length" => {
-                settings.edge_min_length = extract_non_negative_f64(&v, "edge_min_length")?;
+                patch.edge_min_length = Some(v.extract()?);
             }
             "edge_min_length_prefilter" => {
-                settings.edge_min_length_prefilter =
-                    extract_non_negative_f64(&v, "edge_min_length_prefilter")?;
+                patch.edge_min_length_prefilter = Some(v.extract()?);
             }
-            "min_words_vertical" => {
-                settings.min_words_vertical = extract_non_negative_usize(&v, "min_words_vertical")?;
-            }
-            "min_words_horizontal" => {
-                settings.min_words_horizontal =
-                    extract_non_negative_usize(&v, "min_words_horizontal")?;
-            }
+            "min_words_vertical" => patch.min_words_vertical = Some(v.extract()?),
+            "min_words_horizontal" => patch.min_words_horizontal = Some(v.extract()?),
             "intersection_tolerance" => {
-                let val = extract_non_negative_f64(&v, "intersection_tolerance")?;
-                settings.intersection_x_tolerance = val;
-                settings.intersection_y_tolerance = val;
+                patch.intersection_tolerance = Some(v.extract()?);
             }
             "intersection_x_tolerance" => {
-                settings.intersection_x_tolerance =
-                    extract_non_negative_f64(&v, "intersection_x_tolerance")?;
+                patch.intersection_x_tolerance = Some(v.extract()?);
             }
             "intersection_y_tolerance" => {
-                settings.intersection_y_tolerance =
-                    extract_non_negative_f64(&v, "intersection_y_tolerance")?;
-            }
-            "text_settings" => {
-                if !v.is_none() {
-                    let ts_dict = v.cast::<PyDict>().map_err(|_| {
-                        PyValueError::new_err("text_settings must be a dict when provided")
-                    })?;
-                    apply_text_settings_from_dict(&mut text_settings, ts_dict)?;
-                }
-            }
-            "text_layout" => {
-                if !v.is_none() {
-                    text_settings.layout = v.extract()?;
-                }
+                patch.intersection_y_tolerance = Some(v.extract()?);
             }
             "explicit_vertical_lines" => {
-                settings.explicit_vertical_lines = parse_explicit_lines(py, &v)?;
+                patch.explicit_vertical_lines = Some(parse_explicit_lines(py, &v)?);
             }
             "explicit_horizontal_lines" => {
-                settings.explicit_horizontal_lines = parse_explicit_lines(py, &v)?;
+                patch.explicit_horizontal_lines = Some(parse_explicit_lines(py, &v)?);
             }
             _ => return Err(unexpected_table_setting(&key)),
         }
     }
 
-    validate_explicit_lines(
-        settings.vertical_strategy,
-        settings.explicit_vertical_lines.len(),
-        "vertical",
-    )?;
-    validate_explicit_lines(
-        settings.horizontal_strategy,
-        settings.explicit_horizontal_lines.len(),
-        "horizontal",
-    )?;
+    apply_text_settings_from_dict(&mut text_settings, &text_dict)?;
+    // pdfplumber's order: every tolerance and count, then horizontal, then vertical strategy.
+    patch
+        .check()
+        .map_err(|error| PyValueError::new_err(error.message))?;
+    if let Some(value) = horizontal_strategy {
+        patch.horizontal_strategy = Some(parse_table_strategy(&value, "horizontal")?);
+    }
+    if let Some(value) = vertical_strategy {
+        patch.vertical_strategy = Some(parse_table_strategy(&value, "vertical")?);
+    }
+    patch
+        .apply_to(&mut settings)
+        .map_err(|error| PyValueError::new_err(error.message))?;
 
     settings.text_settings = text_settings;
     Ok(settings)
