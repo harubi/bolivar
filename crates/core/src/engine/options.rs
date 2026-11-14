@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use crate::document::PDFDocument;
 use crate::layout::LAParams;
 
-use super::plan::{ExecutionPlan, PageSet};
+use super::plan::{ExecutionPlan, kept_pages};
 
 /// Options for text extraction.
 ///
@@ -108,22 +108,23 @@ impl ExtractOptions {
         }
         let page_count = doc.page_tree_len();
         let plan = ExecutionPlan::new(page_count, self.page_numbers.as_deref(), self.maxpages);
-        let wanted = selection
-            .pages
-            .as_deref()
-            .map(|pages| PageSet::new(page_count, pages));
-        let limit = selection.max_pages.map_or(usize::MAX, NonZeroUsize::get);
-        let order = plan
-            .order
-            .into_iter()
-            .filter(|&page_idx| wanted.as_ref().is_none_or(|set| set.contains(page_idx)))
-            .skip(selection.skip)
-            .take(limit)
-            .collect();
+        let order = kept_pages(
+            plan.order,
+            page_count,
+            selection.pages.as_deref(),
+            selection.skip,
+            selection.max_pages.map(NonZeroUsize::get),
+        );
+        // Field by field, so the document's own page list is never copied only to be replaced.
         Self {
+            password: self.password.clone(),
             page_numbers: Some(order),
             maxpages: 0,
-            ..self.clone()
+            caching: self.caching,
+            laparams: self.laparams,
+            rotation: self.rotation,
+            bidi: self.bidi,
+            read_ahead: self.read_ahead,
         }
     }
 }
