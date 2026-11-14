@@ -13,7 +13,7 @@ pub mod batch;
 pub mod stream;
 
 pub use batch::run_batch;
-pub use options::{Cell, DocumentTables, ExtractOptions, PageTables, Row, Table};
+pub use options::{Cell, CursorSelection, DocumentTables, ExtractOptions, PageTables, Row, Table};
 pub use plan::{ExecutionPlan, select_pages, validate_geometry_count};
 pub use processor::{
     aggregator_result, collector_result, process_page, process_page_with_cancellation,

@@ -35,9 +35,10 @@ use crate::document::{PDFDocument, PDFPage};
 // `process_page`, `aggregator_result`, etc. through the canonical extract path.
 use crate::engine::stream::run_stateful_stream;
 pub use crate::engine::{
-    ExecutionPlan, ExtractOptions, PageTables, Stream, aggregator_result, collector_result,
-    no_precheck, no_precheck_cancellable, process_page, process_page_with_cancellation, run_batch,
-    run_stream, run_stream_cancellable, validate_geometry_count,
+    CursorSelection, ExecutionPlan, ExtractOptions, PageTables, Stream, aggregator_result,
+    collector_result, no_precheck, no_precheck_cancellable, process_page,
+    process_page_with_cancellation, run_batch, run_stream, run_stream_cancellable,
+    validate_geometry_count,
 };
 use crate::error::{PdfError, Result};
 use crate::image::ImageWriter;
@@ -1630,6 +1631,122 @@ mod tests {
 
         assert_eq!(out.len(), 2);
         assert_eq!(usage, 0);
+    }
+
+    fn narrowed_order(options: &ExtractOptions, selection: CursorSelection) -> Option<Vec<usize>> {
+        let doc = PDFDocument::new(build_minimal_pdf_with_pages(8), "").unwrap();
+        options.narrowed(&doc, &selection).page_numbers
+    }
+
+    fn nz(n: usize) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(n).unwrap()
+    }
+
+    #[test]
+    fn an_empty_selection_leaves_the_options_unchanged() {
+        let doc = PDFDocument::new(build_minimal_pdf_with_pages(3), "").unwrap();
+        let options = ExtractOptions {
+            maxpages: 2,
+            ..ExtractOptions::default()
+        };
+        assert_eq!(options.narrowed(&doc, &CursorSelection::default()), options);
+    }
+
+    #[test]
+    fn a_selection_narrows_the_document_selection() {
+        let all = ExtractOptions::default();
+        let document_pages = ExtractOptions {
+            page_numbers: Some(vec![1, 4, 6]),
+            ..ExtractOptions::default()
+        };
+        let document_max = ExtractOptions {
+            maxpages: 3,
+            ..ExtractOptions::default()
+        };
+        let pick = CursorSelection::default;
+
+        assert_eq!(
+            narrowed_order(&all, pick().max_pages(nz(2))),
+            Some(vec![0, 1])
+        );
+        assert_eq!(narrowed_order(&all, pick().skip(6)), Some(vec![6, 7]));
+        assert_eq!(
+            narrowed_order(&all, pick().pages(vec![7, 2, 2, 99])),
+            Some(vec![2, 7]),
+            "document order, each page once, missing pages ignored"
+        );
+        assert_eq!(
+            narrowed_order(&document_pages, pick().pages(vec![0, 4, 6])),
+            Some(vec![4, 6]),
+            "only pages the document selects"
+        );
+        assert_eq!(
+            narrowed_order(&document_max, pick().skip(1)),
+            Some(vec![1, 2])
+        );
+        assert_eq!(
+            narrowed_order(&document_max, pick().max_pages(nz(5))),
+            Some(vec![0, 1, 2]),
+            "a cursor never reads past the document's own limit"
+        );
+        assert_eq!(
+            narrowed_order(
+                &all,
+                pick().pages(vec![1, 3, 5, 7]).skip(1).max_pages(nz(2))
+            ),
+            Some(vec![3, 5]),
+            "pages, then skip, then max pages"
+        );
+    }
+
+    #[test]
+    fn a_head_and_a_skip_read_each_selected_page_once() {
+        let document_pages = ExtractOptions {
+            page_numbers: Some(vec![1, 4, 6]),
+            ..ExtractOptions::default()
+        };
+        let head = narrowed_order(&document_pages, CursorSelection::default().max_pages(nz(2)));
+        let rest = narrowed_order(&document_pages, CursorSelection::default().skip(2));
+        assert_eq!(head, Some(vec![1, 4]));
+        assert_eq!(rest, Some(vec![6]));
+    }
+
+    #[test]
+    fn a_selection_with_no_pages_left_stays_empty() {
+        let all = ExtractOptions::default();
+        assert_eq!(
+            narrowed_order(&all, CursorSelection::default().skip(8)),
+            Some(vec![])
+        );
+        assert_eq!(
+            narrowed_order(&all, CursorSelection::default().pages(vec![])),
+            Some(vec![])
+        );
+
+        let doc = Arc::new(PDFDocument::new(build_minimal_pdf_with_pages(3), "").unwrap());
+        let options = all.narrowed(&doc, &CursorSelection::default().skip(3));
+        let pages = extract_pages_stream_from_doc(doc, options).unwrap().count();
+        assert_eq!(pages, 0, "an empty order reads nothing, never every page");
+    }
+
+    #[test]
+    fn a_narrowed_stream_creates_only_the_selected_pages() {
+        let _guard = stream_usage_test_guard();
+        let doc = Arc::new(PDFDocument::new(build_minimal_pdf_with_pages(5), "").unwrap());
+        crate::document::page::reset_page_create_count(doc.as_ref());
+
+        let options =
+            ExtractOptions::default().narrowed(&doc, &CursorSelection::default().max_pages(nz(2)));
+        let pages: Vec<usize> = extract_pages_stream_from_doc(Arc::clone(&doc), options)
+            .unwrap()
+            .map(|r| r.unwrap().0)
+            .collect();
+
+        assert_eq!(pages, vec![0, 1]);
+        assert_eq!(
+            crate::document::page::take_page_create_count(doc.as_ref()),
+            2
+        );
     }
 
     #[test]

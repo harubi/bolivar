@@ -2,7 +2,10 @@
 
 use std::num::NonZeroUsize;
 
+use crate::document::PDFDocument;
 use crate::layout::LAParams;
+
+use super::plan::{ExecutionPlan, PageSet};
 
 /// Options for text extraction.
 ///
@@ -49,6 +52,75 @@ impl Default for ExtractOptions {
             rotation: 0,
             bidi: false,
             read_ahead: None,
+        }
+    }
+}
+
+/// Which pages one stream reads, inside the selection its options already make. It can only
+/// narrow that selection, never widen it. Build it from `default()` with the setters.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CursorSelection {
+    /// Zero-indexed page numbers to keep. None keeps every page. Pages that do not exist are
+    /// ignored, and an empty list keeps none.
+    pub pages: Option<Vec<usize>>,
+
+    /// How many of the remaining pages to pass over first, counted in the narrowed order, so a
+    /// first read of `max_pages(n)` and a second of `skip(n)` together read each page once.
+    pub skip: usize,
+
+    /// The most pages to read after that. None means no limit.
+    pub max_pages: Option<NonZeroUsize>,
+}
+
+impl CursorSelection {
+    #[must_use]
+    pub fn pages(mut self, pages: Vec<usize>) -> Self {
+        self.pages = Some(pages);
+        self
+    }
+
+    #[must_use]
+    pub const fn skip(mut self, skip: usize) -> Self {
+        self.skip = skip;
+        self
+    }
+
+    #[must_use]
+    pub const fn max_pages(mut self, max_pages: NonZeroUsize) -> Self {
+        self.max_pages = Some(max_pages);
+        self
+    }
+}
+
+impl ExtractOptions {
+    /// These options narrowed to `selection`: the plan order of `doc` under these options, kept
+    /// to the selection's pages, past its `skip`, cut to its `max_pages`, in document order. An
+    /// empty selection returns the options unchanged; any other one returns its order as an
+    /// explicit `page_numbers` (empty when no page is left) with no `maxpages`.
+    #[must_use]
+    pub fn narrowed(&self, doc: &PDFDocument, selection: &CursorSelection) -> Self {
+        if *selection == CursorSelection::default() {
+            return self.clone();
+        }
+        let page_count = doc.page_tree_len();
+        let plan = ExecutionPlan::new(page_count, self.page_numbers.as_deref(), self.maxpages);
+        let wanted = selection
+            .pages
+            .as_deref()
+            .map(|pages| PageSet::new(page_count, pages));
+        let limit = selection.max_pages.map_or(usize::MAX, NonZeroUsize::get);
+        let order = plan
+            .order
+            .into_iter()
+            .filter(|&page_idx| wanted.as_ref().is_none_or(|set| set.contains(page_idx)))
+            .skip(selection.skip)
+            .take(limit)
+            .collect();
+        Self {
+            page_numbers: Some(order),
+            maxpages: 0,
+            ..self.clone()
         }
     }
 }
