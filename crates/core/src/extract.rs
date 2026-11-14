@@ -383,6 +383,49 @@ pub fn extract_pages_with_images_with_document(
         .collect::<Result<Vec<_>>>()
 }
 
+/// Write the images of the selected pages to `output_dir`, with the file names
+/// [`extract_pages_with_images_with_document`] gives them. Pages are interpreted for their
+/// images only: no layout analysis runs and no page is kept, so memory stays within the
+/// stream's read-ahead whatever the document's size.
+#[hotpath::measure]
+pub fn export_images_with_document(
+    doc: Arc<PDFDocument>,
+    options: ExtractOptions,
+    output_dir: &str,
+) -> Result<()> {
+    let caching = options.caching;
+    let rotation = options.rotation;
+    let output_dir = output_dir.to_string();
+
+    let stream = run_stream_cancellable(
+        doc,
+        options.page_numbers,
+        options.maxpages,
+        options.read_ahead,
+        no_precheck_cancellable::<()>,
+        move |arena, page_idx, page, doc, cancellation| {
+            let writer = Rc::new(RefCell::new(ImageWriter::for_page(&output_dir, page_idx)?));
+            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+            let mut aggregator = PDFPageAggregator::new_with_imagewriter(
+                None,
+                page_idx as i32 + 1,
+                Some(writer),
+                arena,
+            );
+            process_page_with_cancellation(
+                page,
+                &mut aggregator,
+                &mut rsrcmgr,
+                rotation,
+                doc,
+                cancellation,
+                |_| Ok(()),
+            )
+        },
+    )?;
+    stream.into_iter().try_for_each(|page| page.map(drop))
+}
+
 pub fn extract_pages_stream_from_doc(
     doc: Arc<PDFDocument>,
     options: ExtractOptions,
@@ -1796,5 +1839,50 @@ mod tests {
         let start = std::time::Instant::now();
         drop(stream);
         assert!(start.elapsed() < std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn exported_images_match_the_layout_pass() {
+        let pdf = include_bytes!("../tests/fixtures/nonfree/dmca.pdf").to_vec();
+        let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
+        let options = ExtractOptions {
+            page_numbers: Some(vec![0]),
+            ..ExtractOptions::default()
+        };
+        let files = |dir: &std::path::Path| {
+            let mut names: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            names.sort();
+            names
+        };
+        let dir = |purpose: &str| {
+            let dir =
+                std::env::temp_dir().join(format!("bolivar-{purpose}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            dir
+        };
+        let (exported, laid_out) = (dir("exported"), dir("laid-out"));
+
+        export_images_with_document(
+            Arc::clone(&doc),
+            options.clone(),
+            exported.to_str().unwrap(),
+        )
+        .unwrap();
+        extract_pages_with_images_with_document(doc, options, laid_out.to_str().unwrap()).unwrap();
+
+        assert!(!files(&exported).is_empty());
+        assert_eq!(files(&exported), files(&laid_out));
+        for name in files(&exported) {
+            assert_eq!(
+                std::fs::read(exported.join(&name)).unwrap(),
+                std::fs::read(laid_out.join(&name)).unwrap(),
+                "{name:?}"
+            );
+        }
+        std::fs::remove_dir_all(exported).unwrap();
+        std::fs::remove_dir_all(laid_out).unwrap();
     }
 }
