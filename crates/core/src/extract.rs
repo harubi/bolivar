@@ -327,6 +327,51 @@ pub fn extract_pages_stream(
     extract_pages_stream_from_doc(Arc::new(doc), options)
 }
 
+/// What one page run with an image writer keeps besides its images.
+#[derive(Clone, Copy)]
+enum ImagePass {
+    /// The page, laid out with these parameters.
+    Layout(LAParams),
+    /// Nothing: the page is interpreted for its images and not built.
+    ImagesOnly,
+}
+
+/// Interpret one page with an image writer that names its files after `page_idx`, so every
+/// image pass writes the same files, then end it with `finish`.
+#[allow(clippy::too_many_arguments)]
+fn image_page<R>(
+    pass: ImagePass,
+    output_dir: &str,
+    caching: bool,
+    rotation: i64,
+    arena: &mut PageArena,
+    page_idx: usize,
+    page: &PDFPage,
+    doc: &PDFDocument,
+    cancellation: &CancellationToken,
+    finish: impl FnOnce(&mut PDFPageAggregator<'_>) -> Result<R>,
+) -> Result<R> {
+    cancellation.check()?;
+    let writer = Rc::new(RefCell::new(ImageWriter::for_page(output_dir, page_idx)?));
+    let mut rsrcmgr = PDFResourceManager::with_caching(caching);
+    let pageno = page_idx as i32 + 1;
+    let mut aggregator = match pass {
+        ImagePass::Layout(laparams) => {
+            PDFPageAggregator::new_with_imagewriter(Some(laparams), pageno, Some(writer), arena)
+        }
+        ImagePass::ImagesOnly => PDFPageAggregator::images_only(pageno, writer, arena),
+    };
+    process_page_with_cancellation(
+        page,
+        &mut aggregator,
+        &mut rsrcmgr,
+        rotation,
+        doc,
+        cancellation,
+        finish,
+    )
+}
+
 /// Extract LTPage objects from an already-parsed PDFDocument while exporting images.
 ///
 /// Pages are processed in parallel. Each worker constructs its own `ImageWriter`
@@ -339,10 +384,8 @@ pub fn extract_pages_with_images_with_document(
     options: ExtractOptions,
     output_dir: &str,
 ) -> Result<Vec<LTPage>> {
-    let laparams = options.laparams.unwrap_or_default();
-    let caching = options.caching;
-    let rotation = options.rotation;
-    let bidi = options.bidi;
+    let pass = ImagePass::Layout(options.laparams.unwrap_or_default());
+    let (caching, rotation, bidi) = (options.caching, options.rotation, options.bidi);
     let output_dir = output_dir.to_string();
 
     let stream = run_stream_cancellable(
@@ -352,21 +395,14 @@ pub fn extract_pages_with_images_with_document(
         options.read_ahead,
         no_precheck_cancellable::<LTPage>,
         move |arena, page_idx, page, doc, cancellation| {
-            cancellation.check()?;
-            let writer = ImageWriter::for_page(&output_dir, page_idx)?;
-            let writer = Rc::new(RefCell::new(writer));
-            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut aggregator = PDFPageAggregator::new_with_imagewriter(
-                Some(laparams),
-                page_idx as i32 + 1,
-                Some(writer),
-                arena,
-            );
-            let mut ltpage = process_page_with_cancellation(
-                page,
-                &mut aggregator,
-                &mut rsrcmgr,
+            let mut ltpage = image_page(
+                pass,
+                &output_dir,
+                caching,
                 rotation,
+                arena,
+                page_idx,
+                page,
                 doc,
                 cancellation,
                 aggregator_result,
@@ -384,17 +420,16 @@ pub fn extract_pages_with_images_with_document(
 }
 
 /// Write the images of the selected pages to `output_dir`, with the file names
-/// [`extract_pages_with_images_with_document`] gives them. Pages are interpreted for their
-/// images only: no layout analysis runs and no page is kept, so memory stays within the
-/// stream's read-ahead whatever the document's size.
+/// [`extract_pages_with_images_with_document`] gives them. Pages are interpreted but never
+/// laid out or built, and none is kept, so memory stays within the stream's read-ahead
+/// whatever the document's size.
 #[hotpath::measure]
 pub fn export_images_with_document(
     doc: Arc<PDFDocument>,
     options: ExtractOptions,
     output_dir: &str,
 ) -> Result<()> {
-    let caching = options.caching;
-    let rotation = options.rotation;
+    let (caching, rotation) = (options.caching, options.rotation);
     let output_dir = output_dir.to_string();
 
     let stream = run_stream_cancellable(
@@ -404,19 +439,14 @@ pub fn export_images_with_document(
         options.read_ahead,
         no_precheck_cancellable::<()>,
         move |arena, page_idx, page, doc, cancellation| {
-            let writer = Rc::new(RefCell::new(ImageWriter::for_page(&output_dir, page_idx)?));
-            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut aggregator = PDFPageAggregator::new_with_imagewriter(
-                None,
-                page_idx as i32 + 1,
-                Some(writer),
-                arena,
-            );
-            process_page_with_cancellation(
-                page,
-                &mut aggregator,
-                &mut rsrcmgr,
+            image_page(
+                ImagePass::ImagesOnly,
+                &output_dir,
+                caching,
                 rotation,
+                arena,
+                page_idx,
+                page,
                 doc,
                 cancellation,
                 |_| Ok(()),
