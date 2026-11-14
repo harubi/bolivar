@@ -23,6 +23,8 @@ pub struct PDFPageAggregator<'a> {
     #[allow(dead_code)]
     analyzer: PDFLayoutAnalyzer<'a>,
     result: Option<LTPage>,
+    /// False for a device that only writes images: it ends each page without building it.
+    keep_pages: bool,
 }
 
 impl<'a> PDFPageAggregator<'a> {
@@ -46,6 +48,20 @@ impl<'a> PDFPageAggregator<'a> {
                 arena.context(),
             ),
             result: None,
+            keep_pages: true,
+        }
+    }
+
+    /// A device that writes each page's images through `image_writer` and keeps nothing: no
+    /// page is laid out or built, so `take_result` stays empty.
+    pub fn images_only(
+        pageno: i32,
+        image_writer: Rc<RefCell<ImageWriter>>,
+        arena: &'a mut PageArena,
+    ) -> Self {
+        Self {
+            keep_pages: false,
+            ..Self::new_with_imagewriter(None, pageno, Some(image_writer), arena)
         }
     }
 
@@ -94,7 +110,9 @@ impl<'a> PDFDevice for PDFPageAggregator<'a> {
     }
 
     fn end_page(&mut self, _pageid: u32) {
-        if let Some(page) = self.analyzer.end_page() {
+        if !self.keep_pages {
+            self.analyzer.end_page_arena();
+        } else if let Some(page) = self.analyzer.end_page() {
             self.result = Some(page);
         }
     }
