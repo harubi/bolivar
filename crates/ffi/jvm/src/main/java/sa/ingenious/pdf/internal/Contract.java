@@ -74,6 +74,17 @@ public final class Contract {
           ADDRESS.withName("explicit_horizontal"),
           JAVA_LONG.withName("explicit_horizontal_len"));
 
+  /** {@code options::CursorOptions}. */
+  public static final StructLayout CURSOR_OPTIONS =
+      structLayout(
+          JAVA_INT.withName("struct_size"),
+          JAVA_INT.withName("present"),
+          JAVA_LONG.withName("skip"),
+          JAVA_LONG.withName("max_pages"),
+          JAVA_LONG.withName("read_ahead"),
+          ADDRESS.withName("pages"),
+          JAVA_LONG.withName("pages_len"));
+
   /** {@code abi::ErrorOut}: a code, then the field and message as UTF-16 pointer and length. */
   public static final StructLayout ERROR_OUT =
       structLayout(
@@ -153,6 +164,19 @@ public final class Contract {
     }
   }
 
+  /** Presence bits of {@code CursorOptions.present}, as {@code options::copt}. */
+  public enum CursorOptionBit {
+    PAGES,
+    SKIP,
+    MAX_PAGES,
+    READ_AHEAD;
+
+    /** This bit's mask. */
+    public int mask() {
+      return 1 << ordinal();
+    }
+  }
+
   /** Native status codes, as {@code abi::Code}; 0 is success. */
   public enum Status {
     INVALID_PATH,
@@ -207,16 +231,18 @@ public final class Contract {
 
   /** What this jar expects {@code bolivar_describe} to give, by name. */
   static Map<String, String> expected() {
-    return Map.of(
-        "Options", describe(OPTIONS),
-        "TableOptions", describe(TABLE_OPTIONS),
-        "ErrorOut", describe(ERROR_OUT),
-        "BatchHeader", describe(BATCH_HEADER),
-        "ColumnDesc", describe(COLUMN_DESC),
-        "OptionBits", values(OptionBit.values(), OptionBit::mask),
-        "TableOptionBits", values(TableOptionBit.values(), TableOptionBit::mask),
-        "TableStrategy", values(TableStrategy.values(), Enum::ordinal),
-        "Status", values(Status.values(), Status::code));
+    return Map.ofEntries(
+        Map.entry("Options", describe(OPTIONS)),
+        Map.entry("TableOptions", describe(TABLE_OPTIONS)),
+        Map.entry("CursorOptions", describe(CURSOR_OPTIONS)),
+        Map.entry("ErrorOut", describe(ERROR_OUT)),
+        Map.entry("BatchHeader", describe(BATCH_HEADER)),
+        Map.entry("ColumnDesc", describe(COLUMN_DESC)),
+        Map.entry("OptionBits", values(OptionBit.values(), OptionBit::mask)),
+        Map.entry("TableOptionBits", values(TableOptionBit.values(), TableOptionBit::mask)),
+        Map.entry("CursorOptionBits", values(CursorOptionBit.values(), CursorOptionBit::mask)),
+        Map.entry("TableStrategy", values(TableStrategy.values(), Enum::ordinal)),
+        Map.entry("Status", values(Status.values(), Status::code)));
   }
 
   /**

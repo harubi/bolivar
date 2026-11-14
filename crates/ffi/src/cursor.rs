@@ -21,7 +21,7 @@ use crate::abi::{
 };
 use crate::batch::{Batch, Built, layout, page_text, raw, summary, table_rows, tables};
 use crate::document::Document;
-use crate::options::{Crops, TableOptions, Tables};
+use crate::options::{Crops, CursorArgs, CursorOptions, TableOptions, Tables};
 use crate::pages::{
     layout_built, page_text_built, raw_built, summary_built, table_rows_built, tables_built,
 };
@@ -55,16 +55,34 @@ fn table_geometry(crops: Crops) -> GeometrySource {
 /// so its code and field reach the caller unchanged instead of collapsing into a core error.
 type PageBatch = FfiResult<Built>;
 
-fn open_stream(kind: u32, document: &Document, tables: Tables) -> FfiResult<Stream<PageBatch>> {
-    let doc = Arc::clone(&document.doc);
-    let mut selection = CursorSelection::default();
-    if matches!(kind, tables::KIND | table_rows::KIND)
-        && let Some(max_pages) = tables.max_pages.and_then(NonZeroUsize::new)
+/// The cursor's selection with a table cursor's own `max_pages` folded in: when both are set,
+/// the smaller wins; when one is, it applies alone.
+fn cursor_selection(kind: u32, cursor: &CursorArgs, tables: &Tables) -> CursorSelection {
+    let table_max = matches!(kind, tables::KIND | table_rows::KIND)
+        .then(|| tables.max_pages.and_then(NonZeroUsize::new))
+        .flatten();
+    match [cursor.selection.max_pages, table_max]
+        .into_iter()
+        .flatten()
+        .min()
     {
-        // Narrows the document's selection, as every cursor selection does.
-        selection = selection.max_pages(max_pages);
+        Some(max_pages) => cursor.selection.clone().max_pages(max_pages),
+        None => cursor.selection.clone(),
     }
-    let options = document.extract.narrowed(&document.doc, &selection);
+}
+
+fn open_stream(
+    kind: u32,
+    document: &Document,
+    tables: Tables,
+    cursor: &CursorArgs,
+) -> FfiResult<Stream<PageBatch>> {
+    let doc = Arc::clone(&document.doc);
+    // Narrows the document's selection, as every cursor selection does.
+    let mut options = document
+        .extract
+        .narrowed(&document.doc, &cursor_selection(kind, cursor, &tables));
+    options.read_ahead = cursor.read_ahead;
     let ffi = |result: PageBatch| -> bolivar_core::Result<PageBatch> { Ok(result) };
     Ok(match kind {
         layout::KIND => extract_pages_stream_with(doc, options, move |index, _, page| {
@@ -141,15 +159,19 @@ impl Cursor {
 
 /// Open a cursor of `kind` (a batch kind number) over a document.
 /// `table_options` applies to the table kinds and must be null otherwise.
+/// `cursor_options` narrows the document's pages and sets the read-ahead;
+/// null reads every page the document selects.
 ///
 /// # Safety
-/// `document` must be a live document; `table_options` must be null or
-/// valid; `out` must be writable; `err` must be null or writable.
+/// `document` must be a live document; `table_options` and `cursor_options`
+/// must be null or valid; `out` must be writable; `err` must be null or
+/// writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bolivar_cursor_open(
     document: *const Document,
     kind: u32,
     table_options: *const TableOptions,
+    cursor_options: *const CursorOptions,
     out: *mut *mut Cursor,
     err: *mut ErrorOut,
 ) -> i32 {
@@ -164,7 +186,8 @@ pub unsafe extern "C" fn bolivar_cursor_open(
             }
             require_out(out, "out")?;
             let tables = Tables::from_raw(table_options)?;
-            let stream = open_stream(kind, document, tables)?;
+            let cursor = CursorArgs::from_raw(cursor_options)?;
+            let stream = open_stream(kind, document, tables, &cursor)?;
             let cancel = stream.cancellation_handle();
             write_handle(
                 out,

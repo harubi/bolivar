@@ -31,7 +31,7 @@ public final class Native {
   private Native() {}
 
   /** The ABI version this jar speaks; must equal {@code bolivar_abi_version()}. */
-  public static final int ABI_VERSION = 2;
+  public static final int ABI_VERSION = 3;
 
   private static final long ERR_FIELD = Contract.offset(Contract.ERROR_OUT, "field");
   private static final long ERR_FIELD_LEN = Contract.offset(Contract.ERROR_OUT, "field_len");
@@ -74,7 +74,8 @@ public final class Native {
     static final MethodHandle DOCUMENT_COUNTS =
         bind("bolivar_document_counts", JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
     static final MethodHandle CURSOR_OPEN =
-        bind("bolivar_cursor_open", JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS);
+        bind(
+            "bolivar_cursor_open", JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS);
     static final MethodHandle CURSOR_NEXT =
         bind("bolivar_cursor_next", JAVA_INT, ADDRESS, ADDRESS, ADDRESS);
     static final MethodHandle CURSOR_CANCEL = bind("bolivar_cursor_cancel", null, ADDRESS);
@@ -397,16 +398,25 @@ public final class Native {
 
   // ---- cursors ----------------------------------------------------------------------------
 
-  /** Open a cursor of {@code kind} over a document. */
+  /**
+   * Open a cursor of {@code kind} over a document. {@code tableOptions} and {@code cursorOptions}
+   * may each be {@code NULL} for the defaults.
+   */
   public static MemorySegment cursorOpen(
-      MemorySegment document, Schema.Kind kind, MemorySegment tableOptions) {
+      MemorySegment document,
+      Schema.Kind kind,
+      MemorySegment tableOptions,
+      MemorySegment cursorOptions) {
     int number = kind.number();
     try (var arena = Arena.ofConfined()) {
       var frame = frame(arena);
       var out = frame.allocate(ADDRESS);
       call(
           errorOut(frame),
-          e -> (int) Lib.CURSOR_OPEN.invokeExact(document, number, tableOptions, out, e));
+          e ->
+              (int)
+                  Lib.CURSOR_OPEN.invokeExact(
+                      document, number, tableOptions, cursorOptions, out, e));
       return out.get(ADDRESS, 0);
     }
   }

@@ -32,6 +32,7 @@ class NativeContractTest {
     Contract.verify(Native::describe);
     assertEquals(96, Contract.OPTIONS.byteSize());
     assertEquals(192, Contract.TABLE_OPTIONS.byteSize());
+    assertEquals(48, Contract.CURSOR_OPTIONS.byteSize());
   }
 
   @Test
