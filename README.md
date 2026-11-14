@@ -220,6 +220,38 @@ fn main() -> bolivar_core::Result<()> {
 }
 ```
 
+### Choose the pages each cursor reads (JVM)
+
+Every cursor takes its own options. They narrow the pages the document's options select, never widen them:
+
+- `pages`: the 1-based page numbers to keep. An empty list keeps none.
+- `skip`: how many of those pages to pass over first.
+- `maxPages`: the most pages to read.
+- `readAhead`: how many pages may be started or finished but not yet read, ahead of the reader. The default is 50. It also caps the cursor's parallelism and how many finished pages wait in memory behind a slow one.
+
+Pages come in document order, each once. A cursor that ends early still pays for the pages it started ahead of you. When you know you need only a few pages, select them: `maxPages(2)` reads two pages, where stopping after two pages of a full cursor can cost most of the document. A first cursor with `maxPages(2)` and a second with `skip(2)` read every selected page exactly once:
+
+```java
+var head = CursorOptions.builder().maxPages(2).build();
+var rest = CursorOptions.builder().skip(2).build();
+try (Document doc = Document.open("doc.pdf");
+     var first = doc.pageTexts(head)) {
+    first.forEachRemaining(page -> System.out.println(page.pageNumber()));
+    try (var others = doc.pageTexts(rest)) {
+        others.forEachRemaining(page -> System.out.println(page.pageNumber()));
+    }
+}
+```
+
+```clojure
+(with-open [doc (pdf/open "doc.pdf")]
+  (let [head (into [] (pdf/page-texts doc {:max-pages 2}))]
+    (when (looks-right? head)
+      (into head (pdf/page-texts doc {:skip 2})))))
+```
+
+`tables` and `table-rows` take the same keys in their options map.
+
 ## Layout and characters (JVM)
 
 Layout and raw pages carry every text box, line and character. The JVM library holds each page as columns and frees the native copy as soon as the page is read, so a 4,000-character page costs a handful of arrays, not 4,000 objects.
@@ -290,6 +322,15 @@ async with pdfplumber.open("doc.pdf") as pdf:
     for page in pdf.pages:
         for table in page.extract_tables():
             print(table)
+```
+
+`extract_pages_async` streams laid-out pages. `read_ahead` bounds how many pages run ahead of the reader (default 50), and with it the parallelism and the pages held in memory:
+
+```python
+from bolivar import extract_pages_async
+
+async for page in extract_pages_async(data, read_ahead=4):
+    print(page.pageid)
 ```
 
 ## License
