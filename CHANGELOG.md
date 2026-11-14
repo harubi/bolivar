@@ -1,3 +1,87 @@
+## [3.0.0](https://github.com/harubi/bolivar/compare/v2.3.1...v3.0.0) (2026-11-14)
+
+### ⚠ BREAKING CHANGES
+
+* **clojure:** rebuild views as data driven kinds
+* **jvm:** redesign java api with typed views
+* **ffi:** rebuild abi with schemas and borrowed pages
+* **core:** add shared option and error types
+* remove uniffi jna and kotlin
+* **clojure:** replace clojure api with reducibles
+* **jvm:** replace uniffi binding with java ffm core
+
+### Features
+
+* **clojure:** replace clojure api with reducibles ([14df976](https://github.com/harubi/bolivar/commit/14df976fa93c7ec74ee298354410c6ee2e472b35))
+* **ffi:** add c abi crate with columnar batches ([011659c](https://github.com/harubi/bolivar/commit/011659c4c649bd9b4b46d75c91a9f91b9bbb959c))
+* **jvm:** replace uniffi binding with java ffm core ([d59a037](https://github.com/harubi/bolivar/commit/d59a03774636ae5fa76879abf5520600c0ac2522))
+
+### Bug Fixes
+
+* **core:** keep output of truncated flate streams ([83af22a](https://github.com/harubi/bolivar/commit/83af22af37bf8fab4e3280f598e457be0e172403))
+* **core:** recover damaged xrefs and objects like pdfminer ([fb601f2](https://github.com/harubi/bolivar/commit/fb601f239cd7d47e1dec8f42dc8f1563fbec2552))
+* **core:** recover from broken xref chains like pdfminer ([08512bc](https://github.com/harubi/bolivar/commit/08512bc530baf77f87d2b3b92202227ac05fbd9a))
+* **core:** tokenize stray bytes like pdfminer ([7bf9e13](https://github.com/harubi/bolivar/commit/7bf9e13e929edc11e2a7b8aa328e905cd82550c9))
+* **python:** follow the page tree like pdfminer ([bbf8562](https://github.com/harubi/bolivar/commit/bbf85621b080ae66479de55c6d198123ddf1fbf0))
+* **python:** refresh pdfminer cmap data ([38eb2c2](https://github.com/harubi/bolivar/commit/38eb2c2933c1bfceb9a4b8954b13a9c0a9df665a))
+* **python:** resolve table settings as pdfplumber does ([b10c221](https://github.com/harubi/bolivar/commit/b10c221f2b936a995cb57f2e7c54f496574173a2))
+* **python:** resolve ty 0.0.103 diagnostics ([a4e3609](https://github.com/harubi/bolivar/commit/a4e36090faea2dc4f18eeb1aab4104bd35f68994))
+* **python:** skip annotations that are not dictionaries ([32384b8](https://github.com/harubi/bolivar/commit/32384b85122afca01af45e8cadca3ae738db591e))
+* **python:** treat missing char text as empty ([b5c7a48](https://github.com/harubi/bolivar/commit/b5c7a48fa5460f824fcf867aa4a48d827241a7ba))
+
+### Performance Improvements
+
+* **core:** borrow char tag and colour space names ([43c3232](https://github.com/harubi/bolivar/commit/43c3232b2b9d6d62ac0d49c7d4567a95f9424bbc))
+* **core:** read object numbers without a utf8 round trip ([f292ad3](https://github.com/harubi/bolivar/commit/f292ad39f36ff4af86affc9fc481ef124417346e))
+* **core:** read page media boxes during the page walk ([ca0ddfb](https://github.com/harubi/bolivar/commit/ca0ddfbdd527b536ed3ffc91ac11e07d43af6890))
+* **core:** speed up layout analysis and text output ([1c6df56](https://github.com/harubi/bolivar/commit/1c6df56abba4ef68798a6307f0587b6c23931416))
+* **core:** use a concurrent cache for objects and pages ([c1f09df](https://github.com/harubi/bolivar/commit/c1f09df1c2ce57a5cf0d5d457d443359075732f7))
+* **python:** count pages only when needed ([2124257](https://github.com/harubi/bolivar/commit/21242574242a48564ef73f23a6afe2f4ea5df318))
+
+### Documentation
+
+* document java views and clojure anomalies ([e201fdf](https://github.com/harubi/bolivar/commit/e201fdfe09497d3ba364865d8bf13dc1416f5b7c))
+* update jvm and clojure usage ([6342556](https://github.com/harubi/bolivar/commit/63425562a199f9e1b92e52565d980132ba10bd54))
+
+### Miscellaneous Chores
+
+* drop the dead PyMuPDF performance submodule ([8986557](https://github.com/harubi/bolivar/commit/8986557c80e5aa4fc8726ad10011323439d18500))
+* update reference submodules ([d7dcd92](https://github.com/harubi/bolivar/commit/d7dcd9203ca825a55dd723aa27748a3ee8da7fc6))
+
+### Code Refactoring
+
+* **clojure:** rebuild views as data driven kinds ([d61485a](https://github.com/harubi/bolivar/commit/d61485aa315d9c09e56bbdd4edcf33826f025011))
+* **clojure:** share kind getters and cell maps ([2cff567](https://github.com/harubi/bolivar/commit/2cff5673210409ebaa521c4e487235e7868a2741))
+* **core:** add shared option and error types ([c0eb1c2](https://github.com/harubi/bolivar/commit/c0eb1c2635ab5eefddb99efd874baa5a70441ad9))
+* **core:** remove the unused SpanFidelity enum ([b3eea5f](https://github.com/harubi/bolivar/commit/b3eea5f4429e8f05af38acf8dbc4653ab0e23d59))
+* **core:** satisfy new clippy lints ([83fc1a9](https://github.com/harubi/bolivar/commit/83fc1a93af0431586cbafdfe358f85ff19077323))
+* **core:** share line text rules and trim copies ([7b666cf](https://github.com/harubi/bolivar/commit/7b666cf0baabbbfa98fbb83bb43c1fd2b62d098b))
+* **ffi:** rebuild abi with schemas and borrowed pages ([c291576](https://github.com/harubi/bolivar/commit/c2915763e9a2d9d79708ab9fd4cb0f021ceedc00))
+* **ffi:** simplify abi helpers and batch slots ([ea74bfc](https://github.com/harubi/bolivar/commit/ea74bfc67f2b0fb2340dd794b4ba30c644b5d0dc))
+* **jvm:** redesign java api with typed views ([7425145](https://github.com/harubi/bolivar/commit/7425145a0522b2d97cd13084e8a89fd24aa06f16))
+* **jvm:** share schema columns and native calls ([86003ee](https://github.com/harubi/bolivar/commit/86003eede553f7f56cdf5095c661cb2327af81c2))
+* remove uniffi jna and kotlin ([0d0a6ae](https://github.com/harubi/bolivar/commit/0d0a6ae3f86af3b6580aa4938e974337548d3bc8))
+
+### Tests
+
+* **jvm:** add concurrency and lifecycle tests ([ab7046c](https://github.com/harubi/bolivar/commit/ab7046c9502f912f11f4f009fe8375003e89c365))
+* **jvm:** capture golden corpus from current api ([6a7a01f](https://github.com/harubi/bolivar/commit/6a7a01f9720f9d11b0f881dcc3b48b8ac455f499))
+* **python:** give each temp pdf a unique name ([408ba58](https://github.com/harubi/bolivar/commit/408ba58e552bfae6d36ab175cbddedd35f5ce0d0))
+
+### Build System
+
+* **icu:** update vendored ICU to 79.1 ([e79b262](https://github.com/harubi/bolivar/commit/e79b2623c040a07f6b2049ccc2393eda33723dbd))
+* **jvm:** add version catalog locks and static checks ([2012fc0](https://github.com/harubi/bolivar/commit/2012fc0281ee8e48181a173a643dc304772a346d))
+* **jvm:** update gradle and dependencies ([27a8339](https://github.com/harubi/bolivar/commit/27a83396e72610603b07c4861f2912753aff5203))
+* **python:** update dependencies and tooling ([63125a7](https://github.com/harubi/bolivar/commit/63125a744b34bb68aab40f4db181c05d32fbbe25))
+* update npm dependencies ([1f07afd](https://github.com/harubi/bolivar/commit/1f07afd670e1379367c69aab9c9aa4782d4b712d))
+* update rust toolchain and dependencies ([3f5622c](https://github.com/harubi/bolivar/commit/3f5622c8fd0f4437bbca2847073502712f71633b))
+
+### Continuous Integration
+
+* add asan job and jvm benchmark gate ([5690b6c](https://github.com/harubi/bolivar/commit/5690b6cc127f33c86ca52636fe9de67fd65575cf))
+* update github actions ([dc72fc9](https://github.com/harubi/bolivar/commit/dc72fc9dab3c546671e682df62d0e45dddc6fea1))
+
 ## [2.3.1](https://github.com/harubi/bolivar/compare/v2.3.0...v2.3.1) (2026-11-13)
 
 ### Tests
