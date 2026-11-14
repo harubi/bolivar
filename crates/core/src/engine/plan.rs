@@ -36,32 +36,92 @@ pub fn validate_geometry_count(order: &[usize], geometry_count: usize) -> Result
     Ok(())
 }
 
+/// The pages of `page_numbers` that exist, one bit per page. Built once, it makes a selection
+/// O(pages + selection), where looking each page up in the list would be O(pages × selection).
+fn wanted_pages(page_count: usize, page_numbers: &[usize]) -> Vec<u64> {
+    let mut bits = vec![0u64; page_count.div_ceil(64)];
+    for &page_idx in page_numbers {
+        if page_idx < page_count {
+            bits[page_idx / 64] |= 1 << (page_idx % 64);
+        }
+    }
+    bits
+}
+
 fn select_pages_ref(
     page_count: usize,
     page_numbers: Option<&[usize]>,
     maxpages: usize,
 ) -> Vec<usize> {
-    let mut order = Vec::new();
-    let mut selected = 0usize;
+    let wanted = page_numbers.map(|nums| wanted_pages(page_count, nums));
+    let limit = if maxpages > 0 { maxpages } else { usize::MAX };
 
-    for page_idx in 0..page_count {
-        if let Some(nums) = page_numbers
-            && !nums.contains(&page_idx)
-        {
-            continue;
-        }
-        if maxpages > 0 && selected >= maxpages {
-            break;
-        }
-        order.push(page_idx);
-        selected += 1;
-    }
-
-    order
+    (0..page_count)
+        .filter(|&page_idx| {
+            wanted
+                .as_deref()
+                .is_none_or(|bits| bits[page_idx / 64] & (1 << (page_idx % 64)) != 0)
+        })
+        .take(limit)
+        .collect()
 }
 
 pub(crate) fn default_worker_count() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The selection as it was first written: a list lookup per page.
+    fn reference(page_count: usize, page_numbers: Option<&[usize]>, maxpages: usize) -> Vec<usize> {
+        let mut order = Vec::new();
+        for page_idx in 0..page_count {
+            if page_numbers.is_some_and(|nums| !nums.contains(&page_idx)) {
+                continue;
+            }
+            if maxpages > 0 && order.len() >= maxpages {
+                break;
+            }
+            order.push(page_idx);
+        }
+        order
+    }
+
+    #[test]
+    fn selection_matches_the_list_lookup_it_replaces() {
+        const SEED: u64 = 0x05EE_D0F9_A6E5;
+        let mut state = SEED;
+        let mut next = |bound: usize| {
+            // xorshift64: deterministic, so a failure reproduces from the seed alone.
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % bound as u64) as usize
+        };
+        for case in 0..2_000 {
+            let page_count = next(150);
+            let page_numbers: Option<Vec<usize>> =
+                (next(4) != 0).then(|| (0..next(40)).map(|_| next(page_count + 10)).collect());
+            let maxpages = if next(3) == 0 { 0 } else { next(20) };
+            assert_eq!(
+                select_pages_ref(page_count, page_numbers.as_deref(), maxpages),
+                reference(page_count, page_numbers.as_deref(), maxpages),
+                "seed {SEED:#x}, case {case}: {page_count} pages, {page_numbers:?}, max {maxpages}"
+            );
+        }
+    }
+
+    #[test]
+    fn selection_ignores_missing_pages_and_keeps_document_order() {
+        assert_eq!(select_pages(5, Some(vec![9, 3, 3, 0]), 0), vec![0, 3]);
+        assert_eq!(select_pages(0, Some(vec![0]), 0), Vec::<usize>::new());
+        assert_eq!(
+            select_pages(70, Some(vec![69, 64, 63]), 0),
+            vec![63, 64, 69]
+        );
+    }
 }
