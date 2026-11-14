@@ -75,65 +75,106 @@ impl<W: Write> TextConverter<W> {
     }
 
     /// Receive and render a layout page.
-    pub fn receive_layout(&mut self, mut ltpage: LTPage) {
+    pub fn receive_layout(&mut self, ltpage: LTPage) {
+        let output = self.page_text(ltpage);
+        self.write_text(&output);
+    }
+
+    /// The text this converter writes for a page, without writing it.
+    pub fn page_text(&self, mut ltpage: LTPage) -> String {
         if self.bidi {
             ltpage.set_bidi(true);
         }
+        let mut output = String::new();
         if self.showpageno {
-            let header = format!("Page {}\n", ltpage.pageid);
-            self.write_text(&header);
+            output.push_str(&format!("Page {}\n", ltpage.pageid));
         }
-
-        // Render page content
-        self.render_item(&LTItem::Page(Box::new(ltpage)));
-
+        self.render_page(&ltpage, &mut output);
         // Form feed at end of page
-        self.write_text("\x0c");
+        output.push('\x0c');
+        output
     }
 
-    /// Recursively render an item.
-    fn render_item(&mut self, item: &LTItem) {
+    /// Render a page's items into `output`, without materializing a compact layout.
+    fn render_page(&self, page: &LTPage, output: &mut String) {
+        page.write_items(output, &mut |item, output| self.render_item(item, output));
+    }
+
+    /// Render one item into `output`.
+    fn render_item(&self, item: &LTItem, output: &mut String) {
         match item {
-            LTItem::Page(page) => {
-                for child in page.iter() {
-                    self.render_item(child);
-                }
-            }
+            LTItem::Page(page) => self.render_page(page, output),
             LTItem::TextBox(tb) => {
-                let text = match tb {
+                output.push_str(&match tb {
                     TextBoxType::Horizontal(h) => h.get_text(),
                     TextBoxType::Vertical(v) => v.get_text(),
-                };
-                self.write_text(&text);
-                self.write_text("\n");
+                });
+                output.push('\n');
             }
-            LTItem::TextLine(tl) => {
-                let text = match tl {
-                    TextLineType::Horizontal(h) => h.get_text(),
-                    TextLineType::Vertical(v) => v.get_text(),
-                };
-                self.write_text(&text);
-            }
-            LTItem::Char(c) => {
-                if self.bidi {
-                    self.write_text(&normalize_arabic_presentation_forms(c.get_text()));
-                } else {
-                    self.write_text(c.get_text());
-                }
-            }
-            LTItem::Anno(a) => {
-                if self.bidi {
-                    self.write_text(&normalize_arabic_presentation_forms(a.get_text()));
-                } else {
-                    self.write_text(a.get_text());
-                }
-            }
+            LTItem::TextLine(tl) => output.push_str(&match tl {
+                TextLineType::Horizontal(h) => h.get_text(),
+                TextLineType::Vertical(v) => v.get_text(),
+            }),
+            LTItem::Char(c) => self.push_glyph_text(c.get_text(), output),
+            LTItem::Anno(a) => self.push_glyph_text(a.get_text(), output),
             LTItem::Figure(fig) => {
                 for child in fig.iter() {
-                    self.render_item(child);
+                    self.render_item(child, output);
                 }
             }
             _ => {}
         }
+    }
+
+    fn push_glyph_text(&self, text: &str, output: &mut String) {
+        if self.bidi {
+            output.push_str(&normalize_arabic_presentation_forms(text));
+        } else {
+            output.push_str(text);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::PDFDocument;
+    use crate::extract::{ExtractOptions, extract_pages_stream_from_doc};
+    use std::sync::Arc;
+
+    /// Rendering from the compact layout writes what rendering the materialized items writes,
+    /// on every page of every fixture, with bidi off and on.
+    #[test]
+    fn compact_rendering_matches_materialized_items() {
+        let files = crate::test_support::fixture_pdfs();
+        let mut pages = 0;
+        for file in &files {
+            let Ok(doc) = PDFDocument::open_path(file, &Default::default()) else {
+                continue;
+            };
+            let Ok(stream) =
+                extract_pages_stream_from_doc(Arc::new(doc), ExtractOptions::default())
+            else {
+                continue;
+            };
+            for (_, page) in stream.flatten() {
+                for bidi in [false, true] {
+                    let mut page = page.clone();
+                    page.set_bidi(bidi);
+                    let mut converter = TextConverter::new(Vec::new(), "utf-8", 1, None, false);
+                    converter.set_bidi(bidi);
+                    let mut expected = String::new();
+                    for item in page.iter() {
+                        converter.render_item(item, &mut expected);
+                    }
+                    expected.push('\x0c');
+                    converter.receive_layout(page);
+                    let actual = String::from_utf8(converter.outfp).unwrap();
+                    assert_eq!(actual, expected, "{} bidi={bidi}", file.display());
+                }
+                pages += 1;
+            }
+        }
+        assert!(pages > 100, "rendered {pages} pages");
     }
 }

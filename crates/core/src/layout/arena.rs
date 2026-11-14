@@ -1,10 +1,10 @@
 use crate::layout::bidi::{
-    contains_rtl_text, reconstruct_textline_raw_text, reorder_text_for_output,
+    reconstruct_textline_raw_text, reorder_text_for_output, source_is_logical_refs,
 };
 use crate::layout::types::{
-    LTAnno, LTChar, LTComponent, LTItem, LTTextBox, LTTextBoxHorizontal, LTTextBoxVertical,
-    LTTextGroup, LTTextLineHorizontal, LTTextLineVertical, TextBoxType, TextGroupElement,
-    TextLineElement, TextLineType,
+    Axis, ElementRef, LTAnno, LTChar, LTComponent, LTItem, LTTextBox, LTTextBoxHorizontal,
+    LTTextBoxVertical, LTTextGroup, LTTextLineHorizontal, LTTextLineVertical, TextBoxType,
+    TextGroupElement, TextLineElement, TextLineType,
 };
 use crate::utils::Rect;
 
@@ -478,64 +478,62 @@ impl LayoutArena {
         }
     }
 
-    fn element_text(&self, element: ArenaElem) -> &str {
+    /// A line's elements, borrowed.
+    pub(crate) fn line_elements(&self, id: LineId) -> impl Iterator<Item = ElementRef<'_>> + Clone {
+        let elements = match &self.lines[id.0] {
+            ArenaTextLine::Horizontal(line) => line.elements.as_slice(),
+            ArenaTextLine::Vertical(line) => line.elements.as_slice(),
+        };
+        elements.iter().map(|element| self.element_ref(*element))
+    }
+
+    /// The `index`th element of a line, borrowed.
+    pub(crate) fn line_element(&self, id: LineId, index: usize) -> Option<ElementRef<'_>> {
+        let elements = match &self.lines[id.0] {
+            ArenaTextLine::Horizontal(line) => line.elements.as_slice(),
+            ArenaTextLine::Vertical(line) => line.elements.as_slice(),
+        };
+        elements
+            .get(index)
+            .map(|element| self.element_ref(*element))
+    }
+
+    fn element_ref(&self, element: ArenaElem) -> ElementRef<'_> {
         match element {
-            ArenaElem::Char(id) => self.chars[id.0].get_text(),
-            ArenaElem::Anno(id) => self.annos[id.0].get_text(),
+            ArenaElem::Char(id) => ElementRef::Char(&self.chars[id.0]),
+            ArenaElem::Anno(id) => ElementRef::Anno(&self.annos[id.0]),
         }
     }
 
-    fn line_text(&self, id: LineId) -> String {
-        let (elements, bidi, source_is_logical) = match &self.lines[id.0] {
-            ArenaTextLine::Horizontal(line) => (
-                line.elements.as_slice(),
-                line.bidi,
-                self.horizontal_source_is_logical(&line.elements),
-            ),
-            ArenaTextLine::Vertical(line) => (line.elements.as_slice(), line.bidi, true),
-        };
-        let capacity = elements
-            .iter()
-            .map(|element| self.element_text(*element).len())
-            .sum();
-        let mut raw_text = String::with_capacity(capacity);
-        for element in elements {
-            raw_text.push_str(self.element_text(*element));
+    /// Whether a line reconstructs bidi text.
+    pub(crate) fn line_bidi(&self, id: LineId) -> bool {
+        match &self.lines[id.0] {
+            ArenaTextLine::Horizontal(line) => line.bidi,
+            ArenaTextLine::Vertical(line) => line.bidi,
         }
+    }
 
-        if bidi {
-            reconstruct_textline_raw_text(raw_text, source_is_logical)
+    /// A box's lines.
+    pub(crate) fn box_lines(&self, id: BoxId) -> &[LineId] {
+        match &self.boxes[id.0] {
+            ArenaTextBox::Horizontal(line_ids) | ArenaTextBox::Vertical(line_ids) => line_ids,
+        }
+    }
+
+    pub(crate) fn line_text(&self, id: LineId) -> String {
+        let axis = if self.line_is_vertical(id) {
+            Axis::Vertical
+        } else {
+            Axis::Horizontal
+        };
+        let raw_text: String = self.line_elements(id).map(ElementRef::text).collect();
+        if self.line_bidi(id) {
+            // The same logical-order rule owned lines use, so both give the same text.
+            let logical = source_is_logical_refs(self.line_elements(id), axis);
+            reconstruct_textline_raw_text(raw_text, logical)
         } else {
             reorder_text_for_output(&raw_text)
         }
-    }
-
-    fn horizontal_source_is_logical(&self, elements: &[ArenaElem]) -> bool {
-        let mut previous_x = None;
-        let mut increasing = 0;
-        let mut decreasing = 0;
-        for element in elements {
-            let ArenaElem::Char(id) = element else {
-                continue;
-            };
-            let character = &self.chars[id.0];
-            if !contains_rtl_text(character.get_text()) {
-                continue;
-            }
-
-            let bbox = character.bbox();
-            let x = (bbox.0 + bbox.2) * 0.5;
-            if let Some(previous_x) = previous_x {
-                let difference: f64 = x - previous_x;
-                if difference > 0.01 {
-                    increasing += 1;
-                } else if difference < -0.01 {
-                    decreasing += 1;
-                }
-            }
-            previous_x = Some(x);
-        }
-        decreasing > increasing
     }
 
     fn append_box_text(&self, id: BoxId, output: &mut String) {
@@ -628,6 +626,11 @@ pub(crate) struct CompactPageLayout {
 }
 
 impl CompactPageLayout {
+    /// The text boxes, in page order, and the arena they live in.
+    pub(crate) fn text_boxes(&self) -> (&LayoutArena, &[BoxId]) {
+        (&self.arena, &self.box_order)
+    }
+
     pub(crate) fn new(
         arena: LayoutArena,
         box_order: Vec<BoxId>,
@@ -708,6 +711,26 @@ impl CompactPageLayout {
             }
             *first_box = false;
             self.arena.append_box_text(*id, output);
+        }
+    }
+
+    /// Write the page's items as a text converter renders them, in [`Self::materialize_items`]
+    /// order: each text box's text and a newline straight from the arena, and every other item
+    /// through `other`. Only empty lines, which are rare, are materialized.
+    pub(crate) fn write_items(
+        &self,
+        output: &mut String,
+        other: &mut dyn FnMut(&LTItem, &mut String),
+    ) {
+        for id in &self.box_order {
+            self.arena.append_box_text(*id, output);
+            output.push('\n');
+        }
+        for item in &self.other_items {
+            other(item, output);
+        }
+        for id in &self.empty_lines {
+            other(&LTItem::TextLine(self.arena.materialize_line(*id)), output);
         }
     }
 

@@ -4,13 +4,12 @@
 //! collector, and edge-probe devices all share this base analyzer; their
 //! `PDFDevice` impls live in sibling modules under `device::`.
 
-use regex::Regex;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use lasso::Spur;
 
-use crate::arena::page_arena::ArenaContext;
+use crate::arena::page_arena::{ArenaContext, ColorSlot, MemoSlot};
 use crate::arena::types::{
     ArenaChar, ArenaCurve, ArenaFigure, ArenaImage, ArenaItem, ArenaLine, ArenaPage, ArenaRect,
 };
@@ -351,27 +350,21 @@ impl<'a> PDFLayoutAnalyzer<'a> {
         evenodd: bool,
         path: &[PathOp],
     ) {
-        // Extract shape string (just operators)
-        let shape: String = path.iter().map(|(op, _)| *op).collect();
-
         // Path must start with 'm'
-        if !shape.starts_with('m') {
+        if path.first().is_none_or(|(op, _)| *op != 'm') {
             return;
         }
 
-        // Handle multiple subpaths (multiple 'm' operators)
-        if shape.matches('m').count() > 1 {
-            // Split at each 'm' and recurse
-            let re = Regex::new(r"m[^m]+").unwrap();
-            let mut start = 0;
-            for m in re.find_iter(&shape) {
-                let subpath: Vec<PathOp> = path[m.start()..m.end()].to_vec();
-                self.paint_path(gstate, stroke, fill, evenodd, &subpath);
-                start = m.end();
+        // Paint each subpath on its own when there are several.
+        if path.iter().filter(|(op, _)| *op == 'm').count() > 1 {
+            for range in subpath_ranges(path) {
+                self.paint_path(gstate, stroke, fill, evenodd, &path[range]);
             }
-            let _ = start; // silence warning
             return;
         }
+
+        // The operators alone, e.g. "mlh".
+        let shape: String = path.iter().map(|(op, _)| *op).collect();
 
         // Calculate points from path operations
         // 'h' (closepath) uses the starting point
@@ -649,14 +642,24 @@ impl<'a> PDFLayoutAnalyzer<'a> {
 
         let fontname = font.fontname().unwrap_or("unknown");
         let text_key = self.arena.intern(&text);
-        let fontname_key = self.arena.intern(fontname);
+        let fontname_key = self.arena.intern_at(MemoSlot::FontName, fontname);
         let ncolor_components = graphicstate.ncolor.components();
         let scolor_components = graphicstate.scolor.components();
-        let ncolor = self.arena.intern_color(ncolor_components.as_slice());
-        let scolor = self.arena.intern_color(scolor_components.as_slice());
+        let ncolor = self
+            .arena
+            .intern_color_at(ColorSlot::NonStroking, ncolor_components.as_slice());
+        let scolor = self
+            .arena
+            .intern_color_at(ColorSlot::Stroking, scolor_components.as_slice());
         let tag = self.current_tag_key();
-        let ncs_name = Some(self.arena.intern(&graphicstate.ncs.name));
-        let scs_name = Some(self.arena.intern(&graphicstate.scs.name));
+        let ncs_name = Some(
+            self.arena
+                .intern_at(MemoSlot::NonStrokingSpace, &graphicstate.ncs.name),
+        );
+        let scs_name = Some(
+            self.arena
+                .intern_at(MemoSlot::StrokingSpace, &graphicstate.scs.name),
+        );
         let item = ArenaChar {
             bbox,
             text: text_key,
@@ -836,5 +839,47 @@ impl<'a> PDFLayoutAnalyzer<'a> {
     /// End a marked content section.
     pub fn end_tag(&mut self) {
         self.marked_content_stack.pop();
+    }
+}
+
+/// The subpaths of `path`, as pdfminer splits them with `re.finditer(r"m[^m]+", shape)`: each
+/// starts at an `m` and runs to the next `m`, and an `m` with nothing after it is dropped.
+fn subpath_ranges(path: &[PathOp]) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    let mut start = path.iter().position(|(op, _)| *op == 'm');
+    std::iter::from_fn(move || {
+        loop {
+            let begin = start?;
+            let end = path[begin + 1..]
+                .iter()
+                .position(|(op, _)| *op == 'm')
+                .map_or(path.len(), |next| begin + 1 + next);
+            start = (end < path.len()).then_some(end);
+            if end - begin >= 2 {
+                return Some(begin..end);
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every operator sequence up to length 6 splits as pdfminer's regex splits it.
+    #[test]
+    fn subpaths_split_as_pdfminers_regex() {
+        let re = regex::Regex::new(r"m[^m]+").unwrap();
+        let ops = ['m', 'l', 'c', 'h'];
+        for len in 0..=6 {
+            for code in 0..ops.len().pow(len) {
+                let shape: String = (0..len)
+                    .map(|i| ops[code / ops.len().pow(i) % ops.len()])
+                    .collect();
+                let path: Vec<PathOp> = shape.chars().map(|op| (op, Vec::new())).collect();
+                let expected: Vec<_> = re.find_iter(&shape).map(|m| m.range()).collect();
+                let actual: Vec<_> = subpath_ranges(&path).collect();
+                assert_eq!(actual, expected, "{shape}");
+            }
+        }
     }
 }

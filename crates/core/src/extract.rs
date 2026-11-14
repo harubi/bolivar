@@ -25,10 +25,12 @@ use std::io::Write;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::arena::PageArena;
+use crate::cancellation::CancellationToken;
 use crate::device::TextConverter;
 use crate::device::{PDFPageAggregator, PDFTableCollector, PDFTableDevice, TableDeviceBuffers};
-use crate::document::PDFDocument;
-use crate::document::catalog::DEFAULT_CACHE_CAPACITY;
+use crate::document::catalog::cache_capacity;
+use crate::document::{PDFDocument, PDFPage};
 // Re-export engine items via `extract` so callers can reach `ExtractOptions`,
 // `process_page`, `aggregator_result`, etc. through the canonical extract path.
 use crate::engine::stream::run_stateful_stream;
@@ -64,10 +66,6 @@ impl TableWorkerState {
             workspace: TableWorkspace::default(),
         }
     }
-}
-
-fn cache_capacity(caching: bool) -> usize {
-    if caching { DEFAULT_CACHE_CAPACITY } else { 0 }
 }
 
 // Rotate supplied top-left coordinates with the interpreted page.
@@ -140,6 +138,58 @@ fn geometry_for_page(
         .get(page_idx)
         .and_then(Option::as_ref)
         .ok_or_else(|| PdfError::DecodeError("page geometry not in plan".to_string()))
+}
+
+/// Computes a page's table geometry from its index and page.
+pub type PageGeometryFn = Arc<dyn Fn(usize, &PDFPage) -> PageGeometry + Send + Sync>;
+
+/// Where each selected page's table geometry comes from.
+#[derive(Clone)]
+pub enum GeometrySource {
+    /// One geometry per selected page, in selection order.
+    Explicit(Vec<PageGeometry>),
+    /// Computed on the worker from the page itself, so no page is resolved
+    /// before the stream starts.
+    PerPage(PageGeometryFn),
+}
+
+impl GeometrySource {
+    /// pdfplumber's geometry for every page ([`PageGeometry::for_page`]).
+    pub fn for_each_page() -> Self {
+        Self::PerPage(Arc::new(|_, page| PageGeometry::for_page(page)))
+    }
+}
+
+/// A [`GeometrySource`] ready for workers.
+#[derive(Clone)]
+enum GeometryLookup {
+    Indexed(Arc<[Option<PageGeometry>]>),
+    PerPage(PageGeometryFn, i64),
+}
+
+impl GeometryLookup {
+    fn new(
+        source: GeometrySource,
+        page_count: usize,
+        order: &[usize],
+        rotation: i64,
+    ) -> Result<Self> {
+        Ok(match source {
+            GeometrySource::Explicit(geometries) => {
+                Self::Indexed(index_geometries(page_count, order, geometries, rotation)?)
+            }
+            GeometrySource::PerPage(resolve) => Self::PerPage(resolve, rotation),
+        })
+    }
+
+    fn get(&self, page_idx: usize, page: &PDFPage) -> Result<PageGeometry> {
+        match self {
+            Self::Indexed(geometries) => geometry_for_page(geometries, page_idx).cloned(),
+            Self::PerPage(resolve, rotation) => {
+                Ok(rotate_geometry(resolve(page_idx, page), *rotation))
+            }
+        }
+    }
 }
 
 /// Parse and return the text contained in PDF data.
@@ -224,9 +274,8 @@ fn extract_text_to_fp_from_doc_impl<W: Write>(
     // Get LAParams (use default if not provided)
     let laparams = options.laparams.unwrap_or_default();
 
-    // Create text converter
-    let mut converter = TextConverter::new(writer, "utf-8", 1, Some(laparams), false);
-
+    // Each worker renders its own page: a page's text depends on that page alone, so the
+    // pages concatenate to what one converter would write, and no page waits on the others.
     let results = run_batch(
         doc,
         options.page_numbers.as_deref(),
@@ -245,12 +294,16 @@ fn extract_text_to_fp_from_doc_impl<W: Write>(
             if options.bidi {
                 ltpage.set_bidi(true);
             }
-            Ok(ltpage)
+            Ok(
+                TextConverter::new(std::io::sink(), "utf-8", 1, Some(laparams), false)
+                    .page_text(ltpage)
+                    .into_bytes(),
+            )
         },
     )?;
 
-    for (_, ltpage) in results {
-        converter.receive_layout(ltpage);
+    for (_, text) in results {
+        writer.write_all(&text)?;
     }
 
     Ok(())
@@ -334,8 +387,22 @@ pub fn extract_pages_with_images_with_document(
 
 pub fn extract_pages_stream_from_doc(
     doc: Arc<PDFDocument>,
-    mut options: ExtractOptions,
+    options: ExtractOptions,
 ) -> Result<Stream<LTPage>> {
+    extract_pages_stream_with(doc, options, |_, _, page| Ok(page))
+}
+
+/// Stream laid-out pages through `map`, which runs on the worker that laid
+/// the page out, so per-page conversion happens in parallel too.
+pub fn extract_pages_stream_with<R, F>(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    map: F,
+) -> Result<Stream<R>>
+where
+    R: Send + 'static,
+    F: Fn(usize, &PDFPage, LTPage) -> Result<R> + Send + Sync + 'static,
+{
     #[cfg(test)]
     record_stream_usage();
 
@@ -351,7 +418,7 @@ pub fn extract_pages_stream_from_doc(
         doc,
         options.page_numbers,
         options.maxpages,
-        no_precheck_cancellable::<LTPage>,
+        no_precheck_cancellable::<R>,
         move |arena, page_idx, page, doc, cancellation| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
             let mut aggregator = PDFPageAggregator::new(laparams, page_idx as i32 + 1, arena);
@@ -367,7 +434,7 @@ pub fn extract_pages_stream_from_doc(
             if bidi {
                 ltpage.set_bidi(true);
             }
-            Ok(ltpage)
+            map(page_idx, page, ltpage)
         },
     )
 }
@@ -412,10 +479,32 @@ pub fn extract_tables_stream_from_doc_with_geometries(
 /// avoiding the double-layout-walk path that consumed `LTPage` objects.
 pub fn extract_tables_metadata_stream_from_doc_with_geometries(
     doc: Arc<PDFDocument>,
-    mut options: ExtractOptions,
-    mut settings: TableSettings,
+    options: ExtractOptions,
+    settings: TableSettings,
     geometries: Vec<PageGeometry>,
 ) -> Result<Stream<Vec<TableMetadata>>> {
+    extract_tables_metadata_stream_with(
+        doc,
+        options,
+        settings,
+        GeometrySource::Explicit(geometries),
+        |_, _, tables| Ok(tables),
+    )
+}
+
+/// Stream per-page table metadata through `map`, which runs on the worker
+/// with the page's geometry.
+pub fn extract_tables_metadata_stream_with<R, F>(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    mut settings: TableSettings,
+    geometry: GeometrySource,
+    map: F,
+) -> Result<Stream<R>>
+where
+    R: Send + 'static,
+    F: Fn(usize, &PageGeometry, Vec<TableMetadata>) -> Result<R> + Send + Sync + 'static,
+{
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
@@ -428,16 +517,16 @@ pub fn extract_tables_metadata_stream_from_doc_with_geometries(
     );
     let caching = options.caching;
     let rotation = options.rotation;
-    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries, rotation)?;
+    let geoms = GeometryLookup::new(geometry, doc.page_index().len(), &plan.order, rotation)?;
 
     run_stateful_stream(
         doc,
         options.page_numbers,
         options.maxpages,
-        no_precheck_cancellable::<Vec<TableMetadata>>,
+        no_precheck_cancellable::<R>,
         move || TableWorkerState::new(caching),
         move |state, arena, page_idx, page, doc, cancellation| {
-            let geom = geometry_for_page(&geoms, page_idx)?.clone();
+            let geom = geoms.get(page_idx, page)?;
             let buffers = std::mem::take(&mut state.buffers);
             let mut device = PDFTableDevice::with_buffers(arena, Some(geom.clone()), buffers);
             process_page_with_cancellation(
@@ -462,7 +551,7 @@ pub fn extract_tables_metadata_stream_from_doc_with_geometries(
                 )
             };
             state.buffers = device.into_buffers();
-            result
+            map(page_idx, &geom, result?)
         },
     )
 }
@@ -470,69 +559,153 @@ pub fn extract_tables_metadata_stream_from_doc_with_geometries(
 /// Stream analyzed layout and table metadata from one interpreter pass per page.
 pub fn extract_layout_tables_metadata_stream_from_doc_with_geometries(
     doc: Arc<PDFDocument>,
-    mut options: ExtractOptions,
-    mut settings: TableSettings,
+    options: ExtractOptions,
+    settings: TableSettings,
     geometries: Vec<PageGeometry>,
 ) -> Result<Stream<(LTPage, Vec<TableMetadata>)>> {
-    if options.laparams.is_none() {
-        options.laparams = Some(LAParams::default());
-    }
-    settings.text_settings.bidi |= options.bidi;
+    extract_layout_tables_metadata_stream_with(
+        doc,
+        options,
+        settings,
+        GeometrySource::Explicit(geometries),
+        |_, _, _, page, tables| Ok((page, tables)),
+    )
+}
 
+/// The resolved inputs of one layout-and-tables page.
+#[derive(Clone)]
+struct LayoutTablesJob {
+    laparams: Option<LAParams>,
+    caching: bool,
+    rotation: i64,
+    bidi: bool,
+    settings: TableSettings,
+}
+
+impl LayoutTablesJob {
+    fn new(options: &mut ExtractOptions, mut settings: TableSettings) -> Self {
+        if options.laparams.is_none() {
+            options.laparams = Some(LAParams::default());
+        }
+        settings.text_settings.bidi |= options.bidi;
+        Self {
+            laparams: options.laparams,
+            caching: options.caching,
+            rotation: options.rotation,
+            bidi: options.bidi,
+            settings,
+        }
+    }
+
+    /// Lay out one page and find its tables in a single interpreter pass.
+    fn run(
+        &self,
+        arena: &mut PageArena,
+        page_idx: usize,
+        page: &PDFPage,
+        doc: &PDFDocument,
+        cancellation: &CancellationToken,
+        geom: &PageGeometry,
+    ) -> Result<(LTPage, Vec<TableMetadata>)> {
+        #[cfg(test)]
+        record_combined_pass();
+
+        let mut rsrcmgr = PDFResourceManager::with_caching(self.caching);
+        let mut collector = PDFTableCollector::new(self.laparams, page_idx as i32 + 1, arena);
+        let page_arena = process_page_with_cancellation(
+            page,
+            &mut collector,
+            &mut rsrcmgr,
+            self.rotation,
+            doc,
+            cancellation,
+            collector_result,
+        )?;
+        let arena_lookup = collector.arena_lookup();
+        let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
+        let tables = extract_tables_with_metadata_from_objects_with_cancellation(
+            chars,
+            edges,
+            geom,
+            &self.settings,
+            arena_lookup,
+            cancellation,
+        )?;
+        cancellation.check()?;
+        let mut layout_page = page_arena.materialize(arena_lookup);
+        if let Some(laparams) = self.laparams {
+            layout_page.analyze(&laparams);
+        }
+        cancellation.check()?;
+        if self.bidi {
+            layout_page.set_bidi(true);
+        }
+        Ok((layout_page, tables))
+    }
+}
+
+/// Stream analyzed layout and table metadata through `map`, which runs on
+/// the worker with the page and its geometry.
+pub fn extract_layout_tables_metadata_stream_with<R, F>(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    settings: TableSettings,
+    geometry: GeometrySource,
+    map: F,
+) -> Result<Stream<R>>
+where
+    R: Send + 'static,
+    F: Fn(usize, &PDFPage, &PageGeometry, LTPage, Vec<TableMetadata>) -> Result<R>
+        + Send
+        + Sync
+        + 'static,
+{
+    let job = LayoutTablesJob::new(&mut options, settings);
     let plan = ExecutionPlan::new(
         doc.page_index().len(),
         options.page_numbers.as_deref(),
         options.maxpages,
     );
-    let laparams = options.laparams;
-    let caching = options.caching;
-    let rotation = options.rotation;
-    let bidi = options.bidi;
-    let geoms = index_geometries(doc.page_index().len(), &plan.order, geometries, rotation)?;
+    let geoms = GeometryLookup::new(geometry, doc.page_index().len(), &plan.order, job.rotation)?;
 
     run_stream_cancellable(
         doc,
         options.page_numbers,
         options.maxpages,
-        no_precheck_cancellable::<(LTPage, Vec<TableMetadata>)>,
+        no_precheck_cancellable::<R>,
         move |arena, page_idx, page, doc, cancellation| {
-            #[cfg(test)]
-            record_combined_pass();
-
-            let mut rsrcmgr = PDFResourceManager::with_caching(caching);
-            let mut collector = PDFTableCollector::new(laparams, page_idx as i32 + 1, arena);
-            let page_arena = process_page_with_cancellation(
-                page,
-                &mut collector,
-                &mut rsrcmgr,
-                rotation,
-                doc,
-                cancellation,
-                collector_result,
-            )?;
-            let arena_lookup = collector.arena_lookup();
-            let geom = geometry_for_page(&geoms, page_idx)?;
-            let (chars, edges) = collect_table_objects_from_arena(&page_arena, geom);
-            let tables = extract_tables_with_metadata_from_objects_with_cancellation(
-                chars,
-                edges,
-                geom,
-                &settings,
-                arena_lookup,
-                cancellation,
-            )?;
-            cancellation.check()?;
-            let mut layout_page = page_arena.materialize(arena_lookup);
-            if let Some(laparams) = laparams {
-                layout_page.analyze(&laparams);
-            }
-            cancellation.check()?;
-            if bidi {
-                layout_page.set_bidi(true);
-            }
-            Ok((layout_page, tables))
+            let geom = geoms.get(page_idx, page)?;
+            let (layout_page, tables) = job.run(arena, page_idx, page, doc, cancellation, &geom)?;
+            map(page_idx, page, &geom, layout_page, tables)
         },
     )
+}
+
+/// Lay out one page and find its tables on the calling thread, without a
+/// stream. `geometry` defaults to [`PageGeometry::for_page`].
+pub fn layout_tables_page(
+    doc: &PDFDocument,
+    page_index: usize,
+    mut options: ExtractOptions,
+    settings: TableSettings,
+    geometry: Option<PageGeometry>,
+) -> Result<(Arc<PDFPage>, PageGeometry, LTPage, Vec<TableMetadata>)> {
+    let job = LayoutTablesJob::new(&mut options, settings);
+    let page = doc.get_page_cached(page_index)?;
+    let geometry = rotate_geometry(
+        geometry.unwrap_or_else(|| PageGeometry::for_page(&page)),
+        job.rotation,
+    );
+    let mut arena = PageArena::new();
+    let (layout_page, tables) = job.run(
+        &mut arena,
+        page_index,
+        &page,
+        doc,
+        &CancellationToken::new(),
+        &geometry,
+    )?;
+    Ok((page, geometry, layout_page, tables))
 }
 
 /// Stream per-page text for selected pages using arena-backed collection.
@@ -695,10 +868,32 @@ pub fn extract_tables_with_text_spans_stream_from_doc_with_settings(
 
 fn extract_tables_stream_from_doc_with_geometries_internal(
     doc: Arc<PDFDocument>,
-    mut options: ExtractOptions,
-    mut settings: TableSettings,
+    options: ExtractOptions,
+    settings: TableSettings,
     geometries: Option<Vec<PageGeometry>>,
 ) -> Result<Stream<PageTables>> {
+    extract_tables_stream_with(
+        doc,
+        options,
+        settings,
+        geometries.map(GeometrySource::Explicit),
+        |_, tables| Ok(tables),
+    )
+}
+
+/// Stream per-page table rows through `map`, which runs on the worker.
+/// Without a geometry source, the device derives each page's geometry.
+pub fn extract_tables_stream_with<R, F>(
+    doc: Arc<PDFDocument>,
+    mut options: ExtractOptions,
+    mut settings: TableSettings,
+    geometry: Option<GeometrySource>,
+    map: F,
+) -> Result<Stream<R>>
+where
+    R: Send + 'static,
+    F: Fn(usize, PageTables) -> Result<R> + Send + Sync + 'static,
+{
     if options.laparams.is_none() {
         options.laparams = Some(LAParams::default());
     }
@@ -710,29 +905,22 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
         options.maxpages,
     );
     let rotation = options.rotation;
-    let geometries = match geometries {
-        Some(geometries) => Some(index_geometries(
-            doc.page_index().len(),
-            &plan.order,
-            geometries,
-            rotation,
-        )?),
-        None => None,
-    };
+    let geoms = geometry
+        .map(|source| GeometryLookup::new(source, doc.page_index().len(), &plan.order, rotation))
+        .transpose()?;
     let caching = options.caching;
     let settings_for_run = settings;
-    let geoms = geometries;
 
     run_stateful_stream(
         doc,
         options.page_numbers.clone(),
         options.maxpages,
-        no_precheck_cancellable::<PageTables>,
+        no_precheck_cancellable::<R>,
         move || TableWorkerState::new(caching),
         move |state, arena, page_idx, page, doc, cancellation| {
             let geometry = geoms
                 .as_ref()
-                .map(|geometries| geometry_for_page(geometries, page_idx).cloned())
+                .map(|geoms| geoms.get(page_idx, page))
                 .transpose()?;
             let buffers = std::mem::take(&mut state.buffers);
             let mut device = PDFTableDevice::with_buffers(arena, geometry, buffers);
@@ -761,7 +949,7 @@ fn extract_tables_stream_from_doc_with_geometries_internal(
                 )
             };
             state.buffers = device.into_buffers();
-            result
+            map(page_idx, result?)
         },
     )
 }

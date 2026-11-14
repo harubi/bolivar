@@ -5,6 +5,7 @@
 //! pages use a bounded-memory spatial frontier. This is algorithmically distinct
 //! from [`super::grouping`], which forms lines and boxes upstream of this stage.
 
+use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use crate::utils::{HasBBox, INF_F64, Plane, Rect};
@@ -12,8 +13,8 @@ use crate::utils::{HasBBox, INF_F64, Plane, Rect};
 use super::super::params::LAParams;
 use super::super::types::{LTTextGroup, TextBoxType, TextGroupElement};
 use super::spatial::{
-    BestEntry, DynamicSpatialTree, FrontierBestParams, FrontierEntry, GroupHeapEntry, PlaneElem,
-    PyId, SpatialNode, bbox_union, calc_dist_lower_bound, dist_key_from_geom, expand_frontier_best,
+    BestEntry, DistKey, DynamicSpatialTree, FrontierBestParams, FrontierEntry, PlaneElem, PyId,
+    SpatialNode, bbox_union, calc_dist_lower_bound, dist_key_from_geom, expand_frontier_best,
 };
 
 const FULL_HEAP_BOX_LIMIT: usize = 512;
@@ -40,6 +41,45 @@ fn group_textboxes_exact_impl(elements: Vec<TextGroupElement>) -> Vec<LTTextGrou
     }
 
     group_textboxes_frontier_impl(elements)
+}
+
+/// One candidate pair of the full heap, packed so that integer order is pdfminer's order:
+/// `(skip_isany, dist, id1, id2)`, lexicographic. In the full heap an element's id is its index,
+/// so the pair needs no separate indices: the key is 16 bytes, not a 48-byte entry, and one
+/// integer compare orders it. Ids take 31 bits each, ample for [`FULL_HEAP_BOX_LIMIT`] boxes
+/// and the groups made from them.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct PairKey(u128);
+
+impl PairKey {
+    const SKIP: u128 = 1 << 127;
+
+    const ID_BITS: u32 = 31;
+    const ID_MASK: u128 = (1 << Self::ID_BITS) - 1;
+
+    fn new(dist: DistKey, id1: usize, id2: usize) -> Self {
+        debug_assert!(id1 as u128 <= Self::ID_MASK && id2 as u128 <= Self::ID_MASK);
+        // Bits: skip flag at 127, distance at 62..=125, id1 at 31..=61, id2 at 0..=30. Flipping
+        // the sign bit maps i64 order onto u64 order.
+        let dist = (dist as u64 ^ (1 << 63)) as u128;
+        Self((dist << (2 * Self::ID_BITS)) | ((id1 as u128) << Self::ID_BITS) | id2 as u128)
+    }
+
+    const fn skipping(self) -> Self {
+        Self(self.0 | Self::SKIP)
+    }
+
+    const fn skips(self) -> bool {
+        self.0 & Self::SKIP != 0
+    }
+
+    const fn id1(self) -> usize {
+        ((self.0 >> Self::ID_BITS) & Self::ID_MASK) as usize
+    }
+
+    const fn id2(self) -> usize {
+        (self.0 & Self::ID_MASK) as usize
+    }
 }
 
 fn group_textboxes_full_heap_impl(elements: Vec<TextGroupElement>) -> Vec<LTTextGroup> {
@@ -81,58 +121,56 @@ fn group_textboxes_full_heap_impl(elements: Vec<TextGroupElement>) -> Vec<LTText
             .map(|(idx, &bbox)| PlaneElem { bbox, idx }),
     );
 
-    let mut best_heap = BinaryHeap::new();
-    for elem1_idx in 0..elements.len() {
-        for elem2_idx in (elem1_idx + 1)..elements.len() {
-            best_heap.push(GroupHeapEntry {
-                skip_isany: false,
-                dist: dist_key_from_geom(
-                    bboxes[elem1_idx],
-                    areas[elem1_idx],
-                    bboxes[elem2_idx],
-                    areas[elem2_idx],
-                ),
-                id1: elem1_idx as PyId,
-                id2: elem2_idx as PyId,
-                elem1_idx,
-                elem2_idx,
-            });
+    // Every initial pair, heapified at once: O(n) rather than one O(log n) push per pair.
+    // Keys are unique, so the pop order does not depend on how the heap was built.
+    let n = elements.len();
+    let mut pairs = Vec::with_capacity(n * (n - 1) / 2);
+    for elem1_idx in 0..n {
+        for elem2_idx in (elem1_idx + 1)..n {
+            let dist = dist_key_from_geom(
+                bboxes[elem1_idx],
+                areas[elem1_idx],
+                bboxes[elem2_idx],
+                areas[elem2_idx],
+            );
+            pairs.push(Reverse(PairKey::new(dist, elem1_idx, elem2_idx)));
         }
     }
+    let mut best_heap = BinaryHeap::from(pairs);
 
     let mut done = vec![false; elements.len()];
     done.reserve_exact(reserve_extra);
 
-    while let Some(mut best) = best_heap.pop() {
-        if done[best.elem1_idx] || done[best.elem2_idx] {
+    while let Some(Reverse(best)) = best_heap.pop() {
+        let (elem1_idx, elem2_idx) = (best.id1(), best.id2());
+        if done[elem1_idx] || done[elem2_idx] {
             continue;
         }
 
-        if !best.skip_isany {
-            let union = bbox_union(bboxes[best.elem1_idx], bboxes[best.elem2_idx]);
+        if !best.skips() {
+            let union = bbox_union(bboxes[elem1_idx], bboxes[elem2_idx]);
             let has_between = plane.any_with_indices(union, |_, element| {
-                element.idx != best.elem1_idx && element.idx != best.elem2_idx
+                element.idx != elem1_idx && element.idx != elem2_idx
             });
             if has_between {
-                best.skip_isany = true;
-                best_heap.push(best);
+                best_heap.push(Reverse(best.skipping()));
                 continue;
             }
         }
 
-        done[best.elem1_idx] = true;
-        done[best.elem2_idx] = true;
-        plane.remove_by_id(best.elem1_idx);
-        plane.remove_by_id(best.elem2_idx);
+        done[elem1_idx] = true;
+        done[elem2_idx] = true;
+        plane.remove_by_id(elem1_idx);
+        plane.remove_by_id(elem2_idx);
 
-        let left = elements[best.elem1_idx].take().expect("missing elem1");
-        let right = elements[best.elem2_idx].take().expect("missing elem2");
+        let left = elements[elem1_idx].take().expect("missing elem1");
+        let right = elements[elem2_idx].take().expect("missing elem2");
         let is_vertical = left.is_vertical() || right.is_vertical();
         let group = LTTextGroup::new(vec![left, right], is_vertical);
         let group_elem = TextGroupElement::Group(Box::new(group));
 
         let new_idx = elements.len();
-        let new_bbox = bbox_union(bboxes[best.elem1_idx], bboxes[best.elem2_idx]);
+        let new_bbox = bbox_union(bboxes[elem1_idx], bboxes[elem2_idx]);
         let new_area = (new_bbox.2 - new_bbox.0) * (new_bbox.3 - new_bbox.1);
 
         elements.push(Some(group_elem));
@@ -144,14 +182,8 @@ fn group_textboxes_full_heap_impl(elements: Vec<TextGroupElement>) -> Vec<LTText
             if done[other_idx] {
                 continue;
             }
-            best_heap.push(GroupHeapEntry {
-                skip_isany: false,
-                dist: dist_key_from_geom(new_bbox, new_area, bboxes[other_idx], areas[other_idx]),
-                id1: new_idx as PyId,
-                id2: other_idx as PyId,
-                elem1_idx: new_idx,
-                elem2_idx: other_idx,
-            });
+            let dist = dist_key_from_geom(new_bbox, new_area, bboxes[other_idx], areas[other_idx]);
+            best_heap.push(Reverse(PairKey::new(dist, new_idx, other_idx)));
         }
         plane.add(PlaneElem {
             bbox: new_bbox,
@@ -380,5 +412,65 @@ mod textboxes_exact_tests {
         let bounded_frontier = group_textboxes_frontier_impl(elements);
 
         assert_eq!(format!("{full_heap:?}"), format!("{bounded_frontier:?}"));
+    }
+}
+
+#[cfg(test)]
+mod pair_key_tests {
+    use super::*;
+
+    /// Packed keys order exactly as pdfminer's (skip_isany, dist, id1, id2) tuples, and give
+    /// their fields back.
+    #[test]
+    fn packed_order_is_pdfminers_tuple_order() {
+        let dists = [
+            i64::MIN,
+            i64::MIN + 1,
+            -7,
+            -1,
+            0,
+            1,
+            7,
+            i64::MAX - 1,
+            i64::MAX,
+        ];
+        let ids = [0, 1, 2, 511, 1023, PairKey::ID_MASK as usize];
+        let mut keys = Vec::new();
+        for skip in [false, true] {
+            for &dist in &dists {
+                for &id1 in &ids {
+                    for &id2 in &ids {
+                        let key = PairKey::new(dist, id1, id2);
+                        let key = if skip { key.skipping() } else { key };
+                        assert_eq!((key.skips(), key.id1(), key.id2()), (skip, id1, id2));
+                        keys.push(((skip, dist, id1, id2), key));
+                    }
+                }
+            }
+        }
+        // A fixed pseudo-random walk over pairs, plus every pair of the edge cases above.
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..200_000 {
+            let a = (next() % keys.len() as u64) as usize;
+            let b = (next() % keys.len() as u64) as usize;
+            assert_eq!(
+                keys[a].0.cmp(&keys[b].0),
+                keys[a].1.cmp(&keys[b].1),
+                "{:?} {:?}",
+                keys[a].0,
+                keys[b].0
+            );
+        }
+        for (ta, ka) in &keys {
+            for (tb, kb) in &keys {
+                assert_eq!(ta.cmp(tb), ka.cmp(kb));
+            }
+        }
     }
 }

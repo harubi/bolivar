@@ -5,10 +5,10 @@
 
 use std::cell::RefCell;
 
-use unicode_bidi::BidiInfo;
+use unicode_bidi::{BidiClass, BidiInfo, bidi_class};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::layout::types::{Axis, TextLineElement};
+use crate::layout::types::{Axis, ElementRef, TextLineElement};
 use crate::utils::HasBBox;
 
 const ICU_LTR: u8 = 0;
@@ -379,6 +379,15 @@ fn select_base_direction(
 }
 
 fn source_is_logical(elements: &[TextLineElement], axis: Axis) -> bool {
+    source_is_logical_refs(elements.iter().map(ElementRef::from), axis)
+}
+
+/// Whether a line's source order is already logical: always for vertical lines; for horizontal
+/// ones, when right-to-left characters mostly run right to left in the content stream.
+pub(crate) fn source_is_logical_refs<'a>(
+    elements: impl IntoIterator<Item = ElementRef<'a>>,
+    axis: Axis,
+) -> bool {
     if axis != Axis::Horizontal {
         return true;
     }
@@ -387,7 +396,7 @@ fn source_is_logical(elements: &[TextLineElement], axis: Axis) -> bool {
     let mut increasing = 0;
     let mut decreasing = 0;
     for element in elements {
-        let TextLineElement::Char(character) = element else {
+        let ElementRef::Char(character) = element else {
             continue;
         };
         if !character.get_text().chars().any(is_rtl_script) {
@@ -409,14 +418,13 @@ fn source_is_logical(elements: &[TextLineElement], axis: Axis) -> bool {
     decreasing > increasing
 }
 
-fn source_scalars(elements: &[TextLineElement]) -> (String, Vec<SourceScalar>) {
+fn source_scalars<'a>(
+    elements: impl IntoIterator<Item = ElementRef<'a>>,
+) -> (String, Vec<SourceScalar>) {
     let mut raw_text = String::new();
     let mut source = Vec::new();
-    for (source_index, element) in elements.iter().enumerate() {
-        let text = match element {
-            TextLineElement::Char(character) => character.get_text(),
-            TextLineElement::Anno(annotation) => annotation.get_text(),
-        };
+    for (source_index, element) in elements.into_iter().enumerate() {
+        let text = element.text();
         raw_text.push_str(text);
         source.extend(text.chars().map(|ch| SourceScalar { ch, source_index }));
     }
@@ -705,8 +713,17 @@ pub(crate) fn reconstruct_textline_elements(
     elements: &[TextLineElement],
     axis: Axis,
 ) -> ReconstructedLine {
-    let (raw_text, source) = source_scalars(elements);
-    reconstruct_source(raw_text, source, source_is_logical(elements, axis))
+    reconstruct_element_refs(elements.iter().map(ElementRef::from), axis)
+}
+
+/// [`reconstruct_textline_elements`] over borrowed elements, so a compact layout's lines
+/// reconstruct without being materialized.
+pub(crate) fn reconstruct_element_refs<'a, I>(elements: I, axis: Axis) -> ReconstructedLine
+where
+    I: IntoIterator<Item = ElementRef<'a>> + Clone,
+{
+    let (raw_text, source) = source_scalars(elements.clone());
+    reconstruct_source(raw_text, source, source_is_logical_refs(elements, axis))
 }
 pub(crate) fn reconstruct_textline_text(elements: &[TextLineElement], axis: Axis) -> String {
     let raw_text = elements
@@ -899,10 +916,35 @@ pub(crate) fn reorder_visual_word_runs<T>(
     runs.into_iter().flat_map(|(_, run)| run).collect()
 }
 
+/// Whether UAX #9 could reorder `text`. Without strong right-to-left
+/// characters, Arabic numbers or explicit embeddings, overrides and
+/// isolates, every character resolves to level 0, so the visual order is
+/// the logical order.
+fn may_reorder(text: &str) -> bool {
+    !text.is_ascii()
+        && text.chars().any(|ch| {
+            matches!(
+                bidi_class(ch),
+                BidiClass::R
+                    | BidiClass::AL
+                    | BidiClass::AN
+                    | BidiClass::LRE
+                    | BidiClass::LRO
+                    | BidiClass::RLE
+                    | BidiClass::RLO
+                    | BidiClass::PDF
+                    | BidiClass::LRI
+                    | BidiClass::RLI
+                    | BidiClass::FSI
+                    | BidiClass::PDI
+            )
+        })
+}
+
 /// Reorder text with the legacy UAX #9 policy.
 pub fn reorder_text_per_line(text: &str) -> String {
-    if text.is_empty() {
-        return String::new();
+    if !may_reorder(text) {
+        return text.to_owned();
     }
 
     let mut output = String::with_capacity(text.len());
@@ -956,6 +998,57 @@ pub fn reorder_text_for_output(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::layout::{LTAnno, LTChar};
+
+    /// The slow path, without the shortcut.
+    fn reorder_slow(text: &str) -> String {
+        let mut output = String::new();
+        for chunk in text.split_inclusive('\n') {
+            let (line, has_newline) = match chunk.strip_suffix('\n') {
+                Some(prefix) => (prefix, true),
+                None => (chunk, false),
+            };
+            if !line.is_empty() {
+                output.push_str(&reorder_single_line(line));
+            }
+            if has_newline {
+                output.push('\n');
+            }
+        }
+        output
+    }
+
+    #[test]
+    fn the_shortcut_never_changes_output() {
+        let samples = [
+            "",
+            "plain ascii, 1.5 (x) [y] - z\n",
+            "café ÿ ñ ü 中文 日本語 한국어 ½ ① ™ €12,50",
+            "Ελληνικά кириллица ไทย देवनागरी",
+            "a\u{200B}b\u{FEFF}c\u{00AD}d\u{0300}e",
+            "mixed English عربي text",
+            "שלום world",
+            "digits ٣٤٥ arabic-indic",
+            "embed \u{202B}x\u{202C} and isolate \u{2067}y\u{2069}",
+            "syriac ܐܒܓ thaana ދިވެހި nko ߊߋ",
+        ];
+        for sample in samples {
+            assert_eq!(
+                reorder_text_per_line(sample),
+                reorder_slow(sample),
+                "{sample:?}"
+            );
+        }
+        // Every non-reordering class, one character each, against the slow path.
+        let mut text = String::new();
+        for code in (0x20..0x3000).chain(0xFF00..0xFFF0) {
+            if let Some(ch) = char::from_u32(code)
+                && !may_reorder(&ch.to_string())
+            {
+                text.push(ch);
+            }
+        }
+        assert_eq!(reorder_text_per_line(&text), reorder_slow(&text));
+    }
 
     fn horizontal_elements(text: &str, decreasing: bool) -> Vec<TextLineElement> {
         let count = text.chars().count() as f64;
