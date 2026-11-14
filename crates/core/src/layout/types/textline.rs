@@ -5,7 +5,7 @@
 use std::hash::Hash;
 
 use crate::layout::bidi::{
-    ReconstructedLine, reconstruct_textline_elements, reconstruct_textline_text,
+    ReconstructedLine, collect_raw_text, line_text, reconstruct_textline_elements,
     reorder_text_for_output,
 };
 use crate::utils::{HasBBox, INF_F64, Plane, Rect};
@@ -91,38 +91,25 @@ impl<'a> From<&'a TextLineElement> for ElementRef<'a> {
     }
 }
 
-fn element_text(element: &TextLineElement) -> &str {
-    ElementRef::from(element).text()
-}
-
 fn collect_text_from_elements(elements: &[TextLineElement]) -> String {
-    let capacity = elements
-        .iter()
-        .map(|element| element_text(element).len())
-        .sum();
-    let mut output = String::with_capacity(capacity);
-    for element in elements {
-        output.push_str(element_text(element));
-    }
-    output
+    collect_raw_text(elements.iter().map(ElementRef::from))
 }
 
 fn text_from_elements(elements: &[TextLineElement], axis: Axis, bidi: bool) -> String {
-    if bidi {
-        reconstruct_textline_text(elements, axis)
-    } else {
-        reorder_text_for_output(&collect_text_from_elements(elements))
-    }
+    line_text(elements.iter().map(ElementRef::from), axis, bidi)
 }
 
-fn elements_are_blank_or_whitespace(elements: &[TextLineElement]) -> bool {
+/// Whether a line's elements hold text and all of it is whitespace.
+pub(crate) fn elements_are_blank_or_whitespace<'a>(
+    elements: impl IntoIterator<Item = ElementRef<'a>>,
+) -> bool {
     let mut has_any = false;
-    for e in elements {
-        let s = element_text(e);
-        if !s.is_empty() {
+    for element in elements {
+        let text = element.text();
+        if !text.is_empty() {
             has_any = true;
         }
-        if s.chars().any(|c| !c.is_whitespace()) {
+        if text.chars().any(|c| !c.is_whitespace()) {
             return false;
         }
     }
@@ -272,7 +259,7 @@ impl LTTextLine for LTTextLineHorizontal {
         if self.component.is_empty() {
             return true;
         }
-        elements_are_blank_or_whitespace(&self.elements)
+        elements_are_blank_or_whitespace(self.elements.iter().map(ElementRef::from))
     }
 
     fn set_bbox(&mut self, bbox: Rect) {
@@ -427,7 +414,7 @@ impl LTTextLine for LTTextLineVertical {
         if self.component.is_empty() {
             return true;
         }
-        elements_are_blank_or_whitespace(&self.elements)
+        elements_are_blank_or_whitespace(self.elements.iter().map(ElementRef::from))
     }
 
     fn set_bbox(&mut self, bbox: Rect) {

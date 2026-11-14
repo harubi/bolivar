@@ -81,57 +81,65 @@ impl<W: Write> TextConverter<W> {
     }
 
     /// The text this converter writes for a page, without writing it.
-    pub fn page_text(&self, mut ltpage: LTPage) -> String {
-        if self.bidi {
-            ltpage.set_bidi(true);
-        }
-        let mut output = String::new();
-        if self.showpageno {
-            output.push_str(&format!("Page {}\n", ltpage.pageid));
-        }
-        self.render_page(&ltpage, &mut output);
-        // Form feed at end of page
-        output.push('\x0c');
-        output
+    pub fn page_text(&self, ltpage: LTPage) -> String {
+        render_page_text(ltpage, self.showpageno, self.bidi)
     }
+}
 
-    /// Render a page's items into `output`, without materializing a compact layout.
-    fn render_page(&self, page: &LTPage, output: &mut String) {
-        page.write_items(output, &mut |item, output| self.render_item(item, output));
+/// The text a [`TextConverter`] writes for a page: an optional `Page N` header, every item's
+/// text, then a form feed. `bidi` reconstructs right-to-left text. Needs no writer, so workers
+/// render pages on their own.
+pub fn render_page_text(mut ltpage: LTPage, showpageno: bool, bidi: bool) -> String {
+    use std::fmt::Write as _;
+    if bidi {
+        ltpage.set_bidi(true);
     }
+    let mut output = String::new();
+    if showpageno {
+        let _ = writeln!(output, "Page {}", ltpage.pageid);
+    }
+    render_page(&ltpage, bidi, &mut output);
+    // Form feed at end of page
+    output.push('\x0c');
+    output
+}
 
-    /// Render one item into `output`.
-    fn render_item(&self, item: &LTItem, output: &mut String) {
-        match item {
-            LTItem::Page(page) => self.render_page(page, output),
-            LTItem::TextBox(tb) => {
-                output.push_str(&match tb {
-                    TextBoxType::Horizontal(h) => h.get_text(),
-                    TextBoxType::Vertical(v) => v.get_text(),
-                });
-                output.push('\n');
+/// Render a page's items into `output`, without materializing a compact layout.
+fn render_page(page: &LTPage, bidi: bool, output: &mut String) {
+    page.write_items(output, &mut |item, output| render_item(item, bidi, output));
+}
+
+/// Render one item into `output`.
+fn render_item(item: &LTItem, bidi: bool, output: &mut String) {
+    match item {
+        LTItem::Page(page) => render_page(page, bidi, output),
+        LTItem::TextBox(tb) => {
+            output.push_str(&match tb {
+                TextBoxType::Horizontal(h) => h.get_text(),
+                TextBoxType::Vertical(v) => v.get_text(),
+            });
+            output.push('\n');
+        }
+        LTItem::TextLine(tl) => output.push_str(&match tl {
+            TextLineType::Horizontal(h) => h.get_text(),
+            TextLineType::Vertical(v) => v.get_text(),
+        }),
+        LTItem::Char(c) => push_glyph_text(c.get_text(), bidi, output),
+        LTItem::Anno(a) => push_glyph_text(a.get_text(), bidi, output),
+        LTItem::Figure(fig) => {
+            for child in fig.iter() {
+                render_item(child, bidi, output);
             }
-            LTItem::TextLine(tl) => output.push_str(&match tl {
-                TextLineType::Horizontal(h) => h.get_text(),
-                TextLineType::Vertical(v) => v.get_text(),
-            }),
-            LTItem::Char(c) => self.push_glyph_text(c.get_text(), output),
-            LTItem::Anno(a) => self.push_glyph_text(a.get_text(), output),
-            LTItem::Figure(fig) => {
-                for child in fig.iter() {
-                    self.render_item(child, output);
-                }
-            }
-            _ => {}
         }
+        _ => {}
     }
+}
 
-    fn push_glyph_text(&self, text: &str, output: &mut String) {
-        if self.bidi {
-            output.push_str(&normalize_arabic_presentation_forms(text));
-        } else {
-            output.push_str(text);
-        }
+fn push_glyph_text(text: &str, bidi: bool, output: &mut String) {
+    if bidi {
+        output.push_str(&normalize_arabic_presentation_forms(text));
+    } else {
+        output.push_str(text);
     }
 }
 
@@ -165,7 +173,7 @@ mod tests {
                     converter.set_bidi(bidi);
                     let mut expected = String::new();
                     for item in page.iter() {
-                        converter.render_item(item, &mut expected);
+                        render_item(item, bidi, &mut expected);
                     }
                     expected.push('\x0c');
                     converter.receive_layout(page);

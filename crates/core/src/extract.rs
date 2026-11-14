@@ -15,7 +15,7 @@
 //!
 //! Internal helpers (file-private):
 //! - `extract_text_to_fp_impl` — bytes path: validates header, opens doc, delegates
-//! - `extract_text_to_fp_from_doc_impl` — drives a `TextConverter` over pages
+//! - `extract_text_to_fp_from_doc_impl` — renders each page's text on its worker
 //!
 //! `extract_text` and `extract_text_to_fp` both lower into `*_from_doc_impl`,
 //! so the actual rendering logic lives in exactly one place.
@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use crate::arena::PageArena;
 use crate::cancellation::CancellationToken;
-use crate::device::TextConverter;
+use crate::device::render_page_text;
 use crate::device::{PDFPageAggregator, PDFTableCollector, PDFTableDevice, TableDeviceBuffers};
 use crate::document::catalog::cache_capacity;
 use crate::document::{PDFDocument, PDFPage};
@@ -294,11 +294,7 @@ fn extract_text_to_fp_from_doc_impl<W: Write>(
             if options.bidi {
                 ltpage.set_bidi(true);
             }
-            Ok(
-                TextConverter::new(std::io::sink(), "utf-8", 1, Some(laparams), false)
-                    .page_text(ltpage)
-                    .into_bytes(),
-            )
+            Ok(render_page_text(ltpage, false, false).into_bytes())
         },
     )?;
 
@@ -505,10 +501,7 @@ where
     R: Send + 'static,
     F: Fn(usize, &PageGeometry, Vec<TableMetadata>) -> Result<R> + Send + Sync + 'static,
 {
-    if options.laparams.is_none() {
-        options.laparams = Some(LAParams::default());
-    }
-    settings.text_settings.bidi |= options.bidi;
+    prepare_table_run(&mut options, &mut settings);
 
     let plan = ExecutionPlan::new(
         doc.page_index().len(),
@@ -568,7 +561,7 @@ pub fn extract_layout_tables_metadata_stream_from_doc_with_geometries(
         options,
         settings,
         GeometrySource::Explicit(geometries),
-        |_, _, _, page, tables| Ok((page, tables)),
+        |_, _, page, tables| Ok((page, tables)),
     )
 }
 
@@ -582,12 +575,18 @@ struct LayoutTablesJob {
     settings: TableSettings,
 }
 
+/// What every table run needs first: layout parameters, and table text that follows the
+/// document's bidi setting.
+fn prepare_table_run(options: &mut ExtractOptions, settings: &mut TableSettings) {
+    if options.laparams.is_none() {
+        options.laparams = Some(LAParams::default());
+    }
+    settings.text_settings.bidi |= options.bidi;
+}
+
 impl LayoutTablesJob {
     fn new(options: &mut ExtractOptions, mut settings: TableSettings) -> Self {
-        if options.laparams.is_none() {
-            options.laparams = Some(LAParams::default());
-        }
-        settings.text_settings.bidi |= options.bidi;
+        prepare_table_run(options, &mut settings);
         Self {
             laparams: options.laparams,
             caching: options.caching,
@@ -645,7 +644,7 @@ impl LayoutTablesJob {
 }
 
 /// Stream analyzed layout and table metadata through `map`, which runs on
-/// the worker with the page and its geometry.
+/// the worker with the page.
 pub fn extract_layout_tables_metadata_stream_with<R, F>(
     doc: Arc<PDFDocument>,
     mut options: ExtractOptions,
@@ -655,10 +654,7 @@ pub fn extract_layout_tables_metadata_stream_with<R, F>(
 ) -> Result<Stream<R>>
 where
     R: Send + 'static,
-    F: Fn(usize, &PDFPage, &PageGeometry, LTPage, Vec<TableMetadata>) -> Result<R>
-        + Send
-        + Sync
-        + 'static,
+    F: Fn(usize, &PDFPage, LTPage, Vec<TableMetadata>) -> Result<R> + Send + Sync + 'static,
 {
     let job = LayoutTablesJob::new(&mut options, settings);
     let plan = ExecutionPlan::new(
@@ -676,26 +672,22 @@ where
         move |arena, page_idx, page, doc, cancellation| {
             let geom = geoms.get(page_idx, page)?;
             let (layout_page, tables) = job.run(arena, page_idx, page, doc, cancellation, &geom)?;
-            map(page_idx, page, &geom, layout_page, tables)
+            map(page_idx, page, layout_page, tables)
         },
     )
 }
 
-/// Lay out one page and find its tables on the calling thread, without a
-/// stream. `geometry` defaults to [`PageGeometry::for_page`].
+/// Lay out one page and find its tables, in pdfplumber's geometry for the
+/// page, on the calling thread, without a stream.
 pub fn layout_tables_page(
     doc: &PDFDocument,
     page_index: usize,
     mut options: ExtractOptions,
     settings: TableSettings,
-    geometry: Option<PageGeometry>,
-) -> Result<(Arc<PDFPage>, PageGeometry, LTPage, Vec<TableMetadata>)> {
+) -> Result<(Arc<PDFPage>, LTPage, Vec<TableMetadata>)> {
     let job = LayoutTablesJob::new(&mut options, settings);
     let page = doc.get_page_cached(page_index)?;
-    let geometry = rotate_geometry(
-        geometry.unwrap_or_else(|| PageGeometry::for_page(&page)),
-        job.rotation,
-    );
+    let geometry = rotate_geometry(PageGeometry::for_page(&page), job.rotation);
     let mut arena = PageArena::new();
     let (layout_page, tables) = job.run(
         &mut arena,
@@ -705,7 +697,7 @@ pub fn layout_tables_page(
         &CancellationToken::new(),
         &geometry,
     )?;
-    Ok((page, geometry, layout_page, tables))
+    Ok((page, layout_page, tables))
 }
 
 /// Stream per-page text for selected pages using arena-backed collection.
@@ -818,14 +810,10 @@ pub fn extract_tables_with_text_spans_stream_from_doc_with_settings(
     mut options: ExtractOptions,
     mut settings: TableSettings,
 ) -> Result<Stream<(PageTables, Vec<crate::layout::table::TableTextSpans>)>> {
-    if options.laparams.is_none() {
-        options.laparams = Some(LAParams::default());
-    }
-    settings.text_settings.bidi |= options.bidi;
+    prepare_table_run(&mut options, &mut settings);
 
     let caching = options.caching;
     let rotation = options.rotation;
-    let settings_for_run = settings;
 
     run_stateful_stream(
         doc,
@@ -846,7 +834,7 @@ pub fn extract_tables_with_text_spans_stream_from_doc_with_settings(
                 |_| Ok(()),
             )?;
             let geom = device.geometry().clone();
-            let result = if should_probe_tables(&settings_for_run) && !device.has_edges() {
+            let result = if should_probe_tables(&settings) && !device.has_edges() {
                 Ok((Vec::new(), Vec::new()))
             } else {
                 let (chars, edges) = device.objects();
@@ -854,7 +842,7 @@ pub fn extract_tables_with_text_spans_stream_from_doc_with_settings(
                     chars,
                     edges,
                     &geom,
-                    &settings_for_run,
+                    &settings,
                     device.arena_lookup(),
                     cancellation,
                     &mut state.workspace,
@@ -894,10 +882,7 @@ where
     R: Send + 'static,
     F: Fn(usize, PageTables) -> Result<R> + Send + Sync + 'static,
 {
-    if options.laparams.is_none() {
-        options.laparams = Some(LAParams::default());
-    }
-    settings.text_settings.bidi |= options.bidi;
+    prepare_table_run(&mut options, &mut settings);
 
     let plan = ExecutionPlan::new(
         doc.page_index().len(),
@@ -909,7 +894,6 @@ where
         .map(|source| GeometryLookup::new(source, doc.page_index().len(), &plan.order, rotation))
         .transpose()?;
     let caching = options.caching;
-    let settings_for_run = settings;
 
     run_stateful_stream(
         doc,
@@ -934,7 +918,7 @@ where
                 |_| Ok(()),
             )?;
             let geom = device.geometry().clone();
-            let result = if should_probe_tables(&settings_for_run) && !device.has_edges() {
+            let result = if should_probe_tables(&settings) && !device.has_edges() {
                 Ok(Vec::new())
             } else {
                 let (chars, edges) = device.objects();
@@ -942,7 +926,7 @@ where
                     chars,
                     edges,
                     &geom,
-                    &settings_for_run,
+                    &settings,
                     device.arena_lookup(),
                     cancellation,
                     &mut state.workspace,

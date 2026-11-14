@@ -1,10 +1,8 @@
-use crate::layout::bidi::{
-    reconstruct_textline_raw_text, reorder_text_for_output, source_is_logical_refs,
-};
+use crate::layout::bidi::{append_line_text, line_text};
 use crate::layout::types::{
     Axis, ElementRef, LTAnno, LTChar, LTComponent, LTItem, LTTextBox, LTTextBoxHorizontal,
     LTTextBoxVertical, LTTextGroup, LTTextLineHorizontal, LTTextLineVertical, TextBoxType,
-    TextGroupElement, TextLineElement, TextLineType,
+    TextGroupElement, TextLineElement, TextLineType, elements_are_blank_or_whitespace,
 };
 use crate::utils::Rect;
 
@@ -478,24 +476,33 @@ impl LayoutArena {
         }
     }
 
+    fn element_ids(&self, id: LineId) -> &[ArenaElem] {
+        match &self.lines[id.0] {
+            ArenaTextLine::Horizontal(line) => &line.elements,
+            ArenaTextLine::Vertical(line) => &line.elements,
+        }
+    }
+
     /// A line's elements, borrowed.
     pub(crate) fn line_elements(&self, id: LineId) -> impl Iterator<Item = ElementRef<'_>> + Clone {
-        let elements = match &self.lines[id.0] {
-            ArenaTextLine::Horizontal(line) => line.elements.as_slice(),
-            ArenaTextLine::Vertical(line) => line.elements.as_slice(),
-        };
-        elements.iter().map(|element| self.element_ref(*element))
+        self.element_ids(id)
+            .iter()
+            .map(|element| self.element_ref(*element))
     }
 
     /// The `index`th element of a line, borrowed.
     pub(crate) fn line_element(&self, id: LineId, index: usize) -> Option<ElementRef<'_>> {
-        let elements = match &self.lines[id.0] {
-            ArenaTextLine::Horizontal(line) => line.elements.as_slice(),
-            ArenaTextLine::Vertical(line) => line.elements.as_slice(),
-        };
-        elements
+        self.element_ids(id)
             .get(index)
             .map(|element| self.element_ref(*element))
+    }
+
+    pub(crate) fn line_axis(&self, id: LineId) -> Axis {
+        if self.line_is_vertical(id) {
+            Axis::Vertical
+        } else {
+            Axis::Horizontal
+        }
     }
 
     fn element_ref(&self, element: ArenaElem) -> ElementRef<'_> {
@@ -521,27 +528,21 @@ impl LayoutArena {
     }
 
     pub(crate) fn line_text(&self, id: LineId) -> String {
-        let axis = if self.line_is_vertical(id) {
-            Axis::Vertical
-        } else {
-            Axis::Horizontal
-        };
-        let raw_text: String = self.line_elements(id).map(ElementRef::text).collect();
-        if self.line_bidi(id) {
-            // The same logical-order rule owned lines use, so both give the same text.
-            let logical = source_is_logical_refs(self.line_elements(id), axis);
-            reconstruct_textline_raw_text(raw_text, logical)
-        } else {
-            reorder_text_for_output(&raw_text)
-        }
+        line_text(
+            self.line_elements(id),
+            self.line_axis(id),
+            self.line_bidi(id),
+        )
     }
 
     fn append_box_text(&self, id: BoxId, output: &mut String) {
-        let line_ids = match &self.boxes[id.0] {
-            ArenaTextBox::Horizontal(line_ids) | ArenaTextBox::Vertical(line_ids) => line_ids,
-        };
-        for line_id in line_ids {
-            output.push_str(&self.line_text(*line_id));
+        for &line_id in self.box_lines(id) {
+            append_line_text(
+                output,
+                self.line_elements(line_id),
+                self.line_axis(line_id),
+                self.line_bidi(line_id),
+            );
         }
     }
 
@@ -562,43 +563,8 @@ impl LayoutArena {
     }
 
     pub fn line_is_empty(&self, id: LineId) -> bool {
-        let line = &self.lines[id.0];
-        let mut has_any = false;
-        let mut has_non_ws = false;
-        match line {
-            ArenaTextLine::Horizontal(h) => {
-                for e in &h.elements {
-                    let s = match e {
-                        ArenaElem::Char(cid) => self.chars[cid.0].get_text(),
-                        ArenaElem::Anno(aid) => self.annos[aid.0].get_text(),
-                    };
-                    if !s.is_empty() {
-                        has_any = true;
-                    }
-                    if s.chars().any(|c| !c.is_whitespace()) {
-                        has_non_ws = true;
-                        break;
-                    }
-                }
-                h.component.is_empty() || (has_any && !has_non_ws)
-            }
-            ArenaTextLine::Vertical(v) => {
-                for e in &v.elements {
-                    let s = match e {
-                        ArenaElem::Char(cid) => self.chars[cid.0].get_text(),
-                        ArenaElem::Anno(aid) => self.annos[aid.0].get_text(),
-                    };
-                    if !s.is_empty() {
-                        has_any = true;
-                    }
-                    if s.chars().any(|c| !c.is_whitespace()) {
-                        has_non_ws = true;
-                        break;
-                    }
-                }
-                v.component.is_empty() || (has_any && !has_non_ws)
-            }
-        }
+        self.lines[id.0].component().is_empty()
+            || elements_are_blank_or_whitespace(self.line_elements(id))
     }
 }
 

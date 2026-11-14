@@ -3,12 +3,13 @@
 use std::sync::OnceLock;
 
 use crate::layout::arena::CompactPageLayout;
+use crate::layout::bidi::append_line_text;
 use crate::utils::{Matrix, Rect, apply_matrix_rect};
 
 use super::component::LTComponent;
 use super::item::LTItem;
-use super::textbox::{LTTextGroup, TextBoxType};
-use super::textline::LTTextLine;
+use super::textbox::LTTextGroup;
+use super::textline::ElementRef;
 use super::view::BoxRef;
 
 fn append_item_text(item: &LTItem, output: &mut String, first_box: &mut bool) {
@@ -18,17 +19,9 @@ fn append_item_text(item: &LTItem, output: &mut String, first_box: &mut bool) {
                 output.push('\n');
             }
             *first_box = false;
-            match text_box {
-                TextBoxType::Horizontal(text_box) => {
-                    for line in text_box.iter() {
-                        output.push_str(&line.get_text());
-                    }
-                }
-                TextBoxType::Vertical(text_box) => {
-                    for line in text_box.iter() {
-                        output.push_str(&line.get_text());
-                    }
-                }
+            for line in text_box.lines() {
+                let elements = line.elements().iter().map(ElementRef::from);
+                append_line_text(output, elements, line.axis(), line.bidi());
             }
         }
         LTItem::Figure(figure) => {

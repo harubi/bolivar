@@ -55,7 +55,11 @@ type StyleKey = (
 
 /// One shared [`CharStyle`] per distinct style, for the characters of one page.
 #[derive(Default)]
-pub(crate) struct StyleCache(FxHashMap<StyleKey, Arc<CharStyle>>);
+pub(crate) struct StyleCache {
+    /// The previous character's style: runs of characters share one, so most lookups end here.
+    last: Option<(StyleKey, Arc<CharStyle>)>,
+    styles: FxHashMap<StyleKey, Arc<CharStyle>>,
+}
 
 impl ArenaChar {
     /// One character on its own: its style is built for it alone.
@@ -74,12 +78,19 @@ impl ArenaChar {
             self.ncolor,
             self.scolor,
         );
-        let style = Arc::clone(
-            styles
-                .0
-                .entry(key)
-                .or_insert_with(|| Arc::new(self.style(arena))),
-        );
+        let style = match &styles.last {
+            Some((last, style)) if *last == key => Arc::clone(style),
+            _ => {
+                let style = Arc::clone(
+                    styles
+                        .styles
+                        .entry(key)
+                        .or_insert_with(|| Arc::new(self.style(arena))),
+                );
+                styles.last = Some((key, Arc::clone(&style)));
+                style
+            }
+        };
         self.with_style(arena, style)
     }
 

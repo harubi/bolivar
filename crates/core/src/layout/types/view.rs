@@ -2,11 +2,24 @@
 //! from owned items, so that callers walking every character need not materialize the page.
 
 use crate::layout::arena::{BoxId, LayoutArena, LineId};
-use crate::layout::bidi::{ReconstructedLine, reconstruct_element_refs, reorder_text_for_output};
+use std::borrow::Cow;
+
+use crate::layout::bidi::{
+    ReconstructedLine, collect_raw_text, line_output, reconstruct_element_refs, reorder_for_output,
+};
 use crate::utils::{HasBBox, Rect};
 
 use super::textbox::TextBoxType;
 use super::textline::{Axis, ElementRef, LTTextLine};
+
+/// `f(&text)` as an owned string, reusing `text` itself when `f` borrows it unchanged.
+fn owned_or(text: String, f: impl for<'t> FnOnce(&'t str) -> Cow<'t, str>) -> String {
+    match f(&text) {
+        Cow::Borrowed(_) => None,
+        Cow::Owned(changed) => Some(changed),
+    }
+    .unwrap_or(text)
+}
 
 /// A text box of a page.
 #[derive(Clone, Copy)]
@@ -64,8 +77,7 @@ impl<'a> LineRef<'a> {
     pub fn axis(self) -> Axis {
         match self {
             Self::Owned(line) => line.axis(),
-            Self::Arena(arena, id) if arena.line_is_vertical(id) => Axis::Vertical,
-            Self::Arena(..) => Axis::Horizontal,
+            Self::Arena(arena, id) => arena.line_axis(id),
         }
     }
 
@@ -89,13 +101,20 @@ impl<'a> LineRef<'a> {
     pub fn raw_text(self) -> String {
         match self {
             Self::Owned(line) => line.raw_text(),
-            Self::Arena(arena, id) => arena.line_elements(id).map(ElementRef::text).collect(),
+            Self::Arena(arena, id) => collect_raw_text(arena.line_elements(id)),
         }
     }
 
     /// The output text without bidi reconstruction.
     pub fn text_without_bidi(self) -> String {
-        reorder_text_for_output(&self.raw_text())
+        owned_or(self.raw_text(), reorder_for_output)
+    }
+
+    /// The output text, as [`Self::text`] gives it, from this line's [`Self::raw_text`]:
+    /// borrowed from `raw` when the output is the raw text unchanged, as for most lines. Callers
+    /// that need both texts collect the raw text once.
+    pub fn output_for<'r>(self, raw: &'r str) -> Cow<'r, str> {
+        line_output(raw, self.elements(), self.axis(), self.bidi())
     }
 
     /// The bidi reconstruction, with each span's source element.
@@ -109,7 +128,7 @@ impl<'a> LineRef<'a> {
     }
 
     /// The line's elements, in content order.
-    pub fn elements(self) -> impl Iterator<Item = ElementRef<'a>> {
+    pub fn elements(self) -> impl Iterator<Item = ElementRef<'a>> + Clone {
         let (owned, arena) = match self {
             Self::Owned(line) => (Some(line.elements()), None),
             Self::Arena(arena, id) => (None, Some(arena.line_elements(id))),

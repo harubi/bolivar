@@ -16,10 +16,7 @@ struct ColorKey {
 
 impl ColorKey {
     fn from_slice(color: &[f64]) -> Self {
-        let mut inline = [0; 4];
-        for (slot, component) in inline.iter_mut().zip(color) {
-            *slot = component.to_bits();
-        }
+        let inline = pack_inline(color);
         let extra = if color.len() > inline.len() {
             color[inline.len()..]
                 .iter()
@@ -219,16 +216,19 @@ impl<'a> ArenaContext<'a> {
     }
 }
 
-/// A color of at most four components as bit patterns; longer colors are not remembered.
-fn color_bits(color: &[f64]) -> Option<[u64; 4]> {
+/// A color's first four components as bit patterns: equal colors pack equally, so -0.0 and 0.0
+/// stay distinct, and NaN equals itself.
+fn pack_inline(color: &[f64]) -> [u64; 4] {
     let mut bits = [0; 4];
-    if color.len() > bits.len() {
-        return None;
-    }
     for (slot, component) in bits.iter_mut().zip(color) {
         *slot = component.to_bits();
     }
-    Some(bits)
+    bits
+}
+
+/// A color of at most four components as bit patterns; longer colors are not remembered.
+fn color_bits(color: &[f64]) -> Option<[u64; 4]> {
+    (color.len() <= 4).then(|| pack_inline(color))
 }
 
 fn intern_string(interner: &mut Rodeo, cache: &mut InternCache, value: &str) -> Spur {
