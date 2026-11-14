@@ -132,19 +132,20 @@ fn contains_name(
     let Ok(resolved) = document.resolve(object) else {
         return false;
     };
-    match resolved {
-        PDFObject::Name(name) => name == expected,
-        PDFObject::Array(values) => values
-            .iter()
-            .any(|value| contains_name(document, value, expected, depth - 1, visited)),
-        PDFObject::Dict(dictionary) => dictionary.iter().any(|(key, value)| {
-            key == expected || contains_name(document, value, expected, depth - 1, visited)
-        }),
-        PDFObject::Stream(stream) => stream.attrs.iter().any(|(key, value)| {
-            key == expected || contains_name(document, value, expected, depth - 1, visited)
-        }),
-        _ => false,
-    }
+    let dictionary = match resolved {
+        PDFObject::Name(name) => return name == expected,
+        PDFObject::Array(values) => {
+            return values
+                .iter()
+                .any(|value| contains_name(document, value, expected, depth - 1, visited));
+        }
+        PDFObject::Dict(dictionary) => dictionary,
+        PDFObject::Stream(stream) => stream.attrs,
+        _ => return false,
+    };
+    dictionary.iter().any(|(key, value)| {
+        key == expected || contains_name(document, value, expected, depth - 1, visited)
+    })
 }
 
 fn has_javascript(document: &PDFDocument) -> bool {
@@ -320,11 +321,11 @@ pub fn metadata_built(m: &Metadata) -> FfiResult<Built> {
     .filter(|(_, set)| *set)
     .fold(0_i64, |bits, (flag, _)| bits | (1 << flag as u32));
     b.int(
-        Int::FileSize as usize,
+        Int::FileSize,
         i64::try_from(m.file_size_bytes).unwrap_or(i64::MAX),
     );
-    b.int(Int::PageCount as usize, m.page_count as i64);
-    b.int(Int::Flags as usize, flags);
+    b.int(Int::PageCount, m.page_count as i64);
+    b.int(Int::Flags, flags);
     b.finish()
 }
 

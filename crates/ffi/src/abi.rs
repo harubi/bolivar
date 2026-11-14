@@ -64,8 +64,6 @@ impl FfiError {
         }
     }
 
-    /// Back to a core error, for work that runs inside a core stream. Batch
-    /// building only fails on an overflow, a runtime fault.
     /// An invalid option or argument, naming the field at fault.
     pub fn invalid(field: &'static str, message: impl Into<String>) -> Self {
         Self {
@@ -234,10 +232,16 @@ pub unsafe fn free_handle<T>(ptr: *mut T) {
 /// # Safety
 /// `out` must be null or writable.
 pub unsafe fn write_out<T>(out: *mut T, field: &'static str, value: T) -> FfiResult<()> {
+    require_out(out, field)?;
+    unsafe { out.write(value) };
+    Ok(())
+}
+
+/// Refuse a null out-pointer, before any work whose result it would receive.
+pub fn require_out<T>(out: *mut T, field: &'static str) -> FfiResult<()> {
     if out.is_null() {
         return Err(FfiError::invalid(field, "out pointer is null"));
     }
-    unsafe { out.write(value) };
     Ok(())
 }
 
@@ -247,9 +251,7 @@ pub unsafe fn write_out<T>(out: *mut T, field: &'static str, value: T) -> FfiRes
 /// # Safety
 /// `out` must be null or writable.
 pub unsafe fn write_handle<T>(out: *mut *mut T, field: &'static str, value: T) -> FfiResult<()> {
-    if out.is_null() {
-        return Err(FfiError::invalid(field, "out pointer is null"));
-    }
+    require_out(out, field)?;
     unsafe { out.write(into_handle(value)) };
     Ok(())
 }
@@ -288,7 +290,11 @@ pub fn flag(byte: u8, field: &'static str) -> FfiResult<bool> {
 /// # Safety
 /// `ptr` must be null or a live handle of type `T` with no other borrow.
 pub unsafe fn handle_mut<'a, T>(ptr: *mut T) -> FfiResult<&'a mut T> {
-    unsafe { ptr.as_mut() }.ok_or_else(|| FfiError::invalid("handle", "handle is null"))
+    unsafe { ptr.as_mut() }.ok_or_else(null_handle)
+}
+
+fn null_handle() -> FfiError {
+    FfiError::invalid("handle", "handle is null")
 }
 
 /// Borrow a handle shared.
@@ -296,7 +302,15 @@ pub unsafe fn handle_mut<'a, T>(ptr: *mut T) -> FfiResult<&'a mut T> {
 /// # Safety
 /// `ptr` must be null or a live handle of type `T` with no mutable borrow.
 pub unsafe fn handle_ref<'a, T>(ptr: *const T) -> FfiResult<&'a T> {
-    unsafe { ptr.as_ref() }.ok_or_else(|| FfiError::invalid("handle", "handle is null"))
+    unsafe { ptr.as_ref() }.ok_or_else(null_handle)
+}
+
+/// Take back a handle to consume it.
+///
+/// # Safety
+/// As for [`from_handle`].
+pub unsafe fn take_handle<T>(ptr: *mut T) -> FfiResult<Box<T>> {
+    unsafe { from_handle(ptr) }.ok_or_else(null_handle)
 }
 
 // ---- live handle accounting ----------------------------------------------

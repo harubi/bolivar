@@ -32,22 +32,42 @@ pub struct Options {
     pub pages_len: i64,
 }
 
+/// Declares presence bits, one per name in order, with [`NAMES`](opt::NAMES) and
+/// [`ALL`](opt::ALL) generated from the same list so that the names `bolivar_describe` exports
+/// cannot drift from the bits.
+macro_rules! bits {
+    ($($(#[$doc:meta])* $name:ident),* $(,)?) => {
+        #[allow(non_camel_case_types, clippy::upper_case_acronyms, dead_code)]
+        #[repr(u32)]
+        enum Bit {
+            $($name),*
+        }
+        $($(#[$doc])* pub const $name: u32 = 1 << Bit::$name as u32;)*
+        /// Every bit.
+        pub const ALL: u32 = $($name)|*;
+        /// Every bit, by the name Java gives it.
+        pub const NAMES: &[(&str, u32)] = &[$((stringify!($name), $name)),*];
+    };
+}
+
 /// Presence bits of [`Options`], exported to Java by name.
 pub mod opt {
-    pub const PASSWORD: u32 = 1 << 0;
-    pub const PAGES: u32 = 1 << 1;
-    pub const MAX_PAGES: u32 = 1 << 2;
-    pub const CACHING: u32 = 1 << 3;
-    pub const BIDI: u32 = 1 << 4;
-    pub const LINE_OVERLAP: u32 = 1 << 5;
-    pub const CHAR_MARGIN: u32 = 1 << 6;
-    pub const LINE_MARGIN: u32 = 1 << 7;
-    pub const WORD_MARGIN: u32 = 1 << 8;
-    pub const BOXES_FLOW: u32 = 1 << 9;
-    /// `boxes_flow` set to none: disable the boxes-flow ordering.
-    pub const BOXES_FLOW_NONE: u32 = 1 << 10;
-    pub const DETECT_VERTICAL: u32 = 1 << 11;
-    pub const ALL_TEXTS: u32 = 1 << 12;
+    bits! {
+        PASSWORD,
+        PAGES,
+        MAX_PAGES,
+        CACHING,
+        BIDI,
+        LINE_OVERLAP,
+        CHAR_MARGIN,
+        LINE_MARGIN,
+        WORD_MARGIN,
+        BOXES_FLOW,
+        /// `boxes_flow` set to none: disable the boxes-flow ordering.
+        BOXES_FLOW_NONE,
+        DETECT_VERTICAL,
+        ALL_TEXTS,
+    }
     pub const LAYOUT: u32 = LINE_OVERLAP
         | CHAR_MARGIN
         | LINE_MARGIN
@@ -56,23 +76,6 @@ pub mod opt {
         | BOXES_FLOW_NONE
         | DETECT_VERTICAL
         | ALL_TEXTS;
-    pub const ALL: u32 = (1 << 13) - 1;
-
-    pub const NAMES: &[(&str, u32)] = &[
-        ("PASSWORD", PASSWORD),
-        ("PAGES", PAGES),
-        ("MAX_PAGES", MAX_PAGES),
-        ("CACHING", CACHING),
-        ("BIDI", BIDI),
-        ("LINE_OVERLAP", LINE_OVERLAP),
-        ("CHAR_MARGIN", CHAR_MARGIN),
-        ("LINE_MARGIN", LINE_MARGIN),
-        ("WORD_MARGIN", WORD_MARGIN),
-        ("BOXES_FLOW", BOXES_FLOW),
-        ("BOXES_FLOW_NONE", BOXES_FLOW_NONE),
-        ("DETECT_VERTICAL", DETECT_VERTICAL),
-        ("ALL_TEXTS", ALL_TEXTS),
-    ];
 }
 
 /// Table options. `present` holds one bit per field the caller set.
@@ -103,42 +106,24 @@ pub struct TableOptions {
 
 /// Presence bits of [`TableOptions`], exported to Java by name.
 pub mod topt {
-    pub const VERTICAL_STRATEGY: u32 = 1 << 0;
-    pub const HORIZONTAL_STRATEGY: u32 = 1 << 1;
-    pub const SNAP: u32 = 1 << 2;
-    pub const SNAP_X: u32 = 1 << 3;
-    pub const SNAP_Y: u32 = 1 << 4;
-    pub const JOIN: u32 = 1 << 5;
-    pub const JOIN_X: u32 = 1 << 6;
-    pub const JOIN_Y: u32 = 1 << 7;
-    pub const INTERSECTION: u32 = 1 << 8;
-    pub const INTERSECTION_X: u32 = 1 << 9;
-    pub const INTERSECTION_Y: u32 = 1 << 10;
-    pub const EXPLICIT_VERTICAL: u32 = 1 << 11;
-    pub const EXPLICIT_HORIZONTAL: u32 = 1 << 12;
-    pub const CROP: u32 = 1 << 13;
-    pub const FIRST_PAGE_CROP: u32 = 1 << 14;
-    pub const MAX_PAGES: u32 = 1 << 15;
-    pub const ALL: u32 = (1 << 16) - 1;
-
-    pub const NAMES: &[(&str, u32)] = &[
-        ("VERTICAL_STRATEGY", VERTICAL_STRATEGY),
-        ("HORIZONTAL_STRATEGY", HORIZONTAL_STRATEGY),
-        ("SNAP", SNAP),
-        ("SNAP_X", SNAP_X),
-        ("SNAP_Y", SNAP_Y),
-        ("JOIN", JOIN),
-        ("JOIN_X", JOIN_X),
-        ("JOIN_Y", JOIN_Y),
-        ("INTERSECTION", INTERSECTION),
-        ("INTERSECTION_X", INTERSECTION_X),
-        ("INTERSECTION_Y", INTERSECTION_Y),
-        ("EXPLICIT_VERTICAL", EXPLICIT_VERTICAL),
-        ("EXPLICIT_HORIZONTAL", EXPLICIT_HORIZONTAL),
-        ("CROP", CROP),
-        ("FIRST_PAGE_CROP", FIRST_PAGE_CROP),
-        ("MAX_PAGES", MAX_PAGES),
-    ];
+    bits! {
+        VERTICAL_STRATEGY,
+        HORIZONTAL_STRATEGY,
+        SNAP,
+        SNAP_X,
+        SNAP_Y,
+        JOIN,
+        JOIN_X,
+        JOIN_Y,
+        INTERSECTION,
+        INTERSECTION_X,
+        INTERSECTION_Y,
+        EXPLICIT_VERTICAL,
+        EXPLICIT_HORIZONTAL,
+        CROP,
+        FIRST_PAGE_CROP,
+        MAX_PAGES,
+    }
 }
 
 /// Table strategy codes, exported to Java by name.

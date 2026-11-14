@@ -11,6 +11,8 @@
 //!
 //! Ranges into `Text` are `i32` start/end pairs; `-1, -1` is absent.
 
+use std::rc::Rc;
+
 use rustc_hash::FxHashMap;
 
 use crate::abi::{Code, ErrorOut, FfiError, FfiResult, free_handle, guard, write_out};
@@ -110,10 +112,7 @@ impl Built {
         }
     }
 
-    pub fn kind(&self) -> u32 {
-        self.kind
-    }
-
+    #[cfg(test)]
     pub fn columns(&self) -> &[Column] {
         &self.columns
     }
@@ -131,6 +130,7 @@ pub struct Batch {
 }
 
 impl Batch {
+    #[cfg(test)]
     pub fn columns(&self) -> &[Column] {
         &self.columns
     }
@@ -166,13 +166,15 @@ pub mod common {
 
 /// Declare a batch kind: its number, named scalar slots, named ranges (held
 /// in a `Ranges` column), named flag bits, and columns after the common five.
+/// Every group may be left out when it is empty.
 macro_rules! schema {
-    ($module:ident, $kind:expr,
-     ints: [$($int:ident),* $(,)?],
-     floats: [$($float:ident),* $(,)?],
-     ranges: [$($range:ident),* $(,)?],
-     flags: [$($flag:ident),* $(,)?],
-     columns: [$($col:ident : $elem:ident),* $(,)?]) => {
+    ($module:ident, $kind:expr
+     $(, ints: [$($int:ident),* $(,)?])?
+     $(, floats: [$($float:ident),* $(,)?])?
+     $(, ranges: [$($range:ident),* $(,)?])?
+     $(, flags: [$($flag:ident),* $(,)?])?
+     $(, columns: [$($col:ident : $elem:ident),* $(,)?])?
+     $(,)?) => {
         pub mod $module {
             #![allow(dead_code)]
             use crate::batch::{Elem, Kind, COMMON};
@@ -181,25 +183,25 @@ macro_rules! schema {
 
             /// Columns, by index.
             #[derive(Debug, Clone, Copy)]
-            pub enum Col { Text, Strings, StringOff, Ints, Floats, $($col),* }
+            pub enum Col { Text, Strings, StringOff, Ints, Floats, $($($col),*)? }
 
             /// Slots of the `Ints` column.
             #[derive(Debug, Clone, Copy)]
-            pub enum Int { $($int),* }
+            pub enum Int { $($($int),*)? }
 
             /// Slots of the `Floats` column.
             #[derive(Debug, Clone, Copy)]
-            pub enum Float { $($float),* }
+            pub enum Float { $($($float),*)? }
 
             /// Named ranges in the `Ranges` column.
             #[derive(Debug, Clone, Copy)]
-            pub enum Range { $($range),* }
+            pub enum Range { $($($range),*)? }
 
             /// Bits of a flags slot.
             #[derive(Debug, Clone, Copy)]
-            pub enum Flag { $($flag),* }
+            pub enum Flag { $($($flag),*)? }
 
-            const OWN: &[(&str, Elem)] = &[$((stringify!($col), Elem::$elem)),*];
+            const OWN: &[(&str, Elem)] = &[$($((stringify!($col), Elem::$elem)),*)?];
 
             pub const COLUMNS: &[(&str, Elem)] = &{
                 let mut all = [("", Elem::U8); COMMON.len() + OWN.len()];
@@ -217,15 +219,23 @@ macro_rules! schema {
 
             pub const SCHEMA: Kind = Kind {
                 number: KIND,
-                ints: &[$(stringify!($int)),*],
-                floats: &[$(stringify!($float)),*],
-                ranges: &[$(stringify!($range)),*],
-                flags: &[$(stringify!($flag)),*],
+                ints: &[$($(stringify!($int)),*)?],
+                floats: &[$($(stringify!($float)),*)?],
+                ranges: &[$($(stringify!($range)),*)?],
+                flags: &[$($(stringify!($flag)),*)?],
                 columns: COLUMNS,
             };
 
             impl From<Col> for usize {
                 fn from(col: Col) -> usize { col as usize }
+            }
+
+            impl From<Int> for usize {
+                fn from(slot: Int) -> usize { slot as usize }
+            }
+
+            impl From<Float> for usize {
+                fn from(slot: Float) -> usize { slot as usize }
             }
         }
     };
@@ -234,21 +244,20 @@ macro_rules! schema {
 // Layout and raw pages share their first columns, the text layer, at the same
 // positions, so one reader serves both.
 macro_rules! text_layer {
-    ($module:ident, $kind:expr, ints: $ints:tt, floats: $floats:tt, columns: [$($rest:tt)*]) => {
-        schema!($module, $kind, ints: $ints, floats: $floats, ranges: [], flags: [], columns: [
+    ($module:ident, $kind:expr, ints: $ints:tt, floats: $floats:tt $(, columns: [$($rest:tt)*])?) => {
+        schema!($module, $kind, ints: $ints, floats: $floats, columns: [
             BoxBbox: F64, BoxMode: I32, BoxText: I32, BoxLines: I32,
             LineBbox: F64, LineOrient: I32, LineText: I32, LineChars: I32,
             CharX0: F64, CharY0: F64, CharX1: F64, CharY1: F64,
             CharSize: F64, CharFont: I32, CharUpright: U8, CharText: I32,
-            $($rest)*
+            $($($rest)*)?
         ]);
     };
 }
 
 text_layer!(layout, 1,
     ints: [PageNumber, TextEnd],
-    floats: [Rotate, X0, Y0, X1, Y1],
-    columns: []);
+    floats: [Rotate, X0, Y0, X1, Y1]);
 
 text_layer!(raw, 2,
 ints: [PageIndex, ObjectId, Rotation, LabelStart, LabelEnd, TextEnd],
@@ -266,8 +275,6 @@ columns: [
 schema!(page_text, 3,
 ints: [PageNumber],
 floats: [X0, Y0, X1, Y1],
-ranges: [],
-flags: [],
 columns: [
     BoxBbox: F64, BoxText: I32, BoxTextWithoutBidi: I32, BoxLines: I32,
     LineBbox: F64, LineText: I32, LineTextWithoutBidi: I32,
@@ -276,16 +283,10 @@ columns: [
 
 schema!(summary, 4,
     ints: [PageNumber],
-    floats: [Rotate, X0, Y0, X1, Y1],
-    ranges: [],
-    flags: [],
-    columns: []);
+    floats: [Rotate, X0, Y0, X1, Y1]);
 
 schema!(tables, 5,
 ints: [PageNumber],
-floats: [],
-ranges: [],
-flags: [],
 columns: [
     TableBbox: F64, TableShape: I32, TableCells: I32,
     CellIndex: I32, CellBbox: F64, CellText: I32,
@@ -293,14 +294,10 @@ columns: [
 
 schema!(table_rows, 6,
     ints: [PageNumber],
-    floats: [],
-    ranges: [],
-    flags: [],
     columns: [CellText: I32, RowOffsets: I32, TableOffsets: I32]);
 
 schema!(metadata, 7,
     ints: [FileSize, PageCount, Flags],
-    floats: [],
     ranges: [
         Title, Author, Subject, Keywords, Creator, Producer,
         CreationDateRaw, CreationDateIso, ModificationDateRaw, ModificationDateIso,
@@ -312,12 +309,7 @@ schema!(metadata, 7,
     ],
     columns: [Ranges: I32, InfoKeys: I32, InfoValues: I32]);
 
-schema!(text, 8,
-    ints: [],
-    floats: [],
-    ranges: [],
-    flags: [],
-    columns: [Utf8: U8]);
+schema!(text, 8, columns: [Utf8: U8]);
 
 /// Every kind.
 pub const KINDS: &[&Kind] = &[
@@ -352,8 +344,9 @@ pub struct Builder {
     deferred: Vec<(usize, usize, String)>,
     strings: Vec<u16>,
     string_off: Vec<i32>,
-    ids: FxHashMap<Box<str>, i32>,
-    keys: Vec<Box<str>>,
+    /// Each distinct string once, shared by the lookup and the id-ordered list.
+    ids: FxHashMap<Rc<str>, i32>,
+    keys: Vec<Rc<str>>,
     /// The id of each ASCII character, so single-byte glyphs skip hashing.
     ascii_ids: [i32; 128],
     last: [i32; 8],
@@ -404,25 +397,25 @@ impl Builder {
     }
 
     /// Set a named `Ints` slot.
-    pub fn int(&mut self, slot: usize, value: i64) {
+    pub fn int(&mut self, slot: impl Into<usize>, value: i64) {
         match &mut self.columns[common::INTS] {
-            Column::I64(v) => v[slot] = value,
+            Column::I64(v) => v[slot.into()] = value,
             _ => unreachable!("Ints is always I64"),
         }
     }
 
     /// Set a named `Floats` slot.
-    pub fn float(&mut self, slot: usize, value: f64) {
+    pub fn float(&mut self, slot: impl Into<usize>, value: f64) {
         match &mut self.columns[common::FLOATS] {
-            Column::F64(v) => v[slot] = value,
+            Column::F64(v) => v[slot.into()] = value,
             _ => unreachable!("Floats is always F64"),
         }
     }
 
     /// Set four consecutive `Floats` slots from a box.
-    pub fn float_box(&mut self, first: usize, rect: (f64, f64, f64, f64)) {
-        let [a, b, c, d]: [f64; 4] = rect.into();
-        for (offset, value) in [a, b, c, d].into_iter().enumerate() {
+    pub fn float_box(&mut self, first: impl Into<usize>, rect: (f64, f64, f64, f64)) {
+        let first = first.into();
+        for (offset, value) in <[f64; 4]>::from(rect).into_iter().enumerate() {
             self.float(first + offset, value);
         }
     }
@@ -512,8 +505,9 @@ impl Builder {
             return Ok(id);
         }
         let id = to_i32(self.keys.len(), "string table")?;
-        self.ids.insert(value.into(), id);
-        self.keys.push(value.into());
+        let key: Rc<str> = value.into();
+        self.ids.insert(Rc::clone(&key), id);
+        self.keys.push(key);
         self.strings.extend(value.encode_utf16());
         self.string_off
             .push(to_i32(self.strings.len(), "string table")?);
