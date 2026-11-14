@@ -58,7 +58,7 @@ public final class TextLine {
 
   /** The line's glyphs, made on demand. */
   public List<Glyph> glyphs() {
-    return TextLayer.list(glyphStart(), glyphEnd(), layer::glyph);
+    return new IndexedList<>(glyphStart(), glyphEnd(), layer::glyph);
   }
 
   /** A copy that does not keep the page alive. */

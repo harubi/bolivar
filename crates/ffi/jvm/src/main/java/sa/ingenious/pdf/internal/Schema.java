@@ -7,7 +7,6 @@ import static sa.ingenious.pdf.internal.Schema.Elem.U16;
 import static sa.ingenious.pdf.internal.Schema.Elem.U8;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.function.IntFunction;
 import org.jspecify.annotations.Nullable;
@@ -28,27 +27,20 @@ public final class Schema {
 
   /** Column element types, as {@code batch::Elem}. */
   public enum Elem {
-    F64(1),
-    I32(2),
-    I64(3),
-    U8(4),
-    U16(5);
+    F64,
+    I32,
+    I64,
+    U8,
+    U16;
 
-    private final int code;
+    private static final Elem[] BY_CODE = values();
 
-    Elem(int code) {
-      this.code = code;
-    }
-
-    private static final @Nullable Elem[] BY_CODE = {null, F64, I32, I64, U8, U16};
-
-    /** The element type with this native code. */
+    /** The element type with this native code: its ordinal plus one. */
     static Elem of(int code) {
-      Elem elem = code > 0 && code < BY_CODE.length ? BY_CODE[code] : null;
-      if (elem == null || elem.code != code) {
+      if (code < 1 || code > BY_CODE.length) {
         throw new IllegalStateException("unknown column element type " + code);
       }
-      return elem;
+      return BY_CODE[code - 1];
     }
   }
 
@@ -66,24 +58,34 @@ public final class Schema {
     Elem elem();
   }
 
-  /** Indices of the five columns every kind starts with. */
-  static final int TEXT = 0;
+  /** The five columns every kind starts with, at these positions. */
+  public enum Common implements Col {
+    Text(U16),
+    Strings(U16),
+    StringOff(I32),
+    Ints(I64),
+    Floats(F64);
 
-  static final int STRINGS = 1;
-  static final int STRING_OFF = 2;
-  static final int INTS = 3;
-  static final int FLOATS = 4;
+    private final Elem elem;
+
+    Common(Elem elem) {
+      this.elem = elem;
+    }
+
+    @Override
+    public Elem elem() {
+      return elem;
+    }
+  }
+
+  /** Where a kind's own columns start: after the common ones. */
+  static final int OWN = Common.values().length;
 
   /** The layout page. Raw pages share its columns at the same positions. */
   public static final class Layout {
     private Layout() {}
 
     public enum Col implements Schema.Col {
-      Text(U16),
-      Strings(U16),
-      StringOff(I32),
-      Ints(I64),
-      Floats(F64),
       BoxBbox(F64),
       BoxMode(I32),
       BoxText(I32),
@@ -105,6 +107,11 @@ public final class Schema {
 
       Col(Elem elem) {
         this.elem = elem;
+      }
+
+      @Override
+      public int index() {
+        return OWN + ordinal();
       }
 
       @Override
@@ -155,7 +162,7 @@ public final class Schema {
       CellBboxTopDown(F64),
       CellText(I32);
 
-      private static final int SHARED = Layout.Col.values().length;
+      private static final int SHARED = OWN + Layout.Col.values().length;
 
       private final Elem elem;
 
@@ -197,11 +204,6 @@ public final class Schema {
     private PageText() {}
 
     public enum Col implements Schema.Col {
-      Text(U16),
-      Strings(U16),
-      StringOff(I32),
-      Ints(I64),
-      Floats(F64),
       BoxBbox(F64),
       BoxText(I32),
       BoxTextWithoutBidi(I32),
@@ -217,6 +219,11 @@ public final class Schema {
 
       Col(Elem elem) {
         this.elem = elem;
+      }
+
+      @Override
+      public int index() {
+        return OWN + ordinal();
       }
 
       @Override
@@ -241,25 +248,6 @@ public final class Schema {
   public static final class Summary {
     private Summary() {}
 
-    public enum Col implements Schema.Col {
-      Text(U16),
-      Strings(U16),
-      StringOff(I32),
-      Ints(I64),
-      Floats(F64);
-
-      private final Elem elem;
-
-      Col(Elem elem) {
-        this.elem = elem;
-      }
-
-      @Override
-      public Elem elem() {
-        return elem;
-      }
-    }
-
     public enum IntSlot {
       PageNumber
     }
@@ -278,11 +266,6 @@ public final class Schema {
     private Tables() {}
 
     public enum Col implements Schema.Col {
-      Text(U16),
-      Strings(U16),
-      StringOff(I32),
-      Ints(I64),
-      Floats(F64),
       TableBbox(F64),
       TableShape(I32),
       TableCells(I32),
@@ -294,6 +277,11 @@ public final class Schema {
 
       Col(Elem elem) {
         this.elem = elem;
+      }
+
+      @Override
+      public int index() {
+        return OWN + ordinal();
       }
 
       @Override
@@ -312,11 +300,6 @@ public final class Schema {
     private TableRows() {}
 
     public enum Col implements Schema.Col {
-      Text(U16),
-      Strings(U16),
-      StringOff(I32),
-      Ints(I64),
-      Floats(F64),
       CellText(I32),
       RowOffsets(I32),
       TableOffsets(I32);
@@ -325,6 +308,11 @@ public final class Schema {
 
       Col(Elem elem) {
         this.elem = elem;
+      }
+
+      @Override
+      public int index() {
+        return OWN + ordinal();
       }
 
       @Override
@@ -343,11 +331,6 @@ public final class Schema {
     private Metadata() {}
 
     public enum Col implements Schema.Col {
-      Text(U16),
-      Strings(U16),
-      StringOff(I32),
-      Ints(I64),
-      Floats(F64),
       Ranges(I32),
       InfoKeys(I32),
       InfoValues(I32);
@@ -356,6 +339,11 @@ public final class Schema {
 
       Col(Elem elem) {
         this.elem = elem;
+      }
+
+      @Override
+      public int index() {
+        return OWN + ordinal();
       }
 
       @Override
@@ -411,17 +399,17 @@ public final class Schema {
     private Text() {}
 
     public enum Col implements Schema.Col {
-      Text(U16),
-      Strings(U16),
-      StringOff(I32),
-      Ints(I64),
-      Floats(F64),
       Utf8(U8);
 
       private final Elem elem;
 
       Col(Elem elem) {
         this.elem = elem;
+      }
+
+      @Override
+      public int index() {
+        return OWN + ordinal();
       }
 
       @Override
@@ -437,33 +425,38 @@ public final class Schema {
   // The lists are List.of, so unmodifiable; the checker only trusts Guava's types.
   @SuppressWarnings("ImmutableEnumChecker")
   public enum Kind {
-    LAYOUT(1, Layout.Col.values(), Layout.IntSlot.values(), Layout.FloatSlot.values(), NONE, NONE),
+    LAYOUT(
+        1,
+        columns(Layout.Col.values()),
+        Layout.IntSlot.values(),
+        Layout.FloatSlot.values(),
+        NONE,
+        NONE),
     RAW(
         2,
-        concat(Layout.Col.values(), Raw.Col.values()),
+        columns(Layout.Col.values(), Raw.Col.values()),
         Raw.IntSlot.values(),
         Raw.FloatSlot.values(),
         NONE,
         NONE),
     PAGE_TEXT(
         3,
-        PageText.Col.values(),
+        columns(PageText.Col.values()),
         PageText.IntSlot.values(),
         PageText.FloatSlot.values(),
         NONE,
         NONE),
-    SUMMARY(
-        4, Summary.Col.values(), Summary.IntSlot.values(), Summary.FloatSlot.values(), NONE, NONE),
-    TABLES(5, Tables.Col.values(), Tables.IntSlot.values(), NONE, NONE, NONE),
-    TABLE_ROWS(6, TableRows.Col.values(), TableRows.IntSlot.values(), NONE, NONE, NONE),
+    SUMMARY(4, columns(), Summary.IntSlot.values(), Summary.FloatSlot.values(), NONE, NONE),
+    TABLES(5, columns(Tables.Col.values()), Tables.IntSlot.values(), NONE, NONE, NONE),
+    TABLE_ROWS(6, columns(TableRows.Col.values()), TableRows.IntSlot.values(), NONE, NONE, NONE),
     METADATA(
         7,
-        Metadata.Col.values(),
+        columns(Metadata.Col.values()),
         Metadata.IntSlot.values(),
         NONE,
         Metadata.RangeSlot.values(),
         Metadata.FlagBit.values()),
-    TEXT(8, Text.Col.values(), NONE, NONE, NONE, NONE);
+    TEXT(8, columns(Text.Col.values()), NONE, NONE, NONE, NONE);
 
     private final int number;
     private final List<Col> columns;
@@ -491,10 +484,13 @@ public final class Schema {
       this.floatType = floats.length == 0 ? null : floats[0].getDeclaringClass();
     }
 
-    private static Col[] concat(Col[] first, Col[] second) {
-      Col[] all = Arrays.copyOf(first, first.length + second.length, Col[].class);
-      System.arraycopy(second, 0, all, first.length, second.length);
-      return all;
+    /** The common columns, then each group of a kind's own, in order. */
+    private static Col[] columns(Col[]... own) {
+      List<Col> all = new ArrayList<>(List.of(Common.values()));
+      for (Col[] group : own) {
+        all.addAll(List.of(group));
+      }
+      return all.toArray(Col[]::new);
     }
 
     /** Throw unless {@code slot} is one of this kind's {@code Ints} slots. */

@@ -9,6 +9,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 import java.lang.foreign.MemorySegment;
 import org.jspecify.annotations.Nullable;
+import sa.ingenious.pdf.BoundingBox;
 
 /**
  * One batch copied into Java arrays. The native batch is freed as soon as it is read, so no native
@@ -40,7 +41,7 @@ public final class Columns {
   private Columns(Schema.Kind kind, Object[] columns, String[] strings, long elements) {
     this.kind = kind;
     this.columns = columns;
-    this.text = (char[]) columns[Schema.TEXT];
+    this.text = (char[]) columns[Schema.Common.Text.index()];
     this.strings = strings;
     this.elements = elements;
   }
@@ -91,13 +92,13 @@ public final class Columns {
       columns[i] = copy(dir.get(ADDRESS, base + PTR), len, elem);
       elements += len;
     }
-    int ints = ((long[]) columns[Schema.INTS]).length;
-    int floats = ((double[]) columns[Schema.FLOATS]).length;
+    int ints = ((long[]) columns[Schema.Common.Ints.index()]).length;
+    int floats = ((double[]) columns[Schema.Common.Floats.index()]).length;
     if (ints != kind.intCount() || floats != kind.floatCount()) {
       throw new IllegalStateException("batch kind " + kind + " has the wrong scalar slots");
     }
-    char[] chars = (char[]) columns[Schema.STRINGS];
-    int[] offsets = (int[]) columns[Schema.STRING_OFF];
+    char[] chars = (char[]) columns[Schema.Common.Strings.index()];
+    int[] offsets = (int[]) columns[Schema.Common.StringOff.index()];
     String[] strings = new String[Math.max(offsets.length - 1, 0)];
     for (int i = 0; i < strings.length; i++) {
       strings[i] = new String(chars, offsets[i], offsets[i + 1] - offsets[i]);
@@ -109,16 +110,8 @@ public final class Columns {
     if (len < 0 || len > Integer.MAX_VALUE - 8) {
       throw new IllegalStateException("column length out of range: " + len);
     }
+    // A zero-length reinterpret gives an empty array, for a NULL pointer too.
     int n = (int) len;
-    if (n == 0) {
-      return switch (elem) {
-        case F64 -> new double[0];
-        case I32 -> new int[0];
-        case I64 -> new long[0];
-        case U8 -> new byte[0];
-        case U16 -> new char[0];
-      };
-    }
     return switch (elem) {
       case F64 -> ptr.reinterpret(n * 8L).toArray(JAVA_DOUBLE);
       case I32 -> ptr.reinterpret(n * 4L).toArray(JAVA_INT);
@@ -149,22 +142,28 @@ public final class Columns {
     return (int[]) columns[index(column)];
   }
 
-  public long[] i64(Schema.Col column) {
-    return (long[]) columns[index(column)];
-  }
-
   public byte[] u8(Schema.Col column) {
     return (byte[]) columns[index(column)];
   }
 
   /** An {@code Ints} slot; it must belong to this batch's kind. */
   public long integer(Enum<?> slot) {
-    return ((long[]) columns[Schema.INTS])[kind.intSlot(slot)];
+    return ((long[]) columns[Schema.Common.Ints.index()])[kind.intSlot(slot)];
   }
 
   /** A {@code Floats} slot; it must belong to this batch's kind. */
   public double real(Enum<?> slot) {
-    return ((double[]) columns[Schema.FLOATS])[kind.floatSlot(slot)];
+    return ((double[]) columns[Schema.Common.Floats.index()])[kind.floatSlot(slot)];
+  }
+
+  /**
+   * The box in the four {@code Floats} slots from {@code x0}: x0, y0, x1, y1, as every kind
+   * declares them.
+   */
+  public BoundingBox box(Enum<?> x0) {
+    double[] floats = (double[]) columns[Schema.Common.Floats.index()];
+    int o = kind.floatSlot(x0);
+    return new BoundingBox(floats[o], floats[o + 1], floats[o + 2], floats[o + 3]);
   }
 
   /** The batch text; ranges index into it. Shared, not copied: do not change it. */

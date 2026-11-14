@@ -2,6 +2,7 @@ package sa.ingenious.pdf;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import org.jspecify.annotations.Nullable;
@@ -53,9 +54,7 @@ public final class RawPage extends TextPage {
             Math.toIntExact(c.integer(IntSlot.LabelStart)),
             Math.toIntExact(c.integer(IntSlot.LabelEnd)));
     userUnit = c.real(FloatSlot.UserUnit);
-    layoutBbox =
-        new BoundingBox(
-            c.real(FloatSlot.X0), c.real(FloatSlot.Y0), c.real(FloatSlot.X1), c.real(FloatSlot.Y1));
+    layoutBbox = c.box(FloatSlot.X0);
     pageBoxes = c.f64(Col.PageBoxes);
     pageBoxPresent = c.u8(Col.PageBoxPresent);
     advance = c.f64(Col.CharAdvance);
@@ -145,15 +144,15 @@ public final class RawPage extends TextPage {
   }
 
   public @Nullable String glyphTag(int glyph) {
-    return string(tag[glyph]);
+    return layer.string(tag[glyph]);
   }
 
   public @Nullable String glyphNonStrokingColorSpace(int glyph) {
-    return string(ncs[glyph]);
+    return layer.string(ncs[glyph]);
   }
 
   public @Nullable String glyphStrokingColorSpace(int glyph) {
-    return string(scs[glyph]);
+    return layer.string(scs[glyph]);
   }
 
   /** The non-stroking colour's components, copied, or null. */
@@ -166,25 +165,40 @@ public final class RawPage extends TextPage {
     return color(scolor, glyph);
   }
 
-  private @Nullable String string(int id) {
-    return id < 0 ? null : layer.strings[id];
-  }
-
   private double @Nullable [] color(int[] ranges, int glyph) {
     int start = ranges[2 * glyph];
     return start < 0 ? null : Arrays.copyOfRange(colorPool, start, ranges[2 * glyph + 1]);
   }
 
-  private @Nullable List<Double> colorList(int[] ranges, int glyph) {
+  /** A colour as an immutable list, shared while glyphs share its pool range. */
+  private record ColorList(int start, int end, List<Double> values) {}
+
+  // Glyphs in a run share one colour range, so one list serves the run. The record is immutable,
+  // so a read from another thread sees either a whole entry or the previous one.
+  private @Nullable ColorList lastNonStroking;
+  private @Nullable ColorList lastStroking;
+
+  private @Nullable List<Double> colorList(int[] ranges, int glyph, boolean nonStroking) {
     int start = ranges[2 * glyph];
     if (start < 0) {
       return null;
     }
-    Double[] values = new Double[ranges[2 * glyph + 1] - start];
+    int end = ranges[2 * glyph + 1];
+    ColorList last = nonStroking ? lastNonStroking : lastStroking;
+    if (last != null && last.start == start && last.end == end) {
+      return last.values;
+    }
+    Double[] values = new Double[end - start];
     for (int k = 0; k < values.length; k++) {
       values[k] = colorPool[start + k];
     }
-    return TextLayer.wrap(values);
+    var entry = new ColorList(start, end, TextLayer.wrap(values));
+    if (nonStroking) {
+      lastNonStroking = entry;
+    } else {
+      lastStroking = entry;
+    }
+    return entry.values;
   }
 
   /** Every glyph's advance, copied. */
@@ -214,8 +228,8 @@ public final class RawPage extends TextPage {
         glyphTag(glyph),
         glyphNonStrokingColorSpace(glyph),
         glyphStrokingColorSpace(glyph),
-        colorList(ncolor, glyph),
-        colorList(scolor, glyph));
+        colorList(ncolor, glyph, true),
+        colorList(scolor, glyph, false));
   }
 
   /** The text boxes with raw text and graphics state, as records. */
@@ -231,14 +245,16 @@ public final class RawPage extends TextPage {
           characters[g] = character(line.glyphStart() + g);
         }
         String text = line.text();
-        String rawText = line.rawText();
+        int index = line.index();
+        int[] rawRanges = Objects.requireNonNull(layer.lineRawText);
+        // Native code gives raw and output text one range when they are equal: one string then.
+        String rawText =
+            TextLayer.sameRange(layer.lineText, rawRanges, index)
+                ? text
+                : layer.range(rawRanges, index);
         lines[l] =
             new RawTextLine(
-                line.bbox(),
-                line.orientation(),
-                rawText == null ? text : rawText,
-                text,
-                TextLayer.wrap(characters));
+                line.bbox(), line.orientation(), rawText, text, TextLayer.wrap(characters));
       }
       boxes[b] = new RawTextBox(box.bbox(), box.writingMode(), box.text(), TextLayer.wrap(lines));
     }
@@ -247,7 +263,7 @@ public final class RawPage extends TextPage {
 
   // ---- tables -----------------------------------------------------------------------------
 
-  private RawTableBoundingBox tableBox(double[] boxes, int index) {
+  private static RawTableBoundingBox tableBox(double[] boxes, int index) {
     int o = 4 * index;
     return new RawTableBoundingBox(boxes[o], boxes[o + 1], boxes[o + 2], boxes[o + 3]);
   }
@@ -258,27 +274,18 @@ public final class RawPage extends TextPage {
 
   /** The page's tables in pdfplumber space, as records. */
   public List<RawTable> tables() {
-    RawTable[] tables = new RawTable[tableCount()];
-    for (int t = 0; t < tables.length; t++) {
-      RawTableCell[] cells = new RawTableCell[tableCells[t + 1] - tableCells[t]];
-      for (int i = tableCells[t]; i < tableCells[t + 1]; i++) {
-        cells[i - tableCells[t]] =
+    List<RawTable> tables = new ArrayList<>(tableCount());
+    Decode.tables(
+        tableShape,
+        tableCells,
+        cellIndex,
+        RawTableCell[]::new,
+        (i, row, column, rowSpan, columnSpan) ->
             new RawTableCell(
-                cellIndex[4 * i],
-                cellIndex[4 * i + 1],
-                cellIndex[4 * i + 2],
-                cellIndex[4 * i + 3],
-                tableBox(cellBbox, i),
-                layer.range(cellText, i));
-      }
-      tables[t] =
-          new RawTable(
-              tableBox(tableBbox, t),
-              tableShape[2 * t],
-              tableShape[2 * t + 1],
-              TextLayer.wrap(cells));
-    }
-    return TextLayer.wrap(tables);
+                row, column, rowSpan, columnSpan, tableBox(cellBbox, i), layer.range(cellText, i)),
+        (t, rows, columns, cells) -> new RawTable(tableBox(tableBbox, t), rows, columns, cells),
+        tables::add);
+    return Collections.unmodifiableList(tables);
   }
 
   @Override

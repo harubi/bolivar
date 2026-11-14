@@ -17,9 +17,7 @@ public final class LayoutPage extends TextPage {
     super(new TextLayer(c, Math.toIntExact(c.integer(IntSlot.TextEnd)), false));
     pageNumber = Math.toIntExact(c.integer(IntSlot.PageNumber));
     rotate = c.real(FloatSlot.Rotate);
-    bbox =
-        new BoundingBox(
-            c.real(FloatSlot.X0), c.real(FloatSlot.Y0), c.real(FloatSlot.X1), c.real(FloatSlot.Y1));
+    bbox = c.box(FloatSlot.X0);
   }
 
   /** The 1-based page number. */
