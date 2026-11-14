@@ -150,6 +150,7 @@ pub(crate) fn build_extract_options_with_rotation(
         laparams: laparams.map(|p| p.clone().into()),
         rotation,
         bidi,
+        read_ahead: None,
     };
     if options.laparams.is_none() {
         options.laparams = Some(bolivar_core::layout::LAParams::default());

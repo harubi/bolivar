@@ -1,5 +1,7 @@
 //! Extraction options and result type aliases.
 
+use std::num::NonZeroUsize;
+
 use crate::layout::LAParams;
 
 /// Options for text extraction.
@@ -27,6 +29,13 @@ pub struct ExtractOptions {
 
     /// Use ICU to reconstruct visual bidirectional text into logical order.
     pub bidi: bool,
+
+    /// How many pages a stream may have started or finished but not yet handed out, ahead of
+    /// its reader. It also caps the stream's parallelism at `min(workers, read_ahead)`, and the
+    /// finished pages waiting behind a slow one at `read_ahead - 1`. None uses
+    /// [`DEFAULT_STREAM_WINDOW_CAPACITY`](crate::engine::stream::DEFAULT_STREAM_WINDOW_CAPACITY).
+    /// Streams only: whole-document calls such as `extract_text` ignore it.
+    pub read_ahead: Option<NonZeroUsize>,
 }
 
 impl Default for ExtractOptions {
@@ -39,6 +48,7 @@ impl Default for ExtractOptions {
             laparams: None,
             rotation: 0,
             bidi: false,
+            read_ahead: None,
         }
     }
 }

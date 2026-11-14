@@ -348,6 +348,7 @@ pub fn extract_pages_with_images_with_document(
         doc,
         options.page_numbers,
         options.maxpages,
+        options.read_ahead,
         no_precheck_cancellable::<LTPage>,
         move |arena, page_idx, page, doc, cancellation| {
             cancellation.check()?;
@@ -414,6 +415,7 @@ where
         doc,
         options.page_numbers,
         options.maxpages,
+        options.read_ahead,
         no_precheck_cancellable::<R>,
         move |arena, page_idx, page, doc, cancellation| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
@@ -516,6 +518,7 @@ where
         doc,
         options.page_numbers,
         options.maxpages,
+        options.read_ahead,
         no_precheck_cancellable::<R>,
         move || TableWorkerState::new(caching),
         move |state, arena, page_idx, page, doc, cancellation| {
@@ -668,6 +671,7 @@ where
         doc,
         options.page_numbers,
         options.maxpages,
+        options.read_ahead,
         no_precheck_cancellable::<R>,
         move |arena, page_idx, page, doc, cancellation| {
             let geom = geoms.get(page_idx, page)?;
@@ -726,6 +730,7 @@ pub fn extract_text_stream_from_doc_with_geometries(
         doc,
         options.page_numbers,
         options.maxpages,
+        options.read_ahead,
         no_precheck_cancellable::<String>,
         move |arena, page_idx, page, doc, cancellation| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
@@ -776,6 +781,7 @@ pub fn extract_words_stream_from_doc_with_geometries(
         doc,
         options.page_numbers,
         options.maxpages,
+        options.read_ahead,
         no_precheck_cancellable::<Vec<WordObj>>,
         move |arena, page_idx, page, doc, cancellation| {
             let mut rsrcmgr = PDFResourceManager::with_caching(caching);
@@ -819,6 +825,7 @@ pub fn extract_tables_with_text_spans_stream_from_doc_with_settings(
         doc,
         options.page_numbers.clone(),
         options.maxpages,
+        options.read_ahead,
         no_precheck_cancellable::<(PageTables, Vec<crate::layout::table::TableTextSpans>)>,
         move || TableWorkerState::new(caching),
         move |state, arena, _page_idx, page, doc, cancellation| {
@@ -899,6 +906,7 @@ where
         doc,
         options.page_numbers.clone(),
         options.maxpages,
+        options.read_ahead,
         no_precheck_cancellable::<R>,
         move || TableWorkerState::new(caching),
         move |state, arena, page_idx, page, doc, cancellation| {
@@ -1622,6 +1630,39 @@ mod tests {
 
         assert_eq!(out.len(), 2);
         assert_eq!(usage, 0);
+    }
+
+    #[test]
+    fn read_ahead_bounds_the_pages_an_unread_stream_finishes() {
+        let pdf = build_minimal_pdf_with_pages(6);
+        let doc = Arc::new(PDFDocument::new(pdf, "").unwrap());
+        let (finished, finished_pages) = std::sync::mpsc::channel();
+        let options = ExtractOptions {
+            read_ahead: std::num::NonZeroUsize::new(2),
+            ..ExtractOptions::default()
+        };
+        let stream = extract_pages_stream_with(doc, options, move |page_idx, _, _| {
+            finished.send(page_idx).expect("finish signal");
+            Ok(page_idx)
+        })
+        .unwrap();
+
+        let wait = std::time::Duration::from_secs(5);
+        let mut seen = vec![
+            finished_pages.recv_timeout(wait).expect("first page"),
+            finished_pages.recv_timeout(wait).expect("second page"),
+        ];
+        seen.sort_unstable();
+        assert_eq!(seen, vec![0, 1]);
+        assert!(
+            finished_pages
+                .recv_timeout(std::time::Duration::from_millis(200))
+                .is_err(),
+            "a third page ran with nobody reading"
+        );
+
+        let pages: Vec<usize> = stream.map(|r| r.unwrap().1).collect();
+        assert_eq!(pages, vec![0, 1, 2, 3, 4, 5]);
     }
 
     #[test]
