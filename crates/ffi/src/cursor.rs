@@ -5,12 +5,13 @@
 //! another thread never needs the lock `next` holds. The JVM keeps the cursor
 //! alive until every call on it has returned.
 
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 use bolivar_core::engine::{CancellationHandle, Stream};
 use bolivar_core::extract::{
-    GeometrySource, extract_layout_tables_metadata_stream_with, extract_pages_stream_with,
-    extract_tables_metadata_stream_with, extract_tables_stream_with,
+    CursorSelection, GeometrySource, extract_layout_tables_metadata_stream_with,
+    extract_pages_stream_with, extract_tables_metadata_stream_with, extract_tables_stream_with,
 };
 use bolivar_core::table::{PageGeometry, TableSettings};
 
@@ -56,12 +57,14 @@ type PageBatch = FfiResult<Built>;
 
 fn open_stream(kind: u32, document: &Document, tables: Tables) -> FfiResult<Stream<PageBatch>> {
     let doc = Arc::clone(&document.doc);
-    let mut options = document.extract.clone();
+    let mut selection = CursorSelection::default();
     if matches!(kind, tables::KIND | table_rows::KIND)
-        && let Some(max_pages) = tables.max_pages
+        && let Some(max_pages) = tables.max_pages.and_then(NonZeroUsize::new)
     {
-        options.maxpages = max_pages;
+        // Narrows the document's selection, as every cursor selection does.
+        selection = selection.max_pages(max_pages);
     }
+    let options = document.extract.narrowed(&document.doc, &selection);
     let ffi = |result: PageBatch| -> bolivar_core::Result<PageBatch> { Ok(result) };
     Ok(match kind {
         layout::KIND => extract_pages_stream_with(doc, options, move |index, _, page| {

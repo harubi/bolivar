@@ -179,6 +179,7 @@ fn drain(doc: *mut Document, number: u32, tables: Option<&TableOptions>) -> Vec<
 const LAYOUT: u32 = 1;
 const RAW: u32 = 2;
 const TABLES: u32 = 5;
+const TABLE_ROWS: u32 = 6;
 const METADATA: u32 = 7;
 const TEXT: u32 = 8;
 
@@ -477,6 +478,39 @@ fn options_select_pages_and_raw_pages_carry_labels() {
         raw[0].text(0, raw[0].int("TextEnd"))
     );
     unsafe { bolivar_document_free(doc) };
+}
+
+fn table_row_pages(document_max: Option<i64>, table_max: Option<i64>) -> Vec<i64> {
+    let mut options = Options::empty();
+    if let Some(max) = document_max {
+        options.present = opt::MAX_PAGES;
+        options.max_pages = max;
+    }
+    let doc = open(&fixture("contrib/pagelabels.pdf"), Some(&options)).unwrap();
+    let mut tables = TableOptions::empty();
+    if let Some(max) = table_max {
+        tables.present = topt::MAX_PAGES;
+        tables.max_pages = max;
+    }
+    let pages = drain(doc, TABLE_ROWS, Some(&tables))
+        .iter()
+        .map(|v| v.int("PageNumber"))
+        .collect();
+    unsafe { bolivar_document_free(doc) };
+    pages
+}
+
+#[test]
+fn table_max_pages_stays_inside_the_document_selection() {
+    let _serial = serial();
+    assert_eq!(table_row_pages(None, Some(3)), [1, 2, 3]);
+    assert_eq!(table_row_pages(Some(4), None), [1, 2, 3, 4]);
+    assert_eq!(table_row_pages(Some(4), Some(2)), [1, 2]);
+    assert_eq!(
+        table_row_pages(Some(1), Some(3)),
+        [1],
+        "a table cursor never reads pages the document does not select"
+    );
 }
 
 #[test]
