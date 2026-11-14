@@ -6,7 +6,7 @@
 use bolivar_core::arena::PageArena;
 use bolivar_core::error::{PdfError, Result as CoreResult};
 use bolivar_core::extract::{
-    ExtractOptions,
+    ExtractOptions, export_images_with_document as core_export_images_with_document,
     extract_pages_with_images_with_document as core_extract_pages_with_images_with_document,
     extract_text_with_document as core_extract_text_with_document,
 };
@@ -378,6 +378,61 @@ pub fn extract_pages_with_images_from_path(
     Ok(pages.into_iter().map(ltpage_to_py).collect())
 }
 
+/// Write the images of the selected pages of PDF bytes to `output_dir`, with no layout analysis
+/// and no page kept: what `extract_pages_with_images` writes, without building its pages.
+#[pyfunction(name = "_export_images")]
+#[pyo3(signature = (data, output_dir, password = "", page_numbers = None, maxpages = 0, caching = true, rotation = 0))]
+pub fn export_images(
+    py: Python<'_>,
+    data: &Bound<'_, PyAny>,
+    output_dir: &str,
+    password: &str,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+    rotation: i64,
+) -> PyResult<()> {
+    let options = build_extract_options_with_rotation(
+        password,
+        page_numbers,
+        maxpages,
+        caching,
+        None,
+        rotation,
+        false,
+    );
+    let doc = open_document_from_input(py, data, password, caching, true)?;
+    py.detach(|| core_export_images_with_document(doc, options, output_dir))
+        .map_err(|e| core_error_to_py(py, "Failed to export images", e))
+}
+
+/// [`export_images`] for a memory-mapped file path. Do not change the file during this call.
+#[pyfunction(name = "_export_images_from_path")]
+#[pyo3(signature = (path, output_dir, password = "", page_numbers = None, maxpages = 0, caching = true, rotation = 0))]
+pub fn export_images_from_path(
+    py: Python<'_>,
+    path: &str,
+    output_dir: &str,
+    password: &str,
+    page_numbers: Option<Vec<usize>>,
+    maxpages: usize,
+    caching: bool,
+    rotation: i64,
+) -> PyResult<()> {
+    let doc = open_document_from_path(path, password, caching, true)?;
+    let options = build_extract_options_with_rotation(
+        password,
+        page_numbers,
+        maxpages,
+        caching,
+        None,
+        rotation,
+        false,
+    );
+    py.detach(|| core_export_images_with_document(doc, options, output_dir))
+        .map_err(|e| core_error_to_py(py, "Failed to export images", e))
+}
+
 /// Register the table module functions with the Python module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_text, m)?)?;
@@ -386,6 +441,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_pages_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages_with_images, m)?)?;
     m.add_function(wrap_pyfunction!(extract_pages_with_images_from_path, m)?)?;
+    m.add_function(wrap_pyfunction!(export_images, m)?)?;
+    m.add_function(wrap_pyfunction!(export_images_from_path, m)?)?;
     m.add_function(wrap_pyfunction!(process_page, m)?)?;
     m.add_function(wrap_pyfunction!(process_pages, m)?)?;
     m.add_function(wrap_pyfunction!(extract_tables_for_page_indexed, m)?)?;

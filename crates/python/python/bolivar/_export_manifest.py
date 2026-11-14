@@ -110,6 +110,8 @@ PUBLIC_EXPORTS = (
 )
 
 BRIDGE_EXPORTS = (
+    "_export_images",
+    "_export_images_from_path",
     "_extract_tables_for_page_indexed",
     "_extract_tables_for_compat_page",
     "_extract_words_for_page_indexed",

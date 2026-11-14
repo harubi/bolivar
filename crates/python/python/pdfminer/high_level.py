@@ -26,6 +26,10 @@ from bolivar import (
 from bolivar import (
     extract_text_from_path as _extract_text_from_path,
 )
+from bolivar._bridge_api import _export_images as _native_export_images
+from bolivar._bridge_api import (
+    _export_images_from_path as _native_export_images_from_path,
+)
 
 from .converter import HOCRConverter, HTMLConverter, TextConverter, XMLConverter
 from .image import ImageWriter
@@ -149,34 +153,16 @@ def _export_images(
     page_numbers: list[int] | None,
     maxpages: int,
     caching: bool,
-    laparams: LAParams | None,
     rotation: int,
-    bidi: bool,
 ) -> None:
-    """Write the images of the selected pages to `output_dir`."""
+    """Write the images of the selected pages to `output_dir`, one page at a time."""
     if isinstance(resolved, str):
-        _extract_pages_with_images_from_path(
-            resolved,
-            output_dir,
-            password,
-            page_numbers,
-            maxpages,
-            caching,
-            laparams,
-            rotation,
-            bidi,
+        _native_export_images_from_path(
+            resolved, output_dir, password, page_numbers, maxpages, caching, rotation
         )
     else:
-        _extract_pages_with_images(
-            resolved,
-            output_dir,
-            password,
-            page_numbers,
-            maxpages,
-            caching,
-            laparams,
-            rotation,
-            bidi,
+        _native_export_images(
+            resolved, output_dir, password, page_numbers, maxpages, caching, rotation
         )
 
 
@@ -215,21 +201,11 @@ def extract_text_to_fp(
     )
 
     if output_type in {"tag", "text"}:
-        if output_type == "text" and output_dir is not None and output_dir != "":
-            # The text converter renders text only; the images go out through the native
-            # writer, as they do for the other outputs.
+        # The text converter writes text only: a Python LTImage holds no image data.
+        # So the images go out after the text, through the native writer, page by page.
+        resolved = None
+        if output_type == "text" and imagewriter is not None:
             resolved = _resolve_input(inf)
-            _export_images(
-                resolved,
-                output_dir,
-                password,
-                page_numbers,
-                maxpages,
-                not disable_caching,
-                laparams,
-                rotation,
-                bidi,
-            )
             if not isinstance(resolved, str):
                 inf = io.BytesIO(resolved)
         rsrcmgr = PDFResourceManager(caching=not disable_caching)
@@ -259,6 +235,16 @@ def extract_text_to_fp(
             page.rotate = (page.rotate + rotation) % 360
             interpreter.process_page(page)
         device.close()
+        if resolved is not None and output_dir is not None:
+            _export_images(
+                resolved,
+                output_dir,
+                password,
+                page_numbers,
+                maxpages,
+                not disable_caching,
+                rotation,
+            )
         return
 
     rsrcmgr = PDFResourceManager(caching=not disable_caching)
