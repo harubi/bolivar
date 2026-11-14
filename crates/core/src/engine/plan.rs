@@ -38,13 +38,13 @@ pub fn validate_geometry_count(order: &[usize], geometry_count: usize) -> Result
 
 /// The pages of a list that exist in a document, one bit per page. Built once, it makes a
 /// selection O(pages + list), where looking each page up in the list would be O(pages × list).
-pub(crate) struct PageSet {
+struct PageSet {
     bits: Vec<u64>,
 }
 
 impl PageSet {
     /// The pages of `page_numbers` below `page_count`; the others are ignored.
-    pub(crate) fn new(page_count: usize, page_numbers: &[usize]) -> Self {
+    fn new(page_count: usize, page_numbers: &[usize]) -> Self {
         let mut bits = vec![0u64; page_count.div_ceil(64)];
         for &page_idx in page_numbers {
             if page_idx < page_count {
@@ -54,11 +54,29 @@ impl PageSet {
         Self { bits }
     }
 
-    pub(crate) fn contains(&self, page_idx: usize) -> bool {
+    fn contains(&self, page_idx: usize) -> bool {
         self.bits
             .get(page_idx / 64)
             .is_some_and(|word| word & (1 << (page_idx % 64)) != 0)
     }
+}
+
+/// The pages of `order` that are in `pages` (every page when None), past the first `skip` of
+/// those, and at most `limit` of them. Pages at or past `page_count` are never kept.
+pub(crate) fn kept_pages(
+    order: impl IntoIterator<Item = usize>,
+    page_count: usize,
+    pages: Option<&[usize]>,
+    skip: usize,
+    limit: Option<usize>,
+) -> Vec<usize> {
+    let wanted = pages.map(|pages| PageSet::new(page_count, pages));
+    order
+        .into_iter()
+        .filter(|&page_idx| wanted.as_ref().is_none_or(|set| set.contains(page_idx)))
+        .skip(skip)
+        .take(limit.unwrap_or(usize::MAX))
+        .collect()
 }
 
 fn select_pages_ref(
@@ -66,13 +84,8 @@ fn select_pages_ref(
     page_numbers: Option<&[usize]>,
     maxpages: usize,
 ) -> Vec<usize> {
-    let wanted = page_numbers.map(|nums| PageSet::new(page_count, nums));
-    let limit = if maxpages > 0 { maxpages } else { usize::MAX };
-
-    (0..page_count)
-        .filter(|&page_idx| wanted.as_ref().is_none_or(|set| set.contains(page_idx)))
-        .take(limit)
-        .collect()
+    let limit = (maxpages > 0).then_some(maxpages);
+    kept_pages(0..page_count, page_count, page_numbers, 0, limit)
 }
 
 pub(crate) fn default_worker_count() -> usize {
