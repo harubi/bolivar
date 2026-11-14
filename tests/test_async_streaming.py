@@ -1,4 +1,5 @@
 import asyncio
+from typing import cast
 
 import pytest
 
@@ -160,9 +161,12 @@ def test_extract_pages_async_read_ahead_reads_every_page():
     assert asyncio.run(collect_pages()) == [1, 2, 3, 4]
 
 
-@pytest.mark.parametrize("read_ahead", [0, -1])
-def test_extract_pages_async_rejects_a_read_ahead_below_one(read_ahead: int):
+@pytest.mark.parametrize("read_ahead", [0, -1, 2**70, True, 1.5, "2"])
+def test_extract_pages_async_rejects_a_read_ahead_that_is_not_a_positive_int(
+    read_ahead: object,
+):
     from bolivar import extract_pages_async
 
     with pytest.raises(ValueError, match="read_ahead must be a positive integer"):
-        extract_pages_async(build_minimal_pdf_with_pages(1), read_ahead=read_ahead)
+        # Values of the wrong type on purpose: the binding must refuse them.
+        extract_pages_async(build_minimal_pdf_with_pages(1), read_ahead=cast("int", read_ahead))
