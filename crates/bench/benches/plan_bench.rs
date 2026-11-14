@@ -7,7 +7,7 @@ mod group_light;
 
 use std::hint::black_box;
 
-use criterion::{BenchmarkId, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, criterion_group, criterion_main};
 
 use bolivar_core::engine::select_pages;
 
@@ -31,7 +31,12 @@ fn bench_select_pages(c: &mut BenchCriterion) {
     for &n in sizes {
         let every_page: Vec<usize> = (0..n).collect();
         group.bench_with_input(BenchmarkId::new("full_list", n), &every_page, |b, pages| {
-            b.iter(|| black_box(select_pages(n, Some(pages.clone()), 0).len()))
+            // The list is cloned outside the timed part: select_pages takes it by value.
+            b.iter_batched(
+                || pages.clone(),
+                |pages| black_box(select_pages(n, Some(pages), 0).len()),
+                BatchSize::LargeInput,
+            )
         });
     }
 
