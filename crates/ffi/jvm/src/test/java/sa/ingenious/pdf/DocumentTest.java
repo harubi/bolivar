@@ -153,10 +153,29 @@ class DocumentTest {
 
   private static <T> List<Integer> numbers(
       Cursor<T> cursor, java.util.function.ToIntFunction<T> page) {
-    try (cursor) {
-      List<Integer> numbers = new ArrayList<>();
-      cursor.forEachRemaining(item -> numbers.add(page.applyAsInt(item)));
-      return numbers;
+    try (var items = cursor.stream()) {
+      return items.map(page::applyAsInt).toList();
+    }
+  }
+
+  @Test
+  @SuppressWarnings("deprecation") // The deprecated table limit must keep working.
+  void tableMaxPagesNarrowsLikeACursorLimit() {
+    var tableLimit = TableOptions.builder().maxPages(3).build();
+    var cursorLimit = CursorOptions.builder().maxPages(2).build();
+    try (var document = Document.open(LABELS)) {
+      assertEquals(
+          List.of(1, 2, 3), numbers(document.tableRows(tableLimit), PageTableRows::pageNumber));
+      assertEquals(
+          List.of(1, 2),
+          numbers(document.tableRows(tableLimit, cursorLimit), PageTableRows::pageNumber),
+          "the smaller limit wins");
+    }
+    try (var document = Document.open(LABELS, Options.builder().maxPages(1).build())) {
+      assertEquals(
+          List.of(1),
+          numbers(document.tableRows(tableLimit), PageTableRows::pageNumber),
+          "never past the document's own limit");
     }
   }
 

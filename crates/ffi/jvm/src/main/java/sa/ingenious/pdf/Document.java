@@ -238,7 +238,8 @@ public final class Document implements AutoCloseable {
       try (var arena = Arena.ofConfined()) {
         MemorySegment nativeTables =
             tables == null ? MemorySegment.NULL : NativeStructs.tableOptions(tables, arena);
-        MemorySegment nativeSelection = NativeStructs.cursorOptions(selection, arena);
+        MemorySegment nativeSelection =
+            NativeStructs.cursorOptions(withTableMaxPages(selection, tables), arena);
         MemorySegment cursor = Native.cursorOpen(handle, kind, nativeTables, nativeSelection);
         try {
           return new Cursor<>(cursor, kind, decoder);
@@ -249,6 +250,21 @@ public final class Document implements AutoCloseable {
         }
       }
     });
+  }
+
+  /**
+   * {@code selection} with a table cursor's deprecated {@link TableOptions#maxPages()} folded in:
+   * when both limits are set the smaller wins.
+   */
+  private static CursorOptions withTableMaxPages(
+      CursorOptions selection, @Nullable TableOptions tables) {
+    Integer tableMax = tables == null ? null : tables.maxPages();
+    if (tableMax == null) {
+      return selection;
+    }
+    Integer own = selection.maxPages();
+    int max = own == null ? tableMax : Math.min(own, tableMax);
+    return new CursorOptions(selection.pages(), selection.skip(), max, selection.readAhead());
   }
 
   /** The whole document's text, pages separated by form feeds. */

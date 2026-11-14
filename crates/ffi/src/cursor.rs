@@ -5,13 +5,12 @@
 //! another thread never needs the lock `next` holds. The JVM keeps the cursor
 //! alive until every call on it has returned.
 
-use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
 use bolivar_core::engine::{CancellationHandle, Stream};
 use bolivar_core::extract::{
-    CursorSelection, GeometrySource, extract_layout_tables_metadata_stream_with,
-    extract_pages_stream_with, extract_tables_metadata_stream_with, extract_tables_stream_with,
+    GeometrySource, extract_layout_tables_metadata_stream_with, extract_pages_stream_with,
+    extract_tables_metadata_stream_with, extract_tables_stream_with,
 };
 use bolivar_core::table::{PageGeometry, TableSettings};
 
@@ -55,33 +54,15 @@ fn table_geometry(crops: Crops) -> GeometrySource {
 /// so its code and field reach the caller unchanged instead of collapsing into a core error.
 type PageBatch = FfiResult<Built>;
 
-/// The cursor's selection with a table cursor's own `max_pages` folded in: when both are set,
-/// the smaller wins; when one is, it applies alone.
-fn cursor_selection(kind: u32, cursor: &CursorArgs, tables: &Tables) -> CursorSelection {
-    let table_max = matches!(kind, tables::KIND | table_rows::KIND)
-        .then(|| tables.max_pages.and_then(NonZeroUsize::new))
-        .flatten();
-    match [cursor.selection.max_pages, table_max]
-        .into_iter()
-        .flatten()
-        .min()
-    {
-        Some(max_pages) => cursor.selection.clone().max_pages(max_pages),
-        None => cursor.selection.clone(),
-    }
-}
-
 fn open_stream(
     kind: u32,
     document: &Document,
     tables: Tables,
-    cursor: &CursorArgs,
+    cursor: CursorArgs,
 ) -> FfiResult<Stream<PageBatch>> {
     let doc = Arc::clone(&document.doc);
     // Narrows the document's selection, as every cursor selection does.
-    let mut options = document
-        .extract
-        .narrowed(&document.doc, &cursor_selection(kind, cursor, &tables));
+    let mut options = document.extract.narrowed(&document.doc, &cursor.selection);
     options.read_ahead = cursor.read_ahead;
     let ffi = |result: PageBatch| -> bolivar_core::Result<PageBatch> { Ok(result) };
     Ok(match kind {
@@ -187,7 +168,7 @@ pub unsafe extern "C" fn bolivar_cursor_open(
             require_out(out, "out")?;
             let tables = Tables::from_raw(table_options)?;
             let cursor = CursorArgs::from_raw(cursor_options)?;
-            let stream = open_stream(kind, document, tables, &cursor)?;
+            let stream = open_stream(kind, document, tables, cursor)?;
             let cancel = stream.cancellation_handle();
             write_handle(
                 out,

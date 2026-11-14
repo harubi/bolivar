@@ -473,11 +473,7 @@ fn options_select_pages_and_raw_pages_carry_labels() {
     options.pages = pages.as_ptr();
     options.pages_len = 2;
     let doc = open(&fixture("contrib/pagelabels.pdf"), Some(&options)).unwrap();
-    let numbers: Vec<i64> = drain(doc, LAYOUT, None)
-        .iter()
-        .map(|v| v.int("PageNumber"))
-        .collect();
-    assert_eq!(numbers, [2, 4]);
+    assert_eq!(page_numbers(doc, LAYOUT, None, None), [2, 4]);
     let raw = drain(doc, RAW, None);
     assert_eq!(
         raw.iter().map(|v| v.int("PageIndex")).collect::<Vec<_>>(),
@@ -497,39 +493,6 @@ fn options_select_pages_and_raw_pages_carry_labels() {
         raw[0].text(0, raw[0].int("TextEnd"))
     );
     unsafe { bolivar_document_free(doc) };
-}
-
-fn table_row_pages(document_max: Option<i64>, table_max: Option<i64>) -> Vec<i64> {
-    let mut options = Options::empty();
-    if let Some(max) = document_max {
-        options.present = opt::MAX_PAGES;
-        options.max_pages = max;
-    }
-    let doc = open(&fixture("contrib/pagelabels.pdf"), Some(&options)).unwrap();
-    let mut tables = TableOptions::empty();
-    if let Some(max) = table_max {
-        tables.present = topt::MAX_PAGES;
-        tables.max_pages = max;
-    }
-    let pages = drain(doc, TABLE_ROWS, Some(&tables))
-        .iter()
-        .map(|v| v.int("PageNumber"))
-        .collect();
-    unsafe { bolivar_document_free(doc) };
-    pages
-}
-
-#[test]
-fn table_max_pages_stays_inside_the_document_selection() {
-    let _serial = serial();
-    assert_eq!(table_row_pages(None, Some(3)), [1, 2, 3]);
-    assert_eq!(table_row_pages(Some(4), None), [1, 2, 3, 4]);
-    assert_eq!(table_row_pages(Some(4), Some(2)), [1, 2]);
-    assert_eq!(
-        table_row_pages(Some(1), Some(3)),
-        [1],
-        "a table cursor never reads pages the document does not select"
-    );
 }
 
 /// Cursor options with the given 1-based pages, skip, max pages and read-ahead.
@@ -560,8 +523,14 @@ fn cursor_options(
     raw
 }
 
-fn page_numbers(doc: *mut Document, number: u32, selection: &CursorOptions) -> Vec<i64> {
-    drain_with(doc, number, None, Some(selection))
+/// The page numbers a cursor of kind `number` reads with these options.
+fn page_numbers(
+    doc: *mut Document,
+    number: u32,
+    tables: Option<&TableOptions>,
+    selection: Option<&CursorOptions>,
+) -> Vec<i64> {
+    drain_with(doc, number, tables, selection)
         .iter()
         .map(|v| v.int("PageNumber"))
         .collect()
@@ -580,9 +549,9 @@ fn cursor_options_narrow_the_document_selection() {
 
     let head = cursor_options(None, None, Some(2), Some(1));
     let rest = cursor_options(None, Some(2), None, None);
-    assert_eq!(page_numbers(doc, SUMMARY, &head), [2, 3]);
+    assert_eq!(page_numbers(doc, SUMMARY, None, Some(&head)), [2, 3]);
     assert_eq!(
-        page_numbers(doc, SUMMARY, &rest),
+        page_numbers(doc, SUMMARY, None, Some(&rest)),
         [5],
         "head plus skip reads each page once"
     );
@@ -591,37 +560,41 @@ fn cursor_options_narrow_the_document_selection() {
         page_numbers(
             doc,
             LAYOUT,
-            &cursor_options(Some(&inside), None, None, None)
+            None,
+            Some(&cursor_options(Some(&inside), None, None, None))
         ),
         [3, 5],
         "only pages the document selects"
     );
     let none: [i64; 0] = [];
-    assert!(page_numbers(doc, SUMMARY, &cursor_options(Some(&none), None, None, None)).is_empty());
+    let empty = cursor_options(Some(&none), None, None, None);
+    assert!(page_numbers(doc, SUMMARY, None, Some(&empty)).is_empty());
     unsafe { bolivar_document_free(doc) };
 }
 
 #[test]
-fn cursor_and_table_max_pages_combine() {
+fn cursor_max_pages_stays_inside_the_document_selection() {
     let _serial = serial();
-    let doc = open(&fixture("contrib/pagelabels.pdf"), None).unwrap();
-    let rows = |table_max: Option<i64>, cursor_max: Option<i64>| -> Vec<i64> {
-        let mut tables = TableOptions::empty();
-        if let Some(max) = table_max {
-            tables.present = topt::MAX_PAGES;
-            tables.max_pages = max;
+    let rows = |document_max: Option<i64>, cursor_max: Option<i64>| -> Vec<i64> {
+        let mut options = Options::empty();
+        if let Some(max) = document_max {
+            options.present = opt::MAX_PAGES;
+            options.max_pages = max;
         }
+        let doc = open(&fixture("contrib/pagelabels.pdf"), Some(&options)).unwrap();
         let selection = cursor_options(None, None, cursor_max, None);
-        drain_with(doc, TABLE_ROWS, Some(&tables), Some(&selection))
-            .iter()
-            .map(|v| v.int("PageNumber"))
-            .collect()
+        let pages = page_numbers(doc, TABLE_ROWS, None, Some(&selection));
+        unsafe { bolivar_document_free(doc) };
+        pages
     };
-    assert_eq!(rows(Some(2), None), [1, 2]);
     assert_eq!(rows(None, Some(3)), [1, 2, 3]);
-    assert_eq!(rows(Some(4), Some(1)), [1]);
-    assert_eq!(rows(Some(1), Some(4)), [1]);
-    unsafe { bolivar_document_free(doc) };
+    assert_eq!(rows(Some(4), None), [1, 2, 3, 4]);
+    assert_eq!(rows(Some(4), Some(2)), [1, 2]);
+    assert_eq!(
+        rows(Some(1), Some(3)),
+        [1],
+        "a cursor never reads past the document"
+    );
 }
 
 #[test]

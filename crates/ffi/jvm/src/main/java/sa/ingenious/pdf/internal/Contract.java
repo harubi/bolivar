@@ -68,7 +68,6 @@ public final class Contract {
           JAVA_DOUBLE.withName("intersection_y"),
           sequenceLayout(4, JAVA_DOUBLE).withName("crop"),
           sequenceLayout(4, JAVA_DOUBLE).withName("first_page_crop"),
-          JAVA_LONG.withName("max_pages"),
           ADDRESS.withName("explicit_vertical"),
           JAVA_LONG.withName("explicit_vertical_len"),
           ADDRESS.withName("explicit_horizontal"),
@@ -155,8 +154,7 @@ public final class Contract {
     EXPLICIT_VERTICAL,
     EXPLICIT_HORIZONTAL,
     CROP,
-    FIRST_PAGE_CROP,
-    MAX_PAGES;
+    FIRST_PAGE_CROP;
 
     /** This bit's mask. */
     public int mask() {
