@@ -69,3 +69,27 @@
             (catch clojure.lang.ExceptionInfo e
               (and (keyword? (::pdf/error (ex-data e)))
                    (keyword? (:cognitect.anomalies/category (ex-data e)))))))))))
+
+(def ^:private cursor-keys
+  [:pages :skip :max-pages :read-ahead :bogus])
+
+(def ^:private gen-cursor-options
+  (gen/map (gen/elements cursor-keys) gen-value {:max-elements 4}))
+
+(deftest any-cursor-options-read-or-fail-as-anomalies
+  ;; Whatever the cursor options, a source either reads only pages the document has, in order,
+  ;; or throws ex-info naming an error, at call time or when it reads.
+  (with-open [d (pdf/open nics)]
+    (is (passes?
+         (tc/quick-check
+          300
+          (prop/for-all [opts gen-cursor-options
+                         tables? gen/boolean]
+            (try
+              (let [numbers (if tables?
+                              (into [] (map :page-number) (pdf/table-rows d opts))
+                              (into [] (map :page-number) (pdf/page-summaries d opts)))]
+                (every? #{1} numbers))
+              (catch clojure.lang.ExceptionInfo e
+                (and (keyword? (::pdf/error (ex-data e)))
+                     (keyword? (:cognitect.anomalies/category (ex-data e))))))))))))

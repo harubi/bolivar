@@ -10,6 +10,14 @@
   reducible, not seqs. They read one page at a time inside `reduce`, `transduce`, `into`, `run!`
   or `eduction`, and free their native cursor when the reduction ends, however it ends.
 
+  Every source takes cursor options that narrow the document's pages, never widen them:
+    :pages       the 1-based page numbers to keep ([] keeps none)
+    :skip        how many of those to pass over first
+    :max-pages   the most pages to read
+    :read-ahead  how many pages may run ahead of the reader (default 50); it also caps the
+                 parallelism and the pages that wait finished behind a slow one
+  A first read with {:max-pages 2} and a second with {:skip 2} read every page once.
+
   Layout and raw pages are views: read-only maps over the page's columns, so a page of 4,000
   characters costs a few arrays, not 4,000 maps. A view keeps its whole page alive. To keep data
   past the page, copy it with `realize` (or `clojure.datafy/datafy`).
@@ -31,7 +39,8 @@
            [java.io File InputStream]
            [java.nio.file Path]
            [java.util Collection List]
-           [sa.ingenious.pdf BoundingBox Cursor DigitStyle Document Glyph LayoutOptions LayoutPage
+           [sa.ingenious.pdf BoundingBox Cursor CursorOptions DigitStyle Document Glyph LayoutOptions
+            LayoutPage
             Metadata MetadataEntry Options PageSummary PageTableRows PageText PageTextBox
             PageTextLine PdfException RawPage RawTable RawTableBoundingBox RawTableCell Table
             TableCell TableOptions TableStrategy TextBox TextLine TextPage]))
@@ -191,8 +200,7 @@
    :explicit-vertical-lines   :numbers
    :explicit-horizontal-lines :numbers
    :crop                      :box
-   :first-page-crop           :box
-   :max-pages                 :int})
+   :first-page-crop           :box})
 
 (defn- table-options ^TableOptions [m]
   (let [o (conform table-spec "table option" m)]
@@ -202,7 +210,27 @@
                    (:intersection-tolerance o) (:intersection-x-tolerance o)
                    (:intersection-y-tolerance o)
                    (:explicit-vertical-lines o) (:explicit-horizontal-lines o)
-                   (:crop o) (:first-page-crop o) (:max-pages o))))
+                   (:crop o) (:first-page-crop o)
+                   ;; :max-pages is a cursor option now, for every source.
+                   nil)))
+
+(def ^:private cursor-spec
+  {:pages      :pages
+   :skip       :int
+   :max-pages  :int
+   :read-ahead :int})
+
+(defn- cursor-options ^CursorOptions [m]
+  (let [o (conform cursor-spec "cursor option" m)]
+    (CursorOptions. (:pages o) (:skip o) (:max-pages o) (:read-ahead o))))
+
+(defn- split-options
+  "A source's opts map as [table options, cursor options], each checked against its spec."
+  [m]
+  (when-not (or (nil? m) (map? m))
+    (invalid! nil "table option must be a map" m))
+  [(table-options (apply dissoc m (keys cursor-spec)))
+   (cursor-options (select-keys m (keys cursor-spec)))])
 
 ;;;; Views
 ;;
@@ -819,27 +847,35 @@
 (defn pages
   "The laid-out pages, as views. A page has :page-number :bbox :rotate :text :text-boxes, and all
   its :lines and :chars. Boxes hold :lines, and lines hold :chars; a char has :text :bbox :x0
-  :y0 :x1 :y1 :font-name :size :upright."
-  [^Document doc]
-  (source "pages" #(.pages doc) #(View. layout-page % nil nil)))
+  :y0 :x1 :y1 :font-name :size :upright. `opts` takes the cursor options (see the namespace)."
+  ([doc] (pages doc nil))
+  ([^Document doc opts]
+   (let [c (cursor-options opts)]
+     (source "pages" #(.pages doc c) #(View. layout-page % nil nil)))))
 
 (defn raw-pages
   "Every page with nothing dropped, as views: the page's PDF identity and :boxes, its
   :text-boxes, :lines with :raw-text, :chars with their graphics state, and :tables in
-  pdfplumber's top-down space."
-  [^Document doc]
-  (source "raw-pages" #(.rawPages doc) #(View. raw-page-kind % nil nil)))
+  pdfplumber's top-down space. `opts` takes the cursor options."
+  ([doc] (raw-pages doc nil))
+  ([^Document doc opts]
+   (let [c (cursor-options opts)]
+     (source "raw-pages" #(.rawPages doc c) #(View. raw-page-kind % nil nil)))))
 
 (defn page-texts
   "Each page's boxes and lines with :text and :text-without-bidi, its :fonts, and the
-  :digit-styles [font whole-size] of its digits."
-  [^Document doc]
-  (source "page-texts" #(.pageTexts doc) page-text-map))
+  :digit-styles [font whole-size] of its digits. `opts` takes the cursor options."
+  ([doc] (page-texts doc nil))
+  ([^Document doc opts]
+   (let [c (cursor-options opts)]
+     (source "page-texts" #(.pageTexts doc c) page-text-map))))
 
 (defn page-summaries
-  "Each page's :page-number :text :bbox :rotate."
-  [^Document doc]
-  (source "page-summaries" #(.pageSummaries doc) summary-map))
+  "Each page's :page-number :text :bbox :rotate. `opts` takes the cursor options."
+  ([doc] (page-summaries doc nil))
+  ([^Document doc opts]
+   (let [c (cursor-options opts)]
+     (source "page-summaries" #(.pageSummaries doc c) summary-map))))
 
 (defn tables
   "Every table of every page, with :page-number :bbox :row-count :column-count :cells.
@@ -847,11 +883,11 @@
   `opts` uses pdfplumber's names: :vertical-strategy and :horizontal-strategy (:lines
   :lines-strict :text :explicit); :snap-tolerance, :join-tolerance, :intersection-tolerance and
   their -x- and -y- forms; :explicit-vertical-lines and :explicit-horizontal-lines; :crop and
-  :first-page-crop as [x0 y0 x1 y1]; :max-pages."
+  :first-page-crop as [x0 y0 x1 y1]. It also takes the cursor options (see the namespace)."
   ([doc] (tables doc nil))
   ([^Document doc opts]
-   (let [o (table-options opts)]
-     (source "tables" #(.tables doc o) table-map))))
+   (let [[t c] (split-options opts)]
+     (source "tables" #(.tables doc t c) table-map))))
 
 (defn table-rows
   "Each page's raw table rows, as the pdfplumber-compatible pipeline emits them: :cells (nil for
@@ -859,5 +895,5 @@
   `tables`."
   ([doc] (table-rows doc nil))
   ([^Document doc opts]
-   (let [o (table-options opts)]
-     (source "table-rows" #(.tableRows doc o) table-rows-map))))
+   (let [[t c] (split-options opts)]
+     (source "table-rows" #(.tableRows doc t c) table-rows-map))))
