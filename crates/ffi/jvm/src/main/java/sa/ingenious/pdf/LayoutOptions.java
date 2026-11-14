@@ -1,19 +1,21 @@
 package sa.ingenious.pdf;
 
+import org.jspecify.annotations.Nullable;
+
 /**
- * Layout analysis parameters (pdfminer's {@code LAParams}). A null field keeps the native
- * default. {@code boxesFlowDisabled} turns off the boxes-flow ordering, as pdfminer's {@code
+ * Layout analysis parameters (pdfminer's {@code LAParams}). A null field keeps the native default.
+ * {@code boxesFlowDisabled} turns off the boxes-flow ordering, as pdfminer's {@code
  * boxes_flow=None} does; it excludes {@code boxesFlow}.
  */
 public record LayoutOptions(
-    Double lineOverlap,
-    Double charMargin,
-    Double lineMargin,
-    Double wordMargin,
-    Double boxesFlow,
+    @Nullable Double lineOverlap,
+    @Nullable Double charMargin,
+    @Nullable Double lineMargin,
+    @Nullable Double wordMargin,
+    @Nullable Double boxesFlow,
     boolean boxesFlowDisabled,
-    Boolean detectVertical,
-    Boolean allTexts) {
+    @Nullable Boolean detectVertical,
+    @Nullable Boolean allTexts) {
 
   public LayoutOptions {
     if (boxesFlowDisabled && boxesFlow != null) {
@@ -26,14 +28,14 @@ public record LayoutOptions(
   }
 
   public static final class Builder {
-    private Double lineOverlap;
-    private Double charMargin;
-    private Double lineMargin;
-    private Double wordMargin;
-    private Double boxesFlow;
+    private @Nullable Double lineOverlap;
+    private @Nullable Double charMargin;
+    private @Nullable Double lineMargin;
+    private @Nullable Double wordMargin;
+    private @Nullable Double boxesFlow;
     private boolean boxesFlowDisabled;
-    private Boolean detectVertical;
-    private Boolean allTexts;
+    private @Nullable Boolean detectVertical;
+    private @Nullable Boolean allTexts;
 
     private Builder() {}
 

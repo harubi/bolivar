@@ -14,7 +14,6 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.foreign.Arena;
-import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,7 +35,10 @@ class DocumentTest {
     assertEquals(expected, Document.extractText(bytes));
     assertEquals(expected, Document.extractText(new ByteArrayInputStream(bytes)));
     try (var arena = Arena.ofConfined();
-        var document = Document.open(arena.allocateFrom(java.lang.foreign.ValueLayout.JAVA_BYTE, bytes), Options.DEFAULT)) {
+        var document =
+            Document.open(
+                arena.allocateFrom(java.lang.foreign.ValueLayout.JAVA_BYTE, bytes),
+                Options.DEFAULT)) {
       assertEquals(expected, document.text());
     }
   }
@@ -74,6 +76,11 @@ class DocumentTest {
           public int read() throws IOException {
             throw new IOException("disk on fire");
           }
+
+          @Override
+          public int read(byte[] b, int off, int len) throws IOException {
+            throw new IOException("disk on fire");
+          }
         };
     var error = assertThrows(PdfException.IoError.class, () -> Document.open(failing));
     assertEquals("disk on fire", error.getMessage());
@@ -81,14 +88,17 @@ class DocumentTest {
 
   @Test
   void failuresCarryCodesMessagesAndFields() {
-    var missing = assertThrows(PdfException.IoNotFound.class, () -> Document.open(path("nope.pdf")));
+    var missing =
+        assertThrows(PdfException.IoNotFound.class, () -> Document.open(path("nope.pdf")));
     assertEquals(3, missing.code());
     assertFalse(missing.getMessage().isBlank());
 
     assertThrows(PdfException.InvalidPath.class, () -> Document.open(" "));
 
     var wrong = Options.builder().password("bar").build();
-    assertThrows(PdfException.EncryptionError.class, () -> Document.open(path("encryption/rc4-40.pdf"), wrong));
+    assertThrows(
+        PdfException.EncryptionError.class,
+        () -> Document.open(path("encryption/rc4-40.pdf"), wrong));
     var right = Options.builder().password("foo").build();
     try (var document = Document.open(path("encryption/rc4-40.pdf"), right)) {
       assertTrue(document.text().contains("Secret!"));
@@ -98,11 +108,11 @@ class DocumentTest {
     var page = assertThrows(PdfException.InvalidArgument.class, () -> Document.open(SIMPLE, zero));
     assertEquals("pages", page.field());
 
-    var flow =
-        Options.builder().layout(LayoutOptions.builder().boxesFlow(1.5).build()).build();
+    var flow = Options.builder().layout(LayoutOptions.builder().boxesFlow(1.5).build()).build();
     assertEquals(
         "boxes_flow",
-        assertThrows(PdfException.InvalidArgument.class, () -> Document.open(SIMPLE, flow)).field());
+        assertThrows(PdfException.InvalidArgument.class, () -> Document.open(SIMPLE, flow))
+            .field());
 
     try (var document = Document.open(SIMPLE)) {
       assertEquals(
@@ -111,7 +121,8 @@ class DocumentTest {
       var negative = TableOptions.builder().snapTolerance(-1).build();
       assertEquals(
           "snap_tolerance",
-          assertThrows(PdfException.InvalidArgument.class, () -> document.tables(negative)).field());
+          assertThrows(PdfException.InvalidArgument.class, () -> document.tables(negative))
+              .field());
     }
   }
 
@@ -147,18 +158,31 @@ class DocumentTest {
         LayoutPage page = pages.next();
         assertFalse(pages.hasNext());
         assertThrows(NoSuchElementException.class, pages::next);
-        assertEquals(4319, page.charCount());
-        assertEquals(page.charAt(0), page.textBoxes().get(0).lines().get(0).chars().get(0));
-        assertEquals(page.charFontName(0), page.charFontNames()[0]);
-        double[] copy = page.charX0s();
+        assertEquals(4319, page.glyphCount());
+        Glyph first = page.textBoxes().get(0).lines().get(0).glyphs().get(0);
+        assertEquals(page.glyph(0), first, "views compare by page and position");
+        assertEquals(
+            page.glyph(0).toRecord(), page.toRecords().get(0).lines().get(0).chars().get(0));
+        assertEquals(first.fontName(), page.glyphFontNames()[0]);
+        assertEquals(first.text(), page.glyphTexts()[0]);
+        assertNull(page.line(0).rawText(), "layout pages carry no raw text");
+        double[] copy = page.glyphX0s();
         copy[0] = -1;
-        assertNotEquals(-1, page.charX0(0), "column getters copy");
+        assertNotEquals(-1, page.glyph(0).x0(), "column getters copy");
+        assertEquals(
+            page.text(), String.join("\n", page.textBoxes().stream().map(TextBox::text).toList()));
       }
       try (var raw = document.rawPages()) {
         RawPage page = raw.next();
         assertEquals(1, page.tables().size());
-        assertEquals("DeviceGray", page.characterAt(0).nonStrokingColorSpace());
-        assertEquals(6, page.characterAt(0).matrix().size());
+        assertEquals("DeviceGray", page.character(0).nonStrokingColorSpace());
+        assertEquals("DeviceGray", page.glyphNonStrokingColorSpace(0));
+        assertEquals(6, page.character(0).matrix().size());
+        assertEquals(page.glyphMatrix(0, 4), page.character(0).matrix().get(4));
+        assertEquals(1, page.pageNumber());
+        assertEquals(0, page.pageIndex());
+        assertEquals(page.line(0).text(), page.rawTextBoxes().get(0).lines().get(0).text());
+        assertEquals(page.glyphCount(), page.glyphAdvances().length);
       }
       try (var tables = document.tables()) {
         Table table = tables.next();

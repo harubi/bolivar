@@ -8,89 +8,109 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 import java.lang.foreign.MemorySegment;
+import org.jspecify.annotations.Nullable;
 
 /**
- * One batch copied into Java arrays. The native batch is freed as soon as it is read, so no
- * native memory outlives the call that produced it. Not part of the public API.
+ * One batch copied into Java arrays. The native batch is freed as soon as it is read, so no native
+ * memory outlives the call that produced it. Not part of the public API.
  *
- * <p>Text is one string; ranges into it are {@code int} start/end pairs, {@code -1} for absent.
- * Strings that repeat (fonts, colour spaces, tags) are interned in a per-batch table.
+ * <p>Text stays a {@code char[]}; strings are cut from it only when asked for. Ranges into it are
+ * {@code int} start/end pairs, {@code -1} for absent. Strings that repeat (fonts, glyphs, colour
+ * spaces, tags) come from a per-batch table, decoded once.
  */
 @SuppressWarnings("restricted") // Restricted FFM calls are confined to this package.
 public final class Columns {
   private static final int MAGIC = 0x424F_4C56;
+  private static final long HEADER_SIZE = Contract.BATCH_HEADER.byteSize();
+  private static final long DESC_SIZE = Contract.COLUMN_DESC.byteSize();
+  private static final long KIND = Contract.offset(Contract.BATCH_HEADER, "kind");
+  private static final long NCOLS = Contract.offset(Contract.BATCH_HEADER, "ncols");
+  private static final long COLS = Contract.offset(Contract.BATCH_HEADER, "cols");
+  private static final long ABI = Contract.offset(Contract.BATCH_HEADER, "abi_version");
+  private static final long PTR = Contract.offset(Contract.COLUMN_DESC, "ptr");
+  private static final long LEN = Contract.offset(Contract.COLUMN_DESC, "len");
+  private static final long ELEM = Contract.offset(Contract.COLUMN_DESC, "elem");
 
-  private final int kind;
   private final Object[] columns;
-  private final String text;
+  private final char[] text;
   private final String[] strings;
+  private final Schema.Kind kind;
+  private final long elements;
 
-  private Columns(int kind, Object[] columns, String text, String[] strings) {
+  private Columns(Schema.Kind kind, Object[] columns, String[] strings, long elements) {
     this.kind = kind;
     this.columns = columns;
-    this.text = text;
+    this.text = (char[]) columns[Schema.TEXT];
     this.strings = strings;
+    this.elements = elements;
   }
 
   /** Read the batch at {@code batch}, check it is of {@code kind}, and free it. */
-  static Columns readAndFree(MemorySegment batch, int kind) {
+  static Columns readAndFree(MemorySegment batch, Schema.Kind kind) {
     if (batch.address() == 0) {
       throw new IllegalStateException("native call returned no batch");
     }
     try {
-      return read(batch, kind);
+      return read(batch.reinterpret(HEADER_SIZE), kind);
     } finally {
       Native.batchFree(batch);
     }
   }
 
-  private static Columns read(MemorySegment batch, int kind) {
-    var header = batch.reinterpret(Native.BATCH_HEADER.byteSize());
+  private static Columns read(MemorySegment header, Schema.Kind kind) {
     int magic = header.get(JAVA_INT, 0);
-    int abi = header.get(JAVA_INT, 4);
-    int actualKind = header.get(JAVA_INT, 8);
-    int ncols = header.get(JAVA_INT, 12);
+    int abi = header.get(JAVA_INT, ABI);
+    int actualKind = header.get(JAVA_INT, KIND);
+    int ncols = header.get(JAVA_INT, NCOLS);
     if (magic != MAGIC || abi != Native.ABI_VERSION) {
       throw new IllegalStateException("not a Bolivar batch of ABI " + Native.ABI_VERSION);
     }
-    Schema.Column[] schema = Schema.columns(kind);
-    if (actualKind != kind || ncols != schema.length) {
+    if (actualKind != kind.number() || ncols != kind.columnCount()) {
       throw new IllegalStateException(
-          "expected batch kind " + kind + " with " + schema.length + " columns, got kind "
-              + actualKind + " with " + ncols);
+          "expected batch kind "
+              + kind.number()
+              + " with "
+              + kind.columnCount()
+              + " columns, got kind "
+              + actualKind
+              + " with "
+              + ncols);
     }
-    var dir =
-        header
-            .get(ADDRESS, 16)
-            .reinterpret(Math.multiplyExact((long) ncols, Native.COLUMN_DESC.byteSize()));
-    long descSize = Native.COLUMN_DESC.byteSize();
+    MemorySegment dir = header.get(ADDRESS, COLS).reinterpret(ncols * DESC_SIZE);
     Object[] columns = new Object[ncols];
+    long elements = 0;
     for (int i = 0; i < ncols; i++) {
-      long base = i * descSize;
-      MemorySegment ptr = dir.get(ADDRESS, base);
-      long len = dir.get(JAVA_LONG, base + 8);
-      Schema.Elem elem = Schema.Elem.of(dir.get(JAVA_INT, base + 16));
-      if (elem != schema[i].elem()) {
+      long base = i * DESC_SIZE;
+      Schema.Col column = kind.column(i);
+      Schema.Elem elem = Schema.Elem.of(dir.get(JAVA_INT, base + ELEM));
+      if (elem != column.elem()) {
         throw new IllegalStateException(
-            "column " + schema[i].name() + " is " + elem + ", expected " + schema[i].elem());
+            "column " + column.name() + " is " + elem + ", expected " + column.elem());
       }
-      columns[i] = copy(ptr, len, elem);
+      long len = dir.get(JAVA_LONG, base + LEN);
+      columns[i] = copy(dir.get(ADDRESS, base + PTR), len, elem);
+      elements += len;
     }
-    String text = new String((char[]) columns[0]);
-    char[] stringChars = (char[]) columns[1];
-    int[] offsets = (int[]) columns[2];
+    int ints = ((long[]) columns[Schema.INTS]).length;
+    int floats = ((double[]) columns[Schema.FLOATS]).length;
+    if (ints != kind.intCount() || floats != kind.floatCount()) {
+      throw new IllegalStateException("batch kind " + kind + " has the wrong scalar slots");
+    }
+    char[] chars = (char[]) columns[Schema.STRINGS];
+    int[] offsets = (int[]) columns[Schema.STRING_OFF];
     String[] strings = new String[Math.max(offsets.length - 1, 0)];
     for (int i = 0; i < strings.length; i++) {
-      strings[i] = new String(stringChars, offsets[i], offsets[i + 1] - offsets[i]);
+      strings[i] = new String(chars, offsets[i], offsets[i + 1] - offsets[i]);
     }
-    return new Columns(kind, columns, text, strings);
+    return new Columns(kind, columns, strings, elements);
   }
 
   private static Object copy(MemorySegment ptr, long len, Schema.Elem elem) {
     if (len < 0 || len > Integer.MAX_VALUE - 8) {
       throw new IllegalStateException("column length out of range: " + len);
     }
-    if (len == 0) {
+    int n = (int) len;
+    if (n == 0) {
       return switch (elem) {
         case F64 -> new double[0];
         case I32 -> new int[0];
@@ -100,57 +120,76 @@ public final class Columns {
       };
     }
     return switch (elem) {
-      case F64 -> ptr.reinterpret(len * 8).toArray(JAVA_DOUBLE);
-      case I32 -> ptr.reinterpret(len * 4).toArray(JAVA_INT);
-      case I64 -> ptr.reinterpret(len * 8).toArray(JAVA_LONG);
-      case U8 -> ptr.reinterpret(len).toArray(JAVA_BYTE);
-      case U16 -> ptr.reinterpret(len * 2).toArray(JAVA_CHAR);
+      case F64 -> ptr.reinterpret(n * 8L).toArray(JAVA_DOUBLE);
+      case I32 -> ptr.reinterpret(n * 4L).toArray(JAVA_INT);
+      case I64 -> ptr.reinterpret(n * 8L).toArray(JAVA_LONG);
+      case U8 -> ptr.reinterpret(n).toArray(JAVA_BYTE);
+      case U16 -> ptr.reinterpret(n * 2L).toArray(JAVA_CHAR);
     };
   }
 
-  public int kind() {
-    return kind;
+  /** The total element count of every column; for events. */
+  long elements() {
+    return elements;
   }
 
-  public double[] f64(Schema.Column column) {
-    return (double[]) columns[column.ordinal()];
+  private int index(Schema.Col column) {
+    int index = column.index();
+    if (index >= columns.length || !kind.column(index).equals(column)) {
+      throw new IllegalArgumentException(column + " is not a column of " + kind);
+    }
+    return index;
   }
 
-  public int[] i32(Schema.Column column) {
-    return (int[]) columns[column.ordinal()];
+  public double[] f64(Schema.Col column) {
+    return (double[]) columns[index(column)];
   }
 
-  public long[] i64(Schema.Column column) {
-    return (long[]) columns[column.ordinal()];
+  public int[] i32(Schema.Col column) {
+    return (int[]) columns[index(column)];
   }
 
-  public byte[] u8(Schema.Column column) {
-    return (byte[]) columns[column.ordinal()];
+  public long[] i64(Schema.Col column) {
+    return (long[]) columns[index(column)];
   }
 
-  /** The batch's text; ranges index into it. */
-  public String text() {
+  public byte[] u8(Schema.Col column) {
+    return (byte[]) columns[index(column)];
+  }
+
+  /** An {@code Ints} slot; it must belong to this batch's kind. */
+  public long integer(Enum<?> slot) {
+    return ((long[]) columns[Schema.INTS])[kind.intSlot(slot)];
+  }
+
+  /** A {@code Floats} slot; it must belong to this batch's kind. */
+  public double real(Enum<?> slot) {
+    return ((double[]) columns[Schema.FLOATS])[kind.floatSlot(slot)];
+  }
+
+  /** The batch text; ranges index into it. Shared, not copied: do not change it. */
+  public char[] text() {
     return text;
   }
 
-  /** The text of a range, or null for the absent range. */
-  public String range(int start, int end) {
-    return start < 0 ? null : text.substring(start, end);
+  /** The text from {@code start} to {@code end}, or null when {@code start} is negative. */
+  public @Nullable String range(int start, int end) {
+    return start < 0 ? null : new String(text, start, end - start);
   }
 
-  /** The text of the {@code index}th range in a range column. */
-  public String range(Schema.Column column, int index) {
+  /** The text of the {@code index}th range of a range column. */
+  public @Nullable String range(Schema.Col column, int index) {
     int[] ranges = i32(column);
     return range(ranges[2 * index], ranges[2 * index + 1]);
   }
 
-  /** An interned string by id, or null for {@code -1}. */
-  public String string(int id) {
-    return id < 0 ? null : strings[id];
-  }
-
-  /** The per-batch string table. */
+  /** The per-batch string table. Shared, not copied: do not change it. */
   public String[] strings() {
     return strings;
+  }
+
+  /** An interned string, or null for a negative id. */
+  public @Nullable String string(int id) {
+    return id < 0 ? null : strings[id];
   }
 }

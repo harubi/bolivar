@@ -1,30 +1,31 @@
 package sa.ingenious.pdf;
 
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Table extraction settings, in pdfplumber's vocabulary. A null field keeps the default. The
  * general tolerances apply to both axes; the axis-specific ones override them. Crops are
- * pdfplumber-space page regions; {@code firstPageCrop} wins over {@code crop} on page one.
- * Values are checked when the cursor opens.
+ * pdfplumber-space page regions; {@code firstPageCrop} wins over {@code crop} on page one. Values
+ * are checked when the cursor opens.
  */
 public record TableOptions(
-    TableStrategy verticalStrategy,
-    TableStrategy horizontalStrategy,
-    Double snapTolerance,
-    Double snapXTolerance,
-    Double snapYTolerance,
-    Double joinTolerance,
-    Double joinXTolerance,
-    Double joinYTolerance,
-    Double intersectionTolerance,
-    Double intersectionXTolerance,
-    Double intersectionYTolerance,
-    List<Double> explicitVerticalLines,
-    List<Double> explicitHorizontalLines,
-    BoundingBox crop,
-    BoundingBox firstPageCrop,
-    Integer maxPages) {
+    @Nullable TableStrategy verticalStrategy,
+    @Nullable TableStrategy horizontalStrategy,
+    @Nullable Double snapTolerance,
+    @Nullable Double snapXTolerance,
+    @Nullable Double snapYTolerance,
+    @Nullable Double joinTolerance,
+    @Nullable Double joinXTolerance,
+    @Nullable Double joinYTolerance,
+    @Nullable Double intersectionTolerance,
+    @Nullable Double intersectionXTolerance,
+    @Nullable Double intersectionYTolerance,
+    @Nullable List<Double> explicitVerticalLines,
+    @Nullable List<Double> explicitHorizontalLines,
+    @Nullable BoundingBox crop,
+    @Nullable BoundingBox firstPageCrop,
+    @Nullable Integer maxPages) {
 
   /** All defaults. */
   public static final TableOptions DEFAULT = builder().build();
@@ -41,22 +42,22 @@ public record TableOptions(
   }
 
   public static final class Builder {
-    private TableStrategy verticalStrategy;
-    private TableStrategy horizontalStrategy;
-    private Double snapTolerance;
-    private Double snapXTolerance;
-    private Double snapYTolerance;
-    private Double joinTolerance;
-    private Double joinXTolerance;
-    private Double joinYTolerance;
-    private Double intersectionTolerance;
-    private Double intersectionXTolerance;
-    private Double intersectionYTolerance;
-    private List<Double> explicitVerticalLines;
-    private List<Double> explicitHorizontalLines;
-    private BoundingBox crop;
-    private BoundingBox firstPageCrop;
-    private Integer maxPages;
+    private @Nullable TableStrategy verticalStrategy;
+    private @Nullable TableStrategy horizontalStrategy;
+    private @Nullable Double snapTolerance;
+    private @Nullable Double snapXTolerance;
+    private @Nullable Double snapYTolerance;
+    private @Nullable Double joinTolerance;
+    private @Nullable Double joinXTolerance;
+    private @Nullable Double joinYTolerance;
+    private @Nullable Double intersectionTolerance;
+    private @Nullable Double intersectionXTolerance;
+    private @Nullable Double intersectionYTolerance;
+    private @Nullable List<Double> explicitVerticalLines;
+    private @Nullable List<Double> explicitHorizontalLines;
+    private @Nullable BoundingBox crop;
+    private @Nullable BoundingBox firstPageCrop;
+    private @Nullable Integer maxPages;
 
     private Builder() {}
 

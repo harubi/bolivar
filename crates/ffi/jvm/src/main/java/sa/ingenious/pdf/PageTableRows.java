@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.IntStream;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The raw table rows of one page, exactly as the pdfplumber-compatible rows pipeline emits them.
@@ -13,18 +14,20 @@ import java.util.stream.IntStream;
  */
 public final class PageTableRows {
   private final int pageNumber;
-  private final List<String> cells;
+  private final List<@Nullable String> cells;
   private final int[] rowOffsets;
   private final int[] tableOffsets;
 
-  public PageTableRows(int pageNumber, List<String> cells, int[] rowOffsets, int[] tableOffsets) {
-    this(pageNumber, cells.toArray(String[]::new), rowOffsets.clone(), tableOffsets.clone());
+  public PageTableRows(
+      int pageNumber, List<@Nullable String> cells, int[] rowOffsets, int[] tableOffsets) {
+    this(pageNumber, cells.toArray(new String[0]), rowOffsets.clone(), tableOffsets.clone());
   }
 
   /** Takes ownership of the arrays without copying them. */
-  PageTableRows(int pageNumber, String[] cells, int[] rowOffsets, int[] tableOffsets) {
+  PageTableRows(int pageNumber, @Nullable String[] cells, int[] rowOffsets, int[] tableOffsets) {
     this.pageNumber = pageNumber;
-    this.cells = Collections.unmodifiableList(Arrays.asList(cells));
+    this.cells =
+        Collections.<@Nullable String>unmodifiableList(Arrays.<@Nullable String>asList(cells));
     this.rowOffsets = rowOffsets;
     this.tableOffsets = tableOffsets;
   }
@@ -33,7 +36,7 @@ public final class PageTableRows {
     return pageNumber;
   }
 
-  public List<String> cells() {
+  public List<@Nullable String> cells() {
     return cells;
   }
 
@@ -50,14 +53,14 @@ public final class PageTableRows {
   }
 
   /** The rows of table {@code t}, each a list of cells (null for empty). */
-  public List<List<String>> table(int t) {
+  public List<List<@Nullable String>> table(int t) {
     return IntStream.range(tableOffsets[t], tableOffsets[t + 1])
         .mapToObj(r -> cells.subList(rowOffsets[r], rowOffsets[r + 1]))
         .toList();
   }
 
   @Override
-  public boolean equals(Object other) {
+  public boolean equals(@Nullable Object other) {
     return other instanceof PageTableRows rows
         && pageNumber == rows.pageNumber
         && cells.equals(rows.cells)
@@ -67,12 +70,18 @@ public final class PageTableRows {
 
   @Override
   public int hashCode() {
-    return Objects.hash(pageNumber, cells, Arrays.hashCode(rowOffsets), Arrays.hashCode(tableOffsets));
+    return Objects.hash(
+        pageNumber, cells, Arrays.hashCode(rowOffsets), Arrays.hashCode(tableOffsets));
   }
 
   @Override
   public String toString() {
-    return "PageTableRows[pageNumber=" + pageNumber + ", tables=" + tableCount() + ", cells="
-        + cells.size() + "]";
+    return "PageTableRows[pageNumber="
+        + pageNumber
+        + ", tables="
+        + tableCount()
+        + ", cells="
+        + cells.size()
+        + "]";
   }
 }
