@@ -805,6 +805,24 @@ def process_pages(
     laparams: LAParams | None = None,
     bidi: bool = False,
 ) -> list[LTPage]: ...
+def _export_images(
+    data: bytes | bytearray | BinaryIO,
+    output_dir: str,
+    password: str = "",
+    page_numbers: Sequence[int] | None = None,
+    maxpages: int = 0,
+    caching: bool = True,
+    rotation: int = 0,
+) -> None: ...
+def _export_images_from_path(
+    path: str,
+    output_dir: str,
+    password: str = "",
+    page_numbers: Sequence[int] | None = None,
+    maxpages: int = 0,
+    caching: bool = True,
+    rotation: int = 0,
+) -> None: ...
 def _extract_tables_for_page_indexed(
     doc: PDFDocument,
     page_index: int,

@@ -11,6 +11,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from types import ModuleType
 
+    from bolivar._bolivar import _export_images as _export_images
+    from bolivar._bolivar import (
+        _export_images_from_path as _export_images_from_path,
+    )
     from bolivar._bolivar import (
         _extract_tables_for_compat_page as _extract_tables_for_compat_page,
     )
