@@ -45,26 +45,31 @@ public record CursorOptions(
 
     private Builder() {}
 
+    /** Keep only these 1-based pages; missing ones are ignored and repeats count once. */
     public Builder pages(int... values) {
       pages = java.util.Arrays.stream(values).boxed().toList();
       return this;
     }
 
+    /** As {@link #pages(int...)}; an empty list keeps no page. */
     public Builder pages(List<Integer> values) {
       pages = values;
       return this;
     }
 
+    /** Pass over this many of the kept pages first; must not be negative. */
     public Builder skip(int value) {
       skip = value;
       return this;
     }
 
+    /** Read at most this many pages after the skip; must be positive. */
     public Builder maxPages(int value) {
       maxPages = value;
       return this;
     }
 
+    /** Let at most this many pages run ahead of the reader; must be positive. */
     public Builder readAhead(int value) {
       readAhead = value;
       return this;
