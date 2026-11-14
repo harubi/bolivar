@@ -9,6 +9,7 @@ use super::component::LTComponent;
 use super::item::LTItem;
 use super::textbox::{LTTextGroup, TextBoxType};
 use super::textline::LTTextLine;
+use super::view::BoxRef;
 
 fn append_item_text(item: &LTItem, output: &mut String, first_box: &mut bool) {
     match item {
@@ -179,6 +180,35 @@ impl LTPage {
         }
     }
 
+    /// Every text box on the page, depth first through figures, in the order
+    /// [`Self::get_text`] joins them, borrowed without materializing a compact layout: its boxes
+    /// come straight from the arena.
+    pub fn text_layer(&self) -> Vec<BoxRef<'_>> {
+        fn walk<'a>(item: &'a LTItem, out: &mut Vec<BoxRef<'a>>) {
+            match item {
+                LTItem::TextBox(text_box) => out.push(BoxRef::Owned(text_box)),
+                LTItem::Figure(figure) => figure.iter().for_each(|child| walk(child, out)),
+                LTItem::Page(page) => out.extend(page.text_layer()),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(layout) = &self.compact_layout {
+            let (arena, ids) = layout.text_boxes();
+            out.extend(ids.iter().map(|&id| BoxRef::Arena(arena, id)));
+            layout
+                .other_items()
+                .iter()
+                .for_each(|item| walk(item, &mut out));
+        } else {
+            self.container
+                .items
+                .iter()
+                .for_each(|item| walk(item, &mut out));
+        }
+        out
+    }
+
     /// Returns page text without materializing compact layout objects.
     pub fn get_text(&self) -> String {
         let mut output = String::new();
@@ -196,6 +226,22 @@ impl LTPage {
         } else {
             for item in &self.container.items {
                 append_item_text(item, output, first_box);
+            }
+        }
+    }
+
+    /// Write the page's items as a text converter renders them: text boxes come straight from
+    /// a compact layout, and every other item goes through `other`.
+    pub(crate) fn write_items(
+        &self,
+        output: &mut String,
+        other: &mut dyn FnMut(&LTItem, &mut String),
+    ) {
+        if let Some(layout) = &self.compact_layout {
+            layout.write_items(output, other);
+        } else {
+            for item in &self.container.items {
+                other(item, output);
             }
         }
     }

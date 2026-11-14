@@ -36,6 +36,31 @@ impl ColorKey {
     }
 }
 
+/// Where a repeated value comes from, for [`ArenaContext::intern_at`] and
+/// [`ArenaContext::intern_color_at`].
+#[derive(Clone, Copy)]
+pub enum MemoSlot {
+    FontName,
+    NonStrokingSpace,
+    StrokingSpace,
+}
+
+/// Which color an interning call site remembers.
+#[derive(Clone, Copy)]
+pub enum ColorSlot {
+    NonStroking,
+    Stroking,
+}
+
+/// The last value interned at each call site, with its id. Runs of characters share their
+/// font, color spaces and colors, so most lookups end here, after one short comparison and no
+/// hashing. Colors compare by bit pattern, as [`ColorKey`] does.
+#[derive(Default)]
+struct InternMemo {
+    strings: [Option<(SmolStr, Spur)>; 3],
+    colors: [Option<([u64; 4], usize, ColorId)>; 2],
+}
+
 /// Page-scoped arena for allocation-free intermediates.
 pub struct PageArena {
     bump: Bump,
@@ -43,6 +68,7 @@ pub struct PageArena {
     intern_cache: InternCache,
     colors: Vec<Box<[f64]>>,
     color_index: FxHashMap<ColorKey, ColorId>,
+    memo: InternMemo,
 }
 
 pub struct ArenaContext<'a> {
@@ -51,6 +77,7 @@ pub struct ArenaContext<'a> {
     intern_cache: &'a mut InternCache,
     colors: &'a mut Vec<Box<[f64]>>,
     color_index: &'a mut FxHashMap<ColorKey, ColorId>,
+    memo: &'a mut InternMemo,
 }
 
 pub trait ArenaLookup {
@@ -70,6 +97,7 @@ impl PageArena {
             intern_cache: InternCache::default(),
             colors: Vec::new(),
             color_index: FxHashMap::default(),
+            memo: InternMemo::default(),
         }
     }
 
@@ -96,6 +124,7 @@ impl PageArena {
             intern_cache: &mut self.intern_cache,
             colors: &mut self.colors,
             color_index: &mut self.color_index,
+            memo: &mut self.memo,
         }
     }
 
@@ -124,6 +153,8 @@ impl PageArena {
         self.intern_cache.clear();
         self.colors.clear();
         self.color_index.clear();
+        // Remembered ids belong to the interner just cleared.
+        self.memo = InternMemo::default();
     }
 }
 
@@ -140,6 +171,32 @@ impl<'a> ArenaContext<'a> {
 
     pub fn intern(&mut self, s: &str) -> Spur {
         intern_string(self.interner, self.intern_cache, s)
+    }
+
+    /// [`Self::intern`], remembering the last value of `slot`.
+    pub fn intern_at(&mut self, slot: MemoSlot, s: &str) -> Spur {
+        if let Some((last, key)) = &self.memo.strings[slot as usize]
+            && last == s
+        {
+            return *key;
+        }
+        let key = intern_string(self.interner, self.intern_cache, s);
+        self.memo.strings[slot as usize] = Some((SmolStr::new(s), key));
+        key
+    }
+
+    /// [`Self::intern_color`], remembering the last color of `slot`.
+    pub fn intern_color_at(&mut self, slot: ColorSlot, color: &[f64]) -> ColorId {
+        let bits = color_bits(color);
+        if let Some((last, len, id)) = self.memo.colors[slot as usize]
+            && len == color.len()
+            && Some(last) == bits
+        {
+            return id;
+        }
+        let id = self.intern_color(color);
+        self.memo.colors[slot as usize] = bits.map(|bits| (bits, color.len(), id));
+        id
     }
 
     pub fn resolve(&self, key: Spur) -> &str {
@@ -160,6 +217,18 @@ impl<'a> ArenaContext<'a> {
     pub fn color(&self, id: ColorId) -> &[f64] {
         &self.colors[id.index()]
     }
+}
+
+/// A color of at most four components as bit patterns; longer colors are not remembered.
+fn color_bits(color: &[f64]) -> Option<[u64; 4]> {
+    let mut bits = [0; 4];
+    if color.len() > bits.len() {
+        return None;
+    }
+    for (slot, component) in bits.iter_mut().zip(color) {
+        *slot = component.to_bits();
+    }
+    Some(bits)
 }
 
 fn intern_string(interner: &mut Rodeo, cache: &mut InternCache, value: &str) -> Spur {

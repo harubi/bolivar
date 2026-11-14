@@ -103,9 +103,10 @@ mod graphics;
 mod item;
 mod textbox;
 mod textline;
+mod view;
 
 // Re-export all public types
-pub use character::{Color, LTAnno, LTChar, LTCharBuilder};
+pub use character::{CharStyle, Color, LTAnno, LTChar, LTCharBuilder};
 pub use component::LTComponent;
 pub use container::{LTFigure, LTLayoutContainer, LTPage};
 pub use graphics::{LTCurve, LTImage, LTLine, LTRect};
@@ -115,5 +116,7 @@ pub use textbox::{
     LTTextGroupTBRL, TextBoxType, TextGroupElement,
 };
 pub use textline::{
-    Axis, LTTextLine, LTTextLineHorizontal, LTTextLineVertical, TextLineElement, TextLineType,
+    Axis, ElementRef, LTTextLine, LTTextLineHorizontal, LTTextLineVertical, TextLineElement,
+    TextLineType,
 };
+pub use view::{BoxRef, LineRef};

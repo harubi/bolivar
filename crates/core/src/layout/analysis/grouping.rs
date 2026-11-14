@@ -157,6 +157,96 @@ mod arena_grouping_tests {
     use super::*;
     use std::cmp::Ordering;
 
+    /// The grouping before the bottom-edge window: every line scans every other line.
+    fn full_scan_groups(
+        laparams: &LAParams,
+        arena: &LayoutArena,
+        line_ids: &[LineId],
+    ) -> Vec<Vec<LineId>> {
+        let bboxes: Vec<Rect> = line_ids.iter().map(|&lid| arena.line_bbox(lid)).collect();
+        let mut line_to_box: Vec<Option<usize>> = vec![None; line_ids.len()];
+        let mut contents: Vec<Option<Vec<usize>>> = Vec::new();
+        for (i, &lid) in line_ids.iter().enumerate() {
+            let bbox = bboxes[i];
+            let d = laparams.line_margin * arena.line_height(lid);
+            let search = (bbox.0, bbox.1 - d, bbox.2, bbox.3 + d);
+            let mut members = vec![i];
+            for (j, n) in bboxes.iter().enumerate() {
+                if n.0 < search.2
+                    && n.2 > search.0
+                    && n.1 < search.3
+                    && n.3 > search.1
+                    && arena_lines_aligned(arena, lid, line_ids[j], d)
+                {
+                    members.push(j);
+                    if let Some(existing) = line_to_box[j].and_then(|b| contents[b].take()) {
+                        members.extend(existing);
+                    }
+                }
+            }
+            let mut seen = vec![false; line_ids.len()];
+            members.retain(|&m| !std::mem::replace(&mut seen[m], true));
+            for &m in &members {
+                line_to_box[m] = Some(i);
+            }
+            contents.push(Some(members));
+        }
+        let mut done = vec![false; line_ids.len()];
+        let mut out = Vec::new();
+        for b in line_to_box.into_iter().flatten() {
+            if std::mem::replace(&mut done[b], true) {
+                continue;
+            }
+            if let Some(members) = &contents[b] {
+                out.push(members.iter().map(|&m| line_ids[m]).collect());
+            }
+        }
+        out
+    }
+
+    /// The windowed search groups exactly as the full scan does, on random pages that include
+    /// NaN (both signs), infinite and inverted bottom edges.
+    #[test]
+    fn windowed_grouping_matches_the_full_scan() {
+        let laparams = LAParams::default();
+        let mut state = 0x2545_F491_4F6C_DD1D_u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let odd = [
+            f64::from_bits(0xFFF8_0000_0000_0000), // NaN with the sign bit, as x86 makes it
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for _ in 0..3000 {
+            let mut arena = LayoutArena::new();
+            let count = 1 + next() % 40;
+            let ids: Vec<LineId> = (0..count)
+                .map(|_| {
+                    let x0 = (next() % 400) as f64;
+                    let y0 = (next() % 700) as f64 / 2.0;
+                    let height = (next() % 24) as f64 - 2.0;
+                    let width = (next() % 300) as f64;
+                    let mut bbox = (x0, y0, x0 + width, y0 + height);
+                    if next() % 9 == 0 {
+                        bbox.1 = odd[(next() % 4) as usize];
+                    }
+                    arena.push_textline(hline(bbox))
+                })
+                .collect();
+            let expected = full_scan_groups(&laparams, &arena, &ids);
+            let actual: Vec<Vec<LineId>> = group_textlines_arena(&laparams, &mut arena, &ids)
+                .into_iter()
+                .map(|b| arena.box_lines(b).to_vec())
+                .collect();
+            assert_eq!(actual, expected);
+        }
+    }
+
     fn hline(bbox: Rect) -> TextLineType {
         let mut line = LTTextLineHorizontal::new(0.1);
         line.set_bbox(bbox);
@@ -516,6 +606,21 @@ fn group_textlines_arena_impl(
     let mut seen_generation = vec![0usize; line_ids.len()];
     let mut next_box_id: usize = 0;
 
+    // Lines by bottom edge, so each search visits only lines that can overlap it vertically:
+    // a neighbor needs top > search bottom, and top <= bottom + the tallest line, so its bottom
+    // lies above search bottom - tallest. The window only prunes; the overlap test below is
+    // unchanged, and neighbors are visited in index order, as a full scan visits them.
+    // A NaN bottom never passes `bottom < search top`, so a full scan never picks such a line;
+    // leaving it out also keeps `bottoms` sorted, as `partition_point` needs (`total_cmp`
+    // would put a sign-bit NaN first).
+    let mut by_bottom: Vec<usize> = (0..line_ids.len())
+        .filter(|&j| !bboxes[j].1.is_nan())
+        .collect();
+    by_bottom.sort_unstable_by(|&a, &b| bboxes[a].1.total_cmp(&bboxes[b].1));
+    let bottoms: Vec<f64> = by_bottom.iter().map(|&j| bboxes[j].1).collect();
+    let tallest = bboxes.iter().map(|b| b.3 - b.1).fold(0.0_f64, f64::max);
+    let mut window: Vec<usize> = Vec::new();
+
     for (i, &lid) in line_ids.iter().enumerate() {
         let bbox = bboxes[i];
         let (d, search_bbox) = if arena.line_is_vertical(lid) {
@@ -527,7 +632,15 @@ fn group_textlines_arena_impl(
         };
 
         let mut members: Vec<usize> = vec![i];
-        for (j, neighbor_bbox) in bboxes.iter().enumerate() {
+        // Generous margins: rounding in `tallest` must never drop a neighbor.
+        let low = search_bbox.1 - 2.0 * tallest - 1.0;
+        let first = bottoms.partition_point(|&bottom| bottom < low);
+        let last = bottoms.partition_point(|&bottom| bottom < search_bbox.3);
+        window.clear();
+        window.extend_from_slice(&by_bottom[first..last.max(first)]);
+        window.sort_unstable();
+        for &j in &window {
+            let neighbor_bbox = &bboxes[j];
             if neighbor_bbox.0 < search_bbox.2
                 && neighbor_bbox.2 > search_bbox.0
                 && neighbor_bbox.1 < search_bbox.3
@@ -570,6 +683,8 @@ fn group_textlines_arena_impl(
 
     let mut result: Vec<BoxId> = Vec::new();
     let mut done: Vec<bool> = vec![false; next_box_id];
+    // Marks which members a box has seen, stamped per box instead of cleared per box.
+    let mut seen_by_box = vec![usize::MAX; line_ids.len()];
 
     for box_id in line_to_box_id.iter().take(line_ids.len()) {
         let box_id = match box_id {
@@ -587,11 +702,10 @@ fn group_textlines_arena_impl(
             None => continue,
         };
 
-        let mut seen = vec![false; line_ids.len()];
-        let mut unique_members: Vec<usize> = Vec::new();
+        let mut unique_members: Vec<usize> = Vec::with_capacity(members.len());
         for &m in members {
-            if !seen[m] {
-                seen[m] = true;
+            if seen_by_box[m] != box_id {
+                seen_by_box[m] = box_id;
                 unique_members.push(m);
             }
         }
