@@ -3,6 +3,7 @@
 //! PDF text is often stored in visual page order. ICU performs the inverse
 //! bidi operation. This module also keeps the output tied to source elements.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 
 use unicode_bidi::{BidiClass, BidiInfo, bidi_class};
@@ -378,10 +379,6 @@ fn select_base_direction(
     (direction, confidence)
 }
 
-fn source_is_logical(elements: &[TextLineElement], axis: Axis) -> bool {
-    source_is_logical_refs(elements.iter().map(ElementRef::from), axis)
-}
-
 /// Whether a line's source order is already logical: always for vertical lines; for horizontal
 /// ones, when right-to-left characters mostly run right to left in the content stream.
 pub(crate) fn source_is_logical_refs<'a>(
@@ -725,25 +722,70 @@ where
     let (raw_text, source) = source_scalars(elements.clone());
     reconstruct_source(raw_text, source, source_is_logical_refs(elements, axis))
 }
-pub(crate) fn reconstruct_textline_text(elements: &[TextLineElement], axis: Axis) -> String {
-    let raw_text = elements
-        .iter()
-        .map(|element| match element {
-            TextLineElement::Char(character) => character.get_text(),
-            TextLineElement::Anno(annotation) => annotation.get_text(),
-        })
-        .collect::<String>();
-    reconstruct_textline_raw_text(raw_text, source_is_logical(elements, axis))
+/// The elements' texts in content order, in one exactly sized buffer.
+pub(crate) fn collect_raw_text<'a, I>(elements: I) -> String
+where
+    I: IntoIterator<Item = ElementRef<'a>> + Clone,
+{
+    let mut raw = String::with_capacity(elements.clone().into_iter().map(|e| e.text().len()).sum());
+    for element in elements {
+        raw.push_str(element.text());
+    }
+    raw
 }
 
-pub(crate) fn reconstruct_textline_raw_text(raw_text: String, source_is_logical: bool) -> String {
-    if !contains_rtl_script(&raw_text) {
-        return raw_text;
+/// A line's output text from its raw text: reconstructed when `bidi` is on, else reordered for
+/// output. Borrowed when the output is the raw text unchanged, as it is for most lines.
+pub(crate) fn line_output<'r, 'a, I>(
+    raw: &'r str,
+    elements: I,
+    axis: Axis,
+    bidi: bool,
+) -> Cow<'r, str>
+where
+    I: IntoIterator<Item = ElementRef<'a>> + Clone,
+{
+    if !bidi {
+        return reorder_for_output(raw);
     }
-    if source_is_logical {
-        return normalize_arabic_presentation_forms(&raw_text);
+    if !contains_rtl_script(raw) {
+        Cow::Borrowed(raw)
+    } else if source_is_logical_refs(elements, axis) {
+        Cow::Owned(normalize_arabic_presentation_forms(raw))
+    } else {
+        Cow::Owned(reconstruct_text_per_line(raw))
     }
-    reconstruct_text_per_line(&raw_text)
+}
+
+/// Append a line's output text to `output`: its raw text, replaced in place only when the
+/// output differs from it. Owned and compact lines both render through this.
+pub(crate) fn append_line_text<'a, I>(output: &mut String, elements: I, axis: Axis, bidi: bool)
+where
+    I: IntoIterator<Item = ElementRef<'a>> + Clone,
+{
+    let start = output.len();
+    output.reserve(elements.clone().into_iter().map(|e| e.text().len()).sum());
+    for element in elements.clone() {
+        output.push_str(element.text());
+    }
+    let replacement = match line_output(&output[start..], elements, axis, bidi) {
+        Cow::Borrowed(_) => None,
+        Cow::Owned(text) => Some(text),
+    };
+    if let Some(text) = replacement {
+        output.truncate(start);
+        output.push_str(&text);
+    }
+}
+
+/// A line's output text, as [`append_line_text`] writes it.
+pub(crate) fn line_text<'a, I>(elements: I, axis: Axis, bidi: bool) -> String
+where
+    I: IntoIterator<Item = ElementRef<'a>> + Clone,
+{
+    let mut output = String::new();
+    append_line_text(&mut output, elements, axis, bidi);
+    output
 }
 
 fn reconstruct_string_line(line: &str) -> String {
@@ -991,7 +1033,22 @@ pub fn normalize_presentation_forms_for_output(text: &str) -> String {
 
 /// Reorder and normalize text with the legacy output policy.
 pub fn reorder_text_for_output(text: &str) -> String {
-    normalize_presentation_forms_for_output(&reorder_text_per_line(text))
+    reorder_for_output(text).into_owned()
+}
+
+/// [`reorder_text_for_output`], borrowing `text` when the policy leaves it unchanged (no
+/// right-to-left runs, no presentation forms), which is most text.
+pub fn reorder_for_output(text: &str) -> Cow<'_, str> {
+    let reordered = if may_reorder(text) {
+        Cow::Owned(reorder_text_per_line(text))
+    } else {
+        Cow::Borrowed(text)
+    };
+    if reordered.is_empty() || !contains_arabic_presentation_forms(&reordered) {
+        reordered
+    } else {
+        Cow::Owned(reordered.nfkc().collect())
+    }
 }
 
 #[cfg(test)]

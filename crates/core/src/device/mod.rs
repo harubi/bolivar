@@ -21,7 +21,7 @@ pub use edge_probe::PDFEdgeProbe;
 pub use html::{HOCRConverter, HTMLConverter};
 pub use layout_analyzer::{LTContainer, PDFLayoutAnalyzer, PathOp};
 pub(crate) use table::{PDFTableDevice, TableDeviceBuffers};
-pub use text::TextConverter;
+pub use text::{TextConverter, render_page_text};
 pub use xml::XMLConverter;
 
 use crate::interp::types::{PDFFontLike, PDFStackT, PDFTextSeq, PDFTextSeqItem, PathSegment};

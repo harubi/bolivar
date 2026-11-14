@@ -115,6 +115,7 @@ pub use textbox::{
     IndexAssigner, LTTextBox, LTTextBoxHorizontal, LTTextBoxVertical, LTTextGroup, LTTextGroupLRTB,
     LTTextGroupTBRL, TextBoxType, TextGroupElement,
 };
+pub(crate) use textline::elements_are_blank_or_whitespace;
 pub use textline::{
     Axis, ElementRef, LTTextLine, LTTextLineHorizontal, LTTextLineVertical, TextLineElement,
     TextLineType,
