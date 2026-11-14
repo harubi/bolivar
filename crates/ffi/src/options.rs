@@ -99,7 +99,6 @@ pub struct TableOptions {
     pub intersection_y: f64,
     pub crop: [f64; 4],
     pub first_page_crop: [f64; 4],
-    pub max_pages: i64,
     pub explicit_vertical: *const f64,
     pub explicit_vertical_len: i64,
     pub explicit_horizontal: *const f64,
@@ -124,7 +123,6 @@ pub mod topt {
         EXPLICIT_HORIZONTAL,
         CROP,
         FIRST_PAGE_CROP,
-        MAX_PAGES,
     }
 }
 
@@ -320,7 +318,6 @@ impl Crops {
 pub struct Tables {
     pub settings: TableSettings,
     pub crops: Crops,
-    pub max_pages: Option<usize>,
 }
 
 fn strategy(code: i32, field: &'static str) -> FfiResult<TableStrategy> {
@@ -408,9 +405,6 @@ impl Tables {
             crop: has(topt::CROP).then(|| raw.crop.into()),
             first_page_crop: has(topt::FIRST_PAGE_CROP).then(|| raw.first_page_crop.into()),
         };
-        if has(topt::MAX_PAGES) {
-            tables.max_pages = Some(positive_count(raw.max_pages, "max_pages")?);
-        }
         Ok(tables)
     }
 }
@@ -511,7 +505,6 @@ impl TableOptions {
             intersection_y: 0.0,
             crop: [0.0; 4],
             first_page_crop: [0.0; 4],
-            max_pages: 0,
             explicit_vertical: std::ptr::null(),
             explicit_vertical_len: 0,
             explicit_horizontal: std::ptr::null(),
@@ -673,9 +666,6 @@ mod tests {
             field(unsafe { Tables::from_raw(&raw) }),
             Some("vertical_strategy")
         );
-        let mut raw = TableOptions::empty();
-        raw.present = topt::MAX_PAGES;
-        assert_eq!(field(unsafe { Tables::from_raw(&raw) }), Some("max_pages"));
     }
 
     #[test]

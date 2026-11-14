@@ -120,7 +120,6 @@ const DESCRIPTIONS: &[(&str, Describe)] = &[
             intersection_y,
             crop,
             first_page_crop,
-            max_pages,
             explicit_vertical,
             explicit_vertical_len,
             explicit_horizontal,

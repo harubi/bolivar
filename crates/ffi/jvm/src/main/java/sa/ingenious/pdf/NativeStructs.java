@@ -52,7 +52,6 @@ final class NativeStructs {
   private static final long T_HORIZONTAL = offset(TABLE_OPTIONS, "horizontal_strategy");
   private static final long T_CROP = offset(TABLE_OPTIONS, "crop");
   private static final long T_FIRST_PAGE_CROP = offset(TABLE_OPTIONS, "first_page_crop");
-  private static final long T_MAX_PAGES = offset(TABLE_OPTIONS, "max_pages");
   private static final long T_VERTICAL_LINES = offset(TABLE_OPTIONS, "explicit_vertical");
   private static final long T_VERTICAL_LINES_LEN = offset(TABLE_OPTIONS, "explicit_vertical_len");
   private static final long T_HORIZONTAL_LINES = offset(TABLE_OPTIONS, "explicit_horizontal");
@@ -213,7 +212,6 @@ final class NativeStructs {
             TableOptionBit.EXPLICIT_HORIZONTAL.mask());
     present |= crop(s, T_CROP, options.crop(), TableOptionBit.CROP);
     present |= crop(s, T_FIRST_PAGE_CROP, options.firstPageCrop(), TableOptionBit.FIRST_PAGE_CROP);
-    present |= setLong(s, T_MAX_PAGES, options.maxPages(), TableOptionBit.MAX_PAGES.mask());
     s.set(JAVA_INT, T_STRUCT_SIZE, (int) TABLE_OPTIONS.byteSize());
     s.set(JAVA_INT, T_PRESENT, present);
     return s;
@@ -222,8 +220,8 @@ final class NativeStructs {
   /**
    * The native cursor options, or {@code NULL} for the defaults, so a plain cursor allocates none.
    */
-  static MemorySegment cursorOptions(@Nullable CursorOptions options, Arena arena) {
-    if (options == null || options.equals(CursorOptions.DEFAULT)) {
+  static MemorySegment cursorOptions(CursorOptions options, Arena arena) {
+    if (options.equals(CursorOptions.DEFAULT)) {
       return MemorySegment.NULL;
     }
     var s = arena.allocate(CURSOR_OPTIONS);
