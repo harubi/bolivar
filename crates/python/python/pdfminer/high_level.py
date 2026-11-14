@@ -146,26 +146,6 @@ def _prepare_converter_output(
     return outfp, codec
 
 
-def _export_images(
-    resolved: str | bytes | bytearray,
-    output_dir: str,
-    password: str,
-    page_numbers: list[int] | None,
-    maxpages: int,
-    caching: bool,
-    rotation: int,
-) -> None:
-    """Write the images of the selected pages to `output_dir`, one page at a time."""
-    if isinstance(resolved, str):
-        _native_export_images_from_path(
-            resolved, output_dir, password, page_numbers, maxpages, caching, rotation
-        )
-    else:
-        _native_export_images(
-            resolved, output_dir, password, page_numbers, maxpages, caching, rotation
-        )
-
-
 def extract_text_to_fp(
     inf: BinaryIO,
     outfp: AnyIO,
@@ -203,11 +183,18 @@ def extract_text_to_fp(
     if output_type in {"tag", "text"}:
         # The text converter writes text only: a Python LTImage holds no image data.
         # So the images go out after the text, through the native writer, page by page.
-        resolved = None
-        if output_type == "text" and imagewriter is not None:
-            resolved = _resolve_input(inf)
-            if not isinstance(resolved, str):
-                inf = io.BytesIO(resolved)
+        pages_from: BinaryIO | bytes | bytearray = inf
+        export: tuple[str, str | bytes | bytearray] | None = None
+        if output_type == "text" and output_dir is not None and output_dir != "":
+            name = getattr(inf, "name", None)
+            if isinstance(name, str) and os.path.isfile(name):
+                # Mapped by path: nothing is read or copied for the images.
+                export = (output_dir, name)
+            else:
+                resolved = _resolve_input(inf)
+                export = (output_dir, resolved)
+                if not isinstance(resolved, str):
+                    pages_from = resolved
         rsrcmgr = PDFResourceManager(caching=not disable_caching)
         if output_type == "text":
             device = TextConverter(
@@ -226,7 +213,7 @@ def extract_text_to_fp(
             )
         interpreter = PDFPageInterpreter(rsrcmgr, device)
         for page in PDFPage.get_pages(
-            inf,
+            pages_from,
             page_numbers,
             maxpages=maxpages,
             password=password,
@@ -235,16 +222,29 @@ def extract_text_to_fp(
             page.rotate = (page.rotate + rotation) % 360
             interpreter.process_page(page)
         device.close()
-        if resolved is not None and output_dir is not None:
-            _export_images(
-                resolved,
-                output_dir,
-                password,
-                page_numbers,
-                maxpages,
-                not disable_caching,
-                rotation,
-            )
+        if export is not None:
+            export_dir, source = export
+            caching = not disable_caching
+            if isinstance(source, str):
+                _native_export_images_from_path(
+                    source,
+                    export_dir,
+                    password,
+                    page_numbers,
+                    maxpages,
+                    caching,
+                    rotation,
+                )
+            else:
+                _native_export_images(
+                    source,
+                    export_dir,
+                    password,
+                    page_numbers,
+                    maxpages,
+                    caching,
+                    rotation,
+                )
         return
 
     rsrcmgr = PDFResourceManager(caching=not disable_caching)
