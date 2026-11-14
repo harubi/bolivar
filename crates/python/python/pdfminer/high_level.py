@@ -142,6 +142,44 @@ def _prepare_converter_output(
     return outfp, codec
 
 
+def _export_images(
+    resolved: str | bytes | bytearray,
+    output_dir: str,
+    password: str,
+    page_numbers: list[int] | None,
+    maxpages: int,
+    caching: bool,
+    laparams: LAParams | None,
+    rotation: int,
+    bidi: bool,
+) -> None:
+    """Write the images of the selected pages to `output_dir`."""
+    if isinstance(resolved, str):
+        _extract_pages_with_images_from_path(
+            resolved,
+            output_dir,
+            password,
+            page_numbers,
+            maxpages,
+            caching,
+            laparams,
+            rotation,
+            bidi,
+        )
+    else:
+        _extract_pages_with_images(
+            resolved,
+            output_dir,
+            password,
+            page_numbers,
+            maxpages,
+            caching,
+            laparams,
+            rotation,
+            bidi,
+        )
+
+
 def extract_text_to_fp(
     inf: BinaryIO,
     outfp: AnyIO,
@@ -177,6 +215,23 @@ def extract_text_to_fp(
     )
 
     if output_type in {"tag", "text"}:
+        if output_type == "text" and output_dir is not None and output_dir != "":
+            # The text converter renders text only; the images go out through the native
+            # writer, as they do for the other outputs.
+            resolved = _resolve_input(inf)
+            _export_images(
+                resolved,
+                output_dir,
+                password,
+                page_numbers,
+                maxpages,
+                not disable_caching,
+                laparams,
+                rotation,
+                bidi,
+            )
+            if not isinstance(resolved, str):
+                inf = io.BytesIO(resolved)
         rsrcmgr = PDFResourceManager(caching=not disable_caching)
         if output_type == "text":
             device = TextConverter(
